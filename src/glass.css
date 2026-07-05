@@ -1,0 +1,211 @@
+/* ═══════════════════════════════════════════════════════════════
+   MMMXCIX liquid-glass signature — quant edition
+   Dark #0a0e14 base, teal #2dd4bf accent. Elegant, not distracting.
+
+   Layers:
+   · .ambient-bg   fixed wallpaper: deep navy → teal-tinted black mesh
+                   with a barely perceptible drift (90–140s cycles).
+                   position:fixed on purpose — html2canvas (the liquidGL
+                   snapshotter) auto-excludes fixed elements, and a fixed
+                   GRADIENT element must NEVER be the snapshot root
+                   (crashes with "non-finite addColorStop"). The snapshot
+                   root is <body>, whose plain dark background-color is
+                   the safe texture base.
+   · .lg-glass     lens target for the WebGL refraction. The rules under
+                   html.lg-on handle the library's inline-style quirks.
+                   WITHOUT WebGL (mobile, blocked scripts, old GPU) the
+                   base .lg-glass styling below is the whole look —
+                   translucent surface + backdrop blur + 1px light border.
+   · .lg-frost     live CSS frost for FIXED chrome (sidebar / top bar).
+                   Fixed elements must NOT be lenses (casino rule) —
+                   backdrop-filter reacts in real time instead.
+
+   html2canvas constraints (hard-won in the casino — respect them in any
+   markup that ends up INSIDE the body snapshot):
+   · no background-attachment:fixed
+   · no CSS filter: blur() / mix-blend-mode (not rendered; blurred DOM
+     blobs can crash the snapshot)
+   · no negative-z in-flow elements you expect in the texture
+   · no oversized %-positioned animated background layers
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── Snapshot base ─────────────────────────────────────────────── */
+
+html,
+body {
+  background-color: #0a0e14;
+}
+
+/* ── Ambient background (fixed, excluded from snapshot) ────────── */
+
+.ambient-bg {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+  /* Deep navy fading into teal-tinted black — low saturation. */
+  background:
+    radial-gradient(120% 90% at 15% 0%,
+      rgba(24, 38, 62, 0.55) 0%,
+      rgba(13, 20, 33, 0.25) 45%,
+      rgba(10, 14, 20, 0) 75%),
+    radial-gradient(100% 80% at 90% 100%,
+      rgba(15, 42, 41, 0.40) 0%,
+      rgba(10, 20, 22, 0.18) 45%,
+      rgba(10, 14, 20, 0) 75%),
+    linear-gradient(175deg, #0b111c 0%, #0a0e14 45%, #090d13 100%);
+  /* Own compositing layer — stays rock-steady while scrolling. */
+  transform: translateZ(0);
+  backface-visibility: hidden;
+}
+
+/* Two soft glows drifting on slow independent paths. Alphas are tiny —
+   the motion should be felt, not seen. Blur/filters are fine HERE
+   (fixed layer = never snapshotted). */
+.ambient-bg::before,
+.ambient-bg::after {
+  content: "";
+  position: absolute;
+  border-radius: 50%;
+  will-change: transform;
+}
+
+/* Teal breath — upper right */
+.ambient-bg::before {
+  width: 65vmax;
+  height: 65vmax;
+  top: -28vmax;
+  right: -20vmax;
+  background: radial-gradient(circle at center,
+    rgba(45, 212, 191, 0.075) 0%,
+    rgba(45, 212, 191, 0.028) 40%,
+    rgba(45, 212, 191, 0) 68%);
+  animation:
+    ambient-drift-a 120s ease-in-out infinite alternate,
+    ambient-hue 140s ease-in-out infinite alternate;
+}
+
+/* Indigo counterweight — lower left */
+.ambient-bg::after {
+  width: 70vmax;
+  height: 70vmax;
+  bottom: -32vmax;
+  left: -24vmax;
+  background: radial-gradient(circle at center,
+    rgba(76, 96, 172, 0.06) 0%,
+    rgba(76, 96, 172, 0.022) 40%,
+    rgba(76, 96, 172, 0) 68%);
+  animation:
+    ambient-drift-b 96s ease-in-out infinite alternate,
+    ambient-hue 140s ease-in-out infinite alternate-reverse;
+}
+
+@keyframes ambient-drift-a {
+  from { transform: translate3d(0, 0, 0) scale(1); }
+  50%  { transform: translate3d(-6vmax, 5vmax, 0) scale(1.08); }
+  to   { transform: translate3d(3vmax, 9vmax, 0) scale(0.96); }
+}
+
+@keyframes ambient-drift-b {
+  from { transform: translate3d(0, 0, 0) scale(1); }
+  50%  { transform: translate3d(7vmax, -4vmax, 0) scale(1.06); }
+  to   { transform: translate3d(-4vmax, -8vmax, 0) scale(1.1); }
+}
+
+/* Barely-there hue drift (±10deg keeps teal teal, never purple). */
+@keyframes ambient-hue {
+  from { filter: hue-rotate(-8deg); }
+  to   { filter: hue-rotate(10deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ambient-bg::before,
+  .ambient-bg::after {
+    animation: none;
+  }
+}
+
+/* ── .lg-glass — base panel look (fallback AND pre-WebGL state) ── */
+
+.lg-glass {
+  position: relative;
+  overflow: hidden;
+  border-radius: 0.75rem; /* Tailwind rounded-* on the element overrides */
+  background: linear-gradient(150deg,
+    rgba(226, 232, 240, 0.045) 0%,
+    rgba(226, 232, 240, 0.014) 100%);
+  border: 1px solid rgba(226, 232, 240, 0.09);
+  box-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(16px) saturate(150%);
+  -webkit-backdrop-filter: blur(16px) saturate(150%);
+}
+
+/* Top specular hairline — the signature edge. */
+.lg-glass::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  pointer-events: none;
+  background: linear-gradient(90deg,
+    transparent 0%,
+    rgba(226, 232, 240, 0.16) 30%,
+    rgba(45, 212, 191, 0.22) 50%,
+    rgba(226, 232, 240, 0.16) 70%,
+    transparent 100%);
+  z-index: 4;
+}
+
+/* ── .lg-frost — live frost for fixed chrome (sidebar/top bar) ──
+   NOT a lens: fixed elements break the lens UV math and get dropped
+   from the snapshot anyway. backdrop-filter reacts in real time. */
+.lg-frost {
+  background: linear-gradient(180deg,
+    rgba(10, 14, 20, 0.60) 0%,
+    rgba(10, 14, 20, 0.38) 100%);
+  backdrop-filter: blur(20px) saturate(160%);
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
+}
+
+/* ── WebGL lens active (html.lg-on, set by src/lib/liquidGlass.js) ──
+   Library constraints handled here:
+   · it sets pointer-events:none + background:transparent INLINE on
+     every target → restore both (tint needs !important)
+   · ALL targets must share ONE z-index; the shared canvas sits one
+     below → standardise on 50 (canvas lands at 49), content at 3 */
+
+html.lg-on .lg-glass {
+  position: relative;
+  z-index: 50;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  /* Whisper of a tint — the glass should look CLEAR; readability
+     comes from the text-shadow below. */
+  background: linear-gradient(170deg,
+    rgba(8, 11, 17, 0.16) 0%,
+    rgba(8, 11, 17, 0.08) 100%) !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
+}
+
+html.lg-on .lg-glass > * {
+  position: relative;
+  z-index: 3;
+  pointer-events: auto;
+}
+
+/* Whole-card links/buttons: the library's inline pointer-events:none
+   would leave only text children clickable. */
+html.lg-on a.lg-glass,
+html.lg-on button.lg-glass {
+  pointer-events: auto !important;
+}
+
+/* Fixed chrome stays above panels (50) and the lens canvas (49). */
+html.lg-on .lg-frost {
+  z-index: 60;
+}

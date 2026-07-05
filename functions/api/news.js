@@ -1,27 +1,49 @@
 // Cloudflare Pages Function: aggregates finance RSS feeds server-side.
 // No npm deps — runs in workerd. Parses RSS with regex/string ops.
 
+// category: "markets" | "crypto" | "business"
+// access: "free" | "partial-paywall"
 const FEEDS = [
   {
     source: 'CNBC',
     url: 'https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10000664',
+    category: 'business',
+    access: 'free',
   },
   {
     source: 'Yahoo Finance',
     url: 'https://finance.yahoo.com/news/rssindex',
+    category: 'markets',
+    access: 'free',
   },
   {
     source: 'CoinDesk',
     url: 'https://www.coindesk.com/arc/outboundfeeds/rss/',
+    category: 'crypto',
+    access: 'free',
   },
   {
     source: 'MarketWatch',
     url: 'https://feeds.content.dowjones.io/public/rss/mw_topstories',
+    category: 'markets',
+    access: 'partial-paywall',
+  },
+  {
+    source: 'Investing.com',
+    url: 'https://www.investing.com/rss/news.rss',
+    category: 'markets',
+    access: 'free',
+  },
+  {
+    source: 'Cointelegraph',
+    url: 'https://cointelegraph.com/rss',
+    category: 'crypto',
+    access: 'free',
   },
 ];
 
 const FEED_TIMEOUT_MS = 10000;
-const MAX_ITEMS = 60;
+const MAX_ITEMS = 90;
 const DESC_MAX = 240;
 
 function stripCdata(str) {
@@ -52,7 +74,7 @@ function cleanText(raw) {
   return decodeEntities(stripHtml(stripCdata(raw))).trim();
 }
 
-function parseFeed(xml, source) {
+function parseFeed(xml, feed) {
   const items = [];
   const itemBlocks = xml.match(/<item[\s>][\s\S]*?<\/item>/gi) || [];
 
@@ -81,7 +103,15 @@ function parseFeed(xml, source) {
       description = description.slice(0, DESC_MAX - 1).trimEnd() + '…';
     }
 
-    items.push({ title, link, source, pubDate, description });
+    items.push({
+      title,
+      link,
+      source: feed.source,
+      category: feed.category,
+      access: feed.access,
+      pubDate,
+      description,
+    });
   }
 
   return items;
@@ -102,7 +132,7 @@ async function fetchFeed(feed) {
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const xml = await res.text();
-    return parseFeed(xml, feed.source);
+    return parseFeed(xml, feed);
   } finally {
     clearTimeout(timer);
   }

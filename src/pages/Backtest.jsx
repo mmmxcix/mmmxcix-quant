@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { Play, AlertTriangle } from "lucide-react";
 import EquityChart from "@/components/EquityChart";
+import SymbolSearch from "@/components/SymbolSearch";
 import { fetchCandles, MARKETS, INTERVALS, RANGES } from "@/lib/data";
 import { runBacktest, compileStrategy, DEFAULT_STRATEGY_CODE } from "@/lib/backtest";
 import { BUILT_IN_STRATEGIES } from "@/lib/strategies";
@@ -10,7 +11,7 @@ const DEFAULT_SYMBOL = { crypto: "BTCUSDT", stock: "SPY" };
 
 function MetricCard({ label, value, tone }) {
   return (
-    <div className="rounded-xl border border-line bg-surface px-4 py-3">
+    <div className="rounded-xl border border-line lg-glass px-4 py-3">
       <p className="text-[11px] text-dim mb-1">{label}</p>
       <p className={cn("font-mono font-semibold", tone)}>{value}</p>
     </div>
@@ -85,7 +86,7 @@ export default function Backtest() {
       <div className="grid lg:grid-cols-[340px_1fr] gap-6">
         {/* ── Settings column ─────────────────────────────────────────── */}
         <div className="space-y-4">
-          <div className="rounded-xl border border-line bg-surface p-4 space-y-3">
+          <div className="rounded-xl border border-line lg-glass p-4 space-y-3">
             <p className="text-xs text-dim uppercase tracking-widest">Daten</p>
             <div className="flex gap-1">
               {MARKETS.map((mk) => (
@@ -95,8 +96,13 @@ export default function Backtest() {
                 </button>
               ))}
             </div>
-            <input value={symbol} onChange={(e) => setSymbol(e.target.value)}
-              placeholder={market === "crypto" ? "BTCUSDT" : "SPY"} className="input-base font-mono w-full" />
+            <SymbolSearch
+              market={market}
+              value={symbol}
+              onSelect={setSymbol}
+              placeholder={market === "crypto" ? "z. B. Bitcoin oder BTCUSDT" : "z. B. Apple oder SPY"}
+              className="w-full"
+            />
             <div className="flex flex-wrap gap-1">
               {INTERVALS.filter((i) => i.markets.includes(market)).map((i) => (
                 <button key={i.id} onClick={() => setIntervalId(i.id)}
@@ -127,7 +133,7 @@ export default function Backtest() {
             </div>
           </div>
 
-          <div className="rounded-xl border border-line bg-surface p-4 space-y-3">
+          <div className="rounded-xl border border-line lg-glass p-4 space-y-3">
             <div className="flex items-center justify-between">
               <p className="text-xs text-dim uppercase tracking-widest">Strategie</p>
               <div className="flex gap-1">
@@ -197,7 +203,7 @@ export default function Backtest() {
         {/* ── Results column ──────────────────────────────────────────── */}
         <div className="space-y-4">
           {!result ? (
-            <div className="rounded-xl border border-line bg-surface h-72 flex items-center justify-center text-sm text-dim px-8 text-center">
+            <div className="rounded-xl border border-line lg-glass h-72 flex items-center justify-center text-sm text-dim px-8 text-center">
               Wähle Daten und Strategie, dann starte den Backtest — Ergebnisse erscheinen hier.
             </div>
           ) : (
@@ -222,7 +228,7 @@ export default function Backtest() {
                 <MetricCard label="Trades · Exposure" value={`${m.tradeCount} · ${fmtNum(m.exposurePct, 0)}%`} tone="text-text" />
               </div>
 
-              <div className="rounded-xl border border-line bg-surface p-3">
+              <div className="rounded-xl border border-line lg-glass p-3">
                 <p className="text-xs text-dim px-2 pt-1 pb-2">
                   Equity-Kurve — <span className="text-accent">Strategie</span> vs.{" "}
                   <span className="text-text/70">Buy &amp; Hold</span> ({result.symbol}, {result.candleCount} Kerzen)
@@ -231,7 +237,7 @@ export default function Backtest() {
               </div>
 
               {result.trades.length > 0 && (
-                <div className="rounded-xl border border-line bg-surface overflow-hidden">
+                <div className="rounded-xl border border-line lg-glass overflow-hidden">
                   <p className="text-xs text-dim px-4 pt-3 pb-1">Letzte Trades ({Math.min(result.trades.length, 50)} von {result.trades.length})</p>
                   <div className="overflow-x-auto max-h-80 overflow-y-auto">
                     <table className="w-full text-xs font-mono">

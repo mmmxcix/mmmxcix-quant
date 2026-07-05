@@ -1,27 +1,30 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Search } from "lucide-react";
 import CandleChart from "@/components/CandleChart";
-import { fetchCandles, MARKETS, INTERVALS, RANGES } from "@/lib/data";
+import SymbolSearch from "@/components/SymbolSearch";
+import { fetchCandles, fetchOlderCandles, MARKETS, INTERVALS, RANGES } from "@/lib/data";
 import { sma, closes } from "@/lib/indicators";
 import { cn, fmtPrice, fmtPct } from "@/lib/utils";
 
 const DEFAULT_SYMBOL = { crypto: "BTCUSDT", stock: "AAPL" };
+
+// Fill most of the viewport on large screens without squashing laptops.
+function chartHeight() {
+  if (typeof window === "undefined") return 520;
+  return Math.min(760, Math.max(440, window.innerHeight - 380));
+}
 
 export default function Charts() {
   const [params, setParams] = useSearchParams();
   const market = params.get("market") || "crypto";
   const symbol = params.get("symbol") || DEFAULT_SYMBOL[market];
 
-  const [input, setInput] = useState(symbol);
   const [interval, setIntervalId] = useState("1d");
   const [range, setRange] = useState("1y");
   const [showSma, setShowSma] = useState(true);
   const [candles, setCandles] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
-
-  useEffect(() => { setInput(symbol); }, [symbol]);
 
   useEffect(() => {
     let alive = true;
@@ -33,6 +36,21 @@ export default function Charts() {
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
   }, [market, symbol, interval, range]);
+
+  // Infinite history: CandleChart calls this when the user pans towards the
+  // left edge. Prepends older candles and reports how many were added.
+  const loadOlder = useCallback(async () => {
+    let added = 0;
+    const first = candles?.[0];
+    if (!first) return 0;
+    const older = await fetchOlderCandles({ market, symbol, interval, before: first.time });
+    const fresh = older.filter((c) => c.time < first.time);
+    if (fresh.length > 0) {
+      added = fresh.length;
+      setCandles((prev) => (prev && prev[0]?.time === first.time ? [...fresh, ...prev] : prev));
+    }
+    return added;
+  }, [candles, market, symbol, interval]);
 
   const overlays = useMemo(() => {
     if (!candles || !showSma) return [];
@@ -59,12 +77,6 @@ export default function Charts() {
     };
   }, [candles]);
 
-  const submit = (e) => {
-    e.preventDefault();
-    const s = input.trim().toUpperCase();
-    if (s) setParams({ market, symbol: s });
-  };
-
   const switchMarket = (m) => {
     if (m !== market) setParams({ market: m, symbol: DEFAULT_SYMBOL[m] });
   };
@@ -83,15 +95,13 @@ export default function Charts() {
             </button>
           ))}
         </div>
-        <form onSubmit={submit} className="flex items-center gap-2">
-          <input
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder={market === "crypto" ? "z. B. BTCUSDT" : "z. B. AAPL, SPY, ^GSPC"}
-            className="input-base font-mono w-44"
-          />
-          <button type="submit" className="btn-ghost" aria-label="Laden"><Search className="w-4 h-4" /></button>
-        </form>
+        <SymbolSearch
+          market={market}
+          value={symbol}
+          onSelect={(s) => setParams({ market, symbol: s })}
+          placeholder={market === "crypto" ? "z. B. Bitcoin oder BTCUSDT" : "z. B. Apple oder AAPL"}
+          className="w-64"
+        />
         <label className="flex items-center gap-2 text-xs text-dim cursor-pointer select-none ml-auto">
           <input type="checkbox" checked={showSma} onChange={(e) => setShowSma(e.target.checked)} className="accent-[#2dd4bf]" />
           SMA 20/50
@@ -126,13 +136,13 @@ export default function Charts() {
         </div>
       )}
 
-      <div className="rounded-xl border border-line bg-surface p-3">
+      <div className="rounded-xl border border-line lg-glass p-3">
         {error ? (
           <div className="h-96 flex items-center justify-center text-sm text-down px-6 text-center">{error}</div>
         ) : loading && !candles ? (
           <div className="h-96 flex items-center justify-center text-sm text-dim">Lade Daten…</div>
         ) : candles ? (
-          <CandleChart candles={candles} overlays={overlays} />
+          <CandleChart candles={candles} overlays={overlays} height={chartHeight()} onNeedOlder={loadOlder} />
         ) : null}
       </div>
     </div>

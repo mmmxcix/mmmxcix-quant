@@ -156,7 +156,7 @@ export default function Resources() {
                   href={link.href}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="group rounded-xl border border-line bg-surface p-4 hover:border-accent/40 transition-colors"
+                  className="group rounded-xl border border-line lg-glass p-4 hover:border-accent/40 transition-colors"
                 >
                   <div className="flex items-center justify-between gap-2">
                     <span className="font-medium text-text group-hover:text-accent transition-colors">

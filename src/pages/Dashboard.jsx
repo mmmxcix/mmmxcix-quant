@@ -47,7 +47,7 @@ export default function Dashboard() {
       <p className="text-[10px] tracking-[0.3em] text-dim uppercase mb-1">Übersicht</p>
       <h1 className="text-2xl font-bold mb-8">Dashboard</h1>
 
-      <div className="rounded-xl border border-line bg-surface overflow-hidden mb-8">
+      <div className="rounded-xl border border-line lg-glass overflow-hidden mb-8">
         <table className="w-full text-sm">
           <thead>
             <tr className="text-left text-dim text-xs border-b border-line">
@@ -87,7 +87,7 @@ export default function Dashboard() {
       </div>
 
       <div className="grid sm:grid-cols-2 gap-4">
-        <Link to="/backtest" className="group rounded-xl border border-line bg-surface p-5 hover:border-accent/40 transition-colors">
+        <Link to="/backtest" className="group rounded-xl border border-line lg-glass p-5 hover:border-accent/40 transition-colors">
           <div className="flex items-center justify-between mb-2">
             <FlaskConical className="w-5 h-5 text-accent" />
             <ArrowUpRight className="w-4 h-4 text-dim group-hover:text-accent transition-colors" />
@@ -95,7 +95,7 @@ export default function Dashboard() {
           <p className="font-semibold mb-1">Strategie backtesten</p>
           <p className="text-sm text-dim">Baukasten-Strategien oder eigener Code — Equity-Kurve, Sharpe, Drawdown und mehr.</p>
         </Link>
-        <Link to="/news" className="group rounded-xl border border-line bg-surface p-5 hover:border-accent/40 transition-colors">
+        <Link to="/news" className="group rounded-xl border border-line lg-glass p-5 hover:border-accent/40 transition-colors">
           <div className="flex items-center justify-between mb-2">
             <Newspaper className="w-5 h-5 text-accent" />
             <ArrowUpRight className="w-4 h-4 text-dim group-hover:text-accent transition-colors" />

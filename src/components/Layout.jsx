@@ -1,11 +1,14 @@
+import { useEffect } from "react";
 import { NavLink } from "react-router-dom";
-import { LayoutDashboard, CandlestickChart, FlaskConical, Newspaper, Compass } from "lucide-react";
+import { LayoutDashboard, CandlestickChart, FlaskConical, Newspaper, Compass, Wrench } from "lucide-react";
+import { initLiquidGlass, destroyLiquidGlass } from "@/lib/liquidGlass";
 import { cn } from "@/lib/utils";
 
 const NAV = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
   { to: "/charts", label: "Charts", icon: CandlestickChart },
   { to: "/backtest", label: "Backtest", icon: FlaskConical },
+  { to: "/tools", label: "Tools", icon: Wrench },
   { to: "/news", label: "News", icon: Newspaper },
   { to: "/resources", label: "Ressourcen", icon: Compass },
 ];
@@ -31,10 +34,18 @@ function NavItems({ horizontal = false }) {
 }
 
 export default function Layout({ children }) {
+  // Liquid glass: the signature look shared across all mmmxcix sites.
+  // Lazily loads the patched WebGL lib; degrades to CSS glass without it.
+  useEffect(() => {
+    initLiquidGlass();
+    return destroyLiquidGlass;
+  }, []);
+
   return (
     <div className="min-h-screen">
-      {/* Desktop sidebar */}
-      <aside className="hidden md:flex fixed inset-y-0 left-0 w-56 flex-col border-r border-line bg-surface/40 p-4">
+      <div className="ambient-bg" aria-hidden="true" />
+      {/* Desktop sidebar — fixed chrome gets live frost, never a lens */}
+      <aside className="hidden md:flex fixed inset-y-0 left-0 w-56 flex-col border-r border-line lg-frost p-4">
         <div className="mb-8 px-3 pt-2">
           <p className="text-[10px] tracking-[0.3em] text-dim uppercase">MMMXCIX</p>
           <p className="text-lg font-bold text-text tracking-tight">Quant</p>
@@ -50,7 +61,7 @@ export default function Layout({ children }) {
       </aside>
 
       {/* Mobile top bar */}
-      <header className="md:hidden sticky top-0 z-20 border-b border-line bg-bg/90 backdrop-blur px-4 py-3">
+      <header className="md:hidden sticky top-0 z-20 border-b border-line lg-frost px-4 py-3">
         <p className="text-sm font-bold mb-2">
           <span className="text-dim tracking-[0.25em] text-[10px] uppercase mr-2">MMMXCIX</span>Quant
         </p>
@@ -59,7 +70,7 @@ export default function Layout({ children }) {
         </nav>
       </header>
 
-      <main className="md:ml-56 p-4 md:p-8 max-w-6xl">{children}</main>
+      <main className="md:ml-56 p-4 md:p-8 max-w-[1800px]">{children}</main>
     </div>
   );
 }

@@ -102,3 +102,44 @@ export async function fetchCandles({ market, symbol, interval = "1d", range = "1
   if (candles.length < 2) throw new Error(`Zu wenige Datenpunkte für "${symbol}".`);
   return candles;
 }
+
+// Older history for infinite-scroll charts: fetch candles strictly BEFORE
+// `before` (unix seconds). Returns [] when the source has nothing earlier.
+export async function fetchOlderCandles({ market, symbol, interval = "1d", before }) {
+  const iDef = intervalDef(interval);
+
+  if (market === "crypto") {
+    const url = `${BINANCE}/klines?symbol=${encodeURIComponent(symbol.toUpperCase())}&interval=${iDef.binance}&endTime=${before * 1000 - 1}&limit=1000`;
+    const res = await fetch(url);
+    if (!res.ok) return [];
+    const rows = await res.json();
+    return rows.map((r) => ({
+      time: Math.floor(r[0] / 1000),
+      open: +r[1],
+      high: +r[2],
+      low: +r[3],
+      close: +r[4],
+      volume: +r[5],
+    }));
+  }
+
+  // Yahoo: explicit period window ending at `before`. Chunk size depends on
+  // the interval — daily gets 10-year slabs, weekly 25-year slabs.
+  const chunkDays = iDef.yahoo === "1wk" ? 9125 : 3650;
+  const period1 = Math.max(0, before - chunkDays * 86400);
+  const url = `${YAHOO}/${encodeURIComponent(symbol.toUpperCase())}?period1=${period1}&period2=${before}&interval=${iDef.yahoo}&events=div%2Csplit`;
+  const res = await fetch(url);
+  if (!res.ok) return [];
+  const json = await res.json();
+  const result = json?.chart?.result?.[0];
+  const ts = result?.timestamp || [];
+  const q = result?.indicators?.quote?.[0] || {};
+  const candles = [];
+  for (let i = 0; i < ts.length; i++) {
+    const o = q.open?.[i], h = q.high?.[i], l = q.low?.[i], c = q.close?.[i];
+    if (o == null || h == null || l == null || c == null) continue;
+    if (ts[i] >= before) continue;
+    candles.push({ time: ts[i], open: o, high: h, low: l, close: c, volume: q.volume?.[i] ?? 0 });
+  }
+  return candles;
+}

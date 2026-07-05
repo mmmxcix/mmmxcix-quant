@@ -5,6 +5,7 @@ import Charts from "@/pages/Charts";
 import Backtest from "@/pages/Backtest";
 import News from "@/pages/News";
 import Resources from "@/pages/Resources";
+import Tools from "@/pages/Tools";
 
 export default function App() {
   return (
@@ -15,6 +16,7 @@ export default function App() {
           <Route path="/charts" element={<Charts />} />
           <Route path="/backtest" element={<Backtest />} />
           <Route path="/news" element={<News />} />
+          <Route path="/tools" element={<Tools />} />
           <Route path="/resources" element={<Resources />} />
           <Route path="*" element={<Dashboard />} />
         </Routes>
