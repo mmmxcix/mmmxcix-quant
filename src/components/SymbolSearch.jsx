@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { Loader2, Search } from "lucide-react";
-import { searchSymbols } from "@/lib/search";
+import { searchSymbols, localMatches, warmup } from "@/lib/search";
 import { cn } from "@/lib/utils";
 
-const DEBOUNCE_MS = 300;
-const MIN_CHARS = 2;
+const DEBOUNCE_MS = 150;
+const MIN_CHARS = 1;
 
 // Autocomplete input: type a ticker or name, pick from the dropdown, and
 // onSelect(symbol) fires with the plain ticker string. Debounce lives here;
@@ -34,6 +34,11 @@ export default function SymbolSearch({
     setOpen(false);
     setActive(-1);
   }, [value, market]);
+
+  // Pre-load the Binance symbol list so the first crypto keystroke is instant.
+  useEffect(() => {
+    warmup(market);
+  }, [market]);
 
   // Cleanup pending timers on unmount.
   useEffect(
@@ -70,6 +75,14 @@ export default function SymbolSearch({
       setActive(-1);
       setLoading(false);
       return;
+    }
+    // Instant tier: synchronous local hits (name maps, cached lists) appear
+    // on the very same keystroke; the full search replaces them shortly after.
+    const instant = localMatches(q.trim(), market);
+    if (instant.length > 0) {
+      setResults(instant);
+      setOpen(true);
+      setActive(0);
     }
     debounceRef.current = setTimeout(() => runSearch(q.trim()), DEBOUNCE_MS);
   };

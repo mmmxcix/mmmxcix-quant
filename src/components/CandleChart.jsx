@@ -13,10 +13,12 @@ const THEME = {
     borderColor: "#1c2433",
     timeVisible: true,
     secondsVisible: false,
-    // No scrolling into the empty future — the last candle is the edge.
-    fixRightEdge: true,
   },
 };
+
+// Scrolling into the future is allowed, but at least this fraction of the
+// viewport must always show candles (i.e. max ~2/3 empty space on the right).
+const MIN_DATA_FRACTION = 1 / 3;
 
 // Candlestick chart with volume, line overlays and infinite history:
 // when the user pans near the left edge, `onNeedOlder()` is invoked (async,
@@ -32,6 +34,8 @@ export default function CandleChart({ candles, overlays = [], showVolume = true,
   const prevFirstTimeRef = useRef(null);
   const loadingOlderRef = useRef(false);
   const exhaustedRef = useRef(false);
+  const barCountRef = useRef(0);
+  const clampingRef = useRef(false);
   const onNeedOlderRef = useRef(onNeedOlder);
   onNeedOlderRef.current = onNeedOlder;
 
@@ -63,9 +67,25 @@ export default function CandleChart({ candles, overlays = [], showVolume = true,
       chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
     }
 
-    // Lazy history: fires while panning towards the left edge.
     chart.timeScale().subscribeVisibleLogicalRangeChange(async (range) => {
-      if (!range || range.from > 12) return;
+      if (!range) return;
+
+      // Future clamp: cap the empty space right of the last candle so at
+      // least MIN_DATA_FRACTION of the viewport keeps showing data.
+      const lastIndex = barCountRef.current - 1;
+      if (lastIndex > 0 && !clampingRef.current) {
+        const width = range.to - range.from;
+        const maxTo = lastIndex + width * (1 - MIN_DATA_FRACTION);
+        if (range.to > maxTo + 0.5) {
+          clampingRef.current = true;
+          chart.timeScale().setVisibleLogicalRange({ from: maxTo - width, to: maxTo });
+          clampingRef.current = false;
+          return;
+        }
+      }
+
+      // Lazy history: fires while panning towards the left edge.
+      if (range.from > 12) return;
       if (loadingOlderRef.current || exhaustedRef.current) return;
       const cb = onNeedOlderRef.current;
       if (!cb) return;
@@ -108,6 +128,7 @@ export default function CandleChart({ candles, overlays = [], showVolume = true,
     const isPrepend = prevFirst !== null && candles[0].time < prevFirst && candles.some((c) => c.time === prevFirst);
     const addedCount = isPrepend ? candles.findIndex((c) => c.time === prevFirst) : 0;
     const view = isPrepend ? chart.timeScale().getVisibleLogicalRange() : null;
+    barCountRef.current = candles.length;
 
     series.setData(candles);
     if (volSeriesRef.current) {
