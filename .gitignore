@@ -4,3 +4,7 @@ dist
 .env.*
 *.local
 .DS_Store
+
+# Local knowledge-graph tooling (see CLAUDE.md) — never commit, it churns
+# on every graph refresh (learned the hard way in the casino repo).
+graphify-out/
