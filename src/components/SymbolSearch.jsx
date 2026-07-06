@@ -169,7 +169,7 @@ export default function SymbolSearch({
         <ul
           ref={listRef}
           role="listbox"
-          className="absolute left-0 right-0 top-full mt-1 z-50 max-h-72 overflow-auto rounded-lg border border-line bg-surface shadow-lg shadow-black/40"
+          className="absolute left-0 right-0 top-full mt-1 z-50 max-h-72 overflow-auto rounded-lg border border-line bg-surface/75 backdrop-blur-xl shadow-lg shadow-black/40"
         >
           {results.map((r, i) => (
             <li

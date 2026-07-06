@@ -1,7 +1,5 @@
-import { useEffect } from "react";
 import { NavLink } from "react-router-dom";
 import { LayoutDashboard, CandlestickChart, FlaskConical, Newspaper, Compass, Wrench } from "lucide-react";
-import { initLiquidGlass, destroyLiquidGlass } from "@/lib/liquidGlass";
 import { cn } from "@/lib/utils";
 
 const NAV = [
@@ -34,17 +32,12 @@ function NavItems({ horizontal = false }) {
 }
 
 export default function Layout({ children }) {
-  // Liquid glass: the signature look shared across all mmmxcix sites.
-  // Lazily loads the patched WebGL lib; degrades to CSS glass without it.
-  useEffect(() => {
-    initLiquidGlass();
-    return destroyLiquidGlass;
-  }, []);
-
+  // Glass look is pure CSS here (.lg-glass/.lg-frost in glass.css) — the
+  // WebGL liquidGL lens from the casino smeared overlapping UI (dropdowns)
+  // and cost too much RAM for a data-dense trading tool.
   return (
     <div className="min-h-screen">
       <div className="ambient-bg" aria-hidden="true" />
-      {/* Desktop sidebar — fixed chrome gets live frost, never a lens */}
       <aside className="hidden md:flex fixed inset-y-0 left-0 w-56 flex-col border-r border-line lg-frost p-4">
         <div className="mb-8 px-3 pt-2">
           <p className="text-[10px] tracking-[0.3em] text-dim uppercase">MMMXCIX</p>
