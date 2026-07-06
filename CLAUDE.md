@@ -15,7 +15,7 @@ When you need to understand the codebase or any files in this project:
 - **Daten**: Krypto direkt von Binance (Browser-CORS ok); Aktien via `/api/yahoo/*` (Cloudflare Pages Function `functions/api/yahoo/[[path]].js` in Prod, vite-Proxy in Dev); News via `functions/api/news.js` (RSS-Aggregation, 6 Feeds)
 - **Backtest**: `src/lib/backtest.js` (runBacktest, compileStrategy), `src/lib/strategies.js` (6 Baukasten-Strategien), `src/lib/indicators.js` — Signale auf Bar-Close, Fill am nächsten Open (kein Look-Ahead), Gebühren in bps
 - **Candle-Format**: `{ time: unix-SEKUNDEN, open, high, low, close, volume }`, aufsteigend
-- **Liquid Glass**: `public/liquidGL.js` ist die GEPATCHTE Lib vom Casino (nie durch CDN-Version ersetzen!); `src/lib/liquidGlass.js` lädt sie lazy; `.lg-glass` = Panel-Lens, `.lg-frost` = fixed Chrome (Sidebar/Header — fixe Elemente NIE als Lens); `.ambient-bg` bleibt vom Snapshot ausgeschlossen
+- **Glass-Look**: rein CSS (`src/glass.css`) — `.lg-glass` = transluzente Panels mit backdrop-blur, `.lg-frost` = fixed Chrome (Sidebar/Header), `.ambient-bg` = dezenter Gradient dahinter. Die WebGL-liquidGL-Lib vom Casino wurde bewusst ENTFERNT (Commit ec74ecb: verschmierte Dropdowns, zu viel RAM) — nicht wieder einführen, ohne den User zu fragen
 - **Design-Tokens** (tailwind.config.js): bg #0a0e14, surface, line, text, dim, accent #2dd4bf, up, down; Utility-Klassen `.input-base`, `.btn-accent`, `.chip*` in src/index.css
 
 ## Geplant (Ausbaustufen)
