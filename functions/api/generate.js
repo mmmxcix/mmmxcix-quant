@@ -16,7 +16,9 @@
 // Anthropic is preferred when both are set.
 
 const ANTHROPIC_MODEL = "claude-sonnet-5";
-const GEMINI_MODEL = "gemini-flash-latest";
+// Free-tier quotas differ wildly per model — on 429/404 we walk down this
+// list instead of failing (flash-lite has the most generous free limits).
+const GEMINI_MODELS = ["gemini-flash-latest", "gemini-2.5-flash", "gemini-flash-lite-latest", "gemini-2.5-flash-lite"];
 const MAX_PROMPT_CHARS = 2000;
 
 const SYSTEM_PROMPT = `Du bist ein Quant-Strategie-Generator für ein Browser-Backtesting-Tool.
@@ -132,28 +134,39 @@ export async function onRequest({ request, env }) {
   } else {
     // Google Gemini (free tier) — key from aistudio.google.com. Sent via
     // header, not the URL, so it can never end up in logs of intermediaries.
-    res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
-      {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-goog-api-key": env.GEMINI_API_KEY,
-        },
-        body: JSON.stringify({
-          systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
-          contents: [{ role: "user", parts: [{ text: userMsg }] }],
-          generationConfig: { maxOutputTokens: 2500, temperature: 0.4 },
-        }),
+    // Models are tried in order; 429/404 falls through to the next one.
+    let lastStatus = 502;
+    for (const model of GEMINI_MODELS) {
+      res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-goog-api-key": env.GEMINI_API_KEY,
+          },
+          body: JSON.stringify({
+            systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+            contents: [{ role: "user", parts: [{ text: userMsg }] }],
+            generationConfig: { maxOutputTokens: 2500, temperature: 0.4 },
+          }),
+        }
+      );
+      if (res.ok) {
+        const data = await res.json();
+        text = (data?.candidates?.[0]?.content?.parts || [])
+          .map((p) => p.text || "")
+          .join("\n");
+        if (text) break;
+        lastStatus = 502;
+        continue;
       }
-    );
-    if (!res.ok) {
-      return json({ error: res.status === 429 ? "rate_limited" : "upstream_error" }, res.status === 429 ? 429 : 502);
+      lastStatus = res.status;
+      if (res.status !== 429 && res.status !== 404) break; // real error — stop
     }
-    const data = await res.json();
-    text = (data?.candidates?.[0]?.content?.parts || [])
-      .map((p) => p.text || "")
-      .join("\n");
+    if (!text) {
+      return json({ error: lastStatus === 429 ? "rate_limited" : "upstream_error" }, lastStatus === 429 ? 429 : 502);
+    }
   }
 
   if (!text) return json({ error: "empty_response" }, 502);
