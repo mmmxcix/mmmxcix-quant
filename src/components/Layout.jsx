@@ -1,11 +1,13 @@
 import { NavLink } from "react-router-dom";
-import { LayoutDashboard, CandlestickChart, FlaskConical, Newspaper, Compass, Wrench } from "lucide-react";
+import { LayoutDashboard, CandlestickChart, FlaskConical, Newspaper, Compass, Wrench, Activity, Scale } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const NAV = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
+  { to: "/monitor", label: "Monitor", icon: Activity },
   { to: "/charts", label: "Charts", icon: CandlestickChart },
   { to: "/backtest", label: "Backtest", icon: FlaskConical },
+  { to: "/compare", label: "Vergleich", icon: Scale },
   { to: "/tools", label: "Tools", icon: Wrench },
   { to: "/news", label: "News", icon: Newspaper },
   { to: "/resources", label: "Ressourcen", icon: Compass },

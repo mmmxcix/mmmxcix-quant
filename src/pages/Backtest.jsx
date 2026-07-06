@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Play, AlertTriangle } from "lucide-react";
+import { Play, AlertTriangle, Sparkles, Copy, Check, KeyRound, Loader2 } from "lucide-react";
 import EquityChart from "@/components/EquityChart";
 import SymbolSearch from "@/components/SymbolSearch";
 import { fetchCandles, MARKETS, INTERVALS, RANGES } from "@/lib/data";
@@ -32,6 +32,63 @@ export default function Backtest() {
   const [running, setRunning] = useState(false);
   const [error, setError] = useState(null);
   const [result, setResult] = useState(null);
+
+  // AI code generation: the Anthropic key never reaches the browser — the
+  // Pages Function /api/generate holds it server-side; access requires the
+  // dev token (stored once per browser in localStorage).
+  const [aiPrompt, setAiPrompt] = useState("");
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState(null);
+  const [copied, setCopied] = useState(false);
+  const [devToken, setDevToken] = useState(() => {
+    try { return localStorage.getItem("quant_dev_token") || ""; } catch { return ""; }
+  });
+  const [tokenInput, setTokenInput] = useState("");
+
+  const saveToken = () => {
+    const t = tokenInput.trim();
+    if (!t) return;
+    try { localStorage.setItem("quant_dev_token", t); } catch { /* private mode */ }
+    setDevToken(t);
+    setTokenInput("");
+    setAiError(null);
+  };
+
+  const copyCode = async () => {
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch { /* clipboard blocked */ }
+  };
+
+  const generateCode = async () => {
+    const p = aiPrompt.trim();
+    if (!p || aiLoading) return;
+    setAiLoading(true);
+    setAiError(null);
+    try {
+      const res = await fetch("/api/generate", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ prompt: p, token: devToken }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 401) {
+        setDevToken("");
+        try { localStorage.removeItem("quant_dev_token"); } catch { /* ignore */ }
+        throw new Error("Token ungültig — bitte neu eingeben.");
+      }
+      if (res.status === 503) throw new Error("KI noch nicht konfiguriert (Cloudflare-Secrets fehlen).");
+      if (res.status === 429) throw new Error("Rate-Limit erreicht — kurz warten.");
+      if (!res.ok || !data.code) throw new Error("Generierung fehlgeschlagen — nochmal versuchen.");
+      setCode(data.code);
+    } catch (e) {
+      setAiError(e.message);
+    } finally {
+      setAiLoading(false);
+    }
+  };
 
   const strategy = useMemo(
     () => BUILT_IN_STRATEGIES.find((s) => s.id === strategyId),
@@ -170,6 +227,14 @@ export default function Backtest() {
               </>
             ) : (
               <>
+                <div className="flex items-center justify-between">
+                  <p className="text-[11px] text-dim">JS-Editor</p>
+                  <button onClick={copyCode} title="Code kopieren"
+                    className="flex items-center gap-1.5 text-[11px] text-dim hover:text-text transition-colors">
+                    {copied ? <Check className="w-3.5 h-3.5 text-up" /> : <Copy className="w-3.5 h-3.5" />}
+                    {copied ? "Kopiert!" : "Kopieren"}
+                  </button>
+                </div>
                 <textarea
                   value={code}
                   onChange={(e) => setCode(e.target.value)}
@@ -183,6 +248,44 @@ export default function Backtest() {
                   Verfügbar: <code>ctx.candles</code>, <code>ctx.index</code>, <code>ctx.close</code>,{" "}
                   <code>ctx.position</code>, <code>ctx.indicators</code> (sma, ema, rsi, roc, atr, bollinger, donchian).
                 </p>
+
+                {/* KI-Generator */}
+                <div className="border-t border-line pt-3 space-y-2">
+                  <p className="text-[11px] text-dim flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-accent" /> Strategie mit KI generieren
+                  </p>
+                  {devToken ? (
+                    <>
+                      <textarea
+                        value={aiPrompt}
+                        onChange={(e) => setAiPrompt(e.target.value)}
+                        placeholder="z. B. Kaufe, wenn der RSI unter 30 fällt und der Kurs über dem SMA 200 liegt…"
+                        rows={3}
+                        className="input-base w-full text-xs resize-y"
+                      />
+                      <button onClick={generateCode} disabled={aiLoading || !aiPrompt.trim()}
+                        className="btn-accent w-full flex items-center justify-center gap-2 !py-1.5 text-xs">
+                        {aiLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                        {aiLoading ? "Generiere…" : "Generieren (ersetzt den Editor-Inhalt)"}
+                      </button>
+                    </>
+                  ) : (
+                    <div className="flex gap-2">
+                      <input
+                        type="password"
+                        value={tokenInput}
+                        onChange={(e) => setTokenInput(e.target.value)}
+                        onKeyDown={(e) => e.key === "Enter" && saveToken()}
+                        placeholder="Dev-Zugangstoken"
+                        className="input-base flex-1 text-xs"
+                      />
+                      <button onClick={saveToken} className="btn-ghost flex items-center gap-1.5 text-xs">
+                        <KeyRound className="w-3.5 h-3.5" /> Freischalten
+                      </button>
+                    </div>
+                  )}
+                  {aiError && <p className="text-[11px] text-down">{aiError}</p>}
+                </div>
               </>
             )}
           </div>

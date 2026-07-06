@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ExternalLink, RefreshCw, Search } from 'lucide-react';
+import { ChevronDown, ExternalLink, Mail, RefreshCw, Search } from 'lucide-react';
 
 const CATEGORIES = [
   { value: 'Alle', label: 'Alle' },
@@ -33,6 +33,161 @@ function relativeTimeDe(iso) {
   const d = Math.floor(h / 24);
   if (d === 1) return 'vor 1 Tag';
   return `vor ${d} Tagen`;
+}
+
+const NEWSLETTER_LINKS = [
+  { label: 'CNBC Newsletters', url: 'https://www.cnbc.com/newsletters/' },
+  { label: 'MarketWatch Newsletters', url: 'https://www.marketwatch.com/newsletters' },
+  { label: 'CoinDesk Newsletters', url: 'https://www.coindesk.com/newsletters/' },
+  { label: 'Yahoo Finance Morning Brief', url: 'https://finance.yahoo.com/newsletters/' },
+  { label: 'Cointelegraph', url: 'https://cointelegraph.com/newsletter' },
+];
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
+function NewsletterCard() {
+  const [open, setOpen] = useState(false);
+  const [email, setEmail] = useState('');
+  const [status, setStatus] = useState('idle'); // idle | sending | ok | already | invalid | error | kv
+
+  async function subscribe(e) {
+    e.preventDefault();
+    const value = email.trim().toLowerCase();
+    if (!EMAIL_RE.test(value)) {
+      setStatus('invalid');
+      return;
+    }
+    setStatus('sending');
+    try {
+      const res = await fetch('/api/subscribe', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email: value }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 503 && data.error === 'kv_not_configured') {
+        setStatus('kv');
+      } else if (res.ok && data.status === 'already') {
+        setStatus('already');
+      } else if (res.ok && data.status === 'ok') {
+        setStatus('ok');
+        setEmail('');
+      } else {
+        setStatus('error');
+      }
+    } catch {
+      setStatus('error');
+    }
+  }
+
+  return (
+    <div className="rounded-xl border border-line lg-glass">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-2 p-3 text-left"
+        aria-expanded={open}
+      >
+        <Mail size={15} className="text-accent shrink-0" />
+        <span className="text-sm font-medium text-text">Newsletter</span>
+        <span className="text-xs text-dim hidden sm:inline">
+          Markt-Updates direkt ins Postfach
+        </span>
+        <ChevronDown
+          size={15}
+          className={`ml-auto shrink-0 text-dim transition-transform ${open ? 'rotate-180' : ''}`}
+        />
+      </button>
+
+      {open && (
+        <div className="border-t border-line p-4 grid gap-6 md:grid-cols-2">
+          <div>
+            <div className="text-[11px] uppercase tracking-wider text-dim mb-2">
+              Direkt-Abos
+            </div>
+            <p className="text-xs text-dim mb-3">Gratis-Newsletter der Quellen:</p>
+            <ul className="space-y-1.5">
+              {NEWSLETTER_LINKS.map((l) => (
+                <li key={l.url}>
+                  <a
+                    href={l.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="group inline-flex items-center gap-1.5 text-sm text-text hover:text-accent transition-colors"
+                  >
+                    <span>{l.label}</span>
+                    <ExternalLink
+                      size={12}
+                      className="shrink-0 text-dim group-hover:text-accent transition-colors"
+                    />
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          <div>
+            <div className="text-[11px] uppercase tracking-wider text-dim mb-2">
+              MMMXCIX Daily Digest
+            </div>
+            <p className="text-xs text-dim mb-3">
+              Einmal täglich die wichtigsten Schlagzeilen aus allen Quellen — kuratiert als
+              kompakter Markt-Digest.
+            </p>
+            <form onSubmit={subscribe} className="flex flex-col sm:flex-row gap-2">
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => {
+                  setEmail(e.target.value);
+                  if (status !== 'idle') setStatus('idle');
+                }}
+                placeholder="deine@email.com"
+                className="input-base flex-1 min-w-0"
+                aria-label="E-Mail-Adresse"
+              />
+              <button
+                type="submit"
+                disabled={status === 'sending'}
+                className="btn-accent shrink-0"
+              >
+                {status === 'sending' ? 'Sende…' : 'Abonnieren'}
+              </button>
+            </form>
+            {status === 'ok' && (
+              <p className="mt-2 text-xs text-accent">
+                Eingetragen! Der Digest startet, sobald der Versand aktiviert ist.
+              </p>
+            )}
+            {status === 'already' && (
+              <p className="mt-2 text-xs text-dim">
+                Diese Adresse ist bereits eingetragen.
+              </p>
+            )}
+            {status === 'invalid' && (
+              <p className="mt-2 text-xs text-red-400">
+                Bitte eine gültige E-Mail-Adresse eingeben.
+              </p>
+            )}
+            {status === 'kv' && (
+              <p className="mt-2 text-xs text-red-400">
+                Anmeldung derzeit nicht möglich: Der Speicher (KV-Binding{' '}
+                <code className="text-accent">SUBSCRIBERS</code>) ist noch nicht konfiguriert —
+                siehe <code className="text-accent">workers/README.md</code>.
+              </p>
+            )}
+            {status === 'error' && (
+              <p className="mt-2 text-xs text-red-400">
+                Anmeldung fehlgeschlagen. Bitte später erneut versuchen.
+              </p>
+            )}
+            <p className="mt-3 text-[11px] text-dim">
+              Kostenlos, jederzeit abbestellbar, keine Weitergabe.
+            </p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function FilterChip({ active, onClick, children }) {
@@ -214,6 +369,8 @@ export default function News() {
           </div>
         </div>
       </div>
+
+      <NewsletterCard />
 
       {loading && (
         <div className="space-y-3">
