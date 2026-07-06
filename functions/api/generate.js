@@ -9,10 +9,14 @@
 // tokens — the client contract stays identical.
 //
 // Required Cloudflare Pages env vars (Production):
-//   ANTHROPIC_API_KEY  (Secret)  — sk-ant-...
 //   DEV_ACCESS_TOKEN   (Secret)  — long random string, shared only with devs
+//   plus AT LEAST ONE provider key:
+//   ANTHROPIC_API_KEY  (Secret)  — sk-ant-... (paid, best quality)
+//   GEMINI_API_KEY     (Secret)  — from aistudio.google.com (free tier)
+// Anthropic is preferred when both are set.
 
-const MODEL = "claude-sonnet-5";
+const ANTHROPIC_MODEL = "claude-sonnet-5";
+const GEMINI_MODEL = "gemini-flash-latest";
 const MAX_PROMPT_CHARS = 2000;
 
 const SYSTEM_PROMPT = `Du bist ein Quant-Strategie-Generator für ein Browser-Backtesting-Tool.
@@ -78,8 +82,8 @@ export async function onRequest({ request, env }) {
   }
   if (request.method !== "POST") return json({ error: "method_not_allowed" }, 405);
 
-  if (!env.ANTHROPIC_API_KEY || !env.DEV_ACCESS_TOKEN) {
-    return json({ error: "not_configured", hint: "ANTHROPIC_API_KEY / DEV_ACCESS_TOKEN als Cloudflare-Secrets setzen." }, 503);
+  if (!env.DEV_ACCESS_TOKEN || (!env.ANTHROPIC_API_KEY && !env.GEMINI_API_KEY)) {
+    return json({ error: "not_configured", hint: "DEV_ACCESS_TOKEN plus ANTHROPIC_API_KEY oder GEMINI_API_KEY als Cloudflare-Secrets setzen." }, 503);
   }
 
   let body;
@@ -98,33 +102,60 @@ export async function onRequest({ request, env }) {
   if (!prompt) return json({ error: "empty_prompt" }, 400);
   if (prompt.length > MAX_PROMPT_CHARS) return json({ error: "prompt_too_long" }, 400);
 
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": env.ANTHROPIC_API_KEY,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify({
-      model: MODEL,
-      max_tokens: 2500,
-      system: SYSTEM_PROMPT,
-      messages: [{ role: "user", content: `Erstelle eine Backtest-Strategie: ${prompt}` }],
-    }),
-  });
+  const userMsg = `Erstelle eine Backtest-Strategie: ${prompt}`;
+  let res, text;
 
-  if (!res.ok) {
-    // Never forward upstream error bodies — they can reference account details.
-    const status = res.status === 429 ? 429 : 502;
-    return json({ error: status === 429 ? "rate_limited" : "upstream_error" }, status);
+  if (env.ANTHROPIC_API_KEY) {
+    res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": env.ANTHROPIC_API_KEY,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: ANTHROPIC_MODEL,
+        max_tokens: 2500,
+        system: SYSTEM_PROMPT,
+        messages: [{ role: "user", content: userMsg }],
+      }),
+    });
+    if (!res.ok) {
+      // Never forward upstream error bodies — they can reference account details.
+      return json({ error: res.status === 429 ? "rate_limited" : "upstream_error" }, res.status === 429 ? 429 : 502);
+    }
+    const data = await res.json();
+    text = (data?.content || [])
+      .filter((b) => b.type === "text")
+      .map((b) => b.text)
+      .join("\n");
+  } else {
+    // Google Gemini (free tier) — key from aistudio.google.com. Sent via
+    // header, not the URL, so it can never end up in logs of intermediaries.
+    res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-goog-api-key": env.GEMINI_API_KEY,
+        },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+          contents: [{ role: "user", parts: [{ text: userMsg }] }],
+          generationConfig: { maxOutputTokens: 2500, temperature: 0.4 },
+        }),
+      }
+    );
+    if (!res.ok) {
+      return json({ error: res.status === 429 ? "rate_limited" : "upstream_error" }, res.status === 429 ? 429 : 502);
+    }
+    const data = await res.json();
+    text = (data?.candidates?.[0]?.content?.parts || [])
+      .map((p) => p.text || "")
+      .join("\n");
   }
 
-  const data = await res.json();
-  const text = (data?.content || [])
-    .filter((b) => b.type === "text")
-    .map((b) => b.text)
-    .join("\n");
   if (!text) return json({ error: "empty_response" }, 502);
-
   return json({ code: extractCode(text) });
 }
