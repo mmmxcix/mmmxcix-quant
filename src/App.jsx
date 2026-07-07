@@ -8,6 +8,8 @@ import Resources from "@/pages/Resources";
 import Tools from "@/pages/Tools";
 import Compare from "@/pages/Compare";
 import Monitor from "@/pages/Monitor";
+import Watchlist from "@/pages/Watchlist";
+import Portfolio from "@/pages/Portfolio";
 
 export default function App() {
   return (
@@ -19,6 +21,8 @@ export default function App() {
           <Route path="/backtest" element={<Backtest />} />
           <Route path="/compare" element={<Compare />} />
           <Route path="/monitor" element={<Monitor />} />
+          <Route path="/watchlist" element={<Watchlist />} />
+          <Route path="/portfolio" element={<Portfolio />} />
           <Route path="/news" element={<News />} />
           <Route path="/tools" element={<Tools />} />
           <Route path="/resources" element={<Resources />} />

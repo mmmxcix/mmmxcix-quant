@@ -11,8 +11,10 @@
 
 const NEWS_URL = 'https://quant.mmmxcix.com/api/news';
 const SITE_URL = 'https://quant.mmmxcix.com/news';
+const CONFIRM_BASE = 'https://quant.mmmxcix.com/api/subscribe';
 const RESEND_URL = 'https://api.resend.com/emails';
-const MAX_ITEMS = 12;
+const MAX_ITEMS = 12;           // items in a "general" digest
+const MAX_ITEMS_PER_TOPIC = 8;  // cap per category section in a personalized digest
 const SEND_DELAY_MS = 600; // polite sequential sending (well under Resend rate limits)
 
 function sleep(ms) {
@@ -38,16 +40,64 @@ function formatDateDe(date) {
   });
 }
 
-async function fetchTopNews() {
-  const res = await fetch(NEWS_URL, {
-    headers: { accept: 'application/json' },
-  });
+// Fetch the FULL news list (each item carries source, category, access) so we
+// can filter it per subscriber. No slicing here.
+async function fetchAllNews() {
+  const res = await fetch(NEWS_URL, { headers: { accept: 'application/json' } });
   if (!res.ok) throw new Error(`news fetch failed: HTTP ${res.status}`);
   const data = await res.json();
-  if (!Array.isArray(data.items) || data.items.length === 0) {
-    throw new Error('news feed returned no items');
+  if (!Array.isArray(data.items)) throw new Error('news feed returned no items');
+  return data.items;
+}
+
+// Does a news item mention any of the subscriber's symbols? Matches the ticker
+// (word-boundary) or the company/coin name (case-insensitive substring) in the
+// item's title + description.
+function matchesSymbols(item, symbols) {
+  if (!symbols || symbols.length === 0) return false;
+  const hay = `${item.title || ''} ${item.description || ''}`.toLowerCase();
+  for (const s of symbols) {
+    const ticker = String(s.symbol || '').replace(/usdt$/i, '').toLowerCase();
+    if (ticker.length >= 2 && new RegExp(`\\b${ticker.replace(/[^a-z0-9]/gi, '')}\\b`).test(hay)) return true;
+    const name = String(s.name || '').toLowerCase().trim();
+    if (name.length >= 3 && hay.includes(name)) return true;
   }
-  return data.items.slice(0, MAX_ITEMS);
+  return false;
+}
+
+// Build the personalized item set for one subscriber's prefs. Returns
+// { sections: [{ label, items }] } — empty sections omitted.
+function selectForPrefs(allItems, prefs) {
+  const p = prefs || {};
+  const freeOnly = p.freeOnly !== false;
+  const sourceSet = Array.isArray(p.sources) && p.sources.length ? new Set(p.sources) : null;
+
+  // Base pool honoring source + access filters.
+  const pool = allItems.filter((it) => {
+    if (freeOnly && it.access !== 'free') return false;
+    if (sourceSet && !sourceSet.has(it.source)) return false;
+    return true;
+  });
+
+  const categories = Array.isArray(p.categories) && p.categories.length ? p.categories : ['general'];
+  const sections = [];
+  const seen = new Set();
+
+  const pushSection = (label, items) => {
+    const unique = items.filter((it) => it.link && !seen.has(it.link));
+    unique.forEach((it) => seen.add(it.link));
+    if (unique.length) sections.push({ label, items: unique.slice(0, MAX_ITEMS_PER_TOPIC) });
+  };
+
+  if (categories.includes('portfolio') || categories.includes('watchlist')) {
+    const label = categories.includes('portfolio') && categories.includes('watchlist')
+      ? 'Deine Titel' : categories.includes('portfolio') ? 'Dein Portfolio' : 'Deine Watchlist';
+    pushSection(label, pool.filter((it) => matchesSymbols(it, p.symbols)));
+  }
+  if (categories.includes('general')) {
+    pushSection('Allgemeine Finanznews', pool.slice(0, MAX_ITEMS));
+  }
+  return { sections };
 }
 
 function groupBySource(items) {
@@ -60,15 +110,16 @@ function groupBySource(items) {
   return groups;
 }
 
-function buildEmail(items, date) {
-  const groups = groupBySource(items);
+// Build a personalized digest email from selected sections for one recipient.
+function buildEmail(sections, date, email) {
   const dateStr = formatDateDe(date);
   const subject = `MMMXCIX Quant — Täglicher Markt-Digest (${dateStr})`;
+  const unsubUrl = `${CONFIRM_BASE}?email=${encodeURIComponent(email)}`;
 
   // --- HTML version (dark-on-light, inline CSS only) ---
   let sectionsHtml = '';
-  for (const [source, groupItems] of groups) {
-    const rows = groupItems
+  for (const section of sections) {
+    const rows = section.items
       .map(
         (it) => `
           <tr>
@@ -77,6 +128,7 @@ function buildEmail(items, date) {
                  style="color:#1a1a2e;font-size:15px;font-weight:600;text-decoration:none;line-height:1.4;">
                 ${escapeHtml(it.title)}
               </a>
+              <div style="font-size:11px;color:#9a9aae;margin-top:2px">${escapeHtml(it.source || '')}</div>
             </td>
           </tr>`
       )
@@ -87,7 +139,7 @@ function buildEmail(items, date) {
         <td style="padding:18px 0 4px 0;">
           <span style="display:inline-block;padding:2px 10px;border:1px solid #d0d0dc;border-radius:999px;
                        font-size:11px;letter-spacing:1px;text-transform:uppercase;color:#6b6b80;">
-            ${escapeHtml(source)}
+            ${escapeHtml(section.label)}
           </span>
         </td>
       </tr>
@@ -119,9 +171,9 @@ function buildEmail(items, date) {
     <tr>
       <td style="padding:16px 28px 24px 28px;border-top:1px solid #e2e2ea;">
         <p style="margin:0;font-size:12px;color:#6b6b80;line-height:1.6;">
-          Du erhältst diese Mail, weil du den MMMXCIX Daily Digest abonniert hast.
-          Abbestellen oder mehr News: besuche
-          <a href="${SITE_URL}" style="color:#1a1a2e;">quant.mmmxcix.com/news</a>.
+          Du erhältst diese Mail, weil du den MMMXCIX Daily Digest abonniert und bestätigt hast.
+          <a href="${unsubUrl}" style="color:#1a1a2e;">Abbestellen</a> ·
+          <a href="${SITE_URL}" style="color:#1a1a2e;">mehr News</a>.
         </p>
       </td>
     </tr>
@@ -130,48 +182,63 @@ function buildEmail(items, date) {
 
   // --- Plain-text fallback ---
   let text = `MMMXCIX Quant — Täglicher Markt-Digest\n${dateStr}\n`;
-  for (const [source, groupItems] of groups) {
-    text += `\n## ${source}\n`;
-    for (const it of groupItems) {
-      text += `- ${it.title}\n  ${it.link}\n`;
+  for (const section of sections) {
+    text += `\n## ${section.label}\n`;
+    for (const it of section.items) {
+      text += `- ${it.title} (${it.source || ''})\n  ${it.link}\n`;
     }
   }
-  text += `\n--\nAbbestellen oder mehr News: ${SITE_URL}\n`;
+  text += `\n--\nAbbestellen: ${unsubUrl}\nMehr News: ${SITE_URL}\n`;
 
   return { subject, html, text };
 }
 
-async function listSubscribers(kv) {
-  const emails = [];
+// Confirmation (double opt-in) email — mirrors the one the Pages Function
+// sends, used as a fallback for records that signed up while Resend wasn't
+// configured on the Pages project.
+function buildConfirmEmail(email, token) {
+  const link = `${CONFIRM_BASE}?email=${encodeURIComponent(email)}&token=${token}`;
+  const html =
+    `<div style="background:#f4f4f7;padding:24px;font-family:system-ui,Segoe UI,sans-serif">` +
+    `<table width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;margin:0 auto;background:#fff;border:1px solid #e2e2ea;border-radius:12px">` +
+    `<tr><td style="padding:28px">` +
+    `<div style="font-size:11px;letter-spacing:2px;text-transform:uppercase;color:#6b6b80">MMMXCIX Quant</div>` +
+    `<h1 style="margin:6px 0 12px;font-size:20px;color:#1a1a2e">Abo bestätigen</h1>` +
+    `<p style="color:#3a3a4a;font-size:14px;line-height:1.6">Bitte bestätige dein Abo des Daily Digest:</p>` +
+    `<p style="margin:20px 0"><a href="${link}" style="background:#1a1a2e;color:#fff;padding:12px 22px;border-radius:8px;text-decoration:none;font-size:14px">Abo bestätigen</a></p>` +
+    `<p style="color:#6b6b80;font-size:12px">Nicht angefordert? Ignoriere diese Mail.</p>` +
+    `</td></tr></table></div>`;
+  return {
+    subject: 'Bestätige dein MMMXCIX Quant Digest-Abo',
+    html,
+    text: `Bestätige dein Abo: ${link}`,
+  };
+}
+
+// Full subscriber records (parsed JSON), keyed by email.
+async function listSubscriberRecords(kv) {
+  const records = [];
   let cursor = undefined;
   do {
     const page = await kv.list({ prefix: 'sub:', cursor });
     for (const key of page.keys) {
-      emails.push(key.name.slice('sub:'.length));
+      const email = key.name.slice('sub:'.length);
+      const rec = await kv.get(key.name, 'json');
+      if (rec && rec.email) records.push(rec);
+      else records.push({ email, confirmed: true, prefs: { categories: ['general'], freeOnly: true } }); // legacy record
     }
     cursor = page.list_complete ? undefined : page.cursor;
   } while (cursor);
-  return emails;
+  return records;
 }
 
-async function sendOne(env, to, email) {
+async function sendMail(env, to, mail) {
   const res = await fetch(RESEND_URL, {
     method: 'POST',
-    headers: {
-      authorization: `Bearer ${env.RESEND_API_KEY}`,
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify({
-      from: env.DIGEST_FROM,
-      to: [to],
-      subject: email.subject,
-      html: email.html,
-      text: email.text,
-    }),
+    headers: { authorization: `Bearer ${env.RESEND_API_KEY}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ from: env.DIGEST_FROM, to: [to], subject: mail.subject, html: mail.html, text: mail.text }),
   });
-  if (!res.ok) {
-    throw new Error(`resend HTTP ${res.status}`);
-  }
+  if (!res.ok) throw new Error(`resend HTTP ${res.status}`);
 }
 
 async function runDigest(env) {
@@ -179,24 +246,38 @@ async function runDigest(env) {
   if (!env.RESEND_API_KEY) throw new Error('secret RESEND_API_KEY missing');
   if (!env.DIGEST_FROM) throw new Error('secret DIGEST_FROM missing');
 
-  const items = await fetchTopNews();
-  const email = buildEmail(items, new Date());
-  const subscribers = await listSubscribers(env.SUBSCRIBERS);
+  const allItems = await fetchAllNews();
+  const records = await listSubscriberRecords(env.SUBSCRIBERS);
+  const now = new Date();
 
-  let sent = 0;
-  let failed = 0;
-  for (const to of subscribers) {
+  let sent = 0, failed = 0, confirmSent = 0, skippedEmpty = 0;
+
+  for (const rec of records) {
     try {
-      await sendOne(env, to, email);
+      // Unconfirmed: send a confirmation email (once), never the digest.
+      if (!rec.confirmed) {
+        if (!rec.confirmSentAt && rec.confirmToken) {
+          await sendMail(env, rec.email, buildConfirmEmail(rec.email, rec.confirmToken));
+          rec.confirmSentAt = now.toISOString();
+          await env.SUBSCRIBERS.put(`sub:${rec.email}`, JSON.stringify(rec));
+          confirmSent++;
+          await sleep(SEND_DELAY_MS);
+        }
+        continue;
+      }
+
+      // Confirmed: build the personalized digest.
+      const { sections } = selectForPrefs(allItems, rec.prefs);
+      if (sections.length === 0) { skippedEmpty++; continue; } // nothing matched today
+      await sendMail(env, rec.email, buildEmail(sections, now, rec.email));
       sent++;
+      await sleep(SEND_DELAY_MS);
     } catch {
-      // Tolerate individual failures — keep sending to the rest.
       failed++;
     }
-    await sleep(SEND_DELAY_MS);
   }
 
-  return { subscribers: subscribers.length, sent, failed, items: items.length };
+  return { subscribers: records.length, sent, failed, confirmSent, skippedEmpty, items: allItems.length };
 }
 
 export default {

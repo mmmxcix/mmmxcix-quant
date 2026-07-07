@@ -1,5 +1,17 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ChevronDown, ExternalLink, Mail, RefreshCw, Search } from 'lucide-react';
+import { distinctSymbols } from '@/lib/portfolio';
+
+// Sources selectable for the digest, with their access tier (matches
+// functions/api/news.js). "partial" sources are hidden when free-only is on.
+const DIGEST_SOURCES = [
+  { name: 'CNBC', access: 'free' },
+  { name: 'Yahoo Finance', access: 'free' },
+  { name: 'CoinDesk', access: 'free' },
+  { name: 'Investing.com', access: 'free' },
+  { name: 'Cointelegraph', access: 'free' },
+  { name: 'MarketWatch', access: 'partial' },
+];
 
 const CATEGORIES = [
   { value: 'Alle', label: 'Alle' },
@@ -48,7 +60,22 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 function NewsletterCard() {
   const [open, setOpen] = useState(false);
   const [email, setEmail] = useState('');
-  const [status, setStatus] = useState('idle'); // idle | sending | ok | already | invalid | error | kv
+  const [status, setStatus] = useState('idle'); // idle | sending | pending | updated | invalid | error | kv
+
+  // Digest preferences
+  const [categories, setCategories] = useState(['general']); // general | watchlist | portfolio
+  const [freeOnly, setFreeOnly] = useState(true);
+  const [sources, setSources] = useState(null); // null = all; else array of names
+
+  const toggleCategory = (c) =>
+    setCategories((cur) => (cur.includes(c) ? cur.filter((x) => x !== c) : [...cur, c]));
+
+  const toggleSource = (name) =>
+    setSources((cur) => {
+      const base = cur || DIGEST_SOURCES.filter((s) => !freeOnly || s.access === 'free').map((s) => s.name);
+      const next = base.includes(name) ? base.filter((x) => x !== name) : [...base, name];
+      return next;
+    });
 
   async function subscribe(e) {
     e.preventDefault();
@@ -57,28 +84,33 @@ function NewsletterCard() {
       setStatus('invalid');
       return;
     }
+    if (categories.length === 0) {
+      setStatus('nocat');
+      return;
+    }
     setStatus('sending');
+    // Portfolio/watchlist categories need the user's symbols so the digest can
+    // match news to them. distinctSymbols() reads localStorage (this browser).
+    const wantsSymbols = categories.includes('watchlist') || categories.includes('portfolio');
+    const symbols = wantsSymbols ? distinctSymbols() : [];
     try {
       const res = await fetch('/api/subscribe', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ email: value }),
+        body: JSON.stringify({ email: value, prefs: { categories, freeOnly, sources, symbols } }),
       });
       const data = await res.json().catch(() => ({}));
-      if (res.status === 503 && data.error === 'kv_not_configured') {
-        setStatus('kv');
-      } else if (res.ok && data.status === 'already') {
-        setStatus('already');
-      } else if (res.ok && data.status === 'ok') {
-        setStatus('ok');
-        setEmail('');
-      } else {
-        setStatus('error');
-      }
+      if (res.status === 503 && data.error === 'kv_not_configured') setStatus('kv');
+      else if (res.ok && data.status === 'updated') setStatus('updated');
+      else if (res.ok && data.status === 'pending_confirm') { setStatus('pending'); }
+      else setStatus('error');
     } catch {
       setStatus('error');
     }
   }
+
+  const availableSources = DIGEST_SOURCES.filter((s) => !freeOnly || s.access === 'free');
+  const selectedSources = sources || availableSources.map((s) => s.name);
 
   return (
     <div className="rounded-xl border border-line lg-glass">
@@ -130,58 +162,86 @@ function NewsletterCard() {
               MMMXCIX Daily Digest
             </div>
             <p className="text-xs text-dim mb-3">
-              Einmal täglich die wichtigsten Schlagzeilen aus allen Quellen — kuratiert als
-              kompakter Markt-Digest.
+              Einmal täglich die wichtigsten Schlagzeilen — du wählst, worüber und aus welchen Quellen.
             </p>
+
+            {/* Was */}
+            <p className="text-[11px] text-dim mb-1.5">Worüber?</p>
+            <div className="flex flex-wrap gap-1.5 mb-3">
+              {[
+                { id: 'general', label: 'Allgemeine Finanznews' },
+                { id: 'watchlist', label: 'Meine Watchlist' },
+                { id: 'portfolio', label: 'Mein Portfolio' },
+              ].map((c) => (
+                <button key={c.id} type="button" onClick={() => toggleCategory(c.id)}
+                  className={`rounded-full border px-3 py-1 text-xs transition-colors ${
+                    categories.includes(c.id) ? 'border-accent text-accent bg-accent/10' : 'border-line text-dim hover:text-text'
+                  }`}>
+                  {c.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Quellen + gratis */}
+            <div className="flex items-center justify-between mb-1.5">
+              <p className="text-[11px] text-dim">Aus welchen Quellen?</p>
+              <label className="flex items-center gap-1.5 text-[11px] text-dim cursor-pointer select-none">
+                <input type="checkbox" checked={freeOnly}
+                  onChange={(e) => { setFreeOnly(e.target.checked); setSources(null); }}
+                  className="accent-[#2dd4bf]" />
+                Nur gratis
+              </label>
+            </div>
+            <div className="flex flex-wrap gap-1.5 mb-3">
+              {availableSources.map((s) => (
+                <button key={s.name} type="button" onClick={() => toggleSource(s.name)}
+                  className={`rounded-full border px-3 py-1 text-xs transition-colors ${
+                    selectedSources.includes(s.name) ? 'border-accent text-accent bg-accent/10' : 'border-line text-dim hover:text-text'
+                  }`}>
+                  {s.name}{s.access === 'partial' ? ' ·$' : ''}
+                </button>
+              ))}
+            </div>
+
             <form onSubmit={subscribe} className="flex flex-col sm:flex-row gap-2">
               <input
                 type="email"
                 value={email}
-                onChange={(e) => {
-                  setEmail(e.target.value);
-                  if (status !== 'idle') setStatus('idle');
-                }}
+                onChange={(e) => { setEmail(e.target.value); if (status !== 'idle') setStatus('idle'); }}
                 placeholder="deine@email.com"
                 className="input-base flex-1 min-w-0"
                 aria-label="E-Mail-Adresse"
               />
-              <button
-                type="submit"
-                disabled={status === 'sending'}
-                className="btn-accent shrink-0"
-              >
+              <button type="submit" disabled={status === 'sending'} className="btn-accent shrink-0">
                 {status === 'sending' ? 'Sende…' : 'Abonnieren'}
               </button>
             </form>
-            {status === 'ok' && (
+
+            {status === 'pending' && (
               <p className="mt-2 text-xs text-accent">
-                Eingetragen! Der Digest startet, sobald der Versand aktiviert ist.
+                Fast geschafft! Wir haben dir eine Bestätigungsmail geschickt — bitte den Link darin anklicken.
               </p>
             )}
-            {status === 'already' && (
-              <p className="mt-2 text-xs text-dim">
-                Diese Adresse ist bereits eingetragen.
-              </p>
+            {status === 'updated' && (
+              <p className="mt-2 text-xs text-accent">Deine Einstellungen wurden aktualisiert.</p>
+            )}
+            {status === 'nocat' && (
+              <p className="mt-2 text-xs text-red-400">Wähle mindestens eine Kategorie aus.</p>
             )}
             {status === 'invalid' && (
-              <p className="mt-2 text-xs text-red-400">
-                Bitte eine gültige E-Mail-Adresse eingeben.
-              </p>
+              <p className="mt-2 text-xs text-red-400">Bitte eine gültige E-Mail-Adresse eingeben.</p>
             )}
             {status === 'kv' && (
               <p className="mt-2 text-xs text-red-400">
-                Anmeldung derzeit nicht möglich: Der Speicher (KV-Binding{' '}
-                <code className="text-accent">SUBSCRIBERS</code>) ist noch nicht konfiguriert —
-                siehe <code className="text-accent">workers/README.md</code>.
+                Anmeldung derzeit nicht möglich: KV-Binding <code className="text-accent">SUBSCRIBERS</code> fehlt.
               </p>
             )}
             {status === 'error' && (
-              <p className="mt-2 text-xs text-red-400">
-                Anmeldung fehlgeschlagen. Bitte später erneut versuchen.
-              </p>
+              <p className="mt-2 text-xs text-red-400">Anmeldung fehlgeschlagen. Bitte später erneut versuchen.</p>
             )}
             <p className="mt-3 text-[11px] text-dim">
-              Kostenlos, jederzeit abbestellbar, keine Weitergabe.
+              Für Watchlist/Portfolio-News werden die Symbole aus diesem Browser übermittelt. Double-Opt-In,
+              jederzeit abbestellbar, keine Weitergabe. „·$" = teils kostenpflichtige Quelle.
             </p>
           </div>
         </div>

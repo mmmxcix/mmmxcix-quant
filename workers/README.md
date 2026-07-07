@@ -15,6 +15,19 @@ Kurzanleitung, um den MMMXCIX Daily Digest scharf zu schalten. Alles im Cloudfla
 - Danach einmal neu deployen (oder nächsten Deploy abwarten), damit das Binding aktiv ist.
 - Ohne dieses Binding antwortet `/api/subscribe` mit `503 { "error": "kv_not_configured" }`.
 
+### Optional aber empfohlen: Bestätigungsmail sofort verschicken
+
+Der Newsletter nutzt **Double-Opt-In**: Nach der Anmeldung muss der Nutzer einen
+Link in einer Bestätigungsmail anklicken, bevor er Digests erhält (rechtlich sauber).
+Damit die Bestätigungsmail **sofort** rausgeht (statt erst beim nächsten Cron-Lauf
+des Workers), gib der **Pages-Funktion** ebenfalls die Resend-Zugangsdaten:
+
+- Pages-Projekt → **Settings** → **Variables and Secrets** (Environment Production) →
+  zwei **Secrets** anlegen: `RESEND_API_KEY` (aus Schritt 3) und `DIGEST_FROM`
+  (z. B. `MMMXCIX Quant <digest@mmmxcix.com>`).
+- Ohne diese zwei Secrets funktioniert alles trotzdem — die Bestätigungsmail
+  verschickt dann der Digest-Worker beim nächsten Lauf (bis zu 24 h Verzögerung).
+
 ## 3) Resend einrichten (Mail-Versand, gratis 100 Mails/Tag)
 
 - Account auf [resend.com](https://resend.com) anlegen (Free-Plan reicht: 100 Mails/Tag)

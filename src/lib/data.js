@@ -19,6 +19,7 @@ export const MARKETS = [
 // `yahoo: null` = crypto-only interval (Yahoo has no free intraday sub-1h and
 // intraday history is heavily capped, so we keep those to Binance).
 export const INTERVALS = [
+  { id: "1s", label: "1s", binance: "1s", yahoo: null, markets: ["crypto"] },
   { id: "1m", label: "1m", binance: "1m", yahoo: "1m", markets: ["crypto", "stock"] },
   { id: "5m", label: "5m", binance: "5m", yahoo: "5m", markets: ["crypto", "stock"] },
   { id: "15m", label: "15m", binance: "15m", yahoo: "15m", markets: ["crypto", "stock"] },
@@ -33,9 +34,10 @@ export const INTERVALS = [
 
 // Which intervals are "intraday" (sub-daily). Yahoo caps intraday history
 // hard, so we clamp the allowed ranges per interval below.
-const INTRADAY = new Set(["1m", "5m", "15m", "30m", "1h", "2h", "4h"]);
+const INTRADAY = new Set(["1s", "1m", "5m", "15m", "30m", "1h", "2h", "4h"]);
 
 export const RANGES = [
+  { id: "1h", label: "1Std", yahoo: null, days: 1 / 24 },
   { id: "5d", label: "5T", yahoo: "5d", days: 5 },
   { id: "1mo", label: "1M", yahoo: "1mo", days: 30 },
   { id: "3mo", label: "3M", yahoo: "3mo", days: 90 },
@@ -49,11 +51,14 @@ export const RANGES = [
 // which no free source serves and would freeze the browser). Returns the
 // RANGES subset valid for `intervalId`.
 export function rangesFor(intervalId) {
+  // 1-second candles: Binance returns ~16 min per 1000-kline call; keep the
+  // window short (older history still lazy-loads on left-pan).
+  if (intervalId === "1s") return RANGES.filter((r) => ["1h", "5d"].includes(r.id));
   if (intervalId === "1m") return RANGES.filter((r) => ["5d", "1mo"].includes(r.id));
   if (["5m", "15m", "30m"].includes(intervalId)) return RANGES.filter((r) => ["5d", "1mo", "3mo"].includes(r.id));
   if (INTRADAY.has(intervalId)) return RANGES.filter((r) => ["1mo", "3mo", "6mo", "1y"].includes(r.id));
   if (intervalId === "1M") return RANGES.filter((r) => ["5y", "max"].includes(r.id));
-  return RANGES.filter((r) => !["5d"].includes(r.id)); // daily/weekly: 1mo..max
+  return RANGES.filter((r) => !["1h", "5d"].includes(r.id)); // daily/weekly: 1mo..max
 }
 
 export const WATCHLIST = [
