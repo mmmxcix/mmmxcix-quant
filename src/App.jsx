@@ -10,25 +10,40 @@ import Compare from "@/pages/Compare";
 import Monitor from "@/pages/Monitor";
 import Watchlist from "@/pages/Watchlist";
 import Portfolio from "@/pages/Portfolio";
+import Impressum from "@/pages/Impressum";
+import Datenschutz from "@/pages/Datenschutz";
+import Nutzung from "@/pages/Nutzung";
 
+// The legal pages carry their own full-page shell (LegalLayout), so they render
+// outside the app chrome; everything else lives inside Layout.
 export default function App() {
   return (
     <BrowserRouter>
-      <Layout>
-        <Routes>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/charts" element={<Charts />} />
-          <Route path="/backtest" element={<Backtest />} />
-          <Route path="/compare" element={<Compare />} />
-          <Route path="/monitor" element={<Monitor />} />
-          <Route path="/watchlist" element={<Watchlist />} />
-          <Route path="/portfolio" element={<Portfolio />} />
-          <Route path="/news" element={<News />} />
-          <Route path="/tools" element={<Tools />} />
-          <Route path="/resources" element={<Resources />} />
-          <Route path="*" element={<Dashboard />} />
-        </Routes>
-      </Layout>
+      <Routes>
+        <Route path="/impressum" element={<Impressum />} />
+        <Route path="/datenschutz" element={<Datenschutz />} />
+        <Route path="/nutzung" element={<Nutzung />} />
+        <Route
+          path="*"
+          element={
+            <Layout>
+              <Routes>
+                <Route path="/" element={<Dashboard />} />
+                <Route path="/charts" element={<Charts />} />
+                <Route path="/backtest" element={<Backtest />} />
+                <Route path="/compare" element={<Compare />} />
+                <Route path="/monitor" element={<Monitor />} />
+                <Route path="/watchlist" element={<Watchlist />} />
+                <Route path="/portfolio" element={<Portfolio />} />
+                <Route path="/news" element={<News />} />
+                <Route path="/tools" element={<Tools />} />
+                <Route path="/resources" element={<Resources />} />
+                <Route path="*" element={<Dashboard />} />
+              </Routes>
+            </Layout>
+          }
+        />
+      </Routes>
     </BrowserRouter>
   );
 }

@@ -241,7 +241,8 @@ function NewsletterCard() {
             )}
             <p className="mt-3 text-[11px] text-dim">
               Für Watchlist/Portfolio-News werden die Symbole aus diesem Browser übermittelt. Double-Opt-In,
-              jederzeit abbestellbar, keine Weitergabe. „·$" = teils kostenpflichtige Quelle.
+              jederzeit abbestellbar, keine Weitergabe. „·$" = teils kostenpflichtige Quelle. Details:{" "}
+              <a href="/datenschutz" className="text-accent hover:underline">Datenschutz</a>.
             </p>
           </div>
         </div>

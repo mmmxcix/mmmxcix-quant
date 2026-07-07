@@ -1,4 +1,4 @@
-import { NavLink } from "react-router-dom";
+import { NavLink, Link } from "react-router-dom";
 import { LayoutDashboard, CandlestickChart, FlaskConical, Newspaper, Compass, Wrench, Activity, Scale, Star, Briefcase } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -50,10 +50,15 @@ export default function Layout({ children }) {
         <nav className="flex flex-col gap-1">
           <NavItems />
         </nav>
-        <div className="mt-auto px-3 pb-2">
+        <div className="mt-auto px-3 pb-2 space-y-2">
           <p className="text-[10px] text-dim/60 leading-relaxed">
             Keine Anlageberatung. Backtests sind hypothetisch — vergangene Performance garantiert nichts.
           </p>
+          <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-dim/60">
+            <Link to="/impressum" className="hover:text-dim transition-colors">Impressum</Link>
+            <Link to="/datenschutz" className="hover:text-dim transition-colors">Datenschutz</Link>
+            <Link to="/nutzung" className="hover:text-dim transition-colors">Nutzung</Link>
+          </div>
         </div>
       </aside>
 
@@ -68,6 +73,16 @@ export default function Layout({ children }) {
       </header>
 
       <main className="md:ml-56 p-4 md:p-8 max-w-[1800px]">{children}</main>
+
+      {/* Mobile footer — sidebar (with the legal links) is desktop-only */}
+      <footer className="md:hidden border-t border-line px-4 py-4 mt-4">
+        <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-dim">
+          <Link to="/impressum" className="hover:text-text transition-colors">Impressum</Link>
+          <Link to="/datenschutz" className="hover:text-text transition-colors">Datenschutz</Link>
+          <Link to="/nutzung" className="hover:text-text transition-colors">Nutzung</Link>
+        </div>
+        <p className="mt-2 text-[10px] text-dim/60">Keine Anlageberatung.</p>
+      </footer>
     </div>
   );
 }
