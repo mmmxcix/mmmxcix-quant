@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { Play, AlertTriangle, Sparkles, Copy, Check, KeyRound, Loader2 } from "lucide-react";
 import EquityChart from "@/components/EquityChart";
+import CandleChart from "@/components/CandleChart";
 import SymbolSearch from "@/components/SymbolSearch";
 import { fetchCandles, MARKETS, INTERVALS, RANGES } from "@/lib/data";
 import { runBacktest, compileStrategy, DEFAULT_STRATEGY_CODE } from "@/lib/backtest";
@@ -116,7 +117,7 @@ export default function Backtest() {
       const signalFn = mode === "builder" ? strategy.build(effectiveParams) : compileStrategy(code);
       const candles = await fetchCandles({ market, symbol: symbol.trim().toUpperCase(), interval, range });
       const res = runBacktest({ candles, signalFn, initialCapital: capital, feeBps });
-      setResult({ ...res, symbol: symbol.trim().toUpperCase(), candleCount: candles.length });
+      setResult({ ...res, candles, symbol: symbol.trim().toUpperCase(), candleCount: candles.length });
     } catch (e) {
       setError(e.message);
       setResult(null);
@@ -131,6 +132,18 @@ export default function Backtest() {
       { label: "Strategie", color: "#2dd4bf", points: result.equity },
       { label: "Buy & Hold", color: "#64748b", points: result.buyHold },
     ];
+  }, [result]);
+
+  // Buy/sell arrows on the price chart — shows exactly where the strategy
+  // entered and exited, so you can see how close each call was.
+  const tradeMarkers = useMemo(() => {
+    if (!result?.trades) return [];
+    const out = [];
+    for (const t of result.trades) {
+      out.push({ time: t.entryTime, side: "buy", text: "Kauf" });
+      out.push({ time: t.exitTime, side: "sell", text: "Verkauf" });
+    }
+    return out;
   }, [result]);
 
   const m = result?.metrics;
@@ -329,6 +342,14 @@ export default function Backtest() {
                 <MetricCard label="Winrate" value={fmtPct(m.winRatePct).replace("+", "")} tone="text-text" />
                 <MetricCard label="Profit-Faktor" value={fmtNum(m.profitFactor)} tone="text-text" />
                 <MetricCard label="Trades · Exposure" value={`${m.tradeCount} · ${fmtNum(m.exposurePct, 0)}%`} tone="text-text" />
+              </div>
+
+              <div className="rounded-xl border border-line lg-glass p-3">
+                <p className="text-xs text-dim px-2 pt-1 pb-2">
+                  Kursverlauf mit Ein-/Ausstiegen — <span className="text-up">▲ Kauf</span>{" "}
+                  <span className="text-down">▼ Verkauf</span> ({result.symbol})
+                </p>
+                <CandleChart candles={result.candles} markers={tradeMarkers} height={300} showVolume={false} />
               </div>
 
               <div className="rounded-xl border border-line lg-glass p-3">

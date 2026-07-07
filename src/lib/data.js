@@ -16,20 +16,45 @@ export const MARKETS = [
 
 // Interval ids are unified across markets; each entry knows its per-source
 // mapping plus a sensible default range for stocks (Yahoo wants range+interval).
+// `yahoo: null` = crypto-only interval (Yahoo has no free intraday sub-1h and
+// intraday history is heavily capped, so we keep those to Binance).
 export const INTERVALS = [
-  { id: "15m", label: "15m", binance: "15m", yahoo: null, markets: ["crypto"] },
-  { id: "1h", label: "1h", binance: "1h", yahoo: null, markets: ["crypto"] },
+  { id: "1m", label: "1m", binance: "1m", yahoo: "1m", markets: ["crypto", "stock"] },
+  { id: "5m", label: "5m", binance: "5m", yahoo: "5m", markets: ["crypto", "stock"] },
+  { id: "15m", label: "15m", binance: "15m", yahoo: "15m", markets: ["crypto", "stock"] },
+  { id: "30m", label: "30m", binance: "30m", yahoo: "30m", markets: ["crypto", "stock"] },
+  { id: "1h", label: "1h", binance: "1h", yahoo: "60m", markets: ["crypto", "stock"] },
+  { id: "2h", label: "2h", binance: "2h", yahoo: null, markets: ["crypto"] },
   { id: "4h", label: "4h", binance: "4h", yahoo: null, markets: ["crypto"] },
-  { id: "1d", label: "1D", binance: "1d", yahoo: "1d", markets: ["crypto", "stock"] },
+  { id: "1d", label: "1T", binance: "1d", yahoo: "1d", markets: ["crypto", "stock"] },
   { id: "1w", label: "1W", binance: "1w", yahoo: "1wk", markets: ["crypto", "stock"] },
+  { id: "1M", label: "1M", binance: "1M", yahoo: "1mo", markets: ["crypto", "stock"] },
 ];
 
+// Which intervals are "intraday" (sub-daily). Yahoo caps intraday history
+// hard, so we clamp the allowed ranges per interval below.
+const INTRADAY = new Set(["1m", "5m", "15m", "30m", "1h", "2h", "4h"]);
+
 export const RANGES = [
+  { id: "5d", label: "5T", yahoo: "5d", days: 5 },
+  { id: "1mo", label: "1M", yahoo: "1mo", days: 30 },
   { id: "3mo", label: "3M", yahoo: "3mo", days: 90 },
+  { id: "6mo", label: "6M", yahoo: "6mo", days: 180 },
   { id: "1y", label: "1J", yahoo: "1y", days: 365 },
   { id: "5y", label: "5J", yahoo: "5y", days: 1825 },
   { id: "max", label: "Max", yahoo: "max", days: 36500 },
 ];
+
+// Ranges that make sense for a given interval (avoids e.g. 1-minute over Max,
+// which no free source serves and would freeze the browser). Returns the
+// RANGES subset valid for `intervalId`.
+export function rangesFor(intervalId) {
+  if (intervalId === "1m") return RANGES.filter((r) => ["5d", "1mo"].includes(r.id));
+  if (["5m", "15m", "30m"].includes(intervalId)) return RANGES.filter((r) => ["5d", "1mo", "3mo"].includes(r.id));
+  if (INTRADAY.has(intervalId)) return RANGES.filter((r) => ["1mo", "3mo", "6mo", "1y"].includes(r.id));
+  if (intervalId === "1M") return RANGES.filter((r) => ["5y", "max"].includes(r.id));
+  return RANGES.filter((r) => !["5d"].includes(r.id)); // daily/weekly: 1mo..max
+}
 
 export const WATCHLIST = [
   { market: "crypto", symbol: "BTCUSDT", name: "Bitcoin" },
