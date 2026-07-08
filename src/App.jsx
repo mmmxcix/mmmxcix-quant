@@ -10,6 +10,7 @@ import Compare from "@/pages/Compare";
 import Monitor from "@/pages/Monitor";
 import Watchlist from "@/pages/Watchlist";
 import Portfolio from "@/pages/Portfolio";
+import Screener from "@/pages/Screener";
 import Impressum from "@/pages/Impressum";
 import Datenschutz from "@/pages/Datenschutz";
 import Nutzung from "@/pages/Nutzung";
@@ -33,6 +34,7 @@ export default function App() {
                 <Route path="/backtest" element={<Backtest />} />
                 <Route path="/compare" element={<Compare />} />
                 <Route path="/monitor" element={<Monitor />} />
+                <Route path="/screener" element={<Screener />} />
                 <Route path="/watchlist" element={<Watchlist />} />
                 <Route path="/portfolio" element={<Portfolio />} />
                 <Route path="/news" element={<News />} />
