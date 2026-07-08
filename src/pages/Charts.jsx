@@ -4,7 +4,7 @@ import { TrendingUp, Minus, MoveHorizontal, AlignVerticalJustifyCenter, Square, 
 import CandleChart from "@/components/CandleChart";
 import SymbolSearch from "@/components/SymbolSearch";
 import ChartDrawLayer, { DRAW_TOOLS } from "@/components/ChartDrawLayer";
-import { fetchCandles, fetchOlderCandles, MARKETS, INTERVALS, rangesFor } from "@/lib/data";
+import { fetchCandles, fetchOlderCandles, fetchLatestCandles, MARKETS, INTERVALS, rangesFor } from "@/lib/data";
 import { CHART_TYPES } from "@/lib/chartTypes";
 import { sma, ema, closes } from "@/lib/indicators";
 import { cn, fmtPrice, fmtPct } from "@/lib/utils";
@@ -20,6 +20,15 @@ const TOOL_ICONS = { TrendingUp, Minus, MoveHorizontal, AlignVerticalJustifyCent
 function chartHeight() {
   if (typeof window === "undefined") return 520;
   return Math.min(760, Math.max(440, window.innerHeight - 420));
+}
+
+// How often to poll the latest candle, by interval. Fast timeframes update
+// near-real-time; slow ones need only the occasional refresh.
+function pollMs(interval) {
+  if (interval === "1s") return 2000;
+  if (["1m", "5m"].includes(interval)) return 10000;
+  if (["15m", "30m", "1h", "2h", "4h"].includes(interval)) return 30000;
+  return 60000; // daily / weekly / monthly
 }
 
 export default function Charts() {
@@ -84,6 +93,39 @@ export default function Charts() {
     }
     return added;
   }, [candles, market, symbol, interval]);
+
+  // Live refresh: poll the latest candle(s) and merge them into the tail
+  // (update the still-forming bar, append newly-closed ones). Only runs once
+  // there is data and the tab is visible; interval scales with the timeframe.
+  useEffect(() => {
+    if (!candles) return;
+    let alive = true;
+    const tick = async () => {
+      if (document.hidden) return;
+      const latest = await fetchLatestCandles({ market, symbol, interval });
+      if (!alive || latest.length === 0) return;
+      setCandles((prev) => {
+        if (!prev || prev.length === 0) return prev;
+        const byTime = new Map(prev.map((c) => [c.time, c]));
+        let changed = false;
+        for (const c of latest) {
+          const existing = byTime.get(c.time);
+          if (!existing || existing.close !== c.close || existing.high !== c.high || existing.low !== c.low) {
+            byTime.set(c.time, c);
+            changed = true;
+          }
+        }
+        if (!changed) return prev;
+        // Rebuild ascending; only accept bars at/after the current first bar
+        // so a live poll never re-triggers the prepend path.
+        const firstTime = prev[0].time;
+        return [...byTime.values()].filter((c) => c.time >= firstTime).sort((a, b) => a.time - b.time);
+      });
+    };
+    const id = setInterval(tick, pollMs(interval));
+    return () => { alive = false; clearInterval(id); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [market, symbol, interval, candles === null]);
 
   const overlays = useMemo(() => {
     if (!candles) return [];

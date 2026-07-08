@@ -133,6 +133,35 @@ export async function fetchCandles({ market, symbol, interval = "1d", range = "1
   return candles;
 }
 
+// Live tail: fetch just the few most-recent candles for cheap polling. Used to
+// keep an open chart current without re-downloading the whole history. Returns
+// a small ascending array (newest last), or [] on any error (caller keeps its
+// current data). Crypto polls Binance directly; stocks go through the Yahoo
+// proxy with the shortest range that still yields the latest bar.
+export async function fetchLatestCandles({ market, symbol, interval = "1d" }) {
+  const iDef = intervalDef(interval);
+  if (!iDef.markets.includes(market)) return [];
+  try {
+    if (market === "crypto") {
+      const url = `${BINANCE}/klines?symbol=${encodeURIComponent(symbol.toUpperCase())}&interval=${iDef.binance}&limit=3`;
+      const res = await fetch(url);
+      if (!res.ok) return [];
+      const rows = await res.json();
+      return rows.map((r) => ({
+        time: Math.floor(r[0] / 1000),
+        open: +r[1], high: +r[2], low: +r[3], close: +r[4], volume: +r[5],
+      }));
+    }
+    // Stocks: shortest range that reliably contains the last bar per interval.
+    const INTRA = new Set(["1m", "5m", "15m", "30m", "1h"]);
+    const yRange = INTRA.has(interval) ? "1d" : interval === "1M" ? "3mo" : "5d";
+    const all = await fetchYahoo(symbol, iDef.yahoo, yRange);
+    return all.slice(-3);
+  } catch {
+    return [];
+  }
+}
+
 // Older history for infinite-scroll charts: fetch candles strictly BEFORE
 // `before` (unix seconds). Returns [] when the source has nothing earlier.
 export async function fetchOlderCandles({ market, symbol, interval = "1d", before }) {

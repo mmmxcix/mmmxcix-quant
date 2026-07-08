@@ -11,7 +11,8 @@ function useWatchlistQuotes() {
 
   useEffect(() => {
     let alive = true;
-    (async () => {
+    const load = async () => {
+      if (document.hidden) return;
       const results = await Promise.allSettled(
         WATCHLIST.map(async (w) => {
           const candles = await fetchCandles({ market: w.market, symbol: w.symbol, interval: "1d", range: "3mo" });
@@ -31,8 +32,10 @@ function useWatchlistQuotes() {
       }
       setQuotes(map);
       setLoading(false);
-    })();
-    return () => { alive = false; };
+    };
+    load();
+    const id = setInterval(load, 60000); // keep dashboard quotes fresh
+    return () => { alive = false; clearInterval(id); };
   }, []);
 
   return { quotes, loading };

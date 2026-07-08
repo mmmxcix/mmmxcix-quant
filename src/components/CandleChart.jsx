@@ -146,8 +146,12 @@ export default function CandleChart({
 
     const prevFirst = prevFirstTimeRef.current;
     const isPrepend = prevFirst !== null && candles[0].time < prevFirst && candles.some((c) => c.time === prevFirst);
+    // A "tail update" is a live poll: same starting bar, only the last bar(s)
+    // changed/appended. Keep the viewport steady instead of refitting so the
+    // user's zoom/scroll survives every refresh.
+    const isTailUpdate = !isPrepend && prevFirst !== null && candles[0].time === prevFirst;
     const addedCount = isPrepend ? candles.findIndex((c) => c.time === prevFirst) : 0;
-    const view = isPrepend ? chart.timeScale().getVisibleLogicalRange() : null;
+    const view = (isPrepend || isTailUpdate) ? chart.timeScale().getVisibleLogicalRange() : null;
     barCountRef.current = candles.length;
 
     series.setData(toSeriesData(chartType, candles));
@@ -159,6 +163,8 @@ export default function CandleChart({
 
     if (isPrepend && view) {
       chart.timeScale().setVisibleLogicalRange({ from: view.from + addedCount, to: view.to + addedCount });
+    } else if (isTailUpdate && view) {
+      chart.timeScale().setVisibleLogicalRange(view); // hold zoom/scroll on live refresh
     } else {
       exhaustedRef.current = false;
       chart.timeScale().fitContent();
