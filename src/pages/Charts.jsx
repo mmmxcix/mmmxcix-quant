@@ -5,6 +5,7 @@ import CandleChart from "@/components/CandleChart";
 import SymbolSearch from "@/components/SymbolSearch";
 import ChartDrawLayer, { DRAW_TOOLS } from "@/components/ChartDrawLayer";
 import { fetchCandles, fetchOlderCandles, fetchLatestCandles, MARKETS, INTERVALS, rangesFor } from "@/lib/data";
+import { openBinanceKlineStream, mergeLiveCandle } from "@/lib/liveStream";
 import { CHART_TYPES } from "@/lib/chartTypes";
 import { sma, ema, closes } from "@/lib/indicators";
 import { cn, fmtPrice, fmtPct } from "@/lib/utils";
@@ -46,6 +47,7 @@ export default function Charts() {
   const [candles, setCandles] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [live, setLive] = useState(false); // WS connected (crypto real-time)
 
   // Drawing state
   const [activeTool, setActiveTool] = useState(null);
@@ -97,38 +99,42 @@ export default function Charts() {
     return added;
   }, [candles, market, symbol, interval]);
 
-  // Live refresh: poll the latest candle(s) and merge them into the tail
-  // (update the still-forming bar, append newly-closed ones). Only runs once
-  // there is data and the tab is visible; interval scales with the timeframe.
+  // Live updates. Crypto uses the Binance WebSocket (real-time ticks); stocks
+  // have no free realtime feed, so they poll the latest candle on an interval
+  // scaled to the timeframe. Only runs once initial data has loaded.
+  const hasData = candles !== null;
   useEffect(() => {
-    if (!candles) return;
+    if (!hasData) return;
+    setLive(false);
+
+    if (market === "crypto") {
+      const bIv = INTERVALS.find((i) => i.id === interval)?.binance;
+      if (!bIv) return;
+      const close = openBinanceKlineStream({
+        symbol,
+        interval: bIv,
+        onCandle: (c) => setCandles((prev) => mergeLiveCandle(prev, c)),
+        onStatus: (s) => setLive(s === "live"),
+      });
+      return () => { close(); setLive(false); };
+    }
+
+    // Stocks: polling fallback.
     let alive = true;
     const tick = async () => {
       if (document.hidden) return;
       const latest = await fetchLatestCandles({ market, symbol, interval });
       if (!alive || latest.length === 0) return;
       setCandles((prev) => {
-        if (!prev || prev.length === 0) return prev;
-        const byTime = new Map(prev.map((c) => [c.time, c]));
-        let changed = false;
-        for (const c of latest) {
-          const existing = byTime.get(c.time);
-          if (!existing || existing.close !== c.close || existing.high !== c.high || existing.low !== c.low) {
-            byTime.set(c.time, c);
-            changed = true;
-          }
-        }
-        if (!changed) return prev;
-        // Rebuild ascending; only accept bars at/after the current first bar
-        // so a live poll never re-triggers the prepend path.
-        const firstTime = prev[0].time;
-        return [...byTime.values()].filter((c) => c.time >= firstTime).sort((a, b) => a.time - b.time);
+        let next = prev;
+        for (const c of latest) next = mergeLiveCandle(next, c);
+        return next;
       });
     };
     const id = setInterval(tick, pollMs(interval));
     return () => { alive = false; clearInterval(id); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [market, symbol, interval, candles === null]);
+  }, [market, symbol, interval, hasData]);
 
   const overlays = useMemo(() => {
     if (!candles) return [];
@@ -265,6 +271,15 @@ export default function Charts() {
           </div>
           <div><span className="text-dim mr-2">Hoch</span>{fmtPrice(stats.high)}</div>
           <div><span className="text-dim mr-2">Tief</span>{fmtPrice(stats.low)}</div>
+          {live && (
+            <div className="flex items-center gap-1.5 text-up" title="Echtzeit-Daten via WebSocket">
+              <span className="relative flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full rounded-full bg-up opacity-60 animate-ping" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-up" />
+              </span>
+              Live
+            </div>
+          )}
         </div>
       )}
 
