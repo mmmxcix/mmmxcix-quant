@@ -56,8 +56,11 @@ export default function CandleChart({
   showVolume = true,
   height = 440,
   onNeedOlder,
+  onChartReady,
   children,
 }) {
+  const onReadyRef = useRef(onChartReady);
+  onReadyRef.current = onChartReady;
   const containerRef = useRef(null);
   const chartRef = useRef(null);
   const priceSeriesRef = useRef(null);
@@ -126,9 +129,11 @@ export default function CandleChart({
     });
     ro.observe(containerRef.current);
     setChartEpoch((e) => e + 1);
+    onReadyRef.current?.(chart, priceSeriesRef.current);
 
     return () => {
       ro.disconnect();
+      onReadyRef.current?.(null, null);
       chart.remove();
       chartRef.current = null;
       priceSeriesRef.current = null;

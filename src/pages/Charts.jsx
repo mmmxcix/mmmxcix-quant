@@ -4,11 +4,14 @@ import { TrendingUp, Minus, MoveHorizontal, AlignVerticalJustifyCenter, Square, 
 import CandleChart from "@/components/CandleChart";
 import SymbolSearch from "@/components/SymbolSearch";
 import ChartDrawLayer, { DRAW_TOOLS } from "@/components/ChartDrawLayer";
+import IndicatorPane from "@/components/IndicatorPane";
 import { fetchCandles, fetchOlderCandles, fetchLatestCandles, MARKETS, INTERVALS, rangesFor } from "@/lib/data";
 import { openBinanceKlineStream, mergeLiveCandle } from "@/lib/liveStream";
 import { CHART_TYPES } from "@/lib/chartTypes";
-import { sma, ema, closes } from "@/lib/indicators";
+import { sma, ema, bollinger, closes } from "@/lib/indicators";
+import { getAlertsFor, addAlert, removeAlert, subscribeAlerts, checkAlerts, ensureNotificationPermission } from "@/lib/alerts";
 import { cn, fmtPrice, fmtPct } from "@/lib/utils";
+import { Bell, X } from "lucide-react";
 
 const DEFAULT_SYMBOL = { crypto: "BTCUSDT", stock: "AAPL" };
 const DRAW_COLORS = ["#38bdf8", "#f59e0b", "#f472b6", "#a78bfa", "#10b981", "#ef4444"];
@@ -43,11 +46,20 @@ export default function Charts() {
   const [interval, setIntervalId] = useState("1d");
   const [range, setRange] = useState("1y");
   const [chartType, setChartType] = useState("candles");
-  const [indicators, setIndicators] = useState({ sma2050: true, ema200: false });
+  const [indicators, setIndicators] = useState({ sma2050: true, ema200: false, bollinger: false });
+  const [panes, setPanes] = useState({ rsi: false, macd: false }); // oscillator sub-charts
   const [candles, setCandles] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
   const [live, setLive] = useState(false); // WS connected (crypto real-time)
+  const [mainChart, setMainChart] = useState(null); // for pane time-sync
+  const [mainSeries, setMainSeries] = useState(null); // for alert price lines
+
+  // Price alerts
+  const [alerts, setAlerts] = useState([]);
+  const [alertPrice, setAlertPrice] = useState("");
+  const [showAlertBox, setShowAlertBox] = useState(false);
+  const [toast, setToast] = useState(null);
 
   // Drawing state
   const [activeTool, setActiveTool] = useState(null);
@@ -136,6 +148,53 @@ export default function Charts() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [market, symbol, interval, hasData]);
 
+  // Alerts: load for this symbol + stay in sync with storage changes.
+  useEffect(() => {
+    const refresh = () => setAlerts(getAlertsFor(market, symbol));
+    refresh();
+    return subscribeAlerts(refresh);
+  }, [market, symbol]);
+
+  // Check alerts against the latest price on every candle update. Show a toast
+  // for any that fire (checkAlerts also handles the browser notification).
+  const lastClose = candles && candles.length ? candles[candles.length - 1].close : null;
+  useEffect(() => {
+    if (lastClose == null) return;
+    const fired = checkAlerts(market, symbol, lastClose);
+    if (fired.length > 0) {
+      const a = fired[0];
+      setToast(`Alarm: ${a.symbol} ${a.direction === "above" ? "über" : "unter"} ${a.price}`);
+      setTimeout(() => setToast(null), 6000);
+    }
+  }, [lastClose, market, symbol]);
+
+  // Draw a dashed price line on the chart for each active (untriggered) alert.
+  useEffect(() => {
+    if (!mainSeries) return;
+    const lines = alerts
+      .filter((a) => !a.triggered)
+      .map((a) =>
+        mainSeries.createPriceLine({
+          price: a.price,
+          color: a.direction === "above" ? "#10b981" : "#ef4444",
+          lineWidth: 1,
+          lineStyle: 2,
+          axisLabelVisible: true,
+          title: "Alarm",
+        })
+      );
+    return () => { lines.forEach((l) => { try { mainSeries.removePriceLine(l); } catch { /* gone */ } }); };
+  }, [alerts, mainSeries]);
+
+  const submitAlert = async (direction) => {
+    const p = parseFloat(alertPrice);
+    if (!p || p <= 0) return;
+    await ensureNotificationPermission();
+    addAlert({ market, symbol, price: p, direction });
+    setAlertPrice("");
+    setShowAlertBox(false);
+  };
+
   const overlays = useMemo(() => {
     if (!candles) return [];
     const cl = closes(candles);
@@ -146,6 +205,14 @@ export default function Charts() {
     const out = [];
     if (indicators.sma2050) out.push(mk(sma(cl, 20), "#38bdf8", "SMA 20"), mk(sma(cl, 50), "#f59e0b", "SMA 50"));
     if (indicators.ema200) out.push(mk(ema(cl, 200), "#a78bfa", "EMA 200"));
+    if (indicators.bollinger) {
+      const bb = bollinger(cl, 20, 2);
+      const band = (key, color) => ({
+        label: `BB ${key}`, color,
+        points: bb.map((v, i) => (v === null ? null : { time: candles[i].time, value: v[key] })).filter(Boolean),
+      });
+      out.push(band("upper", "#64748b"), band("mid", "#64748b99"), band("lower", "#64748b"));
+    }
     return out;
   }, [candles, indicators]);
 
@@ -216,7 +283,7 @@ export default function Charts() {
           ))}
         </div>
 
-        <div className="flex items-center gap-3 text-xs text-dim">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-dim">
           <label className="flex items-center gap-1.5 cursor-pointer select-none">
             <input type="checkbox" checked={indicators.sma2050}
               onChange={(e) => setIndicators((v) => ({ ...v, sma2050: e.target.checked }))}
@@ -228,6 +295,25 @@ export default function Charts() {
               onChange={(e) => setIndicators((v) => ({ ...v, ema200: e.target.checked }))}
               className="accent-[#2dd4bf]" />
             EMA 200
+          </label>
+          <label className="flex items-center gap-1.5 cursor-pointer select-none">
+            <input type="checkbox" checked={indicators.bollinger}
+              onChange={(e) => setIndicators((v) => ({ ...v, bollinger: e.target.checked }))}
+              className="accent-[#2dd4bf]" />
+            Bollinger
+          </label>
+          <span className="h-3 w-px bg-line" />
+          <label className="flex items-center gap-1.5 cursor-pointer select-none">
+            <input type="checkbox" checked={panes.rsi}
+              onChange={(e) => setPanes((v) => ({ ...v, rsi: e.target.checked }))}
+              className="accent-[#2dd4bf]" />
+            RSI
+          </label>
+          <label className="flex items-center gap-1.5 cursor-pointer select-none">
+            <input type="checkbox" checked={panes.macd}
+              onChange={(e) => setPanes((v) => ({ ...v, macd: e.target.checked }))}
+              className="accent-[#2dd4bf]" />
+            MACD
           </label>
         </div>
 
@@ -289,31 +375,73 @@ export default function Charts() {
         </p>
       )}
 
+      {/* Price alerts */}
+      <div className="mb-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <button onClick={() => setShowAlertBox((v) => !v)}
+            className="flex items-center gap-1.5 chip chip-idle">
+            <Bell className="w-3.5 h-3.5" /> Alarm
+          </button>
+          {showAlertBox && (
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                type="number" value={alertPrice} onChange={(e) => setAlertPrice(e.target.value)}
+                placeholder={stats ? fmtPrice(stats.price) : "Preis"}
+                className="input-base font-mono w-28 text-sm"
+              />
+              <button onClick={() => submitAlert("above")} className="chip chip-idle text-up">↑ über</button>
+              <button onClick={() => submitAlert("below")} className="chip chip-idle text-down">↓ unter</button>
+            </div>
+          )}
+          {alerts.map((a) => (
+            <span key={a.id}
+              className={cn("inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-mono",
+                a.triggered ? "border-line text-dim line-through" : a.direction === "above" ? "border-up/40 text-up" : "border-down/40 text-down")}>
+              {a.direction === "above" ? "↑" : "↓"} {fmtPrice(a.price)}
+              <button onClick={() => removeAlert(a.id)} className="text-dim hover:text-text" aria-label="Alarm entfernen">
+                <X className="w-3 h-3" />
+              </button>
+            </span>
+          ))}
+        </div>
+      </div>
+
+      {toast && (
+        <div className="fixed bottom-4 right-4 z-50 rounded-xl border border-accent/50 bg-surface px-4 py-3 text-sm text-text shadow-lg shadow-black/40 flex items-center gap-2">
+          <Bell className="w-4 h-4 text-accent" /> {toast}
+        </div>
+      )}
+
       <div className="rounded-xl border border-line lg-glass p-3">
         {error ? (
           <div className="h-96 flex items-center justify-center text-sm text-down px-6 text-center">{error}</div>
         ) : loading && !candles ? (
           <div className="h-96 flex items-center justify-center text-sm text-dim">Lade Daten…</div>
         ) : candles ? (
-          <CandleChart
-            candles={candles}
-            chartType={chartType}
-            overlays={overlays}
-            height={chartHeight()}
-            onNeedOlder={loadOlder}
-          >
-            {({ chart, series, containerRef }) => (
-              <ChartDrawLayer
-                chart={chart}
-                series={series}
-                containerRef={containerRef}
-                chartKey={chartKey}
-                activeTool={activeTool}
-                color={drawColor}
-                onToolConsumed={() => setActiveTool(null)}
-              />
-            )}
-          </CandleChart>
+          <>
+            <CandleChart
+              candles={candles}
+              chartType={chartType}
+              overlays={overlays}
+              height={chartHeight()}
+              onNeedOlder={loadOlder}
+              onChartReady={(chart, series) => { setMainChart(chart); setMainSeries(series); }}
+            >
+              {({ chart, series, containerRef }) => (
+                <ChartDrawLayer
+                  chart={chart}
+                  series={series}
+                  containerRef={containerRef}
+                  chartKey={chartKey}
+                  activeTool={activeTool}
+                  color={drawColor}
+                  onToolConsumed={() => setActiveTool(null)}
+                />
+              )}
+            </CandleChart>
+            {panes.rsi && <IndicatorPane candles={candles} type="rsi" mainChart={mainChart} />}
+            {panes.macd && <IndicatorPane candles={candles} type="macd" mainChart={mainChart} />}
+          </>
         ) : null}
       </div>
     </div>

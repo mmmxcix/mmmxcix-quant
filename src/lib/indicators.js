@@ -207,3 +207,40 @@ export function donchian(candles, period) {
   }
   return out;
 }
+
+/**
+ * MACD (Moving Average Convergence Divergence).
+ * macd = EMA(fast) − EMA(slow); signal = EMA(macd, signalPeriod);
+ * histogram = macd − signal. Returns an array aligned to `values`; entries are
+ * null during warm-up, otherwise { macd, signal, hist }.
+ * @param {number[]} values
+ * @param {number} fast  default 12
+ * @param {number} slow  default 26
+ * @param {number} signalPeriod default 9
+ * @returns {({macd:number, signal:number, hist:number}|null)[]}
+ */
+export function macd(values, fast = 12, slow = 26, signalPeriod = 9) {
+  const out = new Array(values.length).fill(null);
+  const emaFast = ema(values, fast);
+  const emaSlow = ema(values, slow);
+
+  // MACD line where both EMAs exist.
+  const macdLine = values.map((_, i) =>
+    emaFast[i] === null || emaSlow[i] === null ? null : emaFast[i] - emaSlow[i]
+  );
+
+  // Signal = EMA of the (non-null) MACD line. Run the EMA over the compact
+  // series, then map results back to their original indices.
+  const startIdx = macdLine.findIndex((v) => v !== null);
+  if (startIdx === -1) return out;
+  const compact = macdLine.slice(startIdx).map((v) => v ?? 0);
+  const signalCompact = ema(compact, signalPeriod);
+
+  for (let j = 0; j < compact.length; j++) {
+    const i = startIdx + j;
+    const sig = signalCompact[j];
+    if (sig === null) continue;
+    out[i] = { macd: macdLine[i], signal: sig, hist: macdLine[i] - sig };
+  }
+  return out;
+}
