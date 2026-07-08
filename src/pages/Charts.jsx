@@ -19,7 +19,10 @@ const TOOL_ICONS = { TrendingUp, Minus, MoveHorizontal, AlignVerticalJustifyCent
 // Fill most of the viewport on large screens without squashing laptops.
 function chartHeight() {
   if (typeof window === "undefined") return 520;
-  return Math.min(760, Math.max(440, window.innerHeight - 420));
+  const h = window.innerHeight;
+  // Shorter on phones so controls + chart both fit without excessive scroll.
+  if (window.innerWidth < 640) return Math.min(420, Math.max(300, h - 360));
+  return Math.min(760, Math.max(440, h - 420));
 }
 
 // How often to poll the latest candle, by interval. Fast timeframes update
@@ -159,9 +162,9 @@ export default function Charts() {
   return (
     <div>
       <p className="text-[10px] tracking-[0.3em] text-dim uppercase mb-1">Marktdaten</p>
-      <h1 className="text-2xl font-bold mb-6">Charts</h1>
+      <h1 className="text-xl sm:text-2xl font-bold mb-4 sm:mb-6">Charts</h1>
 
-      <div className="flex flex-wrap items-center gap-3 mb-4">
+      <div className="flex flex-wrap items-center gap-2 sm:gap-3 mb-4">
         <div className="flex gap-1">
           {MARKETS.map((m) => (
             <button key={m.id} onClick={() => switchMarket(m.id)}
@@ -175,7 +178,7 @@ export default function Charts() {
           value={symbol}
           onSelect={(s) => setParams({ market, symbol: s })}
           placeholder={market === "crypto" ? "z. B. Bitcoin oder BTCUSDT" : "z. B. Apple oder AAPL"}
-          className="w-64"
+          className="w-full sm:w-64"
         />
       </div>
 
@@ -223,7 +226,7 @@ export default function Charts() {
         </div>
 
         {/* Drawing toolbar */}
-        <div className="flex items-center gap-1 ml-auto">
+        <div className="flex items-center gap-1 sm:ml-auto">
           {DRAW_TOOLS.map((tool) => {
             const Icon = TOOL_ICONS[tool.icon] || Pencil;
             const isActive = activeTool === tool.id && tool.id !== "clear";
@@ -233,7 +236,7 @@ export default function Charts() {
                 title={tool.label}
                 onClick={() => setActiveTool((cur) => (tool.id === "clear" ? "clear" : cur === tool.id ? null : tool.id))}
                 className={cn(
-                  "p-1.5 rounded-md border transition-colors",
+                  "p-2 sm:p-1.5 rounded-md border transition-colors",
                   isActive ? "border-accent/60 text-accent bg-accent/10"
                     : tool.id === "clear" ? "border-line text-dim hover:text-down hover:border-down/40"
                     : "border-line text-dim hover:text-text"
@@ -243,10 +246,10 @@ export default function Charts() {
               </button>
             );
           })}
-          <div className="flex items-center gap-1 ml-1">
+          <div className="flex items-center gap-1.5 sm:gap-1 ml-1">
             {DRAW_COLORS.map((c) => (
               <button key={c} onClick={() => setDrawColor(c)} title="Zeichenfarbe"
-                className={cn("w-4 h-4 rounded-full border", drawColor === c ? "border-white" : "border-transparent")}
+                className={cn("w-5 h-5 sm:w-4 sm:h-4 rounded-full border", drawColor === c ? "border-white" : "border-transparent")}
                 style={{ background: c }} />
             ))}
           </div>
@@ -254,7 +257,7 @@ export default function Charts() {
       </div>
 
       {stats && (
-        <div className="flex flex-wrap gap-x-8 gap-y-2 mb-4 text-sm font-mono">
+        <div className="flex flex-wrap gap-x-5 sm:gap-x-8 gap-y-2 mb-4 text-xs sm:text-sm font-mono">
           <div><span className="text-dim mr-2">Kurs</span>{fmtPrice(stats.price)}</div>
           <div>
             <span className="text-dim mr-2">Zeitraum</span>

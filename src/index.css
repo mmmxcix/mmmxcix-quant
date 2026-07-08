@@ -8,6 +8,7 @@
   }
   body {
     @apply bg-bg text-text font-sans antialiased;
+    overflow-x: hidden; /* mobile safety: wide tables scroll in their own container */
   }
   ::-webkit-scrollbar {
     width: 10px;
@@ -44,4 +45,9 @@
   .chip-idle {
     @apply border-line text-dim hover:text-text;
   }
+}
+
+@keyframes slidein {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
 }

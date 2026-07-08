@@ -433,7 +433,7 @@ function DcaTab({ active }) {
                 setStartYear(null);
               }}
               placeholder={market === "crypto" ? "z. B. BTCUSDT" : "z. B. SPY"}
-              className="w-64"
+              className="w-full sm:w-64"
             />
           </div>
           <label className="text-xs text-dim">

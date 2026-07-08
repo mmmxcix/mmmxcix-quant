@@ -1,5 +1,6 @@
-import { NavLink, Link } from "react-router-dom";
-import { LayoutDashboard, CandlestickChart, FlaskConical, Newspaper, Compass, Wrench, Activity, Scale, Star, Briefcase } from "lucide-react";
+import { useState, useEffect } from "react";
+import { NavLink, Link, useLocation } from "react-router-dom";
+import { LayoutDashboard, CandlestickChart, FlaskConical, Newspaper, Compass, Wrench, Activity, Scale, Star, Briefcase, Menu, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const NAV = [
@@ -15,16 +16,16 @@ const NAV = [
   { to: "/resources", label: "Ressourcen", icon: Compass },
 ];
 
-function NavItems({ horizontal = false }) {
+function NavItems({ onNavigate }) {
   return NAV.map(({ to, label, icon: Icon, end }) => (
     <NavLink
       key={to}
       to={to}
       end={end}
+      onClick={onNavigate}
       className={({ isActive }) =>
         cn(
-          "flex items-center gap-2.5 rounded-lg text-sm transition-colors",
-          horizontal ? "px-3 py-1.5" : "px-3 py-2",
+          "flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm transition-colors",
           isActive ? "bg-accent/10 text-accent" : "text-dim hover:text-text hover:bg-surface"
         )
       }
@@ -35,13 +36,33 @@ function NavItems({ horizontal = false }) {
   ));
 }
 
+function LegalLinks({ small }) {
+  const c = small ? "text-[10px] text-dim/60 hover:text-dim" : "text-xs text-dim hover:text-text";
+  return (
+    <div className="flex flex-wrap gap-x-3 gap-y-1">
+      <Link to="/impressum" className={cn("transition-colors", c)}>Impressum</Link>
+      <Link to="/datenschutz" className={cn("transition-colors", c)}>Datenschutz</Link>
+      <Link to="/nutzung" className={cn("transition-colors", c)}>Nutzung</Link>
+    </div>
+  );
+}
+
 export default function Layout({ children }) {
-  // Glass look is pure CSS here (.lg-glass/.lg-frost in glass.css) — the
-  // WebGL liquidGL lens from the casino smeared overlapping UI (dropdowns)
-  // and cost too much RAM for a data-dense trading tool.
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const location = useLocation();
+
+  // Close the mobile drawer on route change and lock body scroll while open.
+  useEffect(() => { setDrawerOpen(false); }, [location.pathname]);
+  useEffect(() => {
+    document.body.style.overflow = drawerOpen ? "hidden" : "";
+    return () => { document.body.style.overflow = ""; };
+  }, [drawerOpen]);
+
   return (
     <div className="min-h-screen">
       <div className="ambient-bg" aria-hidden="true" />
+
+      {/* Desktop sidebar */}
       <aside className="hidden md:flex fixed inset-y-0 left-0 w-56 flex-col border-r border-line lg-frost p-4">
         <div className="mb-8 px-3 pt-2">
           <p className="text-[10px] tracking-[0.3em] text-dim uppercase">MMMXCIX</p>
@@ -54,33 +75,54 @@ export default function Layout({ children }) {
           <p className="text-[10px] text-dim/60 leading-relaxed">
             Keine Anlageberatung. Backtests sind hypothetisch — vergangene Performance garantiert nichts.
           </p>
-          <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-dim/60">
-            <Link to="/impressum" className="hover:text-dim transition-colors">Impressum</Link>
-            <Link to="/datenschutz" className="hover:text-dim transition-colors">Datenschutz</Link>
-            <Link to="/nutzung" className="hover:text-dim transition-colors">Nutzung</Link>
-          </div>
+          <LegalLinks small />
         </div>
       </aside>
 
-      {/* Mobile top bar */}
-      <header className="md:hidden sticky top-0 z-20 border-b border-line lg-frost px-4 py-3">
-        <p className="text-sm font-bold mb-2">
+      {/* Mobile top bar: brand + hamburger */}
+      <header className="md:hidden sticky top-0 z-30 flex items-center justify-between border-b border-line lg-frost px-4 h-14">
+        <p className="text-sm font-bold">
           <span className="text-dim tracking-[0.25em] text-[10px] uppercase mr-2">MMMXCIX</span>Quant
         </p>
-        <nav className="flex gap-1 overflow-x-auto">
-          <NavItems horizontal />
-        </nav>
+        <button
+          onClick={() => setDrawerOpen(true)}
+          aria-label="Menü öffnen"
+          className="p-2 -mr-2 rounded-lg text-dim hover:text-text active:bg-surface transition-colors"
+        >
+          <Menu className="w-5 h-5" />
+        </button>
       </header>
 
-      <main className="md:ml-56 p-4 md:p-8 max-w-[1800px]">{children}</main>
-
-      {/* Mobile footer — sidebar (with the legal links) is desktop-only */}
-      <footer className="md:hidden border-t border-line px-4 py-4 mt-4">
-        <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-dim">
-          <Link to="/impressum" className="hover:text-text transition-colors">Impressum</Link>
-          <Link to="/datenschutz" className="hover:text-text transition-colors">Datenschutz</Link>
-          <Link to="/nutzung" className="hover:text-text transition-colors">Nutzung</Link>
+      {/* Mobile slide-out drawer */}
+      {drawerOpen && (
+        <div className="md:hidden fixed inset-0 z-40">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setDrawerOpen(false)} />
+          <div className="absolute inset-y-0 right-0 w-72 max-w-[85vw] bg-surface border-l border-line flex flex-col p-4 shadow-2xl animate-[slidein_0.18s_ease-out]">
+            <div className="flex items-center justify-between mb-6 px-1">
+              <div>
+                <p className="text-[10px] tracking-[0.3em] text-dim uppercase">MMMXCIX</p>
+                <p className="text-lg font-bold text-text tracking-tight">Quant</p>
+              </div>
+              <button onClick={() => setDrawerOpen(false)} aria-label="Menü schliessen"
+                className="p-2 rounded-lg text-dim hover:text-text active:bg-bg transition-colors">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <nav className="flex flex-col gap-1 overflow-y-auto">
+              <NavItems onNavigate={() => setDrawerOpen(false)} />
+            </nav>
+            <div className="mt-auto pt-4 border-t border-line">
+              <LegalLinks />
+            </div>
+          </div>
         </div>
+      )}
+
+      <main className="md:ml-56 p-3 sm:p-4 md:p-8 max-w-[1800px]">{children}</main>
+
+      {/* Mobile footer */}
+      <footer className="md:hidden border-t border-line px-4 py-4 mt-4">
+        <LegalLinks />
         <p className="mt-2 text-[10px] text-dim/60">Keine Anlageberatung.</p>
       </footer>
     </div>
