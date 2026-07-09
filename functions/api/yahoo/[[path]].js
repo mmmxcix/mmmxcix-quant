@@ -5,7 +5,8 @@
 export async function onRequest({ request, params }) {
   const url = new URL(request.url);
   const path = Array.isArray(params.path) ? params.path.join("/") : params.path || "";
-  if (!path.startsWith("v8/finance/") && !path.startsWith("v1/finance/")) {
+  // Allowed Yahoo endpoints: chart (v8), search (v1), and option chains (v7).
+  if (!path.startsWith("v8/finance/") && !path.startsWith("v1/finance/") && !path.startsWith("v7/finance/options/")) {
     return new Response(JSON.stringify({ error: "unsupported path" }), {
       status: 400,
       headers: { "content-type": "application/json" },

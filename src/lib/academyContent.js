@@ -1,8 +1,16 @@
 // Academy content for quant.mmmxcix.com
 // English educational material. Consumed by the Academy renderer.
 // Block types allowed in `body`: p, h, ul, tip, formula.
+//
+// COURSES (bottom) is the multi-track structure: these original quant levels
+// are the first course; the day-trading and options courses live in their own
+// files and are imported here.
 
-export const ACADEMY = [
+import { DAY_TRADING_COURSE } from "./academyDayTrading";
+import { OPTIONS_COURSE } from "./academyOptions";
+
+// The original four levels — the general quant learning path.
+const QUANT_LEVELS = [
   {
     id: "grundlagen",
     title: "Fundamentals",
@@ -304,3 +312,20 @@ export const ACADEMY = [
     ],
   },
 ];
+
+// Multi-course structure consumed by the Academy page. Each course has an id,
+// title, description, and ordered levels (each with lessons). Lesson ids are
+// globally unique across all courses so progress tracking stays simple.
+export const COURSES = [
+  {
+    id: "quant-foundations",
+    title: "Quant Foundations",
+    description: "The core path: charts, indicators, backtesting and risk — beginner to self-sufficient.",
+    levels: QUANT_LEVELS,
+  },
+  DAY_TRADING_COURSE,
+  OPTIONS_COURSE,
+];
+
+// Back-compat: the flat level list of the first course.
+export const ACADEMY = QUANT_LEVELS;
