@@ -14,6 +14,7 @@ import Screener from "@/pages/Screener";
 import Options from "@/pages/Options";
 import Academy from "@/pages/Academy";
 import Coach from "@/pages/Coach";
+import Lab from "@/pages/Lab";
 import Impressum from "@/pages/Impressum";
 import Datenschutz from "@/pages/Datenschutz";
 import Nutzung from "@/pages/Nutzung";
@@ -35,6 +36,7 @@ export default function App() {
                 <Route path="/" element={<Dashboard />} />
                 <Route path="/charts" element={<Charts />} />
                 <Route path="/backtest" element={<Backtest />} />
+                <Route path="/lab" element={<Lab />} />
                 <Route path="/compare" element={<Compare />} />
                 <Route path="/monitor" element={<Monitor />} />
                 <Route path="/screener" element={<Screener />} />

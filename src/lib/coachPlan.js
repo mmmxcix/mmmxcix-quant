@@ -80,6 +80,7 @@ export const COACH_PLAN = [
       { id: "p1-build", label: "Build your own variant (builder or code, AI-assisted)", to: "/backtest", detail: "Use the code editor + AI generator. Count every variant you test — the count is your overfitting meter." },
       { id: "p1-oos", label: "Out-of-sample check on unseen data", lesson: academyLink("futures-prop", "fp-validation-toolkit"), detail: "Fit on one range, judge ONCE on another symbol/period. ≥50% of in-sample expectancy = pass." },
       { id: "p1-r", label: "Compute expectancy in R after costs", lesson: academyLink("futures-prop", "fp-expectancy-r"), detail: "+0.1R to +0.3R per trade after fees is a real edge. Judge variants by this, never by total return." },
+      { id: "p1-mc", label: "Monte-Carlo your strategy against the prop-firm limit", to: "/lab", lesson: academyLink("futures-prop", "fp-validation-toolkit"), detail: "Backtest → Monte Carlo panel, or play with the edge numbers in the Lab. The 95th-percentile drawdown must fit inside a 4% loss limit." },
     ],
   },
   {

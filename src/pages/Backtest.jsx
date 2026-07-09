@@ -3,6 +3,7 @@ import { Play, AlertTriangle, Sparkles, Copy, Check, KeyRound, Loader2 } from "l
 import EquityChart from "@/components/EquityChart";
 import CandleChart from "@/components/CandleChart";
 import SymbolSearch from "@/components/SymbolSearch";
+import MonteCarloPanel from "@/components/MonteCarloPanel";
 import { fetchCandles, MARKETS, INTERVALS, RANGES } from "@/lib/data";
 import { runBacktest, compileStrategy, DEFAULT_STRATEGY_CODE, ORB_STRATEGY_CODE } from "@/lib/backtest";
 import { BUILT_IN_STRATEGIES } from "@/lib/strategies";
@@ -379,6 +380,21 @@ export default function Backtest() {
                 </p>
                 <EquityChart series={equitySeries} />
               </div>
+
+              {result.trades.length >= 10 && (
+                <div className="rounded-xl border border-line lg-glass p-4">
+                  <p className="text-xs text-dim uppercase tracking-widest pb-3">
+                    Monte Carlo — is this result skill or ordering luck?
+                  </p>
+                  <MonteCarloPanel
+                    returns={result.trades.map((t) => t.pnlPct / 100)}
+                    initialCapital={capital}
+                    defaultSteps={result.trades.length}
+                    defaultLimitPct={20}
+                    note="Each path resamples this backtest's own trades in random order. If P(end ≤ start) isn't near zero, the edge may be luck; the 95th-percentile drawdown — not the single backtest's — is the number to size against (a 50K prop account's $2,000 limit = 4%)."
+                  />
+                </div>
+              )}
 
               {result.trades.length > 0 && (
                 <div className="rounded-xl border border-line lg-glass overflow-hidden">

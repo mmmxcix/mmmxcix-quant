@@ -283,6 +283,7 @@ export const PROP_FIRM_COURSE = {
             { type: "p", text: "Take your backtest's individual trade results and reshuffle/resample them thousands of times. This answers two critical questions: what is the probability the strategy's edge is actually ≤ 0 (should be well under 5%), and what drawdowns can this SAME strategy produce by unlucky ordering? The Monte Carlo drawdown distribution — not the single backtest drawdown — is what you compare against a prop firm's loss limit." },
             { type: "formula", text: "Judge a strategy by:  P(edge ≤ 0) from bootstrap  +  95th-percentile MC drawdown vs. loss limit\n— not by the backtest's total return." },
             { type: "p", text: "A permutation test adds one more attack: run the strategy on shuffled/randomized price data — it should NOT make money there. If it does, your engine or logic has a bug (usually look-ahead)." },
+            { type: "tip", text: "In the tool: every backtest result now includes a Monte Carlo panel that bootstraps its trades, and the Lab page lets you simulate any edge (win rate + R + risk) against a prop-firm loss limit before you ever code it." },
             { type: "tip", text: "Remember the Fabio-report lesson: even a beautiful validation of a trade log cannot detect look-ahead bugs in the strategy that produced the log. Validate the code path, not just the results." },
           ],
         },
