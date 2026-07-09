@@ -12,13 +12,13 @@ import {
 // module stays free of icon imports. The trailing "clear" entry is the
 // "alle löschen" affordance, not a placement tool.
 export const DRAW_TOOLS = [
-  { id: "trendline", label: "Trendlinie", icon: "TrendingUp" },
-  { id: "horizontal", label: "Horizontale (SL/TP)", icon: "Minus" },
-  { id: "ray", label: "Strahl", icon: "MoveHorizontal" },
-  { id: "vertical", label: "Vertikale", icon: "AlignVerticalJustifyCenter" },
-  { id: "rectangle", label: "Rechteck (Zone)", icon: "Square" },
+  { id: "trendline", label: "Trend line", icon: "TrendingUp" },
+  { id: "horizontal", label: "Horizontal (SL/TP)", icon: "Minus" },
+  { id: "ray", label: "Ray", icon: "MoveHorizontal" },
+  { id: "vertical", label: "Vertical", icon: "AlignVerticalJustifyCenter" },
+  { id: "rectangle", label: "Rectangle (Zone)", icon: "Square" },
   { id: "fib", label: "Fibonacci", icon: "GitBranch" },
-  { id: "clear", label: "Alle löschen", icon: "Trash2" },
+  { id: "clear", label: "Clear all", icon: "Trash2" },
 ];
 
 // Locale-aware price formatting with a sensible number of decimals.
@@ -236,7 +236,7 @@ export default function ChartDrawLayer({
               setSelected((cur) => (cur === d.id ? null : d.id));
             }}
           >
-            <title>Zeichnung auswählen</title>
+            <title>Select drawing</title>
           </circle>
         );
       });
@@ -260,7 +260,7 @@ export default function ChartDrawLayer({
                 removeDrawing(d.id);
               }}
             >
-              <title>Zeichnung löschen</title>
+              <title>Delete drawing</title>
               <circle r={9} fill="#ef4444" stroke="#0b0e14" strokeWidth={1.5} />
               <text
                 x={0}

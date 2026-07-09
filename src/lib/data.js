@@ -10,8 +10,8 @@ const BINANCE = "https://api.binance.com/api/v3";
 const YAHOO = "/api/yahoo/v8/finance/chart";
 
 export const MARKETS = [
-  { id: "crypto", label: "Krypto" },
-  { id: "stock", label: "Aktien / ETFs" },
+  { id: "crypto", label: "Crypto" },
+  { id: "stock", label: "Stocks / ETFs" },
 ];
 
 // Interval ids are unified across markets; each entry knows its per-source
@@ -27,7 +27,7 @@ export const INTERVALS = [
   { id: "1h", label: "1h", binance: "1h", yahoo: "60m", markets: ["crypto", "stock"] },
   { id: "2h", label: "2h", binance: "2h", yahoo: null, markets: ["crypto"] },
   { id: "4h", label: "4h", binance: "4h", yahoo: null, markets: ["crypto"] },
-  { id: "1d", label: "1T", binance: "1d", yahoo: "1d", markets: ["crypto", "stock"] },
+  { id: "1d", label: "1D", binance: "1d", yahoo: "1d", markets: ["crypto", "stock"] },
   { id: "1w", label: "1W", binance: "1w", yahoo: "1wk", markets: ["crypto", "stock"] },
   { id: "1M", label: "1M", binance: "1M", yahoo: "1mo", markets: ["crypto", "stock"] },
 ];
@@ -37,13 +37,13 @@ export const INTERVALS = [
 const INTRADAY = new Set(["1s", "1m", "5m", "15m", "30m", "1h", "2h", "4h"]);
 
 export const RANGES = [
-  { id: "1h", label: "1Std", yahoo: null, days: 1 / 24 },
-  { id: "5d", label: "5T", yahoo: "5d", days: 5 },
+  { id: "1h", label: "1H", yahoo: null, days: 1 / 24 },
+  { id: "5d", label: "5D", yahoo: "5d", days: 5 },
   { id: "1mo", label: "1M", yahoo: "1mo", days: 30 },
   { id: "3mo", label: "3M", yahoo: "3mo", days: 90 },
   { id: "6mo", label: "6M", yahoo: "6mo", days: 180 },
-  { id: "1y", label: "1J", yahoo: "1y", days: 365 },
-  { id: "5y", label: "5J", yahoo: "5y", days: 1825 },
+  { id: "1y", label: "1Y", yahoo: "1y", days: 365 },
+  { id: "5y", label: "5Y", yahoo: "5y", days: 1825 },
   { id: "max", label: "Max", yahoo: "max", days: 36500 },
 ];
 
@@ -74,7 +74,7 @@ export const WATCHLIST = [
 
 function intervalDef(id) {
   const def = INTERVALS.find((i) => i.id === id);
-  if (!def) throw new Error(`Unbekanntes Intervall: ${id}`);
+  if (!def) throw new Error(`Unknown interval: ${id}`);
   return def;
 }
 
@@ -84,8 +84,8 @@ async function fetchBinance(symbol, interval, rangeDays) {
   const url = `${BINANCE}/klines?symbol=${encodeURIComponent(symbol.toUpperCase())}&interval=${interval}&limit=1000`;
   const res = await fetch(url);
   if (!res.ok) {
-    if (res.status === 400) throw new Error(`Symbol "${symbol}" bei Binance nicht gefunden (z. B. BTCUSDT).`);
-    throw new Error(`Binance-Fehler ${res.status}`);
+    if (res.status === 400) throw new Error(`Symbol "${symbol}" not found on Binance (e.g. BTCUSDT).`);
+    throw new Error(`Binance error ${res.status}`);
   }
   const rows = await res.json();
   const cutoff = Date.now() / 1000 - rangeDays * 86400;
@@ -104,10 +104,10 @@ async function fetchBinance(symbol, interval, rangeDays) {
 async function fetchYahoo(symbol, yahooInterval, yahooRange) {
   const url = `${YAHOO}/${encodeURIComponent(symbol.toUpperCase())}?range=${yahooRange}&interval=${yahooInterval}&events=div%2Csplit`;
   const res = await fetch(url);
-  if (!res.ok) throw new Error(`Datenabruf fehlgeschlagen (${res.status}) — Symbol korrekt? (z. B. AAPL, SPY, ^GSPC)`);
+  if (!res.ok) throw new Error(`Data request failed (${res.status}) — is the symbol correct? (e.g. AAPL, SPY, ^GSPC)`);
   const json = await res.json();
   const result = json?.chart?.result?.[0];
-  if (!result) throw new Error(json?.chart?.error?.description || `Keine Daten für "${symbol}".`);
+  if (!result) throw new Error(json?.chart?.error?.description || `No data for "${symbol}".`);
   const ts = result.timestamp || [];
   const q = result.indicators?.quote?.[0] || {};
   const candles = [];
@@ -123,13 +123,13 @@ export async function fetchCandles({ market, symbol, interval = "1d", range = "1
   const iDef = intervalDef(interval);
   const rDef = RANGES.find((r) => r.id === range) || RANGES[1];
   if (!iDef.markets.includes(market)) {
-    throw new Error(`Intervall ${iDef.label} ist für diesen Markt nicht verfügbar.`);
+    throw new Error(`Interval ${iDef.label} is not available for this market.`);
   }
   const candles =
     market === "crypto"
       ? await fetchBinance(symbol, iDef.binance, rDef.days)
       : await fetchYahoo(symbol, iDef.yahoo, rDef.yahoo);
-  if (candles.length < 2) throw new Error(`Zu wenige Datenpunkte für "${symbol}".`);
+  if (candles.length < 2) throw new Error(`Too few data points for "${symbol}".`);
   return candles;
 }
 

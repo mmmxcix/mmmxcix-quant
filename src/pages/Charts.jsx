@@ -163,7 +163,7 @@ export default function Charts() {
     const fired = checkAlerts(market, symbol, lastClose);
     if (fired.length > 0) {
       const a = fired[0];
-      setToast(`Alarm: ${a.symbol} ${a.direction === "above" ? "über" : "unter"} ${a.price}`);
+      setToast(`Alert: ${a.symbol} ${a.direction === "above" ? "above" : "below"} ${a.price}`);
       setTimeout(() => setToast(null), 6000);
     }
   }, [lastClose, market, symbol]);
@@ -180,7 +180,7 @@ export default function Charts() {
           lineWidth: 1,
           lineStyle: 2,
           axisLabelVisible: true,
-          title: "Alarm",
+          title: "Alert",
         })
       );
     return () => { lines.forEach((l) => { try { mainSeries.removePriceLine(l); } catch { /* gone */ } }); };
@@ -234,7 +234,7 @@ export default function Charts() {
 
   return (
     <div>
-      <p className="text-[10px] tracking-[0.3em] text-dim uppercase mb-1">Marktdaten</p>
+      <p className="text-[10px] tracking-[0.3em] text-dim uppercase mb-1">Market data</p>
       <h1 className="text-xl sm:text-2xl font-bold mb-4 sm:mb-6">Charts</h1>
 
       <div className="flex flex-wrap items-center gap-2 sm:gap-3 mb-4">
@@ -250,7 +250,7 @@ export default function Charts() {
           market={market}
           value={symbol}
           onSelect={(s) => setParams({ market, symbol: s })}
-          placeholder={market === "crypto" ? "z. B. Bitcoin oder BTCUSDT" : "z. B. Apple oder AAPL"}
+          placeholder={market === "crypto" ? "e.g. Bitcoin or BTCUSDT" : "e.g. Apple or AAPL"}
           className="w-full sm:w-64"
         />
       </div>
@@ -340,7 +340,7 @@ export default function Charts() {
           })}
           <div className="flex items-center gap-1.5 sm:gap-1 ml-1">
             {DRAW_COLORS.map((c) => (
-              <button key={c} onClick={() => setDrawColor(c)} title="Zeichenfarbe"
+              <button key={c} onClick={() => setDrawColor(c)} title="Drawing color"
                 className={cn("w-5 h-5 sm:w-4 sm:h-4 rounded-full border", drawColor === c ? "border-white" : "border-transparent")}
                 style={{ background: c }} />
             ))}
@@ -350,15 +350,15 @@ export default function Charts() {
 
       {stats && (
         <div className="flex flex-wrap gap-x-5 sm:gap-x-8 gap-y-2 mb-4 text-xs sm:text-sm font-mono">
-          <div><span className="text-dim mr-2">Kurs</span>{fmtPrice(stats.price)}</div>
+          <div><span className="text-dim mr-2">Price</span>{fmtPrice(stats.price)}</div>
           <div>
-            <span className="text-dim mr-2">Zeitraum</span>
+            <span className="text-dim mr-2">Period</span>
             <span className={stats.changePct >= 0 ? "text-up" : "text-down"}>{fmtPct(stats.changePct)}</span>
           </div>
-          <div><span className="text-dim mr-2">Hoch</span>{fmtPrice(stats.high)}</div>
-          <div><span className="text-dim mr-2">Tief</span>{fmtPrice(stats.low)}</div>
+          <div><span className="text-dim mr-2">High</span>{fmtPrice(stats.high)}</div>
+          <div><span className="text-dim mr-2">Low</span>{fmtPrice(stats.low)}</div>
           {live && (
-            <div className="flex items-center gap-1.5 text-up" title="Echtzeit-Daten via WebSocket">
+            <div className="flex items-center gap-1.5 text-up" title="Real-time data via WebSocket">
               <span className="relative flex h-2 w-2">
                 <span className="absolute inline-flex h-full w-full rounded-full bg-up opacity-60 animate-ping" />
                 <span className="relative inline-flex h-2 w-2 rounded-full bg-up" />
@@ -371,7 +371,7 @@ export default function Charts() {
 
       {activeTool && activeTool !== "clear" && (
         <p className="text-[11px] text-accent mb-2">
-          Zeichnen aktiv: {DRAW_TOOLS.find((t) => t.id === activeTool)?.label} — in den Chart klicken. Esc zum Abbrechen.
+          Drawing active: {DRAW_TOOLS.find((t) => t.id === activeTool)?.label} — click on the chart. Esc to cancel.
         </p>
       )}
 
@@ -380,17 +380,17 @@ export default function Charts() {
         <div className="flex flex-wrap items-center gap-2">
           <button onClick={() => setShowAlertBox((v) => !v)}
             className="flex items-center gap-1.5 chip chip-idle">
-            <Bell className="w-3.5 h-3.5" /> Alarm
+            <Bell className="w-3.5 h-3.5" /> Alert
           </button>
           {showAlertBox && (
             <div className="flex flex-wrap items-center gap-2">
               <input
                 type="number" value={alertPrice} onChange={(e) => setAlertPrice(e.target.value)}
-                placeholder={stats ? fmtPrice(stats.price) : "Preis"}
+                placeholder={stats ? fmtPrice(stats.price) : "Price"}
                 className="input-base font-mono w-28 text-sm"
               />
-              <button onClick={() => submitAlert("above")} className="chip chip-idle text-up">↑ über</button>
-              <button onClick={() => submitAlert("below")} className="chip chip-idle text-down">↓ unter</button>
+              <button onClick={() => submitAlert("above")} className="chip chip-idle text-up">↑ above</button>
+              <button onClick={() => submitAlert("below")} className="chip chip-idle text-down">↓ below</button>
             </div>
           )}
           {alerts.map((a) => (
@@ -398,7 +398,7 @@ export default function Charts() {
               className={cn("inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-mono",
                 a.triggered ? "border-line text-dim line-through" : a.direction === "above" ? "border-up/40 text-up" : "border-down/40 text-down")}>
               {a.direction === "above" ? "↑" : "↓"} {fmtPrice(a.price)}
-              <button onClick={() => removeAlert(a.id)} className="text-dim hover:text-text" aria-label="Alarm entfernen">
+              <button onClick={() => removeAlert(a.id)} className="text-dim hover:text-text" aria-label="Remove alert">
                 <X className="w-3 h-3" />
               </button>
             </span>
@@ -416,7 +416,7 @@ export default function Charts() {
         {error ? (
           <div className="h-96 flex items-center justify-center text-sm text-down px-6 text-center">{error}</div>
         ) : loading && !candles ? (
-          <div className="h-96 flex items-center justify-center text-sm text-dim">Lade Daten…</div>
+          <div className="h-96 flex items-center justify-center text-sm text-dim">Loading data…</div>
         ) : candles ? (
           <>
             <CandleChart

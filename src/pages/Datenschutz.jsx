@@ -6,87 +6,86 @@ import LegalLayout, { H2 } from "@/components/LegalLayout";
 // and third-party market-data/news fetches from the visitor's browser.
 export default function Datenschutz() {
   return (
-    <LegalLayout title="Datenschutzerklärung" updated="7. Juli 2026">
+    <LegalLayout title="Privacy Policy" updated="July 7, 2026">
       <p>
-        Der Schutz deiner Daten ist uns wichtig. Diese Erklärung informiert dich gemäss dem revidierten
-        Schweizer Datenschutzgesetz (revDSG) und – soweit anwendbar – der EU-Datenschutz-Grundverordnung
-        (DSGVO) darüber, welche Daten wir bei der Nutzung von <strong className="text-text">quant.mmmxcix.com</strong>{" "}
-        bearbeiten.
+        Protecting your data matters to us. This policy explains, in accordance with the revised Swiss Data
+        Protection Act (revDSG) and — where applicable — the EU General Data Protection Regulation (GDPR),
+        which data we process when you use <strong className="text-text">quant.mmmxcix.com</strong>.
       </p>
 
-      <H2>1. Verantwortlicher</H2>
+      <H2>1. Controller</H2>
       <p>
-        Gil Buholzer, Obere Egg 6, 4312 Magden, Schweiz<br />
-        E-Mail: <a href="mailto:admin@mmmxcix.com" className="text-accent hover:underline">admin@mmmxcix.com</a>
+        Gil Buholzer, Obere Egg 6, 4312 Magden, Switzerland<br />
+        Email: <a href="mailto:admin@mmmxcix.com" className="text-accent hover:underline">admin@mmmxcix.com</a>
       </p>
 
-      <H2>2. Hosting &amp; Server-Logs</H2>
+      <H2>2. Hosting &amp; server logs</H2>
       <p>
-        Die Seite wird über <strong className="text-text">Cloudflare Pages</strong> (Cloudflare, Inc., USA)
-        gehostet. Beim Aufruf verarbeitet Cloudflare technisch notwendige Verbindungsdaten (u. a. IP-Adresse,
-        Zeitpunkt, aufgerufene Ressource, Browser-Typ), um die Seite auszuliefern und vor Angriffen zu
-        schützen. Rechtsgrundlage ist unser berechtigtes Interesse am sicheren, stabilen Betrieb
-        (Art. 6 Abs. 1 lit. f DSGVO). Cloudflare ist unter geeigneten Garantien (Standardvertragsklauseln)
-        tätig. Wir selbst führen keine serverseitigen Zugriffsprotokolle.
+        The site is hosted via <strong className="text-text">Cloudflare Pages</strong> (Cloudflare, Inc., USA).
+        When you load the site, Cloudflare processes technically necessary connection data (including IP
+        address, timestamp, requested resource, browser type) to deliver the site and protect it against
+        attacks. The legal basis is our legitimate interest in secure, stable operation (Art. 6(1)(f) GDPR).
+        Cloudflare operates under appropriate safeguards (Standard Contractual Clauses). We ourselves keep no
+        server-side access logs.
       </p>
 
-      <H2>3. Marktdaten &amp; Nachrichten</H2>
+      <H2>3. Market data &amp; news</H2>
       <p>
-        Kurse und Charts werden teils <em>direkt aus deinem Browser</em> von Drittanbietern geladen
-        (insbesondere Binance für Kryptokurse). Dabei wird deine IP-Adresse technisch bedingt an den jeweiligen
-        Anbieter übermittelt. Aktienkurse und Nachrichten laufen über unsere eigene Server-Funktion als Proxy,
-        sodass hierbei keine direkte Verbindung zwischen deinem Browser und dem Datenanbieter entsteht. Auf die
-        Datenverarbeitung der Drittanbieter haben wir keinen Einfluss; es gelten deren Datenschutzbestimmungen.
+        Prices and charts are partly loaded <em>directly from your browser</em> from third parties (in
+        particular Binance for crypto prices). For technical reasons your IP address is transmitted to the
+        respective provider in the process. Stock prices and news run through our own server function acting as
+        a proxy, so no direct connection is made between your browser and the data provider. We have no
+        influence over how these third parties process data; their privacy terms apply.
       </p>
 
-      <H2>4. Lokale Speicherung (Local Storage)</H2>
+      <H2>4. Local storage</H2>
       <p>
-        Deine Einstellungen sowie deine Watchlist und dein (simuliertes) Portfolio werden ausschliesslich
-        <strong className="text-text"> lokal in deinem Browser</strong> gespeichert (Local Storage). Diese Daten
-        verlassen dein Gerät nicht und werden nicht an uns übertragen – ausser du abonnierst den Newsletter mit
-        Watchlist-/Portfolio-Bezug (siehe Ziffer 5). Es werden keine Tracking- oder Werbe-Cookies gesetzt.
+        Your settings as well as your watchlist and your (simulated) portfolio are stored
+        <strong className="text-text"> only locally in your browser</strong> (local storage). This data does
+        not leave your device and is not transmitted to us — unless you subscribe to the newsletter with a
+        watchlist/portfolio focus (see section 5). No tracking or advertising cookies are set.
       </p>
 
       <H2>5. Newsletter (Daily Digest)</H2>
       <p>
-        Wenn du den Digest abonnierst, speichern wir deine <strong className="text-text">E-Mail-Adresse</strong>{" "}
-        sowie deine gewählten Einstellungen (Kategorien, Quellen). Hast du „Meine Watchlist" oder „Mein
-        Portfolio" gewählt, werden zusätzlich die <strong className="text-text">Symbole</strong> (z. B. AAPL,
-        BTC) aus deinem Browser übermittelt und gespeichert, damit wir passende Nachrichten filtern können –
-        <em> nicht</em> jedoch Stückzahlen, Kaufpreise oder Depotwerte.
+        If you subscribe to the digest, we store your <strong className="text-text">email address</strong> and
+        your chosen preferences (categories, sources). If you selected "My watchlist" or "My portfolio", the
+        <strong className="text-text"> symbols</strong> (e.g. AAPL, BTC) from your browser are additionally
+        transmitted and stored so we can filter relevant news — but <em>not</em> quantities, buy prices, or
+        portfolio values.
       </p>
       <p>
-        Die Anmeldung erfolgt im <strong className="text-text">Double-Opt-In-Verfahren</strong>: Du erhältst
-        erst eine Bestätigungsmail; ohne Klick auf den Bestätigungslink versenden wir nichts. Rechtsgrundlage
-        ist deine Einwilligung (Art. 6 Abs. 1 lit. a DSGVO), die du jederzeit über den Abmeldelink in jeder
-        E-Mail oder per Mail an uns widerrufen kannst. Nach Abmeldung wird dein Datensatz gelöscht.
+        Sign-up uses a <strong className="text-text">double opt-in</strong> process: you first receive a
+        confirmation email; without clicking the confirmation link we send nothing. The legal basis is your
+        consent (Art. 6(1)(a) GDPR), which you can withdraw at any time via the unsubscribe link in every
+        email or by contacting us. After unsubscribing, your record is deleted.
       </p>
       <p>
-        <strong className="text-text">Auftragsverarbeiter:</strong> Die Speicherung erfolgt in{" "}
-        <em>Cloudflare KV</em> (Cloudflare, Inc.); der Mailversand über <em>Resend</em> (Resend, Inc., USA).
-        Beide verarbeiten die Daten ausschliesslich in unserem Auftrag zum Zweck des Newsletter-Versands.
-      </p>
-
-      <H2>6. KI-Funktion (Strategie-Generator)</H2>
-      <p>
-        Der optionale KI-Strategie-Generator ist zugangsbeschränkt. Nutzt du ihn, wird dein eingegebener Text
-        über unsere Server-Funktion an einen KI-Anbieter (Google Gemini bzw. Anthropic) übermittelt, um Code zu
-        erzeugen. Gib dort keine personenbezogenen oder vertraulichen Daten ein.
+        <strong className="text-text">Processors:</strong> Storage uses <em>Cloudflare KV</em> (Cloudflare,
+        Inc.); email delivery uses <em>Resend</em> (Resend, Inc., USA). Both process the data solely on our
+        behalf for the purpose of sending the newsletter.
       </p>
 
-      <H2>7. Deine Rechte</H2>
+      <H2>6. AI feature (strategy generator)</H2>
       <p>
-        Du hast das Recht auf Auskunft, Berichtigung, Löschung und Einschränkung der Bearbeitung deiner Daten
-        sowie auf Datenübertragbarkeit und Widerspruch. Wende dich dazu an{" "}
-        <a href="mailto:admin@mmmxcix.com" className="text-accent hover:underline">admin@mmmxcix.com</a>. Zudem
-        besteht ein Beschwerderecht bei der zuständigen Aufsichtsbehörde (in der Schweiz: EDÖB; in der EU: deine
-        nationale Datenschutzbehörde).
+        The optional AI strategy generator is access-restricted. If you use it, the text you enter is sent
+        through our server function to an AI provider (Google Gemini or Anthropic) to generate code. Do not
+        enter any personal or confidential data there.
       </p>
 
-      <H2>8. Änderungen</H2>
+      <H2>7. Your rights</H2>
       <p>
-        Wir passen diese Erklärung an, wenn sich die Funktionen der Seite ändern. Es gilt jeweils die hier
-        veröffentlichte Fassung.
+        You have the right to access, rectify, erase, and restrict the processing of your data, as well as the
+        rights to data portability and objection. To exercise them, contact{" "}
+        <a href="mailto:admin@mmmxcix.com" className="text-accent hover:underline">admin@mmmxcix.com</a>. You
+        also have the right to lodge a complaint with the competent supervisory authority (in Switzerland: the
+        FDPIC; in the EU: your national data protection authority).
+      </p>
+
+      <H2>8. Changes</H2>
+      <p>
+        We update this policy when the site's features change. The version published here applies at any given
+        time.
       </p>
     </LegalLayout>
   );

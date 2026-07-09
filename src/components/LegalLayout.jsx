@@ -11,7 +11,7 @@ export default function LegalLayout({ title, updated, children }) {
             MMMXCIX <span className="text-dim">Quant</span>
           </Link>
           <Link to="/" className="text-xs tracking-widest uppercase text-dim hover:text-text transition-colors">
-            Zur App →
+            To the app →
           </Link>
         </div>
       </header>
@@ -24,9 +24,9 @@ export default function LegalLayout({ title, updated, children }) {
 
       <footer className="border-t border-line mt-16">
         <div className="max-w-3xl mx-auto px-6 py-6 flex flex-wrap items-center gap-4 text-xs text-dim">
-          <Link to="/impressum" className="hover:text-text transition-colors">Impressum</Link>
-          <Link to="/datenschutz" className="hover:text-text transition-colors">Datenschutz</Link>
-          <Link to="/nutzung" className="hover:text-text transition-colors">Nutzung &amp; Haftung</Link>
+          <Link to="/impressum" className="hover:text-text transition-colors">Legal Notice</Link>
+          <Link to="/datenschutz" className="hover:text-text transition-colors">Privacy</Link>
+          <Link to="/nutzung" className="hover:text-text transition-colors">Terms</Link>
           <span className="ml-auto">© {new Date().getFullYear()} MMMXCIX</span>
         </div>
       </footer>

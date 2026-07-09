@@ -31,7 +31,7 @@ function escapeHtml(str) {
 }
 
 function formatDateDe(date) {
-  return date.toLocaleDateString('de-DE', {
+  return date.toLocaleDateString('en-US', {
     weekday: 'long',
     year: 'numeric',
     month: 'long',
@@ -91,11 +91,11 @@ function selectForPrefs(allItems, prefs) {
 
   if (categories.includes('portfolio') || categories.includes('watchlist')) {
     const label = categories.includes('portfolio') && categories.includes('watchlist')
-      ? 'Deine Titel' : categories.includes('portfolio') ? 'Dein Portfolio' : 'Deine Watchlist';
+      ? 'Your symbols' : categories.includes('portfolio') ? 'Your portfolio' : 'Your watchlist';
     pushSection(label, pool.filter((it) => matchesSymbols(it, p.symbols)));
   }
   if (categories.includes('general')) {
-    pushSection('Allgemeine Finanznews', pool.slice(0, MAX_ITEMS));
+    pushSection('General finance news', pool.slice(0, MAX_ITEMS));
   }
   return { sections };
 }
@@ -113,7 +113,7 @@ function groupBySource(items) {
 // Build a personalized digest email from selected sections for one recipient.
 function buildEmail(sections, date, email) {
   const dateStr = formatDateDe(date);
-  const subject = `MMMXCIX Quant — Täglicher Markt-Digest (${dateStr})`;
+  const subject = `MMMXCIX Quant — Daily Market Digest (${dateStr})`;
   const unsubUrl = `${CONFIRM_BASE}?email=${encodeURIComponent(email)}`;
 
   // --- HTML version (dark-on-light, inline CSS only) ---
@@ -156,7 +156,7 @@ function buildEmail(sections, date, email) {
           MMMXCIX Quant
         </div>
         <h1 style="margin:6px 0 0 0;font-size:20px;color:#1a1a2e;">
-          Täglicher Markt-Digest
+          Daily Market Digest
         </h1>
         <div style="margin-top:4px;font-size:13px;color:#6b6b80;">${escapeHtml(dateStr)}</div>
       </td>
@@ -171,9 +171,9 @@ function buildEmail(sections, date, email) {
     <tr>
       <td style="padding:16px 28px 24px 28px;border-top:1px solid #e2e2ea;">
         <p style="margin:0;font-size:12px;color:#6b6b80;line-height:1.6;">
-          Du erhältst diese Mail, weil du den MMMXCIX Daily Digest abonniert und bestätigt hast.
-          <a href="${unsubUrl}" style="color:#1a1a2e;">Abbestellen</a> ·
-          <a href="${SITE_URL}" style="color:#1a1a2e;">mehr News</a>.
+          You're receiving this because you subscribed to and confirmed the MMMXCIX Daily Digest.
+          <a href="${unsubUrl}" style="color:#1a1a2e;">Unsubscribe</a> ·
+          <a href="${SITE_URL}" style="color:#1a1a2e;">more news</a>.
         </p>
       </td>
     </tr>
@@ -181,14 +181,14 @@ function buildEmail(sections, date, email) {
 </div>`;
 
   // --- Plain-text fallback ---
-  let text = `MMMXCIX Quant — Täglicher Markt-Digest\n${dateStr}\n`;
+  let text = `MMMXCIX Quant — Daily Market Digest\n${dateStr}\n`;
   for (const section of sections) {
     text += `\n## ${section.label}\n`;
     for (const it of section.items) {
       text += `- ${it.title} (${it.source || ''})\n  ${it.link}\n`;
     }
   }
-  text += `\n--\nAbbestellen: ${unsubUrl}\nMehr News: ${SITE_URL}\n`;
+  text += `\n--\nUnsubscribe: ${unsubUrl}\nMore news: ${SITE_URL}\n`;
 
   return { subject, html, text };
 }
@@ -203,15 +203,15 @@ function buildConfirmEmail(email, token) {
     `<table width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;margin:0 auto;background:#fff;border:1px solid #e2e2ea;border-radius:12px">` +
     `<tr><td style="padding:28px">` +
     `<div style="font-size:11px;letter-spacing:2px;text-transform:uppercase;color:#6b6b80">MMMXCIX Quant</div>` +
-    `<h1 style="margin:6px 0 12px;font-size:20px;color:#1a1a2e">Abo bestätigen</h1>` +
-    `<p style="color:#3a3a4a;font-size:14px;line-height:1.6">Bitte bestätige dein Abo des Daily Digest:</p>` +
-    `<p style="margin:20px 0"><a href="${link}" style="background:#1a1a2e;color:#fff;padding:12px 22px;border-radius:8px;text-decoration:none;font-size:14px">Abo bestätigen</a></p>` +
-    `<p style="color:#6b6b80;font-size:12px">Nicht angefordert? Ignoriere diese Mail.</p>` +
+    `<h1 style="margin:6px 0 12px;font-size:20px;color:#1a1a2e">Confirm your subscription</h1>` +
+    `<p style="color:#3a3a4a;font-size:14px;line-height:1.6">Please confirm your Daily Digest subscription:</p>` +
+    `<p style="margin:20px 0"><a href="${link}" style="background:#1a1a2e;color:#fff;padding:12px 22px;border-radius:8px;text-decoration:none;font-size:14px">Confirm subscription</a></p>` +
+    `<p style="color:#6b6b80;font-size:12px">Didn't request this? Just ignore this email.</p>` +
     `</td></tr></table></div>`;
   return {
-    subject: 'Bestätige dein MMMXCIX Quant Digest-Abo',
+    subject: 'Confirm your MMMXCIX Quant Digest subscription',
     html,
-    text: `Bestätige dein Abo: ${link}`,
+    text: `Confirm your subscription: ${link}`,
   };
 }
 

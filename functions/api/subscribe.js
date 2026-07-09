@@ -84,10 +84,10 @@ async function sendConfirmation(env, email, token) {
     `<table width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;margin:0 auto;background:#fff;border:1px solid #e2e2ea;border-radius:12px">` +
     `<tr><td style="padding:28px">` +
     `<div style="font-size:11px;letter-spacing:2px;text-transform:uppercase;color:#6b6b80">MMMXCIX Quant</div>` +
-    `<h1 style="margin:6px 0 12px;font-size:20px;color:#1a1a2e">Abo bestätigen</h1>` +
-    `<p style="color:#3a3a4a;font-size:14px;line-height:1.6">Bitte bestätige dein Abo des Daily Digest mit einem Klick:</p>` +
-    `<p style="margin:20px 0"><a href="${link}" style="background:#1a1a2e;color:#fff;padding:12px 22px;border-radius:8px;text-decoration:none;font-size:14px">Abo bestätigen</a></p>` +
-    `<p style="color:#6b6b80;font-size:12px;line-height:1.6">Falls du das nicht angefordert hast, ignoriere diese Mail — ohne Bestätigung wird nichts gesendet.</p>` +
+    `<h1 style="margin:6px 0 12px;font-size:20px;color:#1a1a2e">Confirm your subscription</h1>` +
+    `<p style="color:#3a3a4a;font-size:14px;line-height:1.6">Please confirm your Daily Digest subscription with one click:</p>` +
+    `<p style="margin:20px 0"><a href="${link}" style="background:#1a1a2e;color:#fff;padding:12px 22px;border-radius:8px;text-decoration:none;font-size:14px">Confirm subscription</a></p>` +
+    `<p style="color:#6b6b80;font-size:12px;line-height:1.6">If you didn't request this, just ignore this email — nothing is sent without confirmation.</p>` +
     `</td></tr></table></div>`;
   const res = await fetch('https://api.resend.com/emails', {
     method: 'POST',
@@ -95,9 +95,9 @@ async function sendConfirmation(env, email, token) {
     body: JSON.stringify({
       from: env.DIGEST_FROM,
       to: [email],
-      subject: 'Bestätige dein MMMXCIX Quant Digest-Abo',
+      subject: 'Confirm your MMMXCIX Quant Digest subscription',
       html,
-      text: `Bestätige dein Abo: ${link}\n\nOhne Bestätigung wird nichts gesendet.`,
+      text: `Confirm your subscription: ${link}\n\nNothing is sent without confirmation.`,
     }),
   });
   return res.ok;
@@ -122,20 +122,20 @@ export async function onRequest(context) {
       const url = new URL(request.url);
       const email = normalizeEmail(url.searchParams.get('email'));
       const token = url.searchParams.get('token') || '';
-      if (!email) return html('<p>Ungültiger Link.</p>', 400);
+      if (!email) return html('<p>Invalid link.</p>', 400);
       const rec = await kv.get(`sub:${email}`, 'json');
-      if (!rec || rec.confirmToken !== token) return html('<p>Link ungültig oder abgelaufen.</p>', 400);
+      if (!rec || rec.confirmToken !== token) return html('<p>Link invalid or expired.</p>', 400);
       if (!rec.confirmed) {
         rec.confirmed = true;
         rec.confirmedAt = new Date().toISOString();
         await kv.put(`sub:${email}`, JSON.stringify(rec));
       }
       return html(
-        `<!doctype html><meta charset="utf-8"><title>Bestätigt</title>` +
+        `<!doctype html><meta charset="utf-8"><title>Confirmed</title>` +
         `<div style="font-family:system-ui;background:#0a0e14;color:#e2e8f0;min-height:100vh;display:flex;align-items:center;justify-content:center;text-align:center">` +
-        `<div><h1 style="color:#2dd4bf">✓ Abo bestätigt</h1>` +
-        `<p>Du erhältst ab jetzt den MMMXCIX Quant Digest.</p>` +
-        `<p><a href="https://quant.mmmxcix.com/news" style="color:#2dd4bf">Zurück zur Seite</a></p></div></div>`
+        `<div><h1 style="color:#2dd4bf">✓ Subscription confirmed</h1>` +
+        `<p>You'll now receive the MMMXCIX Quant Digest.</p>` +
+        `<p><a href="https://quant.mmmxcix.com/news" style="color:#2dd4bf">Back to the site</a></p></div></div>`
       );
     }
 

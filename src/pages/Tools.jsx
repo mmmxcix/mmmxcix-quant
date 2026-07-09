@@ -71,31 +71,31 @@ function PositionSizeTool() {
   }, [account, riskPct, entry, stop]);
 
   return (
-    <ToolCard icon={Calculator} title="Positionsgrössen-Rechner">
+    <ToolCard icon={Calculator} title="Position size calculator">
       <div className="grid grid-cols-2 gap-2">
-        <Field label="Kontogrösse" value={account} onChange={setAccount} min="0" />
-        <Field label="Risiko pro Trade (%)" value={riskPct} onChange={setRiskPct} min="0" />
-        <Field label="Einstieg" value={entry} onChange={setEntry} min="0" />
-        <Field label="Stop-Loss" value={stop} onChange={setStop} min="0" />
+        <Field label="Account size" value={account} onChange={setAccount} min="0" />
+        <Field label="Risk per trade (%)" value={riskPct} onChange={setRiskPct} min="0" />
+        <Field label="Entry" value={entry} onChange={setEntry} min="0" />
+        <Field label="Stop-loss" value={stop} onChange={setStop} min="0" />
       </div>
       {r ? (
         <div className="space-y-1.5 pt-1 border-t border-line/60">
           <ResultRow
-            label="Richtung"
+            label="Direction"
             value={r.direction}
             tone={r.direction === "Long" ? "text-up" : "text-down"}
           />
-          <ResultRow label="Risikierter Betrag" value={fmtNum(r.riskAmount)} />
-          <ResultRow label="Positionsgrösse (Stück/Coins)" value={fmtNum(r.size, 4)} tone="text-accent" />
-          <ResultRow label="Positionswert" value={fmtNum(r.posValue)} />
+          <ResultRow label="Risked amount" value={fmtNum(r.riskAmount)} />
+          <ResultRow label="Position size (shares/coins)" value={fmtNum(r.size, 4)} tone="text-accent" />
+          <ResultRow label="Position value" value={fmtNum(r.posValue)} />
           {r.leverage > 1 && (
             <p className="text-xs text-down pt-1">
-              Positionswert übersteigt das Konto — benötigt ca. {fmtNum(r.leverage, 1)}× Hebel.
+              Position value exceeds the account — requires about {fmtNum(r.leverage, 1)}× leverage.
             </p>
           )}
         </div>
       ) : (
-        <p className="text-xs text-dim">Gültige Werte eingeben (Einstieg ≠ Stop).</p>
+        <p className="text-xs text-dim">Enter valid values (Entry ≠ Stop).</p>
       )}
     </ToolCard>
   );
@@ -125,21 +125,21 @@ function RiskRewardTool() {
   const rrTone = r ? (r.rr >= 2 ? "text-up" : r.rr >= 1 ? "text-text" : "text-down") : "text-text";
 
   return (
-    <ToolCard icon={Scale} title="Risk/Reward-Rechner">
+    <ToolCard icon={Scale} title="Risk/Reward calculator">
       <div className="grid grid-cols-3 gap-2">
-        <Field label="Einstieg" value={entry} onChange={setEntry} min="0" />
+        <Field label="Entry" value={entry} onChange={setEntry} min="0" />
         <Field label="Stop" value={stop} onChange={setStop} min="0" />
-        <Field label="Ziel" value={target} onChange={setTarget} min="0" />
+        <Field label="Target" value={target} onChange={setTarget} min="0" />
       </div>
       {r ? (
         <div className="space-y-1.5 pt-1 border-t border-line/60">
-          <ResultRow label="R:R-Verhältnis" value={`${fmtNum(r.rr)} : 1`} tone={rrTone} />
-          <ResultRow label="Gewinn-Distanz" value={fmtPct(r.winPct)} tone="text-up" />
-          <ResultRow label="Verlust-Distanz" value={fmtPct(-r.lossPct)} tone="text-down" />
-          <ResultRow label="Benötigte Winrate (Break-even)" value={`${fmtNum(r.breakevenWinrate, 1)}%`} />
+          <ResultRow label="R:R ratio" value={`${fmtNum(r.rr)} : 1`} tone={rrTone} />
+          <ResultRow label="Gain distance" value={fmtPct(r.winPct)} tone="text-up" />
+          <ResultRow label="Loss distance" value={fmtPct(-r.lossPct)} tone="text-down" />
+          <ResultRow label="Break-even win rate" value={`${fmtNum(r.breakevenWinrate, 1)}%`} />
         </div>
       ) : (
-        <p className="text-xs text-dim">Gültige Werte eingeben (Einstieg ≠ Stop).</p>
+        <p className="text-xs text-dim">Enter valid values (Entry ≠ Stop).</p>
       )}
     </ToolCard>
   );
@@ -192,15 +192,15 @@ function PivotTool() {
   }, [high, low, close, method]);
 
   return (
-    <ToolCard icon={Crosshair} title="Pivot-Punkte">
+    <ToolCard icon={Crosshair} title="Pivot points">
       <div className="grid grid-cols-3 gap-2">
-        <Field label="High (Vorperiode)" value={high} onChange={setHigh} />
-        <Field label="Low (Vorperiode)" value={low} onChange={setLow} />
-        <Field label="Close (Vorperiode)" value={close} onChange={setClose} />
+        <Field label="High (prev. period)" value={high} onChange={setHigh} />
+        <Field label="Low (prev. period)" value={low} onChange={setLow} />
+        <Field label="Close (prev. period)" value={close} onChange={setClose} />
       </div>
       <div className="flex gap-1">
         {[
-          { id: "classic", label: "Klassisch" },
+          { id: "classic", label: "Classic" },
           { id: "fib", label: "Fibonacci" },
         ].map((m) => (
           <button
@@ -224,7 +224,7 @@ function PivotTool() {
           </tbody>
         </table>
       ) : (
-        <p className="text-xs text-dim">Gültige Werte eingeben (High ≥ Low).</p>
+        <p className="text-xs text-dim">Enter valid values (High ≥ Low).</p>
       )}
     </ToolCard>
   );
@@ -251,11 +251,11 @@ function AtrStopTool() {
   }, [entry, atr, mult, dir]);
 
   return (
-    <ToolCard icon={Activity} title="ATR-Stop-Rechner">
+    <ToolCard icon={Activity} title="ATR stop calculator">
       <div className="grid grid-cols-3 gap-2">
-        <Field label="Einstieg" value={entry} onChange={setEntry} min="0" />
-        <Field label="ATR-Wert" value={atr} onChange={setAtr} min="0" />
-        <Field label="Multiplikator" value={mult} onChange={setMult} min="0" />
+        <Field label="Entry" value={entry} onChange={setEntry} min="0" />
+        <Field label="ATR value" value={atr} onChange={setAtr} min="0" />
+        <Field label="Multiplier" value={mult} onChange={setMult} min="0" />
       </div>
       <div className="flex flex-wrap items-center gap-1">
         {["1.5", "2", "3"].map((m) => (
@@ -283,14 +283,14 @@ function AtrStopTool() {
       </div>
       {r ? (
         <div className="space-y-1.5 pt-1 border-t border-line/60">
-          <ResultRow label="Stop-Level" value={fmtNum(r.stop)} tone="text-down" />
-          <ResultRow label="Stop-Distanz" value={`${fmtNum(r.distPct)}%`} />
+          <ResultRow label="Stop level" value={fmtNum(r.stop)} tone="text-down" />
+          <ResultRow label="Stop distance" value={`${fmtNum(r.distPct)}%`} />
           {r.targets.map((t) => (
-            <ResultRow key={t.n} label={`Ziel ${t.n}R`} value={fmtNum(t.level)} tone="text-up" />
+            <ResultRow key={t.n} label={`Target ${t.n}R`} value={fmtNum(t.level)} tone="text-up" />
           ))}
         </div>
       ) : (
-        <p className="text-xs text-dim">Gültige Werte eingeben.</p>
+        <p className="text-xs text-dim">Enter valid values.</p>
       )}
     </ToolCard>
   );
@@ -339,11 +339,11 @@ function SessionsTool() {
   const londonNyOverlap = openNames.includes("London") && openNames.includes("New York");
 
   return (
-    <ToolCard icon={Clock} title="Handelszeiten">
+    <ToolCard icon={Clock} title="Market hours">
       <p className="font-mono text-2xl font-semibold tracking-tight">
         {now.toLocaleTimeString()}
         <span className="text-xs text-dim font-sans font-normal ml-2">
-          Lokalzeit · {now.toLocaleDateString("de-CH", { weekday: "long" })}
+          Local time · {now.toLocaleDateString("en-US", { weekday: "long" })}
         </span>
       </p>
       <div className="space-y-2">
@@ -355,28 +355,28 @@ function SessionsTool() {
               <span className="text-xs text-dim font-mono">{s.range}</span>
             </div>
             <span className={cn("text-xs font-medium", s.open ? "text-up" : "text-dim")}>
-              {s.open ? "Offen" : "Geschlossen"}
+              {s.open ? "Open" : "Closed"}
             </span>
           </div>
         ))}
         <div className="flex items-center justify-between gap-4 text-sm">
           <div className="flex items-center gap-2">
             <span className="w-2 h-2 rounded-full shrink-0 bg-up" />
-            <span>Krypto</span>
+            <span>Crypto</span>
           </div>
-          <span className="text-xs font-medium text-up">24/7 offen</span>
+          <span className="text-xs font-medium text-up">Open 24/7</span>
         </div>
       </div>
       {isWeekend && (
-        <p className="text-xs text-dim">Wochenende — traditionelle Märkte geschlossen.</p>
+        <p className="text-xs text-dim">Weekend — traditional markets closed.</p>
       )}
       {londonNyOverlap && (
         <p className="text-xs text-accent">
-          Überlappung London/New York — höchste Liquidität.
+          London/New York overlap — highest liquidity.
         </p>
       )}
       {!londonNyOverlap && openNames.length >= 2 && (
-        <p className="text-xs text-dim">Überlappung {openNames.join("/")}.</p>
+        <p className="text-xs text-dim">Overlap {openNames.join("/")}.</p>
       )}
     </ToolCard>
   );
@@ -398,32 +398,32 @@ function CompoundingTool() {
   }, [start, retPct, tradesPerMonth, months]);
 
   return (
-    <ToolCard icon={TrendingUp} title="Zinseszins / Compounding">
+    <ToolCard icon={TrendingUp} title="Compounding">
       <div className="grid grid-cols-2 gap-2">
-        <Field label="Startkapital" value={start} onChange={setStart} min="0" />
-        <Field label="Rendite pro Trade (%)" value={retPct} onChange={setRetPct} />
-        <Field label="Trades pro Monat" value={tradesPerMonth} onChange={setTradesPerMonth} min="1" step="1" />
-        <Field label="Monate" value={months} onChange={setMonths} min="1" step="1" />
+        <Field label="Starting capital" value={start} onChange={setStart} min="0" />
+        <Field label="Return per trade (%)" value={retPct} onChange={setRetPct} />
+        <Field label="Trades per month" value={tradesPerMonth} onChange={setTradesPerMonth} min="1" step="1" />
+        <Field label="Months" value={months} onChange={setMonths} min="1" step="1" />
       </div>
       {r ? (
         <div className="space-y-1.5 pt-1 border-t border-line/60">
           <ResultRow
-            label="Endkapital"
+            label="Final capital"
             value={fmtNum(r.end)}
             tone={r.end >= num(start) ? "text-up" : "text-down"}
           />
           <ResultRow
-            label="Gesamtrendite"
+            label="Total return"
             value={fmtPct(r.totalPct)}
             tone={r.totalPct >= 0 ? "text-up" : "text-down"}
           />
         </div>
       ) : (
-        <p className="text-xs text-dim">Gültige Werte eingeben.</p>
+        <p className="text-xs text-dim">Enter valid values.</p>
       )}
       <p className="text-[11px] text-dim leading-relaxed">
-        Idealisierte Rechnung: konstante Rendite pro Trade, keine Verlustserien, Gebühren oder Steuern.
-        Reale Ergebnisse weichen ab.
+        Idealized calculation: constant return per trade, no losing streaks, fees, or taxes.
+        Real results will differ.
       </p>
     </ToolCard>
   );
@@ -434,8 +434,8 @@ function CompoundingTool() {
 export default function Tools() {
   return (
     <div>
-      <p className="text-[10px] tracking-[0.3em] text-dim uppercase mb-1">Werkzeuge</p>
-      <h1 className="text-2xl font-bold mb-6">Trader-Tools</h1>
+      <p className="text-[10px] tracking-[0.3em] text-dim uppercase mb-1">Tools</p>
+      <h1 className="text-2xl font-bold mb-6">Trader tools</h1>
 
       <div className="grid md:grid-cols-2 gap-4">
         <PositionSizeTool />
@@ -447,7 +447,7 @@ export default function Tools() {
       </div>
 
       <p className="text-xs text-dim mt-6">
-        Alle Berechnungen erfolgen lokal im Browser. Keine Anlageberatung.
+        All calculations run locally in your browser. Not investment advice.
       </p>
     </div>
   );

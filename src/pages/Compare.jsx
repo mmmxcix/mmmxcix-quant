@@ -16,8 +16,8 @@ const COLORS = ["#2dd4bf", "#38bdf8", "#f59e0b", "#f472b6", "#a78bfa", "#64748b"
 
 const TABS = [
   { id: "perf", label: "Performance" },
-  { id: "dca", label: "Sparplan (DCA)" },
-  { id: "div", label: "Dividenden" },
+  { id: "dca", label: "Savings plan (DCA)" },
+  { id: "div", label: "Dividends" },
 ];
 
 const PERF_RANGES = [
@@ -96,7 +96,7 @@ function ChartSkeleton({ height = 320 }) {
       className="rounded-xl border border-line lg-glass animate-pulse flex items-center justify-center text-sm text-dim"
       style={{ height }}
     >
-      Lade Daten…
+      Loading data…
     </div>
   );
 }
@@ -172,7 +172,7 @@ function PerformanceTab({ active }) {
         if (!series) return { entry: e, color, error: errors[key] || null };
         const filtered = filterYears(series, years);
         if (filtered.length < 2) {
-          return { entry: e, color, error: `Zu wenig Historie für ${e.symbol} in diesem Zeitraum.` };
+          return { entry: e, color, error: `Not enough history for ${e.symbol} in this period.` };
         }
         const points = rebase(filtered);
         const first = filtered[0].close;
@@ -228,7 +228,7 @@ function PerformanceTab({ active }) {
     <div className="space-y-4">
       <div className="rounded-xl border border-line lg-glass p-4 space-y-3">
         <div className="flex items-center justify-between">
-          <p className="text-xs text-dim uppercase tracking-widest">Symbole (2–6)</p>
+          <p className="text-xs text-dim uppercase tracking-widest">Symbols (2–6)</p>
           <div className="flex gap-1">
             {PERF_RANGES.map((r) => (
               <button
@@ -253,13 +253,13 @@ function PerformanceTab({ active }) {
               market={e.market}
               value={e.symbol}
               onSelect={(s) => updateEntry(e.id, { symbol: s })}
-              placeholder={e.market === "crypto" ? "z. B. BTCUSDT" : "z. B. SPY"}
+              placeholder={e.market === "crypto" ? "e.g. BTCUSDT" : "e.g. SPY"}
               className="flex-1 min-w-[180px]"
             />
             <button
               onClick={() => removeEntry(e.id)}
               disabled={entries.length <= 2}
-              title="Entfernen"
+              title="Remove"
               className="text-dim hover:text-down disabled:opacity-30 disabled:hover:text-dim"
             >
               <X className="w-4 h-4" />
@@ -272,7 +272,7 @@ function PerformanceTab({ active }) {
           disabled={entries.length >= 6}
           className="chip chip-idle flex items-center gap-1 disabled:opacity-40"
         >
-          <Plus className="w-3.5 h-3.5" /> Symbol hinzufügen
+          <Plus className="w-3.5 h-3.5" /> Add symbol
         </button>
       </div>
 
@@ -289,13 +289,13 @@ function PerformanceTab({ active }) {
       ) : chartSeries.length > 0 ? (
         <div className="rounded-xl border border-line lg-glass p-3">
           <p className="text-xs text-dim px-2 pt-1 pb-2">
-            Indexiert auf 100 zum Start des Zeitraums — Monatsschlusskurse
+            Indexed to 100 at the start of the period — monthly closing prices
           </p>
           <EquityChart series={chartSeries} />
         </div>
       ) : (
         <div className="rounded-xl border border-line lg-glass h-72 flex items-center justify-center text-sm text-dim px-8 text-center">
-          Keine darstellbaren Serien — Symbole oder Zeitraum prüfen.
+          No series to display — check the symbols or period.
         </div>
       )}
 
@@ -306,10 +306,10 @@ function PerformanceTab({ active }) {
               <thead>
                 <tr className="text-left text-dim border-b border-line">
                   <th className="px-4 py-2 font-medium">Symbol</th>
-                  <th className="px-4 py-2 font-medium text-right">Gesamtrendite</th>
+                  <th className="px-4 py-2 font-medium text-right">Total return</th>
                   <th className="px-4 py-2 font-medium text-right">CAGR</th>
-                  <th className="px-4 py-2 font-medium text-right">Bester Monat</th>
-                  <th className="px-4 py-2 font-medium text-right">Schlechtester Monat</th>
+                  <th className="px-4 py-2 font-medium text-right">Best month</th>
+                  <th className="px-4 py-2 font-medium text-right">Worst month</th>
                 </tr>
               </thead>
               <tbody>
@@ -406,12 +406,12 @@ function DcaTab({ active }) {
     if (!result?.points?.length) return null;
     return [
       {
-        label: "Eingezahlt",
+        label: "Invested",
         color: "#64748b",
         points: result.points.map((p) => ({ time: p.time, value: p.invested })),
       },
       {
-        label: "Depotwert",
+        label: "Portfolio value",
         color: "#2dd4bf",
         points: result.points.map((p) => ({ time: p.time, value: p.value })),
       },
@@ -421,7 +421,7 @@ function DcaTab({ active }) {
   return (
     <div className="space-y-4">
       <div className="rounded-xl border border-line lg-glass p-4 space-y-3">
-        <p className="text-xs text-dim uppercase tracking-widest">Sparplan</p>
+        <p className="text-xs text-dim uppercase tracking-widest">Savings plan</p>
         <div className="flex flex-wrap items-end gap-3">
           <div className="space-y-2">
             <MarketToggle market={market} onChange={switchMarket} />
@@ -432,12 +432,12 @@ function DcaTab({ active }) {
                 setSymbol(s);
                 setStartYear(null);
               }}
-              placeholder={market === "crypto" ? "z. B. BTCUSDT" : "z. B. SPY"}
+              placeholder={market === "crypto" ? "e.g. BTCUSDT" : "e.g. SPY"}
               className="w-full sm:w-64"
             />
           </div>
           <label className="text-xs text-dim">
-            Monatlicher Betrag
+            Monthly amount
             <input
               type="number"
               min={1}
@@ -447,7 +447,7 @@ function DcaTab({ active }) {
             />
           </label>
           <label className="text-xs text-dim">
-            Start-Jahr
+            Start year
             <select
               value={effStartYear ?? ""}
               onChange={(e) => setStartYear(+e.target.value)}
@@ -471,14 +471,14 @@ function DcaTab({ active }) {
       ) : result ? (
         <>
           <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-3">
-            <MetricCard label="Eingezahlt gesamt" value={fmtNum(result.totalInvested, 0)} />
+            <MetricCard label="Total invested" value={fmtNum(result.totalInvested, 0)} />
             <MetricCard
-              label="Endwert"
+              label="Final value"
               value={fmtNum(result.finalValue, 0)}
               tone={upDown(result.finalValue - result.totalInvested)}
             />
             <MetricCard
-              label="Gesamtrendite"
+              label="Total return"
               value={fmtPct(result.totalReturnPct)}
               tone={upDown(result.totalReturnPct)}
             />
@@ -488,33 +488,34 @@ function DcaTab({ active }) {
               tone={upDown(result.cagrPct)}
             />
             <MetricCard
-              label={market === "crypto" ? "Coins" : "Stück"}
+              label={market === "crypto" ? "Coins" : "Shares"}
               value={fmtNum(result.shares, 4)}
             />
           </div>
 
           <div className="rounded-xl border border-line lg-glass p-3">
             <p className="text-xs text-dim px-2 pt-1 pb-2">
-              <span className="text-text/70">Eingezahlt</span> vs.{" "}
-              <span className="text-accent">Depotwert</span> — Kauf jeweils zum Monatsschluss
+              <span className="text-text/70">Invested</span> vs.{" "}
+              <span className="text-accent">Portfolio value</span> — buying at each month's close
             </p>
             <EquityChart series={chartSeries} />
           </div>
 
           <p className="text-sm text-dim leading-relaxed">
-            Hättest du seit <span className="text-text font-mono">{effStartYear}</span> monatlich{" "}
-            <span className="text-text font-mono">{fmtNum(amount, 0)}</span> in{" "}
-            <span className="text-accent font-mono">{symbol}</span> investiert, wären aus{" "}
-            <span className="text-text font-mono">{fmtNum(result.totalInvested, 0)}</span> heute{" "}
+            Had you invested{" "}
+            <span className="text-text font-mono">{fmtNum(amount, 0)}</span> monthly in{" "}
+            <span className="text-accent font-mono">{symbol}</span> since{" "}
+            <span className="text-text font-mono">{effStartYear}</span>,{" "}
+            <span className="text-text font-mono">{fmtNum(result.totalInvested, 0)}</span> would be worth{" "}
             <span className={cn("font-mono", upDown(result.finalValue - result.totalInvested))}>
               {fmtNum(result.finalValue, 0)}
             </span>{" "}
-            geworden.
+            today.
           </p>
         </>
       ) : !error ? (
         <div className="rounded-xl border border-line lg-glass h-72 flex items-center justify-center text-sm text-dim px-8 text-center">
-          Symbol, Betrag und Start-Jahr wählen — die Simulation erscheint hier.
+          Pick a symbol, amount, and start year — the simulation appears here.
         </div>
       ) : null}
     </div>
@@ -549,7 +550,7 @@ function DividendTab({ active }) {
               getDividends(s.symbol),
             ]);
             if (!dividends.length) {
-              nextErrors[s.symbol] = `Keine Dividenden-Historie für "${s.symbol}" gefunden.`;
+              nextErrors[s.symbol] = `No dividend history found for "${s.symbol}".`;
               return;
             }
             nextData[s.symbol] = { series, dividends };
@@ -608,7 +609,7 @@ function DividendTab({ active }) {
     <div className="space-y-4">
       <div className="rounded-xl border border-line lg-glass p-4 space-y-3">
         <div className="flex items-center justify-between">
-          <p className="text-xs text-dim uppercase tracking-widest">Aktien / ETFs (2–4)</p>
+          <p className="text-xs text-dim uppercase tracking-widest">Stocks / ETFs (2–4)</p>
           <div className="flex gap-1">
             {DIV_WINDOWS.map((w) => (
               <button
@@ -632,13 +633,13 @@ function DividendTab({ active }) {
               market="stock"
               value={s.symbol}
               onSelect={(sym) => updateSymbol(s.id, sym)}
-              placeholder="z. B. KO, JPM, O"
+              placeholder="e.g. KO, JPM, O"
               className="flex-1 min-w-[180px]"
             />
             <button
               onClick={() => removeSymbol(s.id)}
               disabled={symbols.length <= 2}
-              title="Entfernen"
+              title="Remove"
               className="text-dim hover:text-down disabled:opacity-30 disabled:hover:text-dim"
             >
               <X className="w-4 h-4" />
@@ -651,7 +652,7 @@ function DividendTab({ active }) {
           disabled={symbols.length >= 4}
           className="chip chip-idle flex items-center gap-1 disabled:opacity-40"
         >
-          <Plus className="w-3.5 h-3.5" /> Aktie hinzufügen
+          <Plus className="w-3.5 h-3.5" /> Add stock
         </button>
       </div>
 
@@ -673,10 +674,10 @@ function DividendTab({ active }) {
                 <thead>
                   <tr className="text-left text-dim border-b border-line">
                     <th className="px-4 py-2 font-medium">Symbol</th>
-                    <th className="px-4 py-2 font-medium text-right">Dividende/Aktie (letztes volles Jahr)</th>
-                    <th className="px-4 py-2 font-medium text-right">Ø Rendite</th>
-                    <th className="px-4 py-2 font-medium text-right">Wachstum p.a.</th>
-                    <th className="px-4 py-2 font-medium text-right">Ausschüttungen gesamt</th>
+                    <th className="px-4 py-2 font-medium text-right">Dividend/share (last full year)</th>
+                    <th className="px-4 py-2 font-medium text-right">Avg. yield</th>
+                    <th className="px-4 py-2 font-medium text-right">Growth p.a.</th>
+                    <th className="px-4 py-2 font-medium text-right">Total payouts</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -719,7 +720,7 @@ function DividendTab({ active }) {
 
           <div className="rounded-xl border border-line lg-glass p-4 space-y-4">
             <p className="text-xs text-dim uppercase tracking-widest">
-              Dividende je Aktie pro Jahr
+              Dividend per share per year
             </p>
             {rows
               .filter((r) => r.stats)
@@ -750,11 +751,11 @@ function DividendTab({ active }) {
               ))}
           </div>
 
-          <p className="text-xs text-dim">Krypto zahlt keine Dividenden — nur Aktien/ETFs.</p>
+          <p className="text-xs text-dim">Crypto pays no dividends — stocks/ETFs only.</p>
         </>
       ) : (
         <div className="rounded-xl border border-line lg-glass h-72 flex items-center justify-center text-sm text-dim px-8 text-center">
-          Aktien wählen — der Dividenden-Vergleich erscheint hier.
+          Pick stocks — the dividend comparison appears here.
         </div>
       )}
     </div>
@@ -768,8 +769,8 @@ export default function Compare() {
 
   return (
     <div>
-      <p className="text-[10px] tracking-[0.3em] text-dim uppercase mb-1">Analyse</p>
-      <h1 className="text-2xl font-bold mb-6">Vergleich</h1>
+      <p className="text-[10px] tracking-[0.3em] text-dim uppercase mb-1">Analysis</p>
+      <h1 className="text-2xl font-bold mb-6">Compare</h1>
 
       <div className="flex flex-wrap gap-1 mb-6">
         {TABS.map((t) => (

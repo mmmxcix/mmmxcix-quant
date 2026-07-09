@@ -2,49 +2,49 @@ import { Building2, Database, LineChart, GraduationCap, Users, ExternalLink } fr
 
 const SECTIONS = [
   {
-    title: 'Broker & Ausführung',
+    title: 'Brokers & Execution',
     icon: Building2,
     links: [
       {
         name: 'Interactive Brokers',
         href: 'https://www.interactivebrokers.com/',
-        desc: 'Profi-Broker mit globalem Marktzugang und mächtiger API.',
+        desc: 'Professional broker with global market access and a powerful API.',
       },
       {
         name: 'Alpaca',
         href: 'https://alpaca.markets/',
-        desc: 'Kommissionsfreier API-First-Broker für Aktien & Krypto, ideal fürs Algo-Trading.',
+        desc: 'Commission-free, API-first broker for stocks & crypto, ideal for algo trading.',
       },
     ],
   },
   {
-    title: 'Daten',
+    title: 'Data',
     icon: Database,
     links: [
       {
         name: 'Yahoo Finance',
         href: 'https://finance.yahoo.com/',
-        desc: 'Kostenlose Kurse, Fundamentaldaten und historische Daten.',
+        desc: 'Free quotes, fundamentals, and historical data.',
       },
       {
         name: 'Stooq',
         href: 'https://stooq.com/',
-        desc: 'Kostenlose historische EOD-Daten als CSV-Download.',
+        desc: 'Free historical EOD data as a CSV download.',
       },
       {
         name: 'Binance API Docs',
         href: 'https://developers.binance.com/docs/binance-spot-api-docs',
-        desc: 'Offizielle Dokumentation der Binance Spot-API für Krypto-Daten und -Handel.',
+        desc: 'Official Binance Spot API documentation for crypto data and trading.',
       },
       {
-        name: 'FRED (Makrodaten)',
+        name: 'FRED (macro data)',
         href: 'https://fred.stlouisfed.org/',
-        desc: 'Makroökonomische Zeitreihen der Federal Reserve — Zinsen, Inflation, BIP.',
+        desc: 'Macroeconomic time series from the Federal Reserve — rates, inflation, GDP.',
       },
       {
         name: 'Polygon.io',
         href: 'https://polygon.io/',
-        desc: 'Professionelle Markt-APIs für Aktien, Optionen, Forex und Krypto.',
+        desc: 'Professional market APIs for stocks, options, forex, and crypto.',
       },
     ],
   },
@@ -55,53 +55,53 @@ const SECTIONS = [
       {
         name: 'TradingView',
         href: 'https://www.tradingview.com/',
-        desc: 'Charting-Standard mit Pine Script, Screenern und Community-Ideen.',
+        desc: 'The charting standard with Pine Script, screeners, and community ideas.',
       },
       {
         name: 'Finviz',
         href: 'https://finviz.com/',
-        desc: 'Schneller Aktien-Screener mit Heatmaps und Insider-Daten.',
+        desc: 'Fast stock screener with heatmaps and insider data.',
       },
       {
         name: 'Portfolio Visualizer',
         href: 'https://www.portfoliovisualizer.com/',
-        desc: 'Backtesting, Faktoranalyse und Portfolio-Optimierung im Browser.',
+        desc: 'Backtesting, factor analysis, and portfolio optimization in the browser.',
       },
     ],
   },
   {
-    title: 'Lernen & Research',
+    title: 'Learning & Research',
     icon: GraduationCap,
     links: [
       {
         name: 'QuantStart',
         href: 'https://www.quantstart.com/',
-        desc: 'Tutorials und Artikel zu quantitativem Trading und Backtesting.',
+        desc: 'Tutorials and articles on quantitative trading and backtesting.',
       },
       {
         name: 'Quantpedia',
         href: 'https://quantpedia.com/',
-        desc: 'Enzyklopädie akademisch belegter Handelsstrategien.',
+        desc: 'Encyclopedia of academically documented trading strategies.',
       },
       {
         name: 'SSRN (q-fin)',
         href: 'https://www.ssrn.com/index.cfm/en/fen/',
-        desc: 'Preprints und Working Papers aus der Finanzforschung.',
+        desc: 'Preprints and working papers from finance research.',
       },
       {
         name: 'arXiv q-fin',
         href: 'https://arxiv.org/archive/q-fin',
-        desc: 'Open-Access-Paper zu Quantitative Finance.',
+        desc: 'Open-access papers on quantitative finance.',
       },
       {
         name: 'Investopedia',
         href: 'https://www.investopedia.com/',
-        desc: 'Nachschlagewerk für Finanzbegriffe und Grundlagen.',
+        desc: 'Reference for financial terms and fundamentals.',
       },
       {
         name: 'Advances in Financial Machine Learning',
         href: 'https://books.google.com/books?id=oU9KDwAAQBAJ',
-        desc: 'Standardwerk von Marcos López de Prado zu ML im Quant-Trading.',
+        desc: 'The standard reference by Marcos López de Prado on ML in quant trading.',
       },
     ],
   },
@@ -112,17 +112,17 @@ const SECTIONS = [
       {
         name: 'r/algotrading',
         href: 'https://www.reddit.com/r/algotrading/',
-        desc: 'Reddit-Community rund um algorithmisches Trading.',
+        desc: 'Reddit community focused on algorithmic trading.',
       },
       {
         name: 'QuantConnect Forum',
         href: 'https://www.quantconnect.com/forum/',
-        desc: 'Diskussionen zu Strategien und der LEAN-Engine.',
+        desc: 'Discussions on strategies and the LEAN engine.',
       },
       {
         name: 'Elite Trader',
         href: 'https://www.elitetrader.com/et/',
-        desc: 'Traditionsreiches Forum für professionelle Trader.',
+        desc: 'Long-standing forum for professional traders.',
       },
     ],
   },
@@ -132,10 +132,10 @@ export default function Resources() {
   return (
     <div className="space-y-8">
       <div>
-        <div className="text-xs uppercase tracking-widest text-dim">Werkzeugkasten</div>
-        <h1 className="text-2xl font-semibold text-text mt-1">Ressourcen</h1>
+        <div className="text-xs uppercase tracking-widest text-dim">Toolbox</div>
+        <h1 className="text-2xl font-semibold text-text mt-1">Resources</h1>
         <p className="text-sm text-dim mt-2">
-          Kuratierte Links — alles, was ein Quant Trader braucht.
+          Curated links — everything a quant trader needs.
         </p>
       </div>
 

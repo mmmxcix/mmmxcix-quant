@@ -47,7 +47,7 @@ export default function Dashboard() {
 
   return (
     <div>
-      <p className="text-[10px] tracking-[0.3em] text-dim uppercase mb-1">Übersicht</p>
+      <p className="text-[10px] tracking-[0.3em] text-dim uppercase mb-1">Overview</p>
       <h1 className="text-2xl font-bold mb-8">Dashboard</h1>
 
       <div className="rounded-xl border border-line lg-glass overflow-hidden mb-8">
@@ -55,8 +55,8 @@ export default function Dashboard() {
           <thead>
             <tr className="text-left text-dim text-xs border-b border-line">
               <th className="px-4 py-3 font-medium">Symbol</th>
-              <th className="px-4 py-3 font-medium hidden sm:table-cell">Markt</th>
-              <th className="px-4 py-3 font-medium text-right">Kurs</th>
+              <th className="px-4 py-3 font-medium hidden sm:table-cell">Market</th>
+              <th className="px-4 py-3 font-medium text-right">Price</th>
               <th className="px-4 py-3 font-medium text-right">1D</th>
             </tr>
           </thead>
@@ -74,7 +74,7 @@ export default function Dashboard() {
                     <span className="text-dim ml-2 hidden md:inline">{w.name}</span>
                   </td>
                   <td className="px-4 py-3 text-dim hidden sm:table-cell">
-                    {w.market === "crypto" ? "Krypto" : "Aktien"}
+                    {w.market === "crypto" ? "Crypto" : "Stocks"}
                   </td>
                   <td className="px-4 py-3 text-right font-mono">
                     {loading && !q ? <span className="text-dim">…</span> : fmtPrice(q?.price)}
@@ -95,16 +95,16 @@ export default function Dashboard() {
             <FlaskConical className="w-5 h-5 text-accent" />
             <ArrowUpRight className="w-4 h-4 text-dim group-hover:text-accent transition-colors" />
           </div>
-          <p className="font-semibold mb-1">Strategie backtesten</p>
-          <p className="text-sm text-dim">Baukasten-Strategien oder eigener Code — Equity-Kurve, Sharpe, Drawdown und mehr.</p>
+          <p className="font-semibold mb-1">Backtest a strategy</p>
+          <p className="text-sm text-dim">Prebuilt strategies or your own code — equity curve, Sharpe, drawdown and more.</p>
         </Link>
         <Link to="/news" className="group rounded-xl border border-line lg-glass p-5 hover:border-accent/40 transition-colors">
           <div className="flex items-center justify-between mb-2">
             <Newspaper className="w-5 h-5 text-accent" />
             <ArrowUpRight className="w-4 h-4 text-dim group-hover:text-accent transition-colors" />
           </div>
-          <p className="font-semibold mb-1">Markt-News</p>
-          <p className="text-sm text-dim">CNBC, Yahoo Finance, CoinDesk und MarketWatch — gebündelt an einem Ort.</p>
+          <p className="font-semibold mb-1">Market news</p>
+          <p className="text-sm text-dim">CNBC, Yahoo Finance, CoinDesk and MarketWatch — bundled in one place.</p>
         </Link>
       </div>
     </div>

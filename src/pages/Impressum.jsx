@@ -6,46 +6,46 @@ import LegalLayout, { H2 } from "@/components/LegalLayout";
 // German-reachable audience) while also satisfying Swiss UWG Art. 3 lit. s.
 export default function Impressum() {
   return (
-    <LegalLayout title="Impressum" updated="7. Juli 2026">
-      <H2>Angaben gemäss § 5 DDG / UWG Art. 3 lit. s</H2>
+    <LegalLayout title="Legal Notice" updated="July 7, 2026">
+      <H2>Information pursuant to § 5 DDG / UWG Art. 3 lit. s</H2>
       <p>
         Gil Buholzer<br />
         Obere Egg 6<br />
         4312 Magden<br />
-        Aargau, Schweiz
+        Aargau, Switzerland
       </p>
       <p className="text-dim">
-        Privates, nicht-kommerzielles Angebot einer natürlichen Person. Es besteht kein
-        Handelsregistereintrag und keine Mehrwertsteuer-Nummer.
+        Private, non-commercial offering by a natural person. There is no commercial register entry and
+        no VAT identification number.
       </p>
 
-      <H2>Kontakt</H2>
+      <H2>Contact</H2>
       <p>
-        E-Mail: <a href="mailto:admin@mmmxcix.com" className="text-accent hover:underline">admin@mmmxcix.com</a><br />
-        Telefon: <a href="tel:+41774321718" className="text-accent hover:underline">+41 77 432 17 18</a>
+        Email: <a href="mailto:admin@mmmxcix.com" className="text-accent hover:underline">admin@mmmxcix.com</a><br />
+        Phone: <a href="tel:+41774321718" className="text-accent hover:underline">+41 77 432 17 18</a>
       </p>
 
-      <H2>Verantwortlich für den Inhalt</H2>
+      <H2>Responsible for content</H2>
       <p>
         Gil Buholzer<br />
-        Obere Egg 6, 4312 Magden, Aargau, Schweiz
+        Obere Egg 6, 4312 Magden, Aargau, Switzerland
       </p>
 
-      <H2>Über dieses Angebot</H2>
+      <H2>About this offering</H2>
       <p>
-        MMMXCIX Quant ist ein Werkzeug für Recherche, Backtesting und Marktbeobachtung. Es dient
-        ausschliesslich Informations- und Bildungszwecken und stellt <strong className="text-text">keine
-        Anlageberatung, Finanzanalyse oder Kauf-/Verkaufsempfehlung</strong> dar. Details siehe{" "}
-        <a href="/nutzung" className="text-accent hover:underline">Nutzung &amp; Haftung</a>.
+        MMMXCIX Quant is a tool for research, backtesting and market monitoring. It serves informational and
+        educational purposes only and does <strong className="text-text">not constitute investment advice,
+        financial analysis, or a buy/sell recommendation</strong>. See{" "}
+        <a href="/nutzung" className="text-accent hover:underline">Terms &amp; Liability</a> for details.
       </p>
 
-      <H2>Haftung für Inhalte und Links</H2>
+      <H2>Liability for content and links</H2>
       <p>
-        Für eigene Inhalte auf diesen Seiten sind wir nach den allgemeinen Gesetzen verantwortlich. Für
-        verlinkte externe Seiten sind ausschliesslich deren Betreiber verantwortlich; bei Bekanntwerden von
-        Rechtsverletzungen entfernen wir solche Links umgehend. Marktdaten und Nachrichten stammen von Dritten
-        (u. a. Binance, Yahoo Finance, diverse RSS-Quellen) und werden ohne Gewähr auf Richtigkeit,
-        Vollständigkeit oder Aktualität wiedergegeben.
+        We are responsible for our own content on these pages under general law. The operators of linked
+        external sites are solely responsible for their content; we will remove such links promptly upon
+        becoming aware of any legal violations. Market data and news come from third parties (including
+        Binance, Yahoo Finance, and various RSS sources) and are provided without warranty as to accuracy,
+        completeness, or timeliness.
       </p>
     </LegalLayout>
   );

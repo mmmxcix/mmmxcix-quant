@@ -78,11 +78,11 @@ export default function Backtest() {
       if (res.status === 401) {
         setDevToken("");
         try { localStorage.removeItem("quant_dev_token"); } catch { /* ignore */ }
-        throw new Error("Token ungültig — bitte neu eingeben.");
+        throw new Error("Invalid token — please re-enter.");
       }
-      if (res.status === 503) throw new Error("KI noch nicht konfiguriert (Cloudflare-Secrets fehlen).");
-      if (res.status === 429) throw new Error("Rate-Limit erreicht — kurz warten.");
-      if (!res.ok || !data.code) throw new Error("Generierung fehlgeschlagen — nochmal versuchen.");
+      if (res.status === 503) throw new Error("AI not configured yet (Cloudflare secrets missing).");
+      if (res.status === 429) throw new Error("Rate limit reached — please wait a moment.");
+      if (!res.ok || !data.code) throw new Error("Generation failed — please try again.");
       setCode(data.code);
     } catch (e) {
       setAiError(e.message);
@@ -129,7 +129,7 @@ export default function Backtest() {
   const equitySeries = useMemo(() => {
     if (!result) return null;
     return [
-      { label: "Strategie", color: "#2dd4bf", points: result.equity },
+      { label: "Strategy", color: "#2dd4bf", points: result.equity },
       { label: "Buy & Hold", color: "#64748b", points: result.buyHold },
     ];
   }, [result]);
@@ -140,8 +140,8 @@ export default function Backtest() {
     if (!result?.trades) return [];
     const out = [];
     for (const t of result.trades) {
-      out.push({ time: t.entryTime, side: "buy", text: "Kauf" });
-      out.push({ time: t.exitTime, side: "sell", text: "Verkauf" });
+      out.push({ time: t.entryTime, side: "buy", text: "Buy" });
+      out.push({ time: t.exitTime, side: "sell", text: "Sell" });
     }
     return out;
   }, [result]);
@@ -150,14 +150,14 @@ export default function Backtest() {
 
   return (
     <div>
-      <p className="text-[10px] tracking-[0.3em] text-dim uppercase mb-1">Strategie-Labor</p>
+      <p className="text-[10px] tracking-[0.3em] text-dim uppercase mb-1">Strategy Lab</p>
       <h1 className="text-2xl font-bold mb-6">Backtest</h1>
 
       <div className="grid lg:grid-cols-[340px_1fr] gap-6">
         {/* ── Settings column ─────────────────────────────────────────── */}
         <div className="space-y-4">
           <div className="rounded-xl border border-line lg-glass p-4 space-y-3">
-            <p className="text-xs text-dim uppercase tracking-widest">Daten</p>
+            <p className="text-xs text-dim uppercase tracking-widest">Data</p>
             <div className="flex gap-1">
               {MARKETS.map((mk) => (
                 <button key={mk.id} onClick={() => switchMarket(mk.id)}
@@ -170,7 +170,7 @@ export default function Backtest() {
               market={market}
               value={symbol}
               onSelect={setSymbol}
-              placeholder={market === "crypto" ? "z. B. Bitcoin oder BTCUSDT" : "z. B. Apple oder SPY"}
+              placeholder={market === "crypto" ? "e.g. Bitcoin or BTCUSDT" : "e.g. Apple or SPY"}
               className="w-full"
             />
             <div className="flex flex-wrap gap-1">
@@ -191,12 +191,12 @@ export default function Backtest() {
             </div>
             <div className="grid grid-cols-2 gap-2">
               <label className="text-xs text-dim">
-                Startkapital
+                Starting capital
                 <input type="number" value={capital} min={100}
                   onChange={(e) => setCapital(+e.target.value || 10000)} className="input-base w-full mt-1 font-mono" />
               </label>
               <label className="text-xs text-dim">
-                Gebühr (bps/Seite)
+                Fee (bps/side)
                 <input type="number" value={feeBps} min={0} max={100}
                   onChange={(e) => setFeeBps(+e.target.value || 0)} className="input-base w-full mt-1 font-mono" />
               </label>
@@ -205,10 +205,10 @@ export default function Backtest() {
 
           <div className="rounded-xl border border-line lg-glass p-4 space-y-3">
             <div className="flex items-center justify-between">
-              <p className="text-xs text-dim uppercase tracking-widest">Strategie</p>
+              <p className="text-xs text-dim uppercase tracking-widest">Strategy</p>
               <div className="flex gap-1">
                 <button onClick={() => setMode("builder")}
-                  className={cn("chip", mode === "builder" ? "chip-active" : "chip-idle")}>Baukasten</button>
+                  className={cn("chip", mode === "builder" ? "chip-active" : "chip-idle")}>Builder</button>
                 <button onClick={() => setMode("code")}
                   className={cn("chip", mode === "code" ? "chip-active" : "chip-idle")}>Code</button>
               </div>
@@ -241,11 +241,11 @@ export default function Backtest() {
             ) : (
               <>
                 <div className="flex items-center justify-between">
-                  <p className="text-[11px] text-dim">JS-Editor</p>
-                  <button onClick={copyCode} title="Code kopieren"
+                  <p className="text-[11px] text-dim">JS editor</p>
+                  <button onClick={copyCode} title="Copy code"
                     className="flex items-center gap-1.5 text-[11px] text-dim hover:text-text transition-colors">
                     {copied ? <Check className="w-3.5 h-3.5 text-up" /> : <Copy className="w-3.5 h-3.5" />}
-                    {copied ? "Kopiert!" : "Kopieren"}
+                    {copied ? "Copied!" : "Copy"}
                   </button>
                 </div>
                 <textarea
@@ -256,30 +256,30 @@ export default function Backtest() {
                   className="input-base w-full font-mono text-xs leading-relaxed resize-y"
                 />
                 <p className="text-[11px] text-dim leading-relaxed">
-                  Definiere <code className="text-accent">function strategy(ctx)</code> und gib{" "}
-                  <code className="text-accent">"long"</code> oder <code className="text-accent">"flat"</code> zurück.
-                  Verfügbar: <code>ctx.candles</code>, <code>ctx.index</code>, <code>ctx.close</code>,{" "}
+                  Define <code className="text-accent">function strategy(ctx)</code> and return{" "}
+                  <code className="text-accent">"long"</code> or <code className="text-accent">"flat"</code>.
+                  Available: <code>ctx.candles</code>, <code>ctx.index</code>, <code>ctx.close</code>,{" "}
                   <code>ctx.position</code>, <code>ctx.indicators</code> (sma, ema, rsi, roc, atr, bollinger, donchian).
                 </p>
 
                 {/* KI-Generator */}
                 <div className="border-t border-line pt-3 space-y-2">
                   <p className="text-[11px] text-dim flex items-center gap-1.5">
-                    <Sparkles className="w-3.5 h-3.5 text-accent" /> Strategie mit KI generieren
+                    <Sparkles className="w-3.5 h-3.5 text-accent" /> Generate strategy with AI
                   </p>
                   {devToken ? (
                     <>
                       <textarea
                         value={aiPrompt}
                         onChange={(e) => setAiPrompt(e.target.value)}
-                        placeholder="z. B. Kaufe, wenn der RSI unter 30 fällt und der Kurs über dem SMA 200 liegt…"
+                        placeholder="e.g. Buy when RSI drops below 30 and price is above the SMA 200…"
                         rows={3}
                         className="input-base w-full text-xs resize-y"
                       />
                       <button onClick={generateCode} disabled={aiLoading || !aiPrompt.trim()}
                         className="btn-accent w-full flex items-center justify-center gap-2 !py-1.5 text-xs">
                         {aiLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-                        {aiLoading ? "Generiere…" : "Generieren (ersetzt den Editor-Inhalt)"}
+                        {aiLoading ? "Generating…" : "Generate (replaces the editor content)"}
                       </button>
                     </>
                   ) : (
@@ -289,11 +289,11 @@ export default function Backtest() {
                         value={tokenInput}
                         onChange={(e) => setTokenInput(e.target.value)}
                         onKeyDown={(e) => e.key === "Enter" && saveToken()}
-                        placeholder="Dev-Zugangstoken"
+                        placeholder="Dev access token"
                         className="input-base flex-1 text-xs"
                       />
                       <button onClick={saveToken} className="btn-ghost flex items-center gap-1.5 text-xs">
-                        <KeyRound className="w-3.5 h-3.5" /> Freischalten
+                        <KeyRound className="w-3.5 h-3.5" /> Unlock
                       </button>
                     </div>
                   )}
@@ -305,7 +305,7 @@ export default function Backtest() {
 
           <button onClick={run} disabled={running} className="btn-accent w-full flex items-center justify-center gap-2">
             <Play className="w-4 h-4" />
-            {running ? "Läuft…" : "Backtest starten"}
+            {running ? "Running…" : "Run backtest"}
           </button>
 
           {error && (
@@ -320,55 +320,55 @@ export default function Backtest() {
         <div className="space-y-4">
           {!result ? (
             <div className="rounded-xl border border-line lg-glass h-72 flex items-center justify-center text-sm text-dim px-8 text-center">
-              Wähle Daten und Strategie, dann starte den Backtest — Ergebnisse erscheinen hier.
+              Pick data and a strategy, then run the backtest — results appear here.
             </div>
           ) : (
             <>
               {result.warnings?.length > 0 && (
                 <div className="rounded-xl border border-yellow-500/40 bg-yellow-500/10 p-3 text-xs text-yellow-400">
-                  Strategie-Warnung: {result.warnings[0]}
+                  Strategy warning: {result.warnings[0]}
                 </div>
               )}
 
               <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3">
-                <MetricCard label="Rendite" value={fmtPct(m.totalReturnPct)}
+                <MetricCard label="Return" value={fmtPct(m.totalReturnPct)}
                   tone={m.totalReturnPct >= 0 ? "text-up" : "text-down"} />
                 <MetricCard label="Buy & Hold" value={fmtPct(m.buyHoldReturnPct)}
                   tone={m.buyHoldReturnPct >= 0 ? "text-up" : "text-down"} />
                 <MetricCard label="CAGR" value={fmtPct(m.cagrPct)}
                   tone={m.cagrPct >= 0 ? "text-up" : "text-down"} />
                 <MetricCard label="Sharpe" value={fmtNum(m.sharpe)} tone="text-text" />
-                <MetricCard label="Max. Drawdown" value={fmtPct(-Math.abs(m.maxDrawdownPct))} tone="text-down" />
-                <MetricCard label="Winrate" value={fmtPct(m.winRatePct).replace("+", "")} tone="text-text" />
-                <MetricCard label="Profit-Faktor" value={fmtNum(m.profitFactor)} tone="text-text" />
+                <MetricCard label="Max drawdown" value={fmtPct(-Math.abs(m.maxDrawdownPct))} tone="text-down" />
+                <MetricCard label="Win rate" value={fmtPct(m.winRatePct).replace("+", "")} tone="text-text" />
+                <MetricCard label="Profit factor" value={fmtNum(m.profitFactor)} tone="text-text" />
                 <MetricCard label="Trades · Exposure" value={`${m.tradeCount} · ${fmtNum(m.exposurePct, 0)}%`} tone="text-text" />
               </div>
 
               <div className="rounded-xl border border-line lg-glass p-3">
                 <p className="text-xs text-dim px-2 pt-1 pb-2">
-                  Kursverlauf mit Ein-/Ausstiegen — <span className="text-up">▲ Kauf</span>{" "}
-                  <span className="text-down">▼ Verkauf</span> ({result.symbol})
+                  Price with entries/exits — <span className="text-up">▲ Buy</span>{" "}
+                  <span className="text-down">▼ Sell</span> ({result.symbol})
                 </p>
                 <CandleChart candles={result.candles} markers={tradeMarkers} height={300} showVolume={false} />
               </div>
 
               <div className="rounded-xl border border-line lg-glass p-3">
                 <p className="text-xs text-dim px-2 pt-1 pb-2">
-                  Equity-Kurve — <span className="text-accent">Strategie</span> vs.{" "}
-                  <span className="text-text/70">Buy &amp; Hold</span> ({result.symbol}, {result.candleCount} Kerzen)
+                  Equity curve — <span className="text-accent">Strategy</span> vs.{" "}
+                  <span className="text-text/70">Buy &amp; Hold</span> ({result.symbol}, {result.candleCount} candles)
                 </p>
                 <EquityChart series={equitySeries} />
               </div>
 
               {result.trades.length > 0 && (
                 <div className="rounded-xl border border-line lg-glass overflow-hidden">
-                  <p className="text-xs text-dim px-4 pt-3 pb-1">Letzte Trades ({Math.min(result.trades.length, 50)} von {result.trades.length})</p>
+                  <p className="text-xs text-dim px-4 pt-3 pb-1">Recent trades ({Math.min(result.trades.length, 50)} of {result.trades.length})</p>
                   <div className="overflow-x-auto max-h-80 overflow-y-auto">
                     <table className="w-full text-xs font-mono">
                       <thead>
                         <tr className="text-left text-dim border-b border-line sticky top-0 bg-surface">
-                          <th className="px-4 py-2 font-medium">Einstieg</th>
-                          <th className="px-4 py-2 font-medium">Ausstieg</th>
+                          <th className="px-4 py-2 font-medium">Entry</th>
+                          <th className="px-4 py-2 font-medium">Exit</th>
                           <th className="px-4 py-2 font-medium text-right">Bars</th>
                           <th className="px-4 py-2 font-medium text-right">PnL %</th>
                         </tr>

@@ -14,21 +14,21 @@ const DIGEST_SOURCES = [
 ];
 
 const CATEGORIES = [
-  { value: 'Alle', label: 'Alle' },
-  { value: 'markets', label: 'Märkte' },
-  { value: 'crypto', label: 'Krypto' },
+  { value: 'Alle', label: 'All' },
+  { value: 'markets', label: 'Markets' },
+  { value: 'crypto', label: 'Crypto' },
   { value: 'business', label: 'Business' },
 ];
 
 const ACCESS_OPTIONS = [
-  { value: 'Alle', label: 'Alle' },
-  { value: 'free', label: 'Nur gratis' },
+  { value: 'Alle', label: 'All' },
+  { value: 'free', label: 'Free only' },
 ];
 
 const SORT_OPTIONS = [
-  { value: 'newest', label: 'Neueste zuerst' },
-  { value: 'oldest', label: 'Älteste zuerst' },
-  { value: 'source', label: 'Nach Quelle A–Z' },
+  { value: 'newest', label: 'Newest first' },
+  { value: 'oldest', label: 'Oldest first' },
+  { value: 'source', label: 'By source A–Z' },
 ];
 
 function relativeTimeDe(iso) {
@@ -36,15 +36,15 @@ function relativeTimeDe(iso) {
   const then = Date.parse(iso);
   if (isNaN(then)) return '';
   const diffMs = Date.now() - then;
-  if (diffMs < 0) return 'gerade eben';
+  if (diffMs < 0) return 'just now';
   const min = Math.floor(diffMs / 60000);
-  if (min < 1) return 'gerade eben';
-  if (min < 60) return `vor ${min} Min.`;
+  if (min < 1) return 'just now';
+  if (min < 60) return `${min} min ago`;
   const h = Math.floor(min / 60);
-  if (h < 24) return `vor ${h} Std.`;
+  if (h < 24) return `${h} h ago`;
   const d = Math.floor(h / 24);
-  if (d === 1) return 'vor 1 Tag';
-  return `vor ${d} Tagen`;
+  if (d === 1) return '1 day ago';
+  return `${d} days ago`;
 }
 
 const NEWSLETTER_LINKS = [
@@ -122,7 +122,7 @@ function NewsletterCard() {
         <Mail size={15} className="text-accent shrink-0" />
         <span className="text-sm font-medium text-text">Newsletter</span>
         <span className="text-xs text-dim hidden sm:inline">
-          Markt-Updates direkt ins Postfach
+          Market updates in your inbox
         </span>
         <ChevronDown
           size={15}
@@ -134,9 +134,9 @@ function NewsletterCard() {
         <div className="border-t border-line p-4 grid gap-6 md:grid-cols-2">
           <div>
             <div className="text-[11px] uppercase tracking-wider text-dim mb-2">
-              Direkt-Abos
+              Direct subscriptions
             </div>
-            <p className="text-xs text-dim mb-3">Gratis-Newsletter der Quellen:</p>
+            <p className="text-xs text-dim mb-3">Free newsletters from the sources:</p>
             <ul className="space-y-1.5">
               {NEWSLETTER_LINKS.map((l) => (
                 <li key={l.url}>
@@ -162,16 +162,16 @@ function NewsletterCard() {
               MMMXCIX Daily Digest
             </div>
             <p className="text-xs text-dim mb-3">
-              Einmal täglich die wichtigsten Schlagzeilen — du wählst, worüber und aus welchen Quellen.
+              The top headlines once a day — you choose the topics and the sources.
             </p>
 
             {/* Was */}
-            <p className="text-[11px] text-dim mb-1.5">Worüber?</p>
+            <p className="text-[11px] text-dim mb-1.5">Topics?</p>
             <div className="flex flex-wrap gap-1.5 mb-3">
               {[
-                { id: 'general', label: 'Allgemeine Finanznews' },
-                { id: 'watchlist', label: 'Meine Watchlist' },
-                { id: 'portfolio', label: 'Mein Portfolio' },
+                { id: 'general', label: 'General finance news' },
+                { id: 'watchlist', label: 'My watchlist' },
+                { id: 'portfolio', label: 'My portfolio' },
               ].map((c) => (
                 <button key={c.id} type="button" onClick={() => toggleCategory(c.id)}
                   className={`rounded-full border px-3 py-1 text-xs transition-colors ${
@@ -184,12 +184,12 @@ function NewsletterCard() {
 
             {/* Quellen + gratis */}
             <div className="flex items-center justify-between mb-1.5">
-              <p className="text-[11px] text-dim">Aus welchen Quellen?</p>
+              <p className="text-[11px] text-dim">From which sources?</p>
               <label className="flex items-center gap-1.5 text-[11px] text-dim cursor-pointer select-none">
                 <input type="checkbox" checked={freeOnly}
                   onChange={(e) => { setFreeOnly(e.target.checked); setSources(null); }}
                   className="accent-[#2dd4bf]" />
-                Nur gratis
+                Free only
               </label>
             </div>
             <div className="flex flex-wrap gap-1.5 mb-3">
@@ -208,41 +208,41 @@ function NewsletterCard() {
                 type="email"
                 value={email}
                 onChange={(e) => { setEmail(e.target.value); if (status !== 'idle') setStatus('idle'); }}
-                placeholder="deine@email.com"
+                placeholder="you@email.com"
                 className="input-base flex-1 min-w-0"
-                aria-label="E-Mail-Adresse"
+                aria-label="Email address"
               />
               <button type="submit" disabled={status === 'sending'} className="btn-accent shrink-0">
-                {status === 'sending' ? 'Sende…' : 'Abonnieren'}
+                {status === 'sending' ? 'Sending…' : 'Subscribe'}
               </button>
             </form>
 
             {status === 'pending' && (
               <p className="mt-2 text-xs text-accent">
-                Fast geschafft! Wir haben dir eine Bestätigungsmail geschickt — bitte den Link darin anklicken.
+                Almost there! We've sent you a confirmation email — please click the link inside it.
               </p>
             )}
             {status === 'updated' && (
-              <p className="mt-2 text-xs text-accent">Deine Einstellungen wurden aktualisiert.</p>
+              <p className="mt-2 text-xs text-accent">Your settings were updated.</p>
             )}
             {status === 'nocat' && (
-              <p className="mt-2 text-xs text-red-400">Wähle mindestens eine Kategorie aus.</p>
+              <p className="mt-2 text-xs text-red-400">Select at least one category.</p>
             )}
             {status === 'invalid' && (
-              <p className="mt-2 text-xs text-red-400">Bitte eine gültige E-Mail-Adresse eingeben.</p>
+              <p className="mt-2 text-xs text-red-400">Please enter a valid email address.</p>
             )}
             {status === 'kv' && (
               <p className="mt-2 text-xs text-red-400">
-                Anmeldung derzeit nicht möglich: KV-Binding <code className="text-accent">SUBSCRIBERS</code> fehlt.
+                Sign-up not available right now: KV binding <code className="text-accent">SUBSCRIBERS</code> is missing.
               </p>
             )}
             {status === 'error' && (
-              <p className="mt-2 text-xs text-red-400">Anmeldung fehlgeschlagen. Bitte später erneut versuchen.</p>
+              <p className="mt-2 text-xs text-red-400">Sign-up failed. Please try again later.</p>
             )}
             <p className="mt-3 text-[11px] text-dim">
-              Für Watchlist/Portfolio-News werden die Symbole aus diesem Browser übermittelt. Double-Opt-In,
-              jederzeit abbestellbar, keine Weitergabe. „·$" = teils kostenpflichtige Quelle. Details:{" "}
-              <a href="/datenschutz" className="text-accent hover:underline">Datenschutz</a>.
+              For watchlist/portfolio news, the symbols from this browser are transmitted. Double opt-in,
+              unsubscribe anytime, no sharing. "·$" = partly paid source. Details:{" "}
+              <a href="/datenschutz" className="text-accent hover:underline">Privacy</a>.
             </p>
           </div>
         </div>
@@ -284,7 +284,7 @@ export default function News() {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
-  const [sourceFilter, setSourceFilter] = useState('Alle');
+  const [sourceFilter, setSourceFilter] = useState('All');
   const [categoryFilter, setCategoryFilter] = useState('Alle');
   const [accessFilter, setAccessFilter] = useState('Alle');
   const [sortBy, setSortBy] = useState('newest');
@@ -313,13 +313,13 @@ export default function News() {
 
   const sources = useMemo(() => {
     const set = new Set(items.map((it) => it.source).filter(Boolean));
-    return ['Alle', ...[...set].sort((a, b) => a.localeCompare(b, 'de'))];
+    return ['All', ...[...set].sort((a, b) => a.localeCompare(b, 'de'))];
   }, [items]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     const result = items.filter((it) => {
-      if (sourceFilter !== 'Alle' && it.source !== sourceFilter) return false;
+      if (sourceFilter !== 'All' && it.source !== sourceFilter) return false;
       if (categoryFilter !== 'Alle' && it.category !== categoryFilter) return false;
       if (accessFilter === 'free' && it.access !== 'free') return false;
       if (!q) return true;
@@ -346,17 +346,17 @@ export default function News() {
     <div className="space-y-6">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <div className="text-xs uppercase tracking-widest text-dim">Märkte</div>
+          <div className="text-xs uppercase tracking-widest text-dim">Markets</div>
           <h1 className="text-2xl font-semibold text-text mt-1">News</h1>
         </div>
         <button
           onClick={load}
           disabled={loading}
           className="inline-flex items-center gap-2 rounded-xl border border-line lg-glass px-3 py-2 text-sm text-dim hover:border-accent/40 hover:text-text transition-colors disabled:opacity-60"
-          title="Aktualisieren"
+          title="Refresh"
         >
           <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
-          Aktualisieren
+          Refresh
         </button>
       </div>
 
@@ -364,7 +364,7 @@ export default function News() {
         <div className="flex flex-col sm:flex-row sm:items-center gap-3">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-[11px] uppercase tracking-wider text-dim w-16 shrink-0">
-              Quelle
+              Source
             </span>
             {sources.map((s) => (
               <FilterChip key={s} active={sourceFilter === s} onClick={() => setSourceFilter(s)}>
@@ -378,7 +378,7 @@ export default function News() {
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Suchen…"
+              placeholder="Search…"
               className="w-full sm:w-64 rounded-xl border border-line lg-glass pl-9 pr-3 py-2 text-sm text-text placeholder:text-dim focus:outline-none focus:border-accent/40"
             />
           </div>
@@ -387,7 +387,7 @@ export default function News() {
         <div className="flex flex-col sm:flex-row sm:items-center gap-3">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-[11px] uppercase tracking-wider text-dim w-16 shrink-0">
-              Thema
+              Topic
             </span>
             {CATEGORIES.map((c) => (
               <FilterChip
@@ -412,14 +412,14 @@ export default function News() {
           <div className="flex items-center gap-3 sm:ml-auto">
             {!loading && !error && (
               <span className="text-xs text-dim whitespace-nowrap">
-                {filtered.length} Artikel
+                {filtered.length} articles
               </span>
             )}
             <select
               value={sortBy}
               onChange={(e) => setSortBy(e.target.value)}
               className="rounded-xl border border-line lg-glass px-3 py-2 text-sm text-text focus:outline-none focus:border-accent/40"
-              title="Sortierung"
+              title="Sort"
             >
               {SORT_OPTIONS.map((o) => (
                 <option key={o.value} value={o.value}>
@@ -443,38 +443,38 @@ export default function News() {
 
       {!loading && error && (
         <div className="rounded-xl border border-line lg-glass p-6 text-center">
-          <p className="text-text font-medium">News konnten nicht geladen werden.</p>
+          <p className="text-text font-medium">News could not be loaded.</p>
           <p className="text-dim text-sm mt-2">
-            Hinweis: Der News-Feed läuft über eine Cloudflare Pages Function
-            (<code className="text-accent">/api/news</code>) und funktioniert nur auf der
-            deployten Seite — nicht im lokalen <code className="text-accent">vite dev</code>-Server.
+            Note: The news feed runs through a Cloudflare Pages Function
+            (<code className="text-accent">/api/news</code>) and only works on the
+            deployed site — not in the local <code className="text-accent">vite dev</code> server.
           </p>
           <button
             onClick={load}
             className="mt-4 inline-flex items-center gap-2 rounded-xl border border-line px-3 py-2 text-sm text-dim hover:border-accent/40 hover:text-text transition-colors"
           >
             <RefreshCw size={14} />
-            Erneut versuchen
+            Try again
           </button>
         </div>
       )}
 
       {!loading && !error && filtered.length === 0 && (
         <div className="rounded-xl border border-line lg-glass p-6 text-center">
-          <p className="text-text font-medium">Keine Meldungen gefunden.</p>
+          <p className="text-text font-medium">No news found.</p>
           <p className="text-dim text-sm mt-2">
-            Keine Artikel entsprechen den aktuellen Filtern. Filter zurücksetzen oder Suche anpassen.
+            No articles match the current filters. Reset the filters or adjust your search.
           </p>
           <button
             onClick={() => {
-              setSourceFilter('Alle');
+              setSourceFilter('All');
               setCategoryFilter('Alle');
               setAccessFilter('Alle');
               setQuery('');
             }}
             className="mt-4 inline-flex items-center gap-2 rounded-xl border border-line px-3 py-2 text-sm text-dim hover:border-accent/40 hover:text-text transition-colors"
           >
-            Filter zurücksetzen
+            Reset filters
           </button>
         </div>
       )}
@@ -492,7 +492,7 @@ export default function News() {
                 </span>
                 {it.access === 'partial-paywall' && (
                   <span className="rounded-full border border-line px-2 py-0.5 text-[11px] text-dim">
-                    Paywall möglich
+                    Possible paywall
                   </span>
                 )}
                 <span className="text-xs text-dim">{relativeTimeDe(it.pubDate)}</span>

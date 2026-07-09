@@ -207,7 +207,7 @@ async function loadCryptoList() {
   if (!cryptoListPromise) {
     cryptoListPromise = (async () => {
       const res = await fetch(BINANCE_EXCHANGE_INFO);
-      if (!res.ok) throw new Error(`Binance-Fehler ${res.status}`);
+      if (!res.ok) throw new Error(`Binance error ${res.status}`);
       const json = await res.json();
       const list = (json?.symbols || [])
         .filter((s) => s.quoteAsset === "USDT" && s.status === "TRADING")

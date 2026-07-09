@@ -100,19 +100,19 @@ export default function Watchlist() {
 
   return (
     <div>
-      <p className="text-[10px] tracking-[0.3em] text-dim uppercase mb-1">Beobachten</p>
+      <p className="text-[10px] tracking-[0.3em] text-dim uppercase mb-1">Watchlist</p>
       <h1 className="text-2xl font-bold mb-6">Watchlist</h1>
 
       {/* Add row */}
       <div className="rounded-xl border border-line lg-glass p-4 mb-6">
-        <p className="text-xs text-dim uppercase tracking-widest mb-3">Symbol hinzufügen</p>
+        <p className="text-xs text-dim uppercase tracking-widest mb-3">Add symbol</p>
         <div className="flex flex-wrap items-center gap-2">
           <MarketToggle market={market} onChange={setMarket} />
           <SymbolSearch
             market={market}
             value=""
             onSelect={handleAdd}
-            placeholder={market === "crypto" ? "z. B. BTCUSDT" : "z. B. AAPL, SPY"}
+            placeholder={market === "crypto" ? "e.g. BTCUSDT" : "e.g. AAPL, SPY"}
             className="flex-1 min-w-[200px]"
           />
         </div>
@@ -129,10 +129,10 @@ export default function Watchlist() {
       ) : items.length === 0 ? (
         <div className="rounded-xl border border-line lg-glass p-10 text-center">
           <Star className="w-8 h-8 text-dim mx-auto mb-3" />
-          <p className="font-semibold mb-1">Noch keine Symbole beobachtet</p>
+          <p className="font-semibold mb-1">No symbols watched yet</p>
           <p className="text-sm text-dim max-w-md mx-auto">
-            Füge oben Kryptowährungen oder Aktien hinzu, um Kurse und Tagesveränderung
-            im Blick zu behalten. Ein Klick auf eine Zeile öffnet den Chart.
+            Add cryptocurrencies or stocks above to keep an eye on prices and daily
+            change. Click a row to open the chart.
           </p>
         </div>
       ) : (
@@ -142,8 +142,8 @@ export default function Watchlist() {
               <thead>
                 <tr className="text-left text-dim text-xs border-b border-line">
                   <th className="px-4 py-3 font-medium">Symbol</th>
-                  <th className="px-4 py-3 font-medium hidden sm:table-cell">Markt</th>
-                  <th className="px-4 py-3 font-medium text-right">Kurs</th>
+                  <th className="px-4 py-3 font-medium hidden sm:table-cell">Market</th>
+                  <th className="px-4 py-3 font-medium text-right">Price</th>
                   <th className="px-4 py-3 font-medium text-right">1D</th>
                   <th className="px-4 py-3 font-medium text-right w-10" />
                 </tr>
@@ -166,7 +166,7 @@ export default function Watchlist() {
                         <span className="text-dim ml-2 hidden md:inline">{w.name}</span>
                       </td>
                       <td className="px-4 py-3 text-dim hidden sm:table-cell">
-                        {w.market === "crypto" ? "Krypto" : "Aktien"}
+                        {w.market === "crypto" ? "Crypto" : "Stocks"}
                       </td>
                       <td className="px-4 py-3 text-right font-mono">
                         {q ? fmtPrice(q.price) : <span className="text-dim">…</span>}
@@ -195,7 +195,7 @@ export default function Watchlist() {
                             e.stopPropagation();
                             handleRemove(w);
                           }}
-                          title="Entfernen"
+                          title="Remove"
                           className="text-dim hover:text-down transition-colors"
                         >
                           <Trash2 className="w-4 h-4" />
@@ -211,7 +211,7 @@ export default function Watchlist() {
       )}
 
       <p className="text-xs text-dim mt-4 flex items-center gap-1.5">
-        <Plus className="w-3 h-3" /> Kurse aktualisieren sich automatisch alle 60 Sekunden.
+        <Plus className="w-3 h-3" /> Prices refresh automatically every 60 seconds.
       </p>
     </div>
   );

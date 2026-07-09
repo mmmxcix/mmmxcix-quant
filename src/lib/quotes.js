@@ -27,17 +27,17 @@ function setCached(symbol, quote) {
 export async function fetchStockQuote(symbol) {
   const url = `${YAHOO_CHART}/${encodeURIComponent(symbol.toUpperCase())}?range=5d&interval=1d`;
   const res = await fetch(url);
-  if (!res.ok) throw new Error(`Yahoo-Fehler ${res.status} für "${symbol}"`);
+  if (!res.ok) throw new Error(`Yahoo error ${res.status} for "${symbol}"`);
   const json = await res.json();
   const result = json?.chart?.result?.[0];
   if (!result) {
-    throw new Error(json?.chart?.error?.description || `Keine Daten für "${symbol}".`);
+    throw new Error(json?.chart?.error?.description || `No data for "${symbol}".`);
   }
 
   const closes = (result.indicators?.quote?.[0]?.close || []).filter(
     (c) => c != null && Number.isFinite(c)
   );
-  if (closes.length < 2) throw new Error(`Zu wenige Datenpunkte für "${symbol}".`);
+  if (closes.length < 2) throw new Error(`Too few data points for "${symbol}".`);
 
   const lastClose = closes[closes.length - 1];
   const prevClose = closes[closes.length - 2];
@@ -52,7 +52,7 @@ export async function fetchStockQuote(symbol) {
 // Returns Map<symbol, { price, changePct }>.
 export async function fetchAllCryptoTickers() {
   const res = await fetch(BINANCE_24H);
-  if (!res.ok) throw new Error(`Binance-Fehler ${res.status}`);
+  if (!res.ok) throw new Error(`Binance error ${res.status}`);
   const rows = await res.json();
   const map = new Map();
   for (const r of rows) {

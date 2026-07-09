@@ -8,7 +8,7 @@ import { cn, fmtPrice, fmtPct } from "@/lib/utils";
 // via src/lib/quotes.js (one Binance call + throttled Yahoo chart calls).
 const PANELS = [
   {
-    title: "Indizes",
+    title: "Indices",
     entries: [
       { market: "stock", symbol: "^GSPC", name: "S&P 500" },
       { market: "stock", symbol: "^NDX", name: "Nasdaq 100" },
@@ -20,7 +20,7 @@ const PANELS = [
     ],
   },
   {
-    title: "Krypto",
+    title: "Crypto",
     entries: [
       { market: "crypto", symbol: "BTCUSDT", name: "Bitcoin" },
       { market: "crypto", symbol: "ETHUSDT", name: "Ethereum" },
@@ -31,18 +31,18 @@ const PANELS = [
     ],
   },
   {
-    title: "Rohstoffe",
+    title: "Commodities",
     entries: [
       { market: "stock", symbol: "GC=F", name: "Gold" },
-      { market: "stock", symbol: "SI=F", name: "Silber" },
-      { market: "stock", symbol: "CL=F", name: "WTI Öl" },
+      { market: "stock", symbol: "SI=F", name: "Silver" },
+      { market: "stock", symbol: "CL=F", name: "WTI Oil" },
       { market: "stock", symbol: "BZ=F", name: "Brent" },
-      { market: "stock", symbol: "NG=F", name: "Erdgas" },
-      { market: "stock", symbol: "HG=F", name: "Kupfer" },
+      { market: "stock", symbol: "NG=F", name: "Natural Gas" },
+      { market: "stock", symbol: "HG=F", name: "Copper" },
     ],
   },
   {
-    title: "Devisen",
+    title: "Forex",
     entries: [
       { market: "stock", symbol: "EURUSD=X", name: "EUR/USD" },
       { market: "stock", symbol: "GBPUSD=X", name: "GBP/USD" },
@@ -64,11 +64,11 @@ const PANELS = [
     ],
   },
   {
-    title: "Anleihen / Vola",
+    title: "Bonds / Vol",
     entries: [
-      { market: "stock", symbol: "^TNX", name: "US 10Y Rendite" },
-      { market: "stock", symbol: "^FVX", name: "US 5Y Rendite" },
-      { market: "stock", symbol: "^VIX", name: "VIX Volatilität" },
+      { market: "stock", symbol: "^TNX", name: "US 10Y Yield" },
+      { market: "stock", symbol: "^FVX", name: "US 5Y Yield" },
+      { market: "stock", symbol: "^VIX", name: "VIX Volatility" },
     ],
   },
 ];
@@ -187,13 +187,13 @@ export default function Monitor() {
     <div>
       <div className="flex flex-wrap items-end justify-between gap-3 mb-6">
         <div>
-          <p className="text-[10px] tracking-[0.3em] text-dim uppercase mb-1">Marktübersicht</p>
+          <p className="text-[10px] tracking-[0.3em] text-dim uppercase mb-1">Market overview</p>
           <h1 className="text-2xl font-bold">Monitor</h1>
         </div>
         <div className="flex items-center gap-3">
           {updatedAt && (
             <span className="text-xs text-dim font-mono">
-              Stand: {updatedAt.toLocaleTimeString("de-CH", { hour12: false })}
+              As of: {updatedAt.toLocaleTimeString("de-CH", { hour12: false })}
             </span>
           )}
           <button
@@ -202,7 +202,7 @@ export default function Monitor() {
             className="flex items-center gap-2 rounded-lg border border-line lg-glass px-3 py-1.5 text-xs text-dim hover:text-text hover:border-accent/40 transition-colors disabled:opacity-60"
           >
             <RefreshCw className={cn("w-3.5 h-3.5", loading && "animate-spin")} />
-            Aktualisieren
+            Refresh
           </button>
         </div>
       </div>

@@ -11,11 +11,11 @@ const NAV = [
   { to: "/watchlist", label: "Watchlist", icon: Star },
   { to: "/portfolio", label: "Portfolio", icon: Briefcase },
   { to: "/backtest", label: "Backtest", icon: FlaskConical },
-  { to: "/compare", label: "Vergleich", icon: Scale },
+  { to: "/compare", label: "Compare", icon: Scale },
   { to: "/tools", label: "Tools", icon: Wrench },
   { to: "/academy", label: "Academy", icon: GraduationCap },
   { to: "/news", label: "News", icon: Newspaper },
-  { to: "/resources", label: "Ressourcen", icon: Compass },
+  { to: "/resources", label: "Resources", icon: Compass },
 ];
 
 function NavItems({ onNavigate }) {
@@ -42,9 +42,9 @@ function LegalLinks({ small }) {
   const c = small ? "text-[10px] text-dim/60 hover:text-dim" : "text-xs text-dim hover:text-text";
   return (
     <div className="flex flex-wrap gap-x-3 gap-y-1">
-      <Link to="/impressum" className={cn("transition-colors", c)}>Impressum</Link>
-      <Link to="/datenschutz" className={cn("transition-colors", c)}>Datenschutz</Link>
-      <Link to="/nutzung" className={cn("transition-colors", c)}>Nutzung</Link>
+      <Link to="/impressum" className={cn("transition-colors", c)}>Legal Notice</Link>
+      <Link to="/datenschutz" className={cn("transition-colors", c)}>Privacy</Link>
+      <Link to="/nutzung" className={cn("transition-colors", c)}>Terms</Link>
     </div>
   );
 }
@@ -75,7 +75,7 @@ export default function Layout({ children }) {
         </nav>
         <div className="mt-auto px-3 pb-2 space-y-2">
           <p className="text-[10px] text-dim/60 leading-relaxed">
-            Keine Anlageberatung. Backtests sind hypothetisch — vergangene Performance garantiert nichts.
+            Not investment advice. Backtests are hypothetical — past performance guarantees nothing.
           </p>
           <LegalLinks small />
         </div>
@@ -88,7 +88,7 @@ export default function Layout({ children }) {
         </p>
         <button
           onClick={() => setDrawerOpen(true)}
-          aria-label="Menü öffnen"
+          aria-label="Open menu"
           className="p-2 -mr-2 rounded-lg text-dim hover:text-text active:bg-surface transition-colors"
         >
           <Menu className="w-5 h-5" />
@@ -105,7 +105,7 @@ export default function Layout({ children }) {
                 <p className="text-[10px] tracking-[0.3em] text-dim uppercase">MMMXCIX</p>
                 <p className="text-lg font-bold text-text tracking-tight">Quant</p>
               </div>
-              <button onClick={() => setDrawerOpen(false)} aria-label="Menü schliessen"
+              <button onClick={() => setDrawerOpen(false)} aria-label="Close menu"
                 className="p-2 rounded-lg text-dim hover:text-text active:bg-bg transition-colors">
                 <X className="w-5 h-5" />
               </button>
@@ -125,7 +125,7 @@ export default function Layout({ children }) {
       {/* Mobile footer */}
       <footer className="md:hidden border-t border-line px-4 py-4 mt-4">
         <LegalLinks />
-        <p className="mt-2 text-[10px] text-dim/60">Keine Anlageberatung.</p>
+        <p className="mt-2 text-[10px] text-dim/60">Not investment advice.</p>
       </footer>
     </div>
   );

@@ -6,24 +6,24 @@ import { MARKETS } from "@/lib/data";
 import { cn, fmtPrice, fmtPct, fmtNum } from "@/lib/utils";
 
 const RSI_OPTS = [
-  { id: "any", label: "RSI: alle" },
-  { id: "oversold", label: "Überverkauft (<30)" },
-  { id: "overbought", label: "Überkauft (>70)" },
+  { id: "any", label: "RSI: all" },
+  { id: "oversold", label: "Oversold (<30)" },
+  { id: "overbought", label: "Overbought (>70)" },
 ];
 const TREND_OPTS = [
-  { id: "any", label: "Trend: alle" },
-  { id: "above50", label: "Über SMA 50" },
-  { id: "below50", label: "Unter SMA 50" },
-  { id: "above200", label: "Über SMA 200" },
-  { id: "below200", label: "Unter SMA 200" },
+  { id: "any", label: "Trend: all" },
+  { id: "above50", label: "Above SMA 50" },
+  { id: "below50", label: "Below SMA 50" },
+  { id: "above200", label: "Above SMA 200" },
+  { id: "below200", label: "Below SMA 200" },
 ];
 
-// Compact volume: 1.2 Mrd / 3.4 Mio / 5.6 Tsd
+// Compact volume: 1.2 B / 3.4 M / 5.6 K
 function fmtVol(v) {
   if (v == null || Number.isNaN(v)) return "–";
-  if (v >= 1e9) return `${fmtNum(v / 1e9, 1)} Mrd`;
-  if (v >= 1e6) return `${fmtNum(v / 1e6, 1)} Mio`;
-  if (v >= 1e3) return `${fmtNum(v / 1e3, 1)} Tsd`;
+  if (v >= 1e9) return `${fmtNum(v / 1e9, 1)} B`;
+  if (v >= 1e6) return `${fmtNum(v / 1e6, 1)} M`;
+  if (v >= 1e3) return `${fmtNum(v / 1e3, 1)} K`;
   return fmtNum(v, 0);
 }
 
@@ -46,7 +46,7 @@ export default function Screener() {
       const data = m === "crypto" ? await scanCrypto({ limit: 30 }) : await scanStocks();
       setRows(data);
     } catch (e) {
-      setError(e.message || "Scan fehlgeschlagen.");
+      setError(e.message || "Scan failed.");
       setRows([]);
     } finally {
       setLoading(false);
@@ -109,19 +109,19 @@ export default function Screener() {
           {TREND_OPTS.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
         </select>
         <label className="flex items-center gap-1.5 text-xs text-dim">
-          Änderung ≥
+          Change ≥
           <input type="number" value={minChange} onChange={(e) => setMinChange(e.target.value)}
             placeholder="%" className="input-base font-mono w-20 text-sm" />
         </label>
         <button onClick={() => load()} disabled={loading}
-          className="btn-ghost flex items-center gap-1.5 ml-auto" title="Neu scannen">
-          <RefreshCw className={cn("w-4 h-4", loading && "animate-spin")} /> Scannen
+          className="btn-ghost flex items-center gap-1.5 ml-auto" title="Rescan">
+          <RefreshCw className={cn("w-4 h-4", loading && "animate-spin")} /> Scan
         </button>
       </div>
 
       <p className="text-xs text-dim mb-3">
-        {loading ? "Scanne Markt…" : `${filtered.length} von ${rows.length} Werten`}
-        {market === "crypto" ? " · Top 30 nach Volumen" : " · kuratiertes Aktien-Universum"}
+        {loading ? "Scanning market…" : `${filtered.length} of ${rows.length} symbols`}
+        {market === "crypto" ? " · Top 30 by volume" : " · curated stock universe"}
       </p>
 
       <div className="rounded-xl border border-line lg-glass overflow-hidden">
@@ -130,9 +130,9 @@ export default function Screener() {
             <thead>
               <tr className="text-left text-dim text-xs border-b border-line">
                 <Th label="Symbol" k="symbol" />
-                <Th label="Kurs" k="price" right />
+                <Th label="Price" k="price" right />
                 <Th label="24h %" k="changePct" right />
-                <Th label="Volumen" k="volume" right />
+                <Th label="Volume" k="volume" right />
                 <Th label="RSI" k="rsi" right />
                 <th className="px-3 py-2 font-medium text-right whitespace-nowrap">Trend</th>
               </tr>
@@ -148,7 +148,7 @@ export default function Screener() {
                   </tr>
                 ))
               ) : filtered.length === 0 ? (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-dim">Keine Treffer für diese Filter.</td></tr>
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-dim">No matches for these filters.</td></tr>
               ) : (
                 filtered.map((r) => (
                   <tr key={`${r.market}:${r.symbol}`}
@@ -185,8 +185,8 @@ export default function Screener() {
       </div>
 
       <p className="mt-3 text-[11px] text-dim">
-        Trend-Badges: grün = Kurs über dem SMA (50/200), rot = darunter. RSI: grün = überverkauft (&lt;30),
-        rot = überkauft (&gt;70). Klick auf eine Zeile öffnet den Chart. Keine Anlageberatung.
+        Trend badges: green = price above the SMA (50/200), red = below. RSI: green = oversold (&lt;30),
+        red = overbought (&gt;70). Click a row to open the chart. Not investment advice.
       </p>
     </div>
   );

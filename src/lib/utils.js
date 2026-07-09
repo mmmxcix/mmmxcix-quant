@@ -5,10 +5,10 @@ export function cn(...inputs) {
   return twMerge(clsx(inputs));
 }
 
-// 1234.5678 → "1'234.57" (Swiss-style thousands separator)
+// 1234.5678 → "1,234.57" (US-style thousands separator)
 export function fmtNum(n, digits = 2) {
   if (n === null || n === undefined || Number.isNaN(n)) return "–";
-  return n.toLocaleString("de-CH", {
+  return n.toLocaleString("en-US", {
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,
   });

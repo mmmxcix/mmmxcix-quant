@@ -5,56 +5,56 @@ import LegalLayout, { H2 } from "@/components/LegalLayout";
 // so it is not mistaken for regulated investment advice.
 export default function Nutzung() {
   return (
-    <LegalLayout title="Nutzung & Haftung" updated="7. Juli 2026">
-      <H2>1. Keine Anlageberatung</H2>
+    <LegalLayout title="Terms & Liability" updated="July 7, 2026">
+      <H2>1. Not investment advice</H2>
       <p>
-        MMMXCIX Quant stellt Werkzeuge zur Marktbeobachtung, zum Backtesting und zur Recherche bereit. Sämtliche
-        Inhalte, Kennzahlen, Charts, Backtest-Ergebnisse, Vergleiche, Simulationen und generierten Strategien
-        dienen ausschliesslich <strong className="text-text">Informations- und Bildungszwecken</strong>. Sie
-        stellen <strong className="text-text">keine Anlageberatung, keine Finanzanalyse und keine
-        Empfehlung</strong> zum Kauf, Verkauf oder Halten von Finanzinstrumenten dar und berücksichtigen weder
-        deine persönlichen Verhältnisse noch deine Anlageziele oder Risikofähigkeit. Es besteht keine
-        Kundenbeziehung im Sinne des Schweizer Finanzdienstleistungsgesetzes (FIDLEG).
+        MMMXCIX Quant provides tools for market monitoring, backtesting and research. All content, metrics,
+        charts, backtest results, comparisons, simulations and generated strategies serve
+        <strong className="text-text"> informational and educational purposes only</strong>. They do
+        <strong className="text-text"> not constitute investment advice, financial analysis, or a
+        recommendation</strong> to buy, sell, or hold financial instruments, and take into account neither your
+        personal circumstances nor your investment objectives or risk capacity. No client relationship within
+        the meaning of the Swiss Financial Services Act (FinSA/FIDLEG) is established.
       </p>
 
-      <H2>2. Keine Gewähr auf Daten</H2>
+      <H2>2. No warranty on data</H2>
       <p>
-        Marktdaten und Nachrichten stammen von Drittanbietern und können verzögert, unvollständig oder
-        fehlerhaft sein. Wir übernehmen keine Gewähr für Richtigkeit, Vollständigkeit oder Aktualität.
-        Historische Kursverläufe und Backtest-Resultate sind <strong className="text-text">keine Garantie für
-        zukünftige Entwicklungen</strong>; simulierte Ergebnisse unterliegen nicht den Risiken echten Handels.
+        Market data and news come from third parties and may be delayed, incomplete, or inaccurate. We provide
+        no warranty as to accuracy, completeness, or timeliness. Historical price movements and backtest
+        results are <strong className="text-text">no guarantee of future performance</strong>; simulated
+        results are not subject to the risks of real trading.
       </p>
 
-      <H2>3. Simuliertes Portfolio</H2>
+      <H2>3. Simulated portfolio</H2>
       <p>
-        Das Portfolio-Werkzeug ist eine reine Simulation mit fiktiven Positionen. Es findet kein echter Handel
-        statt, es wird kein Geld bewegt und es besteht keine Verbindung zu einem Broker oder Depot.
+        The portfolio tool is a pure simulation using fictitious positions. No real trading takes place, no
+        money is moved, and there is no connection to any broker or brokerage account.
       </p>
 
-      <H2>4. Eigenverantwortung &amp; Risiko</H2>
+      <H2>4. Own responsibility &amp; risk</H2>
       <p>
-        Anlageentscheidungen triffst du eigenverantwortlich und auf eigenes Risiko. Der Handel mit
-        Finanzinstrumenten, insbesondere mit Kryptowährungen, ist mit erheblichen Risiken bis zum Totalverlust
-        verbunden. Ziehe bei Bedarf eine qualifizierte, unabhängige Fachperson bei.
+        You make investment decisions on your own responsibility and at your own risk. Trading financial
+        instruments, and cryptocurrencies in particular, carries substantial risk up to total loss. Consult a
+        qualified, independent professional where appropriate.
       </p>
 
-      <H2>5. Haftungsausschluss</H2>
+      <H2>5. Limitation of liability</H2>
       <p>
-        Soweit gesetzlich zulässig, haften wir nicht für Schäden, die aus der Nutzung oder Nichtverfügbarkeit
-        des Angebots, aus fehlerhaften Daten oder aus Entscheidungen entstehen, die auf Grundlage der
-        bereitgestellten Inhalte getroffen wurden. Das Angebot wird „wie besehen" und ohne Zusicherung
-        ununterbrochener Verfügbarkeit bereitgestellt.
+        To the extent permitted by law, we are not liable for damages arising from the use or unavailability of
+        the service, from faulty data, or from decisions made on the basis of the content provided. The service
+        is provided "as is" and without any assurance of uninterrupted availability.
       </p>
 
-      <H2>6. Nutzung der KI-Funktion</H2>
+      <H2>6. Use of the AI feature</H2>
       <p>
-        Von der KI generierter Code wird ohne Gewähr bereitgestellt und kann Fehler enthalten. Prüfe erzeugten
-        Code vor jeder Verwendung selbst. Eine missbräuchliche Nutzung der Funktion ist untersagt.
+        Code generated by the AI is provided without warranty and may contain errors. Review generated code
+        yourself before any use. Misuse of the feature is prohibited.
       </p>
 
-      <H2>7. Anwendbares Recht</H2>
+      <H2>7. Applicable law</H2>
       <p>
-        Es gilt Schweizer Recht. Gerichtsstand ist – soweit gesetzlich zulässig – der Wohnsitz des Betreibers.
+        Swiss law applies. The place of jurisdiction is — to the extent permitted by law — the operator's
+        place of residence.
       </p>
     </LegalLayout>
   );

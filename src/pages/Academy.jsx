@@ -56,11 +56,11 @@ export default function Academy() {
     return (
       <div className="max-w-3xl">
         <button onClick={closeLesson} className="flex items-center gap-1.5 text-sm text-dim hover:text-text transition-colors mb-4">
-          <ArrowLeft className="w-4 h-4" /> Zurück zum Lernpfad
+          <ArrowLeft className="w-4 h-4" /> Back to the path
         </button>
         <p className="text-[10px] tracking-[0.3em] text-dim uppercase mb-1">Level {lesson.level} · {lesson.categoryTitle}</p>
         <h1 className="text-2xl font-bold mb-2">{lesson.title}</h1>
-        <p className="flex items-center gap-1.5 text-xs text-dim mb-6"><Clock className="w-3.5 h-3.5" /> {lesson.minutes} Min. Lesezeit</p>
+        <p className="flex items-center gap-1.5 text-xs text-dim mb-6"><Clock className="w-3.5 h-3.5" /> {lesson.minutes} min read</p>
 
         <article className="space-y-4 text-sm">
           {lesson.body.map((b, i) => <Block key={i} block={b} />)}
@@ -69,19 +69,19 @@ export default function Academy() {
         <button onClick={() => setDone(lesson.id, !isDone)}
           className={cn("mt-8 flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors",
             isDone ? "bg-up/15 border border-up/40 text-up" : "btn-accent")}>
-          <Check className="w-4 h-4" /> {isDone ? "Als erledigt markiert" : "Als erledigt markieren"}
+          <Check className="w-4 h-4" /> {isDone ? "Marked as done" : "Mark as done"}
         </button>
 
         <div className="flex justify-between gap-3 mt-8 pt-6 border-t border-line">
           {prev ? (
             <button onClick={() => openLesson(prev.id)} className="btn-ghost text-left max-w-[48%]">
-              <span className="block text-[10px] text-dim uppercase tracking-wide">Zurück</span>
+              <span className="block text-[10px] text-dim uppercase tracking-wide">Back</span>
               <span className="text-sm truncate block">{prev.title}</span>
             </button>
           ) : <span />}
           {next && (
             <button onClick={() => openLesson(next.id)} className="btn-ghost text-right max-w-[48%] ml-auto">
-              <span className="block text-[10px] text-dim uppercase tracking-wide">Weiter</span>
+              <span className="block text-[10px] text-dim uppercase tracking-wide">Next</span>
               <span className="text-sm truncate block">{next.title}</span>
             </button>
           )}
@@ -96,20 +96,20 @@ export default function Academy() {
 
   return (
     <div className="max-w-4xl">
-      <p className="text-[10px] tracking-[0.3em] text-dim uppercase mb-1">Lernpfad</p>
+      <p className="text-[10px] tracking-[0.3em] text-dim uppercase mb-1">Learning path</p>
       <div className="flex items-center gap-2 mb-2">
         <GraduationCap className="w-6 h-6 text-accent" />
         <h1 className="text-xl sm:text-2xl font-bold">Quant Academy</h1>
       </div>
       <p className="text-sm text-dim mb-5 max-w-2xl">
-        Ein Weg vom kompletten Einsteiger bis zu dem Punkt, an dem du eigenständig weiterkommst.
-        Arbeite die Level der Reihe nach durch — jede Lektion ist mit den Werkzeugen dieser Seite verknüpft.
+        A path from complete beginner to the point where you can carry on independently.
+        Work through the levels in order — each lesson is linked to the tools on this site.
       </p>
 
       {/* Overall progress */}
       <div className="rounded-xl border border-line lg-glass p-4 mb-6">
         <div className="flex items-center justify-between mb-2">
-          <span className="text-sm text-text">Dein Fortschritt</span>
+          <span className="text-sm text-text">Your progress</span>
           <span className="text-sm font-mono text-accent">{totalDone}/{total}</span>
         </div>
         <div className="h-2 rounded-full bg-bg overflow-hidden">
@@ -117,11 +117,11 @@ export default function Academy() {
         </div>
         {nextUp && (
           <button onClick={() => openLesson(nextUp.id)} className="btn-accent mt-3 text-sm">
-            {totalDone === 0 ? "Jetzt starten" : "Weiterlernen"}: {nextUp.title}
+            {totalDone === 0 ? "Start now" : "Continue"}: {nextUp.title}
           </button>
         )}
         {!nextUp && total > 0 && (
-          <p className="mt-3 text-sm text-up">Alles abgeschlossen — du bist bereit, eigenständig weiterzugehen. 🎉</p>
+          <p className="mt-3 text-sm text-up">All done — you're ready to continue on your own. 🎉</p>
         )}
       </div>
 
@@ -166,17 +166,17 @@ export default function Academy() {
       <div className="rounded-xl border border-line lg-glass p-5 mt-6">
         <div className="flex items-center gap-2 mb-2">
           <Compass className="w-5 h-5 text-accent" />
-          <p className="font-semibold text-text">Ab hier kommst du allein weiter</p>
+          <p className="font-semibold text-text">From here, you continue on your own</p>
         </div>
         <p className="text-sm text-dim mb-3">
-          Wenn du die Level durch hast, kennst du die Grundlagen, Indikatoren, Backtesting und Risikomanagement.
-          Der nächste Schritt ist eigenes Ausprobieren: baue Strategien im Backtest, scanne den Markt im Screener,
-          und vertiefe dich mit den kuratierten externen Quellen.
+          Once you've worked through the levels, you'll know the fundamentals, indicators, backtesting, and risk management.
+          The next step is experimenting on your own: build strategies in the Backtest, scan the market in the Screener,
+          and dig deeper with the curated external sources.
         </p>
         <div className="flex flex-wrap gap-2">
-          <Link to="/backtest" className="chip chip-idle">Zum Backtest</Link>
-          <Link to="/screener" className="chip chip-idle">Zum Screener</Link>
-          <Link to="/resources" className="chip chip-idle">Externe Ressourcen</Link>
+          <Link to="/backtest" className="chip chip-idle">To Backtest</Link>
+          <Link to="/screener" className="chip chip-idle">To Screener</Link>
+          <Link to="/resources" className="chip chip-idle">External resources</Link>
         </div>
       </div>
     </div>

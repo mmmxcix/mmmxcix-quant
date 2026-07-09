@@ -58,7 +58,7 @@ export async function scanCrypto({ limit = 30 } = {}) {
   if (hit && Date.now() - hit.t < CACHE_TTL) return hit.data;
 
   const res = await fetch(`${BINANCE}/ticker/24hr`);
-  if (!res.ok) throw new Error("Binance-Ticker nicht erreichbar.");
+  if (!res.ok) throw new Error("Binance ticker unavailable.");
   const all = await res.json();
 
   const top = all

@@ -21,26 +21,26 @@ const ANTHROPIC_MODEL = "claude-sonnet-5";
 const GEMINI_MODELS = ["gemini-flash-latest", "gemini-2.5-flash", "gemini-flash-lite-latest", "gemini-2.5-flash-lite"];
 const MAX_PROMPT_CHARS = 2000;
 
-const SYSTEM_PROMPT = `Du bist ein Quant-Strategie-Generator für ein Browser-Backtesting-Tool.
-Antworte AUSSCHLIESSLICH mit JavaScript-Code, ohne Markdown-Zäune, ohne Erklärtext davor oder danach.
+const SYSTEM_PROMPT = `You are a quant strategy generator for a browser-based backtesting tool.
+Respond with JavaScript code ONLY — no markdown fences, no explanatory text before or after.
 
-Der Code MUSS eine Funktion \`strategy(ctx)\` definieren:
-- ctx.candles: Array von { time (Unix-Sekunden), open, high, low, close, volume }, aufsteigend
-- ctx.index: Index der aktuellen Kerze (Signal wird auf Schlusskurs berechnet, Ausführung am nächsten Open)
-- ctx.close: aktueller Schlusskurs
-- ctx.position: "long" | "flat" (aktuelle Position)
+The code MUST define a function \`strategy(ctx)\`:
+- ctx.candles: array of { time (unix seconds), open, high, low, close, volume }, ascending
+- ctx.index: index of the current candle (the signal is computed on the close, executed at the next open)
+- ctx.close: current close price
+- ctx.position: "long" | "flat" (current position)
 - ctx.indicators: { sma, ema, rsi, roc, atr, bollinger, donchian, closes }
-  - sma/ema/rsi/roc(values, period) erwarten number[] (z. B. ctx.indicators.closes(ctx.candles))
+  - sma/ema/rsi/roc(values, period) expect number[] (e.g. ctx.indicators.closes(ctx.candles))
   - atr/donchian(candles, period); bollinger(values, period, mult)
-  - Alle liefern Arrays gleicher Länge wie der Input, mit null in der Warmup-Phase
-- Rückgabe: "long" (Position halten/eröffnen) oder "flat" (keine Position)
+  - All return arrays the same length as the input, with null during the warm-up phase
+- Return: "long" (hold/open a position) or "flat" (no position)
 
-Regeln:
-- Nur Long/Flat (kein Short). Kein Look-Ahead (nur Daten bis ctx.index verwenden).
-- Indikator-Arrays einmal pro Kerzen-Array berechnen und cachen (z. B. Modul-Variable mit WeakMap oder Vergleich der Array-Referenz), damit der Backtest schnell bleibt.
-- Defensive Checks auf null in der Warmup-Phase → dann "flat".
-- Deutsche Kommentare, die die Logik knapp erklären.
-- Kein Zugriff auf window/fetch/DOM — reine Berechnung.`;
+Rules:
+- Long/flat only (no shorting). No look-ahead (use only data up to ctx.index).
+- Compute indicator arrays once per candle array and cache them (e.g. a module-level WeakMap or an array-reference check) to keep the backtest fast.
+- Defensive null checks during the warm-up phase → return "flat".
+- Concise English comments explaining the logic.
+- No access to window/fetch/DOM — pure computation only.`;
 
 function json(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -85,7 +85,7 @@ export async function onRequest({ request, env }) {
   if (request.method !== "POST") return json({ error: "method_not_allowed" }, 405);
 
   if (!env.DEV_ACCESS_TOKEN || (!env.ANTHROPIC_API_KEY && !env.GEMINI_API_KEY)) {
-    return json({ error: "not_configured", hint: "DEV_ACCESS_TOKEN plus ANTHROPIC_API_KEY oder GEMINI_API_KEY als Cloudflare-Secrets setzen." }, 503);
+    return json({ error: "not_configured", hint: "Set DEV_ACCESS_TOKEN plus ANTHROPIC_API_KEY or GEMINI_API_KEY as Cloudflare secrets." }, 503);
   }
 
   let body;
@@ -104,7 +104,7 @@ export async function onRequest({ request, env }) {
   if (!prompt) return json({ error: "empty_prompt" }, 400);
   if (prompt.length > MAX_PROMPT_CHARS) return json({ error: "prompt_too_long" }, 400);
 
-  const userMsg = `Erstelle eine Backtest-Strategie: ${prompt}`;
+  const userMsg = `Create a backtest strategy: ${prompt}`;
   let res, text;
 
   if (env.ANTHROPIC_API_KEY) {

@@ -78,9 +78,9 @@ export async function ensureNotificationPermission() {
 }
 
 function notify(alert) {
-  const dir = alert.direction === "above" ? "über" : "unter";
+  const dir = alert.direction === "above" ? "above" : "below";
   const title = `${alert.symbol} ${dir} ${alert.price}`;
-  const body = `Preisalarm ausgelöst: ${alert.symbol} ist ${dir} ${alert.price}.`;
+  const body = `Price alert triggered: ${alert.symbol} is ${dir} ${alert.price}.`;
   try {
     if (typeof Notification !== "undefined" && Notification.permission === "granted") {
       new Notification(title, { body, tag: alert.id });

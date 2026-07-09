@@ -184,26 +184,26 @@ export default function Portfolio() {
       <p className="text-[10px] tracking-[0.3em] text-dim uppercase mb-1">Simulation</p>
       <h1 className="text-2xl font-bold mb-2">Portfolio</h1>
       <p className="text-sm text-dim mb-6">
-        Simuliertes Portfolio — kein echtes Geld, keine Anlageberatung.
+        Simulated portfolio — not real money, not investment advice.
       </p>
 
       {/* Summary */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
-        <SummaryCard label="Gesamtwert" value={fmtNum(totals.totalValue, 2)} big />
-        <SummaryCard label="Eingesetzt" value={fmtNum(totals.totalCost, 2)} big />
+        <SummaryCard label="Total value" value={fmtNum(totals.totalValue, 2)} big />
+        <SummaryCard label="Invested" value={fmtNum(totals.totalCost, 2)} big />
         <SummaryCard
-          label="Gesamt-G/V"
+          label="Total P/L"
           value={(totals.totalPnl >= 0 ? "+" : "") + fmtNum(totals.totalPnl, 2)}
           sub={gvSub}
           tone={upDown(totals.totalPnl)}
           big
         />
-        <SummaryCard label="Positionen" value={String(totals.count)} big />
+        <SummaryCard label="Positions" value={String(totals.count)} big />
       </div>
 
       {/* Add form */}
       <div className="rounded-xl border border-line lg-glass p-4 mb-6">
-        <p className="text-xs text-dim uppercase tracking-widest mb-3">Position hinzufügen</p>
+        <p className="text-xs text-dim uppercase tracking-widest mb-3">Add position</p>
         <div className="flex flex-wrap items-end gap-3">
           <div className="space-y-2">
             <MarketToggle
@@ -217,12 +217,12 @@ export default function Portfolio() {
               market={market}
               value={symbol}
               onSelect={(s) => setSymbol(s.toUpperCase())}
-              placeholder={market === "crypto" ? "z. B. BTCUSDT" : "z. B. AAPL"}
+              placeholder={market === "crypto" ? "e.g. BTCUSDT" : "e.g. AAPL"}
               className="w-56"
             />
           </div>
           <label className="text-xs text-dim">
-            Anzahl / Stück
+            Quantity / shares
             <input
               type="number"
               min={0}
@@ -234,14 +234,14 @@ export default function Portfolio() {
             />
           </label>
           <label className="text-xs text-dim">
-            Kaufpreis (Ø)
+            Buy price (avg.)
             <input
               type="number"
               min={0}
               step="any"
               value={avgPrice}
               onChange={(e) => setAvgPrice(e.target.value)}
-              placeholder="aktuell"
+              placeholder="current"
               className="input-base w-32 mt-1 font-mono block"
             />
           </label>
@@ -251,11 +251,11 @@ export default function Portfolio() {
             disabled={!canSubmit || submitting}
             className="btn-accent flex items-center gap-1.5 disabled:opacity-40"
           >
-            <Plus className="w-4 h-4" /> Hinzufügen
+            <Plus className="w-4 h-4" /> Add
           </button>
         </div>
         <p className="text-[11px] text-dim mt-2">
-          Kaufpreis leer lassen → der aktuelle Kurs wird als Einstieg übernommen.
+          Leave buy price empty → the current price is used as the entry.
         </p>
       </div>
 
@@ -271,10 +271,10 @@ export default function Portfolio() {
       ) : positions.length === 0 ? (
         <div className="rounded-xl border border-line lg-glass p-10 text-center">
           <Wallet className="w-8 h-8 text-dim mx-auto mb-3" />
-          <p className="font-semibold mb-1">Noch keine Positionen</p>
+          <p className="font-semibold mb-1">No positions yet</p>
           <p className="text-sm text-dim max-w-md mx-auto">
-            Lege oben eine simulierte Position an, um Wert und Gewinn/Verlust in
-            Echtzeit zu verfolgen. Rein zu Übungszwecken — es fließt kein echtes Geld.
+            Add a simulated position above to track value and profit/loss in real
+            time. For practice only — no real money is involved.
           </p>
         </div>
       ) : (
@@ -284,12 +284,12 @@ export default function Portfolio() {
               <thead>
                 <tr className="text-left text-dim text-xs border-b border-line">
                   <th className="px-4 py-3 font-medium">Symbol</th>
-                  <th className="px-4 py-3 font-medium text-right">Anzahl</th>
-                  <th className="px-4 py-3 font-medium text-right">Ø Kaufpreis</th>
-                  <th className="px-4 py-3 font-medium text-right">Kurs</th>
-                  <th className="px-4 py-3 font-medium text-right">Wert</th>
-                  <th className="px-4 py-3 font-medium text-right">G/V</th>
-                  <th className="px-4 py-3 font-medium hidden lg:table-cell w-40">Anteil</th>
+                  <th className="px-4 py-3 font-medium text-right">Quantity</th>
+                  <th className="px-4 py-3 font-medium text-right">Avg. buy price</th>
+                  <th className="px-4 py-3 font-medium text-right">Price</th>
+                  <th className="px-4 py-3 font-medium text-right">Value</th>
+                  <th className="px-4 py-3 font-medium text-right">P/L</th>
+                  <th className="px-4 py-3 font-medium hidden lg:table-cell w-40">Weight</th>
                   <th className="px-4 py-3 font-medium text-right w-20" />
                 </tr>
               </thead>
@@ -374,14 +374,14 @@ export default function Portfolio() {
                             <>
                               <button
                                 onClick={() => saveEdit(r.id)}
-                                title="Speichern"
+                                title="Save"
                                 className="text-dim hover:text-up transition-colors"
                               >
                                 <Check className="w-4 h-4" />
                               </button>
                               <button
                                 onClick={() => setEditId(null)}
-                                title="Abbrechen"
+                                title="Cancel"
                                 className="text-dim hover:text-text transition-colors"
                               >
                                 <X className="w-4 h-4" />
@@ -391,14 +391,14 @@ export default function Portfolio() {
                             <>
                               <button
                                 onClick={() => startEdit(r)}
-                                title="Bearbeiten"
+                                title="Edit"
                                 className="text-dim hover:text-accent transition-colors"
                               >
                                 <Pencil className="w-4 h-4" />
                               </button>
                               <button
                                 onClick={() => removePosition(r.id)}
-                                title="Entfernen"
+                                title="Remove"
                                 className="text-dim hover:text-down transition-colors"
                               >
                                 <Trash2 className="w-4 h-4" />
@@ -417,8 +417,8 @@ export default function Portfolio() {
       )}
 
       <p className="text-xs text-dim mt-4">
-        Kurse aktualisieren sich automatisch alle 60 Sekunden. Simuliertes Portfolio —
-        kein echtes Geld, keine Anlageberatung.
+        Prices refresh automatically every 60 seconds. Simulated portfolio —
+        not real money, not investment advice.
       </p>
     </div>
   );

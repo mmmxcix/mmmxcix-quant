@@ -7,7 +7,7 @@ export const CHART_TYPES = [
   { id: "heikin", label: "Heikin-Ashi" },
   { id: "bars", label: "Bars" },
   { id: "line", label: "Linie" },
-  { id: "area", label: "Fläche" },
+  { id: "area", label: "Area" },
 ];
 
 // Heikin-Ashi smoothing. Returns candles in the same shape; each HA bar:

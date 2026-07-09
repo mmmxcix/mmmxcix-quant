@@ -15,9 +15,9 @@ const YEAR_SECONDS = 365.25 * 86400;
 // Monatliche Schlusskurse, komplette Historie. → [{ time, close }]
 export async function fetchMonthlySeries(market, symbol) {
   const sym = String(symbol || "").trim().toUpperCase();
-  if (!sym) throw new Error("Kein Symbol angegeben.");
+  if (!sym) throw new Error("No symbol provided.");
   const series = market === "crypto" ? await fetchBinanceMonthly(sym) : await fetchYahooMonthly(sym);
-  if (series.length < 2) throw new Error(`Zu wenige Datenpunkte für "${sym}".`);
+  if (series.length < 2) throw new Error(`Too few data points for "${sym}".`);
   return series;
 }
 
