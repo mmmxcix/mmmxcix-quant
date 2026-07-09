@@ -8,7 +8,7 @@ import {
   fetchDividends,
   rebase,
   simulateDCA,
-  dividendStats,
+  simulateDividendGrowth,
 } from "@/lib/compare";
 import { cn, fmtNum, fmtPct } from "@/lib/utils";
 
@@ -21,15 +21,15 @@ const TABS = [
 ];
 
 const PERF_RANGES = [
-  { id: "1y", label: "1J", years: 1 },
-  { id: "5y", label: "5J", years: 5 },
-  { id: "10y", label: "10J", years: 10 },
+  { id: "1y", label: "1Y", years: 1 },
+  { id: "5y", label: "5Y", years: 5 },
+  { id: "10y", label: "10Y", years: 10 },
   { id: "max", label: "Max", years: null },
 ];
 
 const DIV_WINDOWS = [
-  { id: "5y", label: "5J", years: 5 },
-  { id: "10y", label: "10J", years: 10 },
+  { id: "5y", label: "5Y", years: 5 },
+  { id: "10y", label: "10Y", years: 10 },
   { id: "max", label: "Max", years: null },
 ];
 
@@ -522,240 +522,123 @@ function DcaTab({ active }) {
   );
 }
 
-// ── Tab 3: Dividenden ────────────────────────────────────────────────────────
+// ── Tab 3: Dividends — growth of a dividend stock, three lines over time:
+// invested (contributions), price-only value, and value with dividends
+// reinvested. Shows the "power of dividend reinvestment" for one stock.
 
 function DividendTab({ active }) {
-  const [symbols, setSymbols] = useState([
-    { id: 1, symbol: "KO" },
-    { id: 2, symbol: "JPM" },
-  ]);
-  const idRef = useRef(3);
-  const [windowId, setWindowId] = useState("10y");
-  const [data, setData] = useState({}); // SYMBOL → { series, dividends }
-  const [errors, setErrors] = useState({});
+  const [symbol, setSymbol] = useState("O"); // Realty Income — a classic dividend stock
+  const [monthly, setMonthly] = useState(200);
+  const [windowId, setWindowId] = useState("max");
+  const [data, setData] = useState(null); // { series, dividends }
+  const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     if (!active) return;
     let cancelled = false;
     setLoading(true);
+    setError(null);
     (async () => {
-      const nextData = {};
-      const nextErrors = {};
-      await Promise.all(
-        symbols.map(async (s) => {
-          try {
-            const [series, dividends] = await Promise.all([
-              getSeries("stock", s.symbol),
-              getDividends(s.symbol),
-            ]);
-            if (!dividends.length) {
-              nextErrors[s.symbol] = `No dividend history found for "${s.symbol}".`;
-              return;
-            }
-            nextData[s.symbol] = { series, dividends };
-          } catch (err) {
-            nextErrors[s.symbol] = err.message;
-          }
-        })
-      );
-      if (cancelled) return;
-      setData(nextData);
-      setErrors(nextErrors);
-      setLoading(false);
+      try {
+        const [series, dividends] = await Promise.all([
+          getSeries("stock", symbol),
+          getDividends(symbol),
+        ]);
+        if (cancelled) return;
+        if (!dividends.length) {
+          setError(`No dividend history found for "${symbol}".`);
+          setData(null);
+        } else {
+          setData({ series, dividends });
+        }
+      } catch (err) {
+        if (!cancelled) { setError(err.message); setData(null); }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
     })();
-    return () => {
-      cancelled = true;
-    };
-  }, [active, symbols]);
+    return () => { cancelled = true; };
+  }, [active, symbol]);
 
   const windowYears = DIV_WINDOWS.find((w) => w.id === windowId)?.years ?? null;
 
-  const rows = useMemo(
-    () =>
-      symbols.map((s, i) => {
-        const color = COLORS[i % COLORS.length];
-        const d = data[s.symbol];
-        if (!d) return { id: s.id, symbol: s.symbol, color, error: errors[s.symbol] || null };
-        const stats = dividendStats(d.series, d.dividends, windowYears);
-        const nowYear = new Date().getUTCFullYear();
-        const lastFull = stats.yearlySums.filter((y) => y.year < nowYear).pop() || null;
-        return { id: s.id, symbol: s.symbol, color, stats, lastFull };
-      }),
-    [symbols, data, errors, windowYears]
-  );
+  const sim = useMemo(() => {
+    if (!data) return null;
+    return simulateDividendGrowth(data.series, data.dividends, { monthlyAmount: monthly, windowYears });
+  }, [data, monthly, windowYears]);
 
-  const maxYearSum = useMemo(
-    () =>
-      Math.max(
-        0,
-        ...rows.flatMap((r) => (r.stats ? r.stats.yearlySums.map((y) => y.sum) : []))
-      ),
-    [rows]
-  );
-
-  const updateSymbol = (id, symbol) =>
-    setSymbols((list) => list.map((s) => (s.id === id ? { ...s, symbol } : s)));
-
-  const addSymbol = () =>
-    setSymbols((list) =>
-      list.length >= 4 ? list : [...list, { id: idRef.current++, symbol: "O" }]
-    );
-
-  const removeSymbol = (id) =>
-    setSymbols((list) => (list.length <= 2 ? list : list.filter((s) => s.id !== id)));
+  const chartSeries = useMemo(() => {
+    if (!sim?.points.length) return null;
+    return [
+      { label: "With dividends reinvested", color: "#10b981", points: sim.points.map((p) => ({ time: p.time, value: p.totalValue })) },
+      { label: "Price only", color: "#ef4444", points: sim.points.map((p) => ({ time: p.time, value: p.priceValue })) },
+      { label: "Invested", color: "#94a3b8", points: sim.points.map((p) => ({ time: p.time, value: p.invested })) },
+    ];
+  }, [sim]);
 
   return (
     <div className="space-y-4">
       <div className="rounded-xl border border-line lg-glass p-4 space-y-3">
-        <div className="flex items-center justify-between">
-          <p className="text-xs text-dim uppercase tracking-widest">Stocks / ETFs (2–4)</p>
+        <div className="flex flex-wrap items-center gap-3">
+          <SymbolSearch
+            market="stock"
+            value={symbol}
+            onSelect={(s) => setSymbol(s)}
+            placeholder="Dividend stock, e.g. O, KO, JNJ"
+            className="flex-1 min-w-[180px]"
+          />
+          <label className="flex items-center gap-1.5 text-xs text-dim">
+            Monthly $
+            <input
+              type="number" value={monthly} min={10}
+              onChange={(e) => setMonthly(+e.target.value || 0)}
+              className="input-base font-mono w-24 text-sm"
+            />
+          </label>
           <div className="flex gap-1">
             {DIV_WINDOWS.map((w) => (
-              <button
-                key={w.id}
-                onClick={() => setWindowId(w.id)}
-                className={cn("chip font-mono", windowId === w.id ? "chip-active" : "chip-idle")}
-              >
+              <button key={w.id} onClick={() => setWindowId(w.id)}
+                className={cn("chip font-mono", windowId === w.id ? "chip-active" : "chip-idle")}>
                 {w.label}
               </button>
             ))}
           </div>
         </div>
-
-        {symbols.map((s, i) => (
-          <div key={s.id} className="flex items-center gap-2">
-            <span
-              className="w-2.5 h-2.5 rounded-full shrink-0"
-              style={{ backgroundColor: COLORS[i % COLORS.length] }}
-            />
-            <SymbolSearch
-              market="stock"
-              value={s.symbol}
-              onSelect={(sym) => updateSymbol(s.id, sym)}
-              placeholder="e.g. KO, JPM, O"
-              className="flex-1 min-w-[180px]"
-            />
-            <button
-              onClick={() => removeSymbol(s.id)}
-              disabled={symbols.length <= 2}
-              title="Remove"
-              className="text-dim hover:text-down disabled:opacity-30 disabled:hover:text-dim"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-        ))}
-
-        <button
-          onClick={addSymbol}
-          disabled={symbols.length >= 4}
-          className="chip chip-idle flex items-center gap-1 disabled:opacity-40"
-        >
-          <Plus className="w-3.5 h-3.5" /> Add stock
-        </button>
       </div>
 
-      {rows
-        .filter((r) => r.error)
-        .map((r) => (
-          <ErrorBox key={r.id}>
-            {r.symbol}: {r.error}
-          </ErrorBox>
-        ))}
+      {error && <ErrorBox>{error}</ErrorBox>}
 
       {loading ? (
-        <ChartSkeleton height={220} />
-      ) : rows.some((r) => r.stats) ? (
+        <ChartSkeleton height={300} />
+      ) : sim?.points.length ? (
         <>
-          <div className="rounded-xl border border-line lg-glass overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs font-mono">
-                <thead>
-                  <tr className="text-left text-dim border-b border-line">
-                    <th className="px-4 py-2 font-medium">Symbol</th>
-                    <th className="px-4 py-2 font-medium text-right">Dividend/share (last full year)</th>
-                    <th className="px-4 py-2 font-medium text-right">Avg. yield</th>
-                    <th className="px-4 py-2 font-medium text-right">Growth p.a.</th>
-                    <th className="px-4 py-2 font-medium text-right">Total payouts</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows
-                    .filter((r) => r.stats)
-                    .map((r) => (
-                      <tr key={r.id} className="border-b border-line/40 last:border-0">
-                        <td className="px-4 py-1.5">
-                          <span className="inline-flex items-center gap-2">
-                            <span
-                              className="w-2 h-2 rounded-full"
-                              style={{ backgroundColor: r.color }}
-                            />
-                            {r.symbol}
-                          </span>
-                        </td>
-                        <td className="px-4 py-1.5 text-right">
-                          {r.lastFull ? `${fmtNum(r.lastFull.sum)} (${r.lastFull.year})` : "–"}
-                        </td>
-                        <td className="px-4 py-1.5 text-right text-up">
-                          {r.stats.avgYieldPct != null
-                            ? fmtPct(r.stats.avgYieldPct).replace("+", "")
-                            : "–"}
-                        </td>
-                        <td
-                          className={cn(
-                            "px-4 py-1.5 text-right",
-                            r.stats.growthPct != null ? upDown(r.stats.growthPct) : "text-dim"
-                          )}
-                        >
-                          {r.stats.growthPct != null ? fmtPct(r.stats.growthPct) : "–"}
-                        </td>
-                        <td className="px-4 py-1.5 text-right">{fmtNum(r.stats.totalPerShare)}</td>
-                      </tr>
-                    ))}
-                </tbody>
-              </table>
-            </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <MetricCard label="Invested" value={`$${fmtNum(sim.invested, 0)}`} />
+            <MetricCard label="Price only" value={`$${fmtNum(sim.priceValue, 0)}`} tone="text-down" />
+            <MetricCard label="With dividends" value={`$${fmtNum(sim.totalValue, 0)}`} tone="text-up" />
+            <MetricCard label="Dividend boost" value={fmtPct(sim.dividendBoostPct)} tone="text-accent" />
           </div>
 
-          <div className="rounded-xl border border-line lg-glass p-4 space-y-4">
-            <p className="text-xs text-dim uppercase tracking-widest">
-              Dividend per share per year
+          <div className="rounded-xl border border-line lg-glass p-3">
+            <p className="text-xs text-dim px-2 pt-1 pb-2">
+              <span className="text-up">With dividends reinvested</span> vs{" "}
+              <span className="text-down">price only</span> vs{" "}
+              <span className="text-text/70">invested</span> — {symbol}, ${fmtNum(monthly, 0)}/month
             </p>
-            {rows
-              .filter((r) => r.stats)
-              .map((r) => (
-                <div key={r.id}>
-                  <p className="text-xs font-mono mb-1.5 flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full" style={{ backgroundColor: r.color }} />
-                    {r.symbol}
-                  </p>
-                  <div className="space-y-1">
-                    {r.stats.yearlySums.map((y) => (
-                      <div key={y.year} className="flex items-center gap-2 text-[11px] font-mono">
-                        <span className="w-10 text-dim shrink-0">{y.year}</span>
-                        <div className="flex-1 h-2.5 rounded-sm bg-line/40 overflow-hidden">
-                          <div
-                            className="h-full rounded-sm"
-                            style={{
-                              width: `${maxYearSum > 0 ? Math.max(1, (y.sum / maxYearSum) * 100) : 0}%`,
-                              backgroundColor: r.color,
-                            }}
-                          />
-                        </div>
-                        <span className="w-14 text-right text-dim shrink-0">{fmtNum(y.sum)}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ))}
+            <EquityChart series={chartSeries} height={320} />
           </div>
 
-          <p className="text-xs text-dim">Crypto pays no dividends — stocks/ETFs only.</p>
+          <p className="text-xs text-dim">
+            Reinvesting the dividends grew your position by{" "}
+            <span className="text-accent font-semibold">{fmtPct(sim.dividendBoostPct)}</span>{" "}
+            more than price appreciation alone. Simulation with fractional shares; taxes and fees ignored.
+            Crypto pays no dividends — stocks/ETFs only.
+          </p>
         </>
       ) : (
         <div className="rounded-xl border border-line lg-glass h-72 flex items-center justify-center text-sm text-dim px-8 text-center">
-          Pick stocks — the dividend comparison appears here.
+          Pick a dividend stock — the growth comparison appears here.
         </div>
       )}
     </div>

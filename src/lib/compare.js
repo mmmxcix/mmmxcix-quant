@@ -63,12 +63,12 @@ export async function fetchDividends(symbol) {
 async function fetchYahooChart(url, symbol) {
   const res = await fetch(url);
   if (!res.ok) {
-    throw new Error(`Datenabruf fehlgeschlagen (${res.status}) — Symbol korrekt? (z. B. AAPL, SPY, KO)`);
+    throw new Error(`Data request failed (${res.status}) — is the symbol correct? (e.g. AAPL, SPY, KO)`);
   }
   const json = await res.json();
   const result = json?.chart?.result?.[0];
   if (!result) {
-    throw new Error(json?.chart?.error?.description || `Keine Daten für "${symbol}".`);
+    throw new Error(json?.chart?.error?.description || `No data for "${symbol}".`);
   }
   return result;
 }
@@ -167,4 +167,59 @@ export function dividendStats(series, dividends, windowYears) {
   }
 
   return { totalPerShare, yearlySums, avgYieldPct, growthPct };
+}
+
+// Growth over time comparing three lines (like the classic "power of dividend
+// reinvestment" chart): cumulative amount invested, the value with price
+// appreciation ONLY (dividends taken as cash / ignored), and the value with
+// dividends REINVESTED. Monthly DCA of `monthlyAmount`. Dividends are matched
+// to the month in which they were paid and, for the total-return line, used to
+// buy additional shares at that month's close.
+export function simulateDividendGrowth(series, dividends, { monthlyAmount = 200, windowYears = null } = {}) {
+  const amount = +monthlyAmount || 0;
+  const empty = { points: [], invested: 0, priceValue: 0, totalValue: 0, dividendBoostPct: 0 };
+  if (!series?.length || amount <= 0) return empty;
+
+  const lastTime = series[series.length - 1].time;
+  const cutoff = windowYears ? Math.max(series[0].time, lastTime - windowYears * YEAR_SECONDS) : series[0].time;
+  const s = series.filter((p) => p.time >= cutoff && p.close);
+  if (s.length < 2) return empty;
+  const divs = (dividends || []).filter((d) => d.time >= cutoff && d.time <= lastTime);
+
+  let sharesPrice = 0; // shares from contributions only (price-return line)
+  let sharesTotal = 0; // shares incl. reinvested dividends (total-return line)
+  let invested = 0;
+  let prevTime = cutoff - 1;
+  const points = [];
+
+  for (const p of s) {
+    // Reinvest any dividends paid since the previous month, before this month's buy.
+    const divPerShare = divs
+      .filter((d) => d.time > prevTime && d.time <= p.time)
+      .reduce((sum, d) => sum + d.amount, 0);
+    if (divPerShare > 0 && sharesTotal > 0) {
+      sharesTotal += (divPerShare * sharesTotal) / p.close;
+    }
+    // Monthly contribution buys shares on both lines.
+    sharesPrice += amount / p.close;
+    sharesTotal += amount / p.close;
+    invested += amount;
+    points.push({
+      time: p.time,
+      invested,
+      priceValue: sharesPrice * p.close,
+      totalValue: sharesTotal * p.close,
+    });
+    prevTime = p.time;
+  }
+
+  const last = points[points.length - 1];
+  const dividendBoostPct = last && last.priceValue > 0 ? (last.totalValue / last.priceValue - 1) * 100 : 0;
+  return {
+    points,
+    invested: last ? last.invested : 0,
+    priceValue: last ? last.priceValue : 0,
+    totalValue: last ? last.totalValue : 0,
+    dividendBoostPct,
+  };
 }
