@@ -3,7 +3,7 @@ import { useSearchParams, Link } from "react-router-dom";
 import { Plus, X, Trash2, ArrowLeftRight } from "lucide-react";
 import SymbolSearch from "@/components/SymbolSearch";
 import XYLineChart from "@/components/XYLineChart";
-import { fetchOptionChain, markPrice, netCost, payoffCurve } from "@/lib/options";
+import { fetchOptionChain, markPrice, netCost, payoffCurve, positionGreeks, STRATEGY_PRESETS } from "@/lib/options";
 import { cn, fmtNum, fmtPrice, fmtPct } from "@/lib/utils";
 
 function fmtExpiry(sec) {
@@ -52,8 +52,13 @@ export default function Options() {
     if (!(premium > 0)) return;
     setLegs((l) => [...l, {
       id: legSeq++, type: side === "calls" ? "call" : "put",
-      strike: r.strike, premium: +premium.toFixed(2), side: "long", qty: 1,
+      strike: r.strike, premium: +premium.toFixed(2), side: "long", qty: 1, greeks: r.greeks,
     }]);
+  };
+  const applyPreset = (preset) => {
+    if (!chain) return;
+    const built = preset.build(chain);
+    if (built) setLegs(built.map((l) => ({ ...l, id: legSeq++ })));
   };
   const flipLeg = (id) => setLegs((l) => l.map((x) => (x.id === id ? { ...x, side: x.side === "long" ? "short" : "long" } : x)));
   const setQty = (id, qty) => setLegs((l) => l.map((x) => (x.id === id ? { ...x, qty: Math.max(1, qty | 0) } : x)));
@@ -61,6 +66,7 @@ export default function Options() {
 
   const payoff = useMemo(() => (legs.length && spot ? payoffCurve(legs, spot) : null), [legs, spot]);
   const cost = useMemo(() => netCost(legs), [legs]);
+  const posGreeks = useMemo(() => positionGreeks(legs), [legs]);
 
   const payoffSeries = payoff
     ? [{ label: "P/L at expiry", color: "#2dd4bf", points: payoff.points }]
@@ -164,8 +170,21 @@ export default function Options() {
             )}
           </div>
 
+          {/* Strategy presets */}
+          <div className="mb-3">
+            <p className="text-[10px] text-dim uppercase tracking-widest mb-1.5">Presets</p>
+            <div className="flex flex-wrap gap-1">
+              {STRATEGY_PRESETS.map((p) => (
+                <button key={p.id} onClick={() => applyPreset(p)} disabled={!chain}
+                  className="chip chip-idle text-[11px] disabled:opacity-40">
+                  {p.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
           {legs.length === 0 ? (
-            <p className="text-sm text-dim">Click <Plus className="inline w-3.5 h-3.5" /> on a contract to add a leg. Combine legs to build spreads, straddles and more.</p>
+            <p className="text-sm text-dim">Pick a preset above, or click <Plus className="inline w-3.5 h-3.5" /> on a contract to add legs manually. Presets use strikes around the current spot for the selected expiry.</p>
           ) : (
             <>
               <div className="space-y-1.5 mb-3">
@@ -190,6 +209,15 @@ export default function Options() {
                 <Stat label="Max loss" value={payoff && isFinite(payoff.maxLoss) ? money(payoff.maxLoss) : "unbounded"} tone="text-down" />
                 <Stat label="Breakeven" value={payoff?.breakevens.length ? payoff.breakevens.map((b) => fmtNum(b, 0)).join(", ") : "–"} />
               </div>
+
+              {posGreeks && (
+                <div className="grid grid-cols-4 gap-2 text-xs mb-3">
+                  <Stat label="Δ Delta" value={fmtNum(posGreeks.delta, 0)} tone={posGreeks.delta >= 0 ? "text-up" : "text-down"} />
+                  <Stat label="Γ Gamma" value={fmtNum(posGreeks.gamma, 1)} />
+                  <Stat label="Θ Theta/d" value={money(posGreeks.theta)} tone={posGreeks.theta >= 0 ? "text-up" : "text-down"} />
+                  <Stat label="V Vega" value={money(posGreeks.vega)} />
+                </div>
+              )}
 
               {payoffSeries && (
                 <div>

@@ -131,6 +131,65 @@ export function netCost(legs) {
   );
 }
 
+// Aggregate (position) Greeks summed across legs, in position terms:
+// delta = share-equivalent, theta = $/day, vega = $ per 1% IV, gamma per $1.
+// Returns null when no leg has usable Greeks.
+export function positionGreeks(legs) {
+  const acc = { delta: 0, gamma: 0, theta: 0, vega: 0 };
+  let any = false;
+  for (const l of legs) {
+    if (!l.greeks) continue;
+    const m = (l.side === "long" ? 1 : -1) * l.qty * MULTIPLIER;
+    if (l.greeks.delta != null) { acc.delta += l.greeks.delta * m; any = true; }
+    if (l.greeks.gamma != null) acc.gamma += l.greeks.gamma * m;
+    if (l.greeks.theta != null) acc.theta += l.greeks.theta * m;
+    if (l.greeks.vega != null) acc.vega += l.greeks.vega * m;
+  }
+  return any ? acc : null;
+}
+
+// ── One-click strategy presets ───────────────────────────────────────────────
+
+function nearest(list, target) {
+  if (!list?.length) return null;
+  return list.reduce((b, c) => (Math.abs(c.strike - target) < Math.abs(b.strike - target) ? c : b), list[0]);
+}
+// Build a leg from a chain contract.
+function leg(contract, type, side, qty = 1) {
+  if (!contract) return null;
+  return { type, strike: contract.strike, premium: +markPrice(contract).toFixed(2), side, qty, greeks: contract.greeks };
+}
+const clean = (legs) => (legs && legs.every(Boolean) ? legs : null);
+
+// Each preset builds legs from the loaded chain (needs chain.spot/calls/puts).
+export const STRATEGY_PRESETS = [
+  { id: "long-call", label: "Long Call",
+    build: (ch) => clean([leg(nearest(ch.calls, ch.spot), "call", "long")]) },
+  { id: "long-put", label: "Long Put",
+    build: (ch) => clean([leg(nearest(ch.puts, ch.spot), "put", "long")]) },
+  { id: "bull-call", label: "Bull Call Spread",
+    build: (ch) => clean([leg(nearest(ch.calls, ch.spot), "call", "long"), leg(nearest(ch.calls, ch.spot * 1.05), "call", "short")]) },
+  { id: "bear-put", label: "Bear Put Spread",
+    build: (ch) => clean([leg(nearest(ch.puts, ch.spot), "put", "long"), leg(nearest(ch.puts, ch.spot * 0.95), "put", "short")]) },
+  { id: "straddle", label: "Long Straddle",
+    build: (ch) => clean([leg(nearest(ch.calls, ch.spot), "call", "long"), leg(nearest(ch.puts, ch.spot), "put", "long")]) },
+  { id: "strangle", label: "Long Strangle",
+    build: (ch) => clean([leg(nearest(ch.calls, ch.spot * 1.05), "call", "long"), leg(nearest(ch.puts, ch.spot * 0.95), "put", "long")]) },
+  { id: "iron-condor", label: "Iron Condor",
+    build: (ch) => clean([
+      leg(nearest(ch.puts, ch.spot * 0.9), "put", "long"),
+      leg(nearest(ch.puts, ch.spot * 0.95), "put", "short"),
+      leg(nearest(ch.calls, ch.spot * 1.05), "call", "short"),
+      leg(nearest(ch.calls, ch.spot * 1.1), "call", "long"),
+    ]) },
+  { id: "call-butterfly", label: "Call Butterfly",
+    build: (ch) => clean([
+      leg(nearest(ch.calls, ch.spot * 0.95), "call", "long"),
+      leg(nearest(ch.calls, ch.spot), "call", "short", 2),
+      leg(nearest(ch.calls, ch.spot * 1.05), "call", "long"),
+    ]) },
+];
+
 // Build a P/L-at-expiry curve across a price range around `center` (usually
 // spot). Returns { points: [{x, y}], breakevens, maxProfit, maxLoss }.
 export function payoffCurve(legs, center, { steps = 120, spread = 0.5 } = {}) {
