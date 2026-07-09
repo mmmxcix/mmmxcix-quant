@@ -97,3 +97,62 @@ export async function fetchOptionChain(symbol, date) {
   const puts = (opt?.puts || []).map((c) => mapContract(c, "put"));
   return { symbol: sym, spot, expirations, expiry, calls, puts };
 }
+
+// ── Strategy / payoff engine ────────────────────────────────────────────────
+
+const MULTIPLIER = 100; // US equity options: 1 contract = 100 shares
+
+// Best available price for a contract: mid of bid/ask, else last.
+export function markPrice(contract) {
+  if (contract.bid != null && contract.ask != null && contract.bid > 0 && contract.ask > 0) {
+    return (contract.bid + contract.ask) / 2;
+  }
+  return contract.last ?? contract.bid ?? contract.ask ?? 0;
+}
+
+// Intrinsic value of one option at underlying price S.
+function intrinsic(type, strike, S) {
+  return type === "call" ? Math.max(0, S - strike) : Math.max(0, strike - S);
+}
+
+// P/L of one leg at expiry (per contract, ×100). A leg is
+// { type, strike, premium, side: "long"|"short", qty }.
+function legPayoff(leg, S) {
+  const intr = intrinsic(leg.type, leg.strike, S);
+  const perShare = leg.side === "long" ? intr - leg.premium : leg.premium - intr;
+  return perShare * leg.qty * MULTIPLIER;
+}
+
+// Net cost of the position: negative = net debit (you pay), positive = credit.
+export function netCost(legs) {
+  return legs.reduce(
+    (sum, l) => sum + (l.side === "long" ? -l.premium : l.premium) * l.qty * MULTIPLIER,
+    0
+  );
+}
+
+// Build a P/L-at-expiry curve across a price range around `center` (usually
+// spot). Returns { points: [{x, y}], breakevens, maxProfit, maxLoss }.
+export function payoffCurve(legs, center, { steps = 120, spread = 0.5 } = {}) {
+  if (!legs.length || !(center > 0)) return { points: [], breakevens: [], maxProfit: 0, maxLoss: 0 };
+  const lo = Math.max(0, center * (1 - spread));
+  const hi = center * (1 + spread);
+  const points = [];
+  let maxProfit = -Infinity, maxLoss = Infinity;
+  const breakevens = [];
+  let prev = null;
+  for (let i = 0; i <= steps; i++) {
+    const S = lo + ((hi - lo) * i) / steps;
+    const y = legs.reduce((sum, l) => sum + legPayoff(l, S), 0);
+    points.push({ x: S, y });
+    if (y > maxProfit) maxProfit = y;
+    if (y < maxLoss) maxLoss = y;
+    if (prev && ((prev.y < 0 && y >= 0) || (prev.y > 0 && y <= 0))) {
+      // linear interpolate the zero crossing
+      const t = Math.abs(prev.y) / (Math.abs(prev.y) + Math.abs(y) || 1);
+      breakevens.push(prev.x + (S - prev.x) * t);
+    }
+    prev = { x: S, y };
+  }
+  return { points, breakevens, maxProfit, maxLoss };
+}
