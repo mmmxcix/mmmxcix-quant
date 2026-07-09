@@ -193,7 +193,9 @@ export default function Academy() {
       </div>
       <p className="text-sm text-dim mb-6 max-w-2xl">
         Structured courses from complete beginner to the point where you continue on your own.
-        Pick a track and work through the levels in order. Not investment advice.
+        Pick a track and work through the levels in order. Not investment advice.{" "}
+        New here? The <Link to="/guide" className="text-accent hover:underline">Guide</Link> explains
+        every tool on this platform and how the courses connect to them.
       </p>
 
       <div className="grid sm:grid-cols-2 gap-4">

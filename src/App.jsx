@@ -15,6 +15,7 @@ import Options from "@/pages/Options";
 import Academy from "@/pages/Academy";
 import Coach from "@/pages/Coach";
 import Lab from "@/pages/Lab";
+import Guide from "@/pages/Guide";
 import Impressum from "@/pages/Impressum";
 import Datenschutz from "@/pages/Datenschutz";
 import Nutzung from "@/pages/Nutzung";
@@ -45,6 +46,7 @@ export default function App() {
                 <Route path="/portfolio" element={<Portfolio />} />
                 <Route path="/news" element={<News />} />
                 <Route path="/academy" element={<Academy />} />
+                <Route path="/guide" element={<Guide />} />
                 <Route path="/coach" element={<Coach />} />
                 <Route path="/tools" element={<Tools />} />
                 <Route path="/resources" element={<Resources />} />
