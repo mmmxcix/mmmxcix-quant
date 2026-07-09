@@ -1,28 +1,87 @@
 // Thin server-side proxy for Yahoo Finance (browsers can't call it directly
-// because of CORS). Mirrors the vite dev proxy in vite.config.js:
-//   /api/yahoo/v8/finance/chart/AAPL?range=1y&interval=1d
-//   → https://query1.finance.yahoo.com/v8/finance/chart/AAPL?...
+// because of CORS). Mirrors the vite dev proxy in vite.config.js.
+//
+// Allowed endpoints: chart (v8), search (v1), and option chains (v7). The v7
+// options endpoint requires Yahoo's "crumb" + cookie anti-bot handshake, which
+// this proxy performs (and caches) transparently; v8/v1 do not.
+
+const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
+// Obtain a { cookie, crumb } session for the crumb-protected endpoints. Cached
+// in the Cloudflare edge cache for ~25 minutes so we don't re-handshake per call.
+async function getSession() {
+  const cache = caches.default;
+  const cacheKey = new Request("https://yahoo-session.internal/crumb");
+  const cached = await cache.match(cacheKey);
+  if (cached) {
+    const data = await cached.json();
+    if (data.cookie && data.crumb) return data;
+  }
+
+  // Step 1: a request that hands back Yahoo's consent cookie.
+  const r1 = await fetch("https://fc.yahoo.com/", { headers: { "user-agent": UA }, redirect: "manual" });
+  const setCookies = typeof r1.headers.getSetCookie === "function"
+    ? r1.headers.getSetCookie()
+    : [r1.headers.get("set-cookie")].filter(Boolean);
+  const cookie = setCookies.map((sc) => sc.split(";")[0]).filter(Boolean).join("; ");
+
+  // Step 2: exchange the cookie for a crumb.
+  const r2 = await fetch("https://query1.finance.yahoo.com/v1/test/getcrumb", {
+    headers: { "user-agent": UA, cookie, accept: "text/plain" },
+  });
+  const crumb = (await r2.text()).trim();
+  const session = { cookie, crumb };
+
+  if (cookie && crumb && !crumb.includes("<")) {
+    await cache.put(
+      cacheKey,
+      new Response(JSON.stringify(session), { headers: { "cache-control": "max-age=1500" } })
+    );
+  }
+  return session;
+}
+
 export async function onRequest({ request, params }) {
   const url = new URL(request.url);
   const path = Array.isArray(params.path) ? params.path.join("/") : params.path || "";
-  // Allowed Yahoo endpoints: chart (v8), search (v1), and option chains (v7).
-  if (!path.startsWith("v8/finance/") && !path.startsWith("v1/finance/") && !path.startsWith("v7/finance/options/")) {
+
+  const isChart = path.startsWith("v8/finance/");
+  const isSearch = path.startsWith("v1/finance/");
+  const isOptions = path.startsWith("v7/finance/options/");
+  if (!isChart && !isSearch && !isOptions) {
     return new Response(JSON.stringify({ error: "unsupported path" }), {
       status: 400,
       headers: { "content-type": "application/json" },
     });
   }
-  const target = `https://query1.finance.yahoo.com/${path}${url.search}`;
+
+  const headers = { "user-agent": UA };
+  let search = url.search;
+
+  if (isOptions) {
+    try {
+      const { cookie, crumb } = await getSession();
+      if (cookie) headers.cookie = cookie;
+      if (crumb) {
+        const sep = search ? "&" : "?";
+        search = `${search}${sep}crumb=${encodeURIComponent(crumb)}`;
+      }
+    } catch {
+      /* fall through — Yahoo will return its own error if the handshake failed */
+    }
+  }
+
+  const target = `https://query1.finance.yahoo.com/${path}${search}`;
   const upstream = await fetch(target, {
-    headers: { "user-agent": "Mozilla/5.0 (compatible; mmmxcix-quant/1.0)" },
-    cf: { cacheTtl: 300, cacheEverything: true },
+    headers,
+    cf: { cacheTtl: isOptions ? 60 : 300, cacheEverything: true },
   });
   return new Response(upstream.body, {
     status: upstream.status,
     headers: {
       "content-type": "application/json",
       "access-control-allow-origin": "*",
-      "cache-control": "public, max-age=300",
+      "cache-control": `public, max-age=${isOptions ? 60 : 300}`,
     },
   });
 }
