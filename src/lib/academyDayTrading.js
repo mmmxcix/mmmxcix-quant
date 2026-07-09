@@ -107,6 +107,7 @@ export const DAY_TRADING_COURSE = {
             { type: "p", text: "Support is a price where buyers have repeatedly stepped in; resistance is where sellers have. These are zones, not exact lines, and they matter because other traders remember them and act at them." },
             { type: "h", text: "Reading price action" },
             { type: "p", text: "Price action is the story the candles tell without indicators: higher highs and higher lows are an uptrend; lower highs and lower lows are a downtrend; a sideways range means indecision. Trade with the structure, not against it." },
+            { type: "diagram", id: "pattern-support-resistance", caption: "Price bounces between support and resistance until one breaks." },
             { type: "ul", items: ["Broken resistance often becomes new support (and vice versa) — the flip is a classic entry", "The more times a level is tested, the more significant — but repeated tests also weaken it", "Round numbers and prior-day high/low act as natural levels"] },
             { type: "p", text: "The cleanest trades cluster where structure, VWAP, and volume all point the same way. One signal is a guess; three aligned signals are a plan." },
             { type: "tip", text: "In the tool: use the Charts drawing tools to mark prior-day high/low and key levels, then set a price alert so you are notified when price returns to them." },
@@ -118,6 +119,7 @@ export const DAY_TRADING_COURSE = {
           minutes: 6,
           body: [
             { type: "p", text: "A candle shows the open, high, low, and close of a period. A handful of patterns carry real information intraday — but only in context, never on their own." },
+            { type: "diagram", id: "candle-anatomy", caption: "Anatomy of a candle: body (open–close) and wicks (high/low)." },
             { type: "ul", items: ["Engulfing: a candle that fully engulfs the prior one, signaling a shift in control", "Pin bar / hammer: a long wick rejecting a level, showing that one side lost the fight", "Inside bar: a candle contained within the prior candle's range, signaling compression before a move"] },
             { type: "h", text: "A caution about reliability" },
             { type: "p", text: "Candlestick patterns are probabilities, not guarantees. The same hammer is bullish at support and meaningless in the middle of a range. Reliability rises when the pattern forms at a key level, with confirming volume, and in the direction of the larger trend." },
@@ -151,6 +153,7 @@ export const DAY_TRADING_COURSE = {
           minutes: 7,
           body: [
             { type: "p", text: "A breakout trade enters as price clears a level that has contained it, betting that the move continues once the level gives way. The cleanest version intraday is built around the opening range." },
+            { type: "diagram", id: "pattern-breakout", caption: "Consolidation under resistance, then a breakout on expanding volume." },
             { type: "h", text: "Opening-range and gap-and-go (stocks)" },
             { type: "p", text: "The opening range is the high and low of the first few minutes after the open. A break above that high can trigger a long; a break below the low can trigger a short. When a stock gaps on news and immediately pushes through the opening range on strong volume, traders call it gap-and-go." },
             { type: "h", text: "Range breaks (crypto)" },

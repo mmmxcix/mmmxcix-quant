@@ -3,6 +3,7 @@ import { useSearchParams, Link } from "react-router-dom";
 import { GraduationCap, Clock, ChevronRight, ArrowLeft, Lightbulb, Check, Circle, Compass, BookOpen, Zap, Sigma } from "lucide-react";
 import { COURSES } from "@/lib/academyContent";
 import { getCompleted, setDone, subscribeProgress } from "@/lib/academyProgress";
+import AcademyDiagram from "@/components/AcademyDiagram";
 import { cn } from "@/lib/utils";
 
 const COURSE_ICON = { "quant-foundations": BookOpen, "day-trading": Zap, "options-derivatives": Sigma };
@@ -23,6 +24,8 @@ function Block({ block }) {
       );
     case "formula":
       return <pre className="rounded-lg border border-line bg-bg px-3 py-2 text-sm font-mono text-accent overflow-x-auto">{block.text}</pre>;
+    case "diagram":
+      return <AcademyDiagram id={block.id} caption={block.caption} />;
     default:
       return <p className="text-dim leading-relaxed">{block.text}</p>;
   }

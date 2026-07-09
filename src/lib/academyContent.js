@@ -40,6 +40,7 @@ const QUANT_LEVELS = [
         body: [
           { type: "p", text: "A candle (candlestick) summarizes four prices for a single time unit: open, high, low, and close. These four values are abbreviated as OHLC." },
           { type: "h", text: "Anatomy of a candle" },
+          { type: "diagram", id: "candle-anatomy", caption: "A bullish and a bearish candle: body from open to close, wicks to high and low." },
           { type: "ul", items: [
             "The body runs from open to close and shows where the price moved on a net basis.",
             "The wicks (shadows) above and below the body mark the high and the low.",
@@ -101,8 +102,9 @@ const QUANT_LEVELS = [
           { type: "formula", text: "SMA(n) = (P_1 + P_2 + ... + P_n) / n" },
           { type: "h", text: "EMA — exponential moving average" },
           { type: "p", text: "The EMA (Exponential Moving Average) weights more recent prices more heavily and therefore reacts faster. The weighting is controlled by the smoothing factor, which depends only on the period length n." },
-          { type: "formula", text: "EMA_t = P_t · a + EMA_(t-1) · (1 − a),  mit a = 2 / (n + 1)" },
+          { type: "formula", text: "EMA_t = P_t · a + EMA_(t-1) · (1 − a),  with a = 2 / (n + 1)" },
           { type: "p", text: "When a short average crosses a long one from below to above, it's called a Golden Cross (bullish); the reverse crossing is a Death Cross (bearish). Such signals are slow and work best during strongly trending phases." },
+          { type: "diagram", id: "indicator-sma-cross", caption: "Golden cross: the fast SMA crossing above the slow SMA — a bullish signal." },
           { type: "tip", text: "In the tool: on the Charts page, place SMA and EMA overlays directly over the candles; the Screener filters assets whose price is above or below the SMA (SMA trend)." },
         ],
       },
@@ -112,9 +114,10 @@ const QUANT_LEVELS = [
         minutes: 5,
         body: [
           { type: "p", text: "The RSI (Relative Strength Index) measures momentum: the ratio of average price gains to average price losses over n periods (default: 14). It fluctuates between 0 and 100." },
-          { type: "formula", text: "RSI = 100 − 100 / (1 + RS),  mit RS = Ø Gewinn / Ø Verlust" },
-          { type: "p", text: "The Ø values are the average up moves and down moves over the last n periods. When RS is large (many gains), the RSI approaches 100; when losses dominate, it falls toward 0." },
+          { type: "formula", text: "RSI = 100 − 100 / (1 + RS),  with RS = avg gain / avg loss" },
+          { type: "p", text: "The averages are the mean up moves and down moves over the last n periods. When RS is large (many gains), the RSI approaches 100; when losses dominate, it falls toward 0." },
           { type: "h", text: "Interpretation" },
+          { type: "diagram", id: "indicator-rsi", caption: "RSI oscillates between the 30 (oversold) and 70 (overbought) bands." },
           { type: "ul", items: [
             "RSI above 70: considered overbought, the advance may be losing steam.",
             "RSI below 30: considered oversold, a countermove is possible.",
@@ -149,8 +152,9 @@ const QUANT_LEVELS = [
         minutes: 4,
         body: [
           { type: "p", text: "Bollinger Bands wrap a volatility band around a moving average. The middle line is an SMA (default: 20 periods); the upper and lower bands sit k standard deviations away (default: k = 2)." },
-          { type: "formula", text: "Oberes Band = SMA(n) + k · σ" },
-          { type: "formula", text: "Unteres Band = SMA(n) − k · σ" },
+          { type: "formula", text: "Upper band = SMA(n) + k · σ" },
+          { type: "formula", text: "Lower band = SMA(n) − k · σ" },
+          { type: "diagram", id: "indicator-bollinger", caption: "Price rides between the volatility bands; a squeeze often precedes a big move." },
           { type: "p", text: "Here σ is the standard deviation of the last n closing prices. When volatility rises, the bands widen; when the market calms down, they contract (a squeeze). A tight squeeze often precedes a powerful move." },
           { type: "h", text: "How to read them" },
           { type: "ul", items: [
@@ -196,7 +200,7 @@ const QUANT_LEVELS = [
           { type: "formula", text: "CAGR = (Endwert / Anfangswert)^(1 / Jahre) − 1" },
           { type: "h", text: "Sharpe ratio — return per unit of risk" },
           { type: "p", text: "The Sharpe ratio relates the excess return to volatility. Annualized and with a risk-free rate of rf = 0, it simplifies to the mean of the period returns divided by their standard deviation, scaled by the square root of the number of periods per year." },
-          { type: "formula", text: "Sharpe = (Ø r / σ_r) · √(Perioden pro Jahr),  rf = 0" },
+          { type: "formula", text: "Sharpe = (avg r / σ_r) · √(periods per year),  rf = 0" },
           { type: "h", text: "Maximum drawdown — largest setback" },
           { type: "p", text: "The max drawdown measures the deepest loss from a prior high (peak) to the following low (trough). It shows how painful the worst phase was." },
           { type: "formula", text: "Max Drawdown = min_t (Wert_t − Peak_t) / Peak_t" },
@@ -255,7 +259,7 @@ const QUANT_LEVELS = [
           { type: "p", text: "The most important decision is not what you buy, but how much. The position size determines how hard a single losing trade hits your total capital. The goal is to keep every single loss small and bearable." },
           { type: "h", text: "The 1% rule" },
           { type: "p", text: "A widely used rule says to risk at most about 1% of your total capital per trade. If you risk 1%, it takes many losses in a row to do serious damage. The number of shares follows from the risk per trade and the distance to the stop-loss." },
-          { type: "formula", text: "Positionsgröße = (Kapital · Risiko%) / (Einstieg − Stop-Loss)" },
+          { type: "formula", text: "Position size = (capital · risk%) / (entry − stop-loss)" },
           { type: "p", text: "Example: with 10,000 in capital and 1% risk, a trade may lose at most 100. If the stop sits 2 below the entry, that works out to 50 shares. That way the loss is always capped at the same amount, regardless of the asset." },
           { type: "tip", text: "In the tool: use the Position size calculator on the Tools page to automatically get the right number of shares from your capital, risk percentage, and stop distance." },
         ],
