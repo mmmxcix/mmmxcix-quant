@@ -3,7 +3,7 @@ import { useSearchParams, Link } from "react-router-dom";
 import { Plus, X, Trash2, ArrowLeftRight } from "lucide-react";
 import SymbolSearch from "@/components/SymbolSearch";
 import XYLineChart from "@/components/XYLineChart";
-import { fetchOptionChain, markPrice, netCost, payoffCurve, positionGreeks, STRATEGY_PRESETS } from "@/lib/options";
+import { fetchOptionChain, markPrice, netCost, payoffCurve, positionGreeks, STRATEGY_PRESETS, fetchTermStructure } from "@/lib/options";
 import { cn, fmtNum, fmtPrice, fmtPct } from "@/lib/utils";
 
 function fmtExpiry(sec) {
@@ -25,6 +25,10 @@ export default function Options() {
   const [error, setError] = useState(null);
   const [legs, setLegs] = useState([]);
 
+  // Term structure (lazy-loaded on demand)
+  const [term, setTerm] = useState(null);
+  const [termLoading, setTermLoading] = useState(false);
+
   useEffect(() => {
     let alive = true;
     setLoading(true);
@@ -36,7 +40,16 @@ export default function Options() {
     return () => { alive = false; };
   }, [symbol, expiry]);
 
-  const setSymbol = (s) => { setExpiry(null); setChain(null); setLegs([]); setParams({ symbol: s }); };
+  const setSymbol = (s) => { setExpiry(null); setChain(null); setLegs([]); setTerm(null); setParams({ symbol: s }); };
+
+  const loadTerm = () => {
+    if (termLoading) return;
+    setTermLoading(true);
+    fetchTermStructure(symbol, 6)
+      .then((pts) => setTerm(pts))
+      .catch(() => setTerm([]))
+      .finally(() => setTermLoading(false));
+  };
 
   const rows = chain ? chain[side] : [];
   const spot = chain?.spot ?? null;
@@ -197,7 +210,11 @@ export default function Options() {
                     </button>
                     <input type="number" value={l.qty} min={1} onChange={(e) => setQty(l.id, +e.target.value)}
                       className="input-base w-12 !px-1.5 !py-0.5 text-center" />
-                    <span className="flex-1">{l.type === "call" ? "C" : "P"} {fmtNum(l.strike, l.strike >= 100 ? 0 : 1)} @ {fmtNum(l.premium)}</span>
+                    <span className="flex-1">
+                      {l.kind === "stock"
+                        ? `${l.qty * 100} sh @ ${fmtNum(l.entry)}`
+                        : `${l.type === "call" ? "C" : "P"} ${fmtNum(l.strike, l.strike >= 100 ? 0 : 1)} @ ${fmtNum(l.premium)}`}
+                    </span>
                     <button onClick={() => removeLeg(l.id)} className="text-dim hover:text-down"><X className="w-3.5 h-3.5" /></button>
                   </div>
                 ))}
@@ -259,6 +276,34 @@ export default function Options() {
           </p>
         </div>
       )}
+
+      {/* Term structure */}
+      <div className="rounded-xl border border-line lg-glass p-4 mt-4">
+        <div className="flex items-center justify-between mb-1">
+          <p className="text-xs text-dim uppercase tracking-widest">Volatility term structure — ATM IV by expiry</p>
+          {!term && (
+            <button onClick={loadTerm} disabled={termLoading} className="chip chip-idle text-[11px]">
+              {termLoading ? "Loading…" : "Load"}
+            </button>
+          )}
+        </div>
+        {term && term.length >= 2 ? (
+          <XYLineChart
+            series={[{ label: "ATM IV", color: "#2dd4bf", points: term.map((t) => ({ x: t.dte, y: t.iv })) }]}
+            height={220}
+            zeroLine={false}
+            fmtX={(v) => `${fmtNum(v, 0)}d`}
+            fmtY={(v) => `${fmtNum(v, 0)}%`}
+          />
+        ) : term ? (
+          <p className="text-sm text-dim">Not enough expirations with IV to plot.</p>
+        ) : (
+          <p className="text-sm text-dim">
+            Loads ATM implied volatility across the next few expirations. An upward slope (contango) is normal;
+            a downward slope (backwardation) often signals near-term stress.
+          </p>
+        )}
+      </div>
 
       <p className="mt-3 text-[11px] text-dim">
         Highlighted row = at-the-money; tinted = in-the-money. IV comes from the market; Greeks and the payoff

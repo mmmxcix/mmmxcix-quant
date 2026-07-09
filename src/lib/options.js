@@ -115,20 +115,26 @@ function intrinsic(type, strike, S) {
   return type === "call" ? Math.max(0, S - strike) : Math.max(0, strike - S);
 }
 
-// P/L of one leg at expiry (per contract, ×100). A leg is
-// { type, strike, premium, side: "long"|"short", qty }.
+// P/L of one leg at expiry (per unit ×100). Option leg:
+// { type:"call"|"put", strike, premium, side, qty }. Stock leg:
+// { kind:"stock", entry, side, qty } where qty is round lots of 100 shares.
 function legPayoff(leg, S) {
+  if (leg.kind === "stock") {
+    const perShare = leg.side === "long" ? S - leg.entry : leg.entry - S;
+    return perShare * leg.qty * MULTIPLIER;
+  }
   const intr = intrinsic(leg.type, leg.strike, S);
   const perShare = leg.side === "long" ? intr - leg.premium : leg.premium - intr;
   return perShare * leg.qty * MULTIPLIER;
 }
 
 // Net cost of the position: negative = net debit (you pay), positive = credit.
+// A long stock leg costs its entry; a short option/stock receives its price.
 export function netCost(legs) {
-  return legs.reduce(
-    (sum, l) => sum + (l.side === "long" ? -l.premium : l.premium) * l.qty * MULTIPLIER,
-    0
-  );
+  return legs.reduce((sum, l) => {
+    const price = l.kind === "stock" ? l.entry : l.premium;
+    return sum + (l.side === "long" ? -price : price) * l.qty * MULTIPLIER;
+  }, 0);
 }
 
 // Aggregate (position) Greeks summed across legs, in position terms:
@@ -159,6 +165,11 @@ function leg(contract, type, side, qty = 1) {
   if (!contract) return null;
   return { type, strike: contract.strike, premium: +markPrice(contract).toFixed(2), side, qty, greeks: contract.greeks };
 }
+// A stock leg (qty in round lots of 100 shares). Delta = ±1 per share.
+function stockLeg(side, spot, qty = 1) {
+  if (!(spot > 0)) return null;
+  return { kind: "stock", side, entry: +spot.toFixed(2), qty, greeks: { delta: 1, gamma: 0, theta: 0, vega: 0 } };
+}
 const clean = (legs) => (legs && legs.every(Boolean) ? legs : null);
 
 // Each preset builds legs from the loaded chain (needs chain.spot/calls/puts).
@@ -188,7 +199,50 @@ export const STRATEGY_PRESETS = [
       leg(nearest(ch.calls, ch.spot), "call", "short", 2),
       leg(nearest(ch.calls, ch.spot * 1.05), "call", "long"),
     ]) },
+  { id: "covered-call", label: "Covered Call",
+    build: (ch) => clean([stockLeg("long", ch.spot), leg(nearest(ch.calls, ch.spot * 1.05), "call", "short")]) },
+  { id: "cash-secured-put", label: "Cash-Secured Put",
+    build: (ch) => clean([leg(nearest(ch.puts, ch.spot * 0.95), "put", "short")]) },
 ];
+
+// ── Term structure ──────────────────────────────────────────────────────────
+
+// ATM implied volatility per expiration — the volatility "term structure".
+// Fetches up to `max` expirations (concurrency-limited) and, for each, takes
+// the average IV of the call and put nearest the spot. Returns
+// [{ expiry, dte, iv }] ascending by expiry. Best-effort: skips failures.
+export async function fetchTermStructure(symbol, max = 6) {
+  const first = await fetchOptionChain(symbol);
+  const spot = first.spot;
+  const atmIv = (chain) => {
+    const c = nearest(chain.calls.filter((x) => x.iv), spot);
+    const p = nearest(chain.puts.filter((x) => x.iv), spot);
+    const ivs = [c?.iv, p?.iv].filter((v) => v > 0);
+    return ivs.length ? ivs.reduce((a, b) => a + b, 0) / ivs.length : null;
+  };
+  const nowSec = Date.now() / 1000;
+  const exps = (first.expirations || []).slice(0, max);
+  const points = [];
+
+  // First expiry is already loaded.
+  const iv0 = atmIv(first);
+  if (iv0) points.push({ expiry: first.expiry, dte: Math.max(1, Math.round((first.expiry - nowSec) / 86400)), iv: iv0 * 100 });
+
+  const rest = exps.filter((e) => e !== first.expiry);
+  let i = 0;
+  async function worker() {
+    while (i < rest.length) {
+      const ex = rest[i++];
+      try {
+        const ch = await fetchOptionChain(symbol, ex);
+        const iv = atmIv(ch);
+        if (iv) points.push({ expiry: ex, dte: Math.max(1, Math.round((ex - nowSec) / 86400)), iv: iv * 100 });
+      } catch { /* skip */ }
+    }
+  }
+  await Promise.all([worker(), worker(), worker()]);
+  return points.sort((a, b) => a.expiry - b.expiry);
+}
 
 // Build a P/L-at-expiry curve across a price range around `center` (usually
 // spot). Returns { points: [{x, y}], breakevens, maxProfit, maxLoss }.
