@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- MMMXCIX Quant — three ascending candles in the site's teal on the app's dark surface -->
+  <rect width="64" height="64" rx="14" fill="#0b1018"/>
+  <!-- candle 1 (dimmest, lowest) -->
+  <line x1="16" y1="31" x2="16" y2="53" stroke="#0f766e" stroke-width="3" stroke-linecap="round"/>
+  <rect x="11" y="36" width="10" height="13" rx="2.5" fill="#0f766e"/>
+  <!-- candle 2 -->
+  <line x1="32" y1="20" x2="32" y2="46" stroke="#14b8a6" stroke-width="3" stroke-linecap="round"/>
+  <rect x="27" y="25" width="10" height="16" rx="2.5" fill="#14b8a6"/>
+  <!-- candle 3 (brightest, highest) -->
+  <line x1="48" y1="9" x2="48" y2="38" stroke="#2dd4bf" stroke-width="3" stroke-linecap="round"/>
+  <rect x="43" y="14" width="10" height="18" rx="2.5" fill="#2dd4bf"/>
+</svg>
