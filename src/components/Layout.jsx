@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { NavLink, Link, useLocation } from "react-router-dom";
-import { LayoutDashboard, CandlestickChart, FlaskConical, Newspaper, Compass, Wrench, Activity, Scale, Star, Briefcase, Radar, GraduationCap, Sigma, Menu, X } from "lucide-react";
+import { LayoutDashboard, CandlestickChart, FlaskConical, Newspaper, Compass, Wrench, Activity, Scale, Star, Briefcase, Radar, GraduationCap, Sigma, Menu, X, Target } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const NAV = [
@@ -19,8 +19,30 @@ const NAV = [
   { to: "/resources", label: "Resources", icon: Compass },
 ];
 
+// The private Coach page only appears in the nav once the dev token exists in
+// this browser (set on /coach or in the Backtest AI panel). The route itself
+// stays gated server-side either way — this just hides the menu entry.
+function useDevNav() {
+  const read = () => {
+    try { return !!localStorage.getItem("quant_dev_token"); } catch { return false; }
+  };
+  const [isDev, setIsDev] = useState(read);
+  useEffect(() => {
+    const update = () => setIsDev(read());
+    window.addEventListener("quant-dev-token", update);
+    window.addEventListener("storage", update);
+    return () => {
+      window.removeEventListener("quant-dev-token", update);
+      window.removeEventListener("storage", update);
+    };
+  }, []);
+  return isDev;
+}
+
 function NavItems({ onNavigate }) {
-  return NAV.map(({ to, label, icon: Icon, end }) => (
+  const isDev = useDevNav();
+  const items = isDev ? [...NAV, { to: "/coach", label: "Coach", icon: Target }] : NAV;
+  return items.map(({ to, label, icon: Icon, end }) => (
     <NavLink
       key={to}
       to={to}

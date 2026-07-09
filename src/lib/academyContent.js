@@ -8,6 +8,7 @@
 
 import { DAY_TRADING_COURSE } from "./academyDayTrading";
 import { OPTIONS_COURSE } from "./academyOptions";
+import { PROP_FIRM_COURSE } from "./academyPropFirm";
 
 // The original four levels — the general quant learning path.
 const QUANT_LEVELS = [
@@ -328,6 +329,7 @@ export const COURSES = [
     levels: QUANT_LEVELS,
   },
   DAY_TRADING_COURSE,
+  PROP_FIRM_COURSE,
   OPTIONS_COURSE,
 ];
 

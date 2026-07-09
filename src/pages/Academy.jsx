@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams, Link } from "react-router-dom";
-import { GraduationCap, Clock, ChevronRight, ArrowLeft, Lightbulb, Check, Circle, Compass, BookOpen, Zap, Sigma } from "lucide-react";
+import { GraduationCap, Clock, ChevronRight, ArrowLeft, Lightbulb, Check, Circle, Compass, BookOpen, Zap, Sigma, Trophy } from "lucide-react";
 import { COURSES } from "@/lib/academyContent";
 import { getCompleted, setDone, subscribeProgress } from "@/lib/academyProgress";
 import AcademyDiagram from "@/components/AcademyDiagram";
 import { cn } from "@/lib/utils";
 
-const COURSE_ICON = { "quant-foundations": BookOpen, "day-trading": Zap, "options-derivatives": Sigma };
+const COURSE_ICON = { "quant-foundations": BookOpen, "day-trading": Zap, "futures-prop": Trophy, "options-derivatives": Sigma };
 
 // Renders one content block. Only fixed block types — plain text, no HTML.
 function Block({ block }) {

@@ -27,16 +27,23 @@ Respond with JavaScript code ONLY — no markdown fences, no explanatory text be
 The code MUST define a function \`strategy(ctx)\`:
 - ctx.candles: array of { time (unix seconds), open, high, low, close, volume }, ascending
 - ctx.index: index of the current candle (the signal is computed on the close, executed at the next open)
-- ctx.close: current close price
-- ctx.position: "long" | "flat" (current position)
-- ctx.indicators: { sma, ema, rsi, roc, atr, bollinger, donchian, closes }
+- ctx.open / ctx.high / ctx.low / ctx.close: this bar's OHLC
+- ctx.position: "long" | "short" | "flat" (current position)
+- ctx.session: { hour, minute, minuteOfDay, isNewDay } — bar time in UTC, for intraday/session logic
+- ctx.indicators: { sma, ema, rsi, roc, atr, bollinger, donchian, macd, closes }
   - sma/ema/rsi/roc(values, period) expect number[] (e.g. ctx.indicators.closes(ctx.candles))
-  - atr/donchian(candles, period); bollinger(values, period, mult)
+  - atr/donchian(candles, period); bollinger(values, period, mult); macd(values, fast, slow, signal)
   - All return arrays the same length as the input, with null during the warm-up phase
-- Return: "long" (hold/open a position) or "flat" (no position)
+- Return one of:
+  - "long" | "short" | "flat" (plain target position), or
+  - { signal: "long"|"short"|"flat", stop: number, target: number } — stop/target are live
+    bracket orders checked intrabar against high/low (stop fills before target if both hit).
+    Return the same signal with new levels to trail a stop while holding.
 
 Rules:
-- Long/flat only (no shorting). No look-ahead (use only data up to ctx.index).
+- No look-ahead (use only data up to ctx.index).
+- The source is evaluated ONCE, then strategy(ctx) is called per bar in order — top-level
+  let/const state persists across bars (useful for opening ranges, one-trade-per-day flags).
 - Compute indicator arrays once per candle array and cache them (e.g. a module-level WeakMap or an array-reference check) to keep the backtest fast.
 - Defensive null checks during the warm-up phase → return "flat".
 - Concise English comments explaining the logic.
@@ -99,6 +106,9 @@ export async function onRequest({ request, env }) {
   if (!safeEqual(token, env.DEV_ACCESS_TOKEN)) {
     return json({ error: "unauthorized" }, 401);
   }
+
+  // Cheap token check (no AI call) — used by the private Coach page gate.
+  if (body?.validate === true) return json({ ok: true });
 
   const prompt = String(body?.prompt || "").trim();
   if (!prompt) return json({ error: "empty_prompt" }, 400);

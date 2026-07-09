@@ -53,6 +53,7 @@ export default function Backtest() {
     setDevToken(t);
     setTokenInput("");
     setAiError(null);
+    window.dispatchEvent(new Event("quant-dev-token")); // reveal the Coach nav entry
   };
 
   const copyCode = async () => {

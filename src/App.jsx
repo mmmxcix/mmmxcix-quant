@@ -13,6 +13,7 @@ import Portfolio from "@/pages/Portfolio";
 import Screener from "@/pages/Screener";
 import Options from "@/pages/Options";
 import Academy from "@/pages/Academy";
+import Coach from "@/pages/Coach";
 import Impressum from "@/pages/Impressum";
 import Datenschutz from "@/pages/Datenschutz";
 import Nutzung from "@/pages/Nutzung";
@@ -42,6 +43,7 @@ export default function App() {
                 <Route path="/portfolio" element={<Portfolio />} />
                 <Route path="/news" element={<News />} />
                 <Route path="/academy" element={<Academy />} />
+                <Route path="/coach" element={<Coach />} />
                 <Route path="/tools" element={<Tools />} />
                 <Route path="/resources" element={<Resources />} />
                 <Route path="*" element={<Dashboard />} />
