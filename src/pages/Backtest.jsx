@@ -4,7 +4,7 @@ import EquityChart from "@/components/EquityChart";
 import CandleChart from "@/components/CandleChart";
 import SymbolSearch from "@/components/SymbolSearch";
 import { fetchCandles, MARKETS, INTERVALS, RANGES } from "@/lib/data";
-import { runBacktest, compileStrategy, DEFAULT_STRATEGY_CODE } from "@/lib/backtest";
+import { runBacktest, compileStrategy, DEFAULT_STRATEGY_CODE, ORB_STRATEGY_CODE } from "@/lib/backtest";
 import { BUILT_IN_STRATEGIES } from "@/lib/strategies";
 import { cn, fmtNum, fmtPct } from "@/lib/utils";
 
@@ -134,14 +134,15 @@ export default function Backtest() {
     ];
   }, [result]);
 
-  // Buy/sell arrows on the price chart — shows exactly where the strategy
-  // entered and exited, so you can see how close each call was.
+  // Entry/exit arrows on the price chart — direction-aware so you can see
+  // exactly where the strategy went long or short and how it got out.
   const tradeMarkers = useMemo(() => {
     if (!result?.trades) return [];
     const out = [];
     for (const t of result.trades) {
-      out.push({ time: t.entryTime, side: "buy", text: "Buy" });
-      out.push({ time: t.exitTime, side: "sell", text: "Sell" });
+      const short = t.side === "short";
+      out.push({ time: t.entryTime, side: short ? "sell" : "buy", text: short ? "Short" : "Long" });
+      out.push({ time: t.exitTime, side: short ? "buy" : "sell", text: short ? "Cover" : "Sell" });
     }
     return out;
   }, [result]);
@@ -242,11 +243,26 @@ export default function Backtest() {
               <>
                 <div className="flex items-center justify-between">
                   <p className="text-[11px] text-dim">JS editor</p>
-                  <button onClick={copyCode} title="Copy code"
-                    className="flex items-center gap-1.5 text-[11px] text-dim hover:text-text transition-colors">
-                    {copied ? <Check className="w-3.5 h-3.5 text-up" /> : <Copy className="w-3.5 h-3.5" />}
-                    {copied ? "Copied!" : "Copy"}
-                  </button>
+                  <div className="flex items-center gap-3">
+                    <select
+                      value=""
+                      onChange={(e) => {
+                        if (e.target.value === "sma") setCode(DEFAULT_STRATEGY_CODE);
+                        else if (e.target.value === "orb") setCode(ORB_STRATEGY_CODE);
+                      }}
+                      title="Insert an example (replaces the editor)"
+                      className="bg-transparent text-[11px] text-dim hover:text-text transition-colors cursor-pointer outline-none"
+                    >
+                      <option value="">Examples…</option>
+                      <option value="sma">SMA Crossover</option>
+                      <option value="orb">Opening Range Breakout</option>
+                    </select>
+                    <button onClick={copyCode} title="Copy code"
+                      className="flex items-center gap-1.5 text-[11px] text-dim hover:text-text transition-colors">
+                      {copied ? <Check className="w-3.5 h-3.5 text-up" /> : <Copy className="w-3.5 h-3.5" />}
+                      {copied ? "Copied!" : "Copy"}
+                    </button>
+                  </div>
                 </div>
                 <textarea
                   value={code}
@@ -257,9 +273,12 @@ export default function Backtest() {
                 />
                 <p className="text-[11px] text-dim leading-relaxed">
                   Define <code className="text-accent">function strategy(ctx)</code> and return{" "}
-                  <code className="text-accent">"long"</code> or <code className="text-accent">"flat"</code>.
-                  Available: <code>ctx.candles</code>, <code>ctx.index</code>, <code>ctx.close</code>,{" "}
-                  <code>ctx.position</code>, <code>ctx.indicators</code> (sma, ema, rsi, roc, atr, bollinger, donchian).
+                  <code className="text-accent">"long"</code>, <code className="text-accent">"short"</code> or{" "}
+                  <code className="text-accent">"flat"</code> — or{" "}
+                  <code className="text-accent">{'{ signal, stop, target }'}</code> for bracket exits.
+                  Available: <code>ctx.candles</code>, <code>ctx.index</code>, <code>ctx.open/high/low/close</code>,{" "}
+                  <code>ctx.position</code>, <code>ctx.session</code> (UTC time, isNewDay),{" "}
+                  <code>ctx.indicators</code> (sma, ema, rsi, roc, atr, bollinger, donchian, macd).
                 </p>
 
                 {/* KI-Generator */}
@@ -367,8 +386,10 @@ export default function Backtest() {
                     <table className="w-full text-xs font-mono">
                       <thead>
                         <tr className="text-left text-dim border-b border-line sticky top-0 bg-surface">
+                          <th className="px-4 py-2 font-medium">Side</th>
                           <th className="px-4 py-2 font-medium">Entry</th>
                           <th className="px-4 py-2 font-medium">Exit</th>
+                          <th className="px-4 py-2 font-medium">Reason</th>
                           <th className="px-4 py-2 font-medium text-right">Bars</th>
                           <th className="px-4 py-2 font-medium text-right">PnL %</th>
                         </tr>
@@ -376,8 +397,12 @@ export default function Backtest() {
                       <tbody>
                         {result.trades.slice(-50).reverse().map((t, i) => (
                           <tr key={i} className="border-b border-line/40 last:border-0">
+                            <td className={cn("px-4 py-1.5", t.side === "short" ? "text-down" : "text-up")}>
+                              {t.side === "short" ? "Short" : "Long"}
+                            </td>
                             <td className="px-4 py-1.5 text-dim">{new Date(t.entryTime * 1000).toLocaleDateString("de-CH")}</td>
                             <td className="px-4 py-1.5 text-dim">{new Date(t.exitTime * 1000).toLocaleDateString("de-CH")}</td>
+                            <td className="px-4 py-1.5 text-dim">{t.reason || "signal"}</td>
                             <td className="px-4 py-1.5 text-right">{t.bars}</td>
                             <td className={cn("px-4 py-1.5 text-right", t.pnlPct >= 0 ? "text-up" : "text-down")}>
                               {fmtPct(t.pnlPct)}

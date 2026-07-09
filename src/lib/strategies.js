@@ -150,6 +150,58 @@ export const BUILT_IN_STRATEGIES = [
   },
 
   {
+    id: "opening-range-breakout",
+    name: "Opening Range Breakout (Intraday)",
+    description:
+      "Bildet aus den ersten N Balken jedes UTC-Tages eine Eröffnungs-Range und handelt den Ausbruch: Stop auf der Gegenseite der Range, Take-Profit als Vielfaches (R) der Range-Breite. Long und Short, ein Trade pro Tag. Für Intraday-Intervalle (z. B. 5m).",
+    params: [
+      { key: "rangeBars", label: "Range-Balken", default: 6, min: 1, max: 120, step: 1 },
+      { key: "targetR", label: "Take-Profit (R)", default: 1, min: 0.25, max: 10, step: 0.25 },
+      { key: "stopBufferPct", label: "Stop-Puffer (%)", default: 0, min: 0, max: 2, step: 0.05 },
+      { key: "longOnly", label: "Nur Long (1/0)", default: 0, min: 0, max: 1, step: 1 },
+    ],
+    build({ rangeBars = 6, targetR = 1, stopBufferPct = 0, longOnly = 0 } = {}) {
+      // Per-run closure state (runBacktest calls the signalFn once per bar,
+      // ascending, so accumulating across bars is safe).
+      let hi = -Infinity, lo = Infinity, count = 0, traded = false;
+      let side = 0, stop = 0, target = 0;
+      return (ctx) => {
+        if (ctx.session.isNewDay) {
+          hi = -Infinity; lo = Infinity; count = 0; traded = false; side = 0;
+        }
+        // Phase 1: build the opening range. Returning "flat" also flattens any
+        // position carried over from the previous day at the first bar's open.
+        if (count < rangeBars) {
+          if (ctx.high > hi) hi = ctx.high;
+          if (ctx.low < lo) lo = ctx.low;
+          count++;
+          return "flat";
+        }
+        // Phase 2: hold the open trade — the engine's brackets do the exiting.
+        if (ctx.position !== "flat") {
+          return side === 1
+            ? { signal: "long", stop, target }
+            : { signal: "short", stop, target };
+        }
+        // Phase 3: one breakout entry per day.
+        if (traded) return "flat";
+        const width = hi - lo;
+        if (width <= 0) return "flat";
+        const buf = width * (stopBufferPct / 100);
+        if (ctx.close > hi) {
+          side = 1; traded = true; stop = lo - buf; target = hi + width * targetR;
+          return { signal: "long", stop, target };
+        }
+        if (!longOnly && ctx.close < lo) {
+          side = -1; traded = true; stop = hi + buf; target = lo - width * targetR;
+          return { signal: "short", stop, target };
+        }
+        return "flat";
+      };
+    },
+  },
+
+  {
     id: "donchian-breakout",
     name: "Donchian Breakout",
     description:

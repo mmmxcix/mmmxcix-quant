@@ -1,9 +1,20 @@
-// backtest.js — event-driven, look-ahead-free long/flat backtesting engine.
+// backtest.js — event-driven, look-ahead-free backtesting engine.
+//
+// Position model: flat / long / short (all-in on current equity).
 //
 // Execution model:
 //   * signalFn(ctx) is called once per bar AFTER that bar closes.
-//   * The returned target position ("long" | "flat") is executed at the
-//     NEXT bar's open — never on the bar the signal was generated on.
+//   * The return decides the target position for the NEXT bar's open:
+//       - "long" | "short" | "flat"  (a plain string), or
+//       - { signal: "long"|"short"|"flat", stop, target }  (bracket order).
+//     Direction changes and flattening execute at the next bar's open — never
+//     on the bar the signal was generated on.
+//   * Bracket exits (stop / target) are LIVE orders: once in a position they
+//     are checked intrabar against each bar's high/low (including the entry
+//     bar) and fill at the bracket price the moment it is touched. If both the
+//     stop and target fall inside one bar, the stop is assumed to fill first
+//     (conservative). Brackets can be updated while holding (e.g. trailing
+//     stops) by returning the same direction with new stop/target levels.
 //   * feeBps is charged per side (entry and exit) on the traded notional.
 //   * Equity is marked to market at every bar close.
 
@@ -21,12 +32,38 @@ function median(arr) {
   return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
 }
 
+/** A finite number, or null. Used to sanitise user-supplied bracket levels. */
+function finiteOrNull(v) {
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
 /**
- * Run a long/flat backtest.
+ * Normalise a raw signal return into { signal, stop, target }.
+ * Accepts the plain strings "long" | "short" | "flat" (back-compat with the
+ * original long/flat engine) or an object carrying bracket levels. Anything
+ * unrecognised becomes "flat".
+ */
+function normalizeSignal(raw) {
+  if (raw === "long" || raw === "short" || raw === "flat") {
+    return { signal: raw, stop: undefined, target: undefined };
+  }
+  if (raw && typeof raw === "object") {
+    const s = raw.signal;
+    if (s === "long" || s === "short" || s === "flat") {
+      return { signal: s, stop: raw.stop, target: raw.target };
+    }
+  }
+  return { signal: "flat", stop: undefined, target: undefined };
+}
+
+/**
+ * Run a long / short / flat backtest.
  *
  * @param {Object} options
  * @param {Array}    options.candles        Ascending candle array ({time /* unix seconds *\/, open, high, low, close, volume}).
- * @param {Function} options.signalFn       (ctx) => "long" | "flat". ctx = { candles, index, close, position, indicators }.
+ * @param {Function} options.signalFn       (ctx) => "long"|"short"|"flat" | { signal, stop, target }.
+ *                                          ctx = { candles, index, time, open, high, low, close,
+ *                                                  position, session, indicators }.
  * @param {number}  [options.initialCapital=10000]
  * @param {number}  [options.feeBps=10]     Fee per side in basis points.
  * @returns {{ equity:Array, buyHold:Array, trades:Array, metrics:Object, warnings:string[] }}
@@ -65,92 +102,151 @@ export function runBacktest({ candles, signalFn, initialCapital = 10000, feeBps 
   const n = candles.length;
 
   // --- Portfolio state -----------------------------------------------------
-  let cash = initialCapital;
-  let units = 0; // asset units held while long
-  let position = "flat"; // "long" | "flat"
-  let pendingTarget = null; // target position to execute at the next bar's open
+  let equityVal = initialCapital; // realised equity; equals cash while flat
+  let position = "flat"; // "long" | "short" | "flat"
+  let dir = 0; // +1 long, -1 short, 0 flat
+  let units = 0; // asset units in the open position
+  let pending = null; // { signal, stop, target } to execute at the next open
 
   // Open-trade bookkeeping.
   let entryTime = 0;
   let entryPrice = 0;
   let entryIndex = 0;
-  let entryCost = 0; // capital committed at entry (pre-fee cash), pnl base
+  let entryEquity = 0; // equity just BEFORE the entry fee (pnl base)
+  let equityAfterEntry = 0; // equity right after paying the entry fee
+  let stopLevel = null;
+  let targetLevel = null;
 
   const equity = [];
   const trades = [];
   let barsInMarket = 0;
   let firstErrorLogged = false;
 
-  const closeTrade = (exitTime, exitPrice, exitIndex) => {
-    const proceeds = units * exitPrice * (1 - fee);
+  // Equity if the open position were marked at `price` (realised if flat).
+  const markToMarket = (price) =>
+    position === "flat" ? equityVal : equityAfterEntry + dir * units * (price - entryPrice);
+
+  const openPosition = (sig, price, i, stop, target) => {
+    dir = sig === "long" ? 1 : -1;
+    entryEquity = equityVal;
+    equityAfterEntry = equityVal * (1 - fee); // entry fee reduces working capital
+    units = price > 0 ? equityAfterEntry / price : 0;
+    entryPrice = price;
+    entryTime = candles[i].time;
+    entryIndex = i;
+    position = sig;
+    stopLevel = finiteOrNull(stop);
+    targetLevel = finiteOrNull(target);
+  };
+
+  const closePosition = (price, i, reason) => {
+    const gross = equityAfterEntry + dir * units * (price - entryPrice);
+    const exitFee = units * price * fee;
+    const finalEq = gross - exitFee;
     trades.push({
       entryTime,
-      exitTime,
+      exitTime: candles[i].time,
       entryPrice,
-      exitPrice,
-      pnl: proceeds - entryCost,
-      pnlPct: entryCost > 0 ? ((proceeds - entryCost) / entryCost) * 100 : 0,
-      bars: exitIndex - entryIndex,
+      exitPrice: price,
+      side: position, // "long" | "short"
+      reason, // "signal" | "stop" | "target" | "eod"
+      pnl: finalEq - entryEquity,
+      pnlPct: entryEquity > 0 ? ((finalEq - entryEquity) / entryEquity) * 100 : 0,
+      bars: i - entryIndex,
     });
-    cash = proceeds;
-    units = 0;
+    equityVal = finalEq;
     position = "flat";
+    dir = 0;
+    units = 0;
+    stopLevel = null;
+    targetLevel = null;
+  };
+
+  // Intrabar bracket exit for the position carried into / opened on bar i.
+  // Stop is assumed to fill before the target when both sit inside the bar.
+  const checkBrackets = (bar, i) => {
+    if (position === "long") {
+      if (stopLevel !== null && bar.low <= stopLevel) return closePosition(stopLevel, i, "stop");
+      if (targetLevel !== null && bar.high >= targetLevel) return closePosition(targetLevel, i, "target");
+    } else if (position === "short") {
+      if (stopLevel !== null && bar.high >= stopLevel) return closePosition(stopLevel, i, "stop");
+      if (targetLevel !== null && bar.low <= targetLevel) return closePosition(targetLevel, i, "target");
+    }
   };
 
   // --- Main loop -----------------------------------------------------------
+  let prevDayIndex = null;
   for (let i = 0; i < n; i++) {
     const bar = candles[i];
 
     // 1) Execute the order decided on the previous bar, at this bar's open.
-    if (pendingTarget !== null && pendingTarget !== position) {
-      if (pendingTarget === "long") {
-        entryCost = cash;
-        units = (cash * (1 - fee)) / bar.open; // entry fee reduces size
-        cash = 0;
-        position = "long";
-        entryTime = bar.time;
-        entryPrice = bar.open;
-        entryIndex = i;
-      } else {
-        closeTrade(bar.time, bar.open, i);
+    if (pending !== null) {
+      const sig = pending.signal;
+      // Close the current position if we're flattening or reversing.
+      if (position !== "flat" && (sig === "flat" || sig !== position)) {
+        closePosition(bar.open, i, "signal");
       }
+      if (sig === "long" || sig === "short") {
+        if (position === "flat") {
+          openPosition(sig, bar.open, i, pending.stop, pending.target);
+        } else if (sig === position) {
+          // Same direction: allow bracket updates (e.g. trailing the stop).
+          if (pending.stop !== undefined) stopLevel = finiteOrNull(pending.stop);
+          if (pending.target !== undefined) targetLevel = finiteOrNull(pending.target);
+        }
+      }
+      pending = null;
     }
-    pendingTarget = null;
 
-    if (position === "long") barsInMarket++;
+    // 2) Intrabar bracket exit for whatever position we now hold this bar.
+    const inPositionThisBar = position !== "flat";
+    checkBrackets(bar, i);
+    if (inPositionThisBar) barsInMarket++;
 
-    // 2) Mark to market at this bar's close.
-    equity.push({
-      time: bar.time,
-      value: position === "long" ? units * bar.close : cash,
-    });
+    // 3) Mark to market at this bar's close.
+    equity.push({ time: bar.time, value: markToMarket(bar.close) });
 
-    // 3) Evaluate the signal for this closed bar (executes next bar).
+    // 4) Evaluate the signal for this closed bar (executes next bar).
+    const dayIndex = Math.floor(bar.time / 86400);
+    const d = new Date(bar.time * 1000);
+    const session = {
+      hour: d.getUTCHours(),
+      minute: d.getUTCMinutes(),
+      minuteOfDay: d.getUTCHours() * 60 + d.getUTCMinutes(),
+      dayIndex,
+      isNewDay: prevDayIndex === null || dayIndex !== prevDayIndex,
+    };
+    prevDayIndex = dayIndex;
+
     try {
-      const target = signalFn({
+      const raw = signalFn({
         candles,
         index: i,
+        time: bar.time,
+        open: bar.open,
+        high: bar.high,
+        low: bar.low,
         close: bar.close,
         position,
+        session,
         indicators: ind,
       });
-      pendingTarget = target === "long" ? "long" : "flat";
+      pending = normalizeSignal(raw);
     } catch (err) {
       if (!firstErrorLogged) {
         warnings.push(`Strategy error at bar ${i} (${bar.time}): ${err && err.message ? err.message : String(err)}`);
         firstErrorLogged = true;
       }
-      pendingTarget = "flat";
+      pending = { signal: "flat" };
     }
   }
 
-  // 4) Force-close any open position at the last bar's close.
+  // 5) Force-close any open position at the last bar's close.
   const last = candles[n - 1];
-  if (position === "long") {
-    closeTrade(last.time, last.close, n - 1);
-    // The last mark-to-market did not include the exit fee — correct it so the
-    // final equity value matches realized cash.
-    equity[equity.length - 1] = { time: last.time, value: cash };
+  if (position !== "flat") {
+    closePosition(last.close, n - 1, "eod");
+    // The last mark-to-market excluded the exit fee — correct it to realised.
+    equity[equity.length - 1] = { time: last.time, value: equityVal };
   }
 
   // --- Buy & hold benchmark (close-to-close, same starting capital) --------
@@ -239,24 +335,27 @@ export function runBacktest({ candles, signalFn, initialCapital = 10000, feeBps 
 // ---------------------------------------------------------------------------
 
 /** Example strategy source shown to the user in the code editor. */
-export const DEFAULT_STRATEGY_CODE = `// Strategie: SMA 20/50 Crossover
+export const DEFAULT_STRATEGY_CODE = `// Strategy: SMA 20/50 Crossover
 //
-// Your code must define a function called \`strategy(ctx)\` that returns
-// either "long" (be invested) or "flat" (hold cash). It is called once per
-// bar AFTER the bar closes; orders execute at the NEXT bar's open.
+// Your code must define a function called \`strategy(ctx)\` that returns a
+// target position for the NEXT bar's open. Return either:
+//   "long" | "short" | "flat"                         — a plain position, or
+//   { signal: "long", stop: 95, target: 110 }         — with bracket exits.
+//
+// Bracket stop/target are live orders: once in the trade they are checked
+// intrabar against each bar's high/low and fill at the touched price.
 //
 // ctx contains:
-//   ctx.candles    - the full candle array [{ time, open, high, low, close, volume }]
+//   ctx.candles    - full candle array [{ time, open, high, low, close, volume }]
 //   ctx.index      - index of the current (just closed) bar
-//   ctx.close      - close price of the current bar
-//   ctx.position   - your current position, "long" or "flat"
-//   ctx.indicators - the indicators module (sma, ema, rsi, roc, atr,
-//                    bollinger, donchian, closes)
+//   ctx.open/high/low/close - this bar's OHLC
+//   ctx.position   - current position: "long" | "short" | "flat"
+//   ctx.session    - { hour, minute, minuteOfDay, isNewDay } in UTC
+//   ctx.indicators - module (sma, ema, rsi, roc, atr, bollinger, donchian, macd, closes)
 
 function strategy(ctx) {
   const { indicators, candles, index } = ctx;
 
-  // Compute both moving averages over the close prices.
   const prices = indicators.closes(candles);
   const fast = indicators.sma(prices, 20);
   const slow = indicators.sma(prices, 50);
@@ -270,11 +369,63 @@ function strategy(ctx) {
 `;
 
 /**
+ * Opening Range Breakout — showcases the intraday features (session reset,
+ * short side, stop/target brackets). Best on an intraday interval (e.g. 5m).
+ */
+export const ORB_STRATEGY_CODE = `// Opening Range Breakout (intraday)
+//
+// Builds a range from the first N bars of each UTC day, then trades a break
+// of that range with the opposite side as the stop and a fixed R multiple as
+// the target. One trade per day. Use an intraday interval (e.g. 5m).
+//
+// State is kept in closure vars — runBacktest calls strategy() once per bar
+// in order, so this is safe.
+
+const RANGE_BARS = 6;   // first 6 bars = opening range (6 x 5m = 30 min)
+const TARGET_R = 1;     // take profit at 1x the range width
+const LONG_ONLY = false;
+
+let hi = -Infinity, lo = Infinity, count = 0, traded = false, side = 0, stop = 0, target = 0;
+
+function strategy(ctx) {
+  if (ctx.session.isNewDay) { hi = -Infinity; lo = Infinity; count = 0; traded = false; side = 0; }
+
+  // Phase 1: build the opening range (flat — this also exits any leftover trade).
+  if (count < RANGE_BARS) {
+    hi = Math.max(hi, ctx.high);
+    lo = Math.min(lo, ctx.low);
+    count++;
+    return "flat";
+  }
+
+  // Phase 2: hold an open trade; brackets do the exiting.
+  if (ctx.position !== "flat") {
+    return side === 1 ? { signal: "long", stop, target } : { signal: "short", stop, target };
+  }
+
+  // Phase 3: one breakout entry per day.
+  if (traded) return "flat";
+  const width = hi - lo;
+  if (width <= 0) return "flat";
+
+  if (ctx.close > hi) {
+    side = 1; traded = true; stop = lo; target = hi + width * TARGET_R;
+    return { signal: "long", stop, target };
+  }
+  if (!LONG_ONLY && ctx.close < lo) {
+    side = -1; traded = true; stop = hi; target = lo - width * TARGET_R;
+    return { signal: "short", stop, target };
+  }
+  return "flat";
+}
+`;
+
+/**
  * Compile user JavaScript source into a signalFn usable by runBacktest.
  *
- * The source must define `function strategy(ctx) { ... }` returning
- * "long" or "flat". The indicators module is injected as `indicators`
- * (also reachable via ctx.indicators).
+ * The source must define `function strategy(ctx) { ... }` returning a position
+ * ("long"|"short"|"flat") or a bracket object. The indicators module is
+ * injected as `indicators` (also reachable via ctx.indicators).
  *
  * @param {string} code
  * @returns {Function} signalFn(ctx)
@@ -295,17 +446,23 @@ export function compileStrategy(code) {
     );
   }
 
-  let compiled;
+  let strat;
   try {
-    // The wrapper runs the user code, then calls their strategy per bar.
-    const wrapped = code + "\n;return strategy(ctx);";
-    compiled = new Function("ctx", "indicators", wrapped);
+    // Evaluate the user source ONCE: it defines strategy() (and any top-level
+    // state it keeps in closure) and hands the function back. Running once —
+    // rather than re-running the whole source every bar — lets stateful
+    // strategies (e.g. an opening-range that accumulates across bars) work.
+    const factory = new Function("indicators", code + "\n;return strategy;");
+    strat = factory(ind);
   } catch (err) {
     throw new Error(
       `Strategy code failed to compile: ${err && err.message ? err.message : String(err)}`
     );
   }
+  if (typeof strat !== "function") {
+    throw new Error('Strategy code must define a function named "strategy".');
+  }
 
-  // Inject the indicators module; runBacktest already puts it on ctx too.
-  return (ctx) => compiled(ctx, ind);
+  // ctx.indicators is also set by runBacktest, so strategies can use either.
+  return (ctx) => strat(ctx);
 }
