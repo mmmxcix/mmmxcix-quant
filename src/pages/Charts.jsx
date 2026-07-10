@@ -5,6 +5,7 @@ import CandleChart from "@/components/CandleChart";
 import SymbolSearch from "@/components/SymbolSearch";
 import ChartDrawLayer, { DRAW_TOOLS } from "@/components/ChartDrawLayer";
 import AutoAnnotateLayer from "@/components/AutoAnnotateLayer";
+import BiasPanel from "@/components/BiasPanel";
 import IndicatorPane from "@/components/IndicatorPane";
 import { fetchCandles, fetchOlderCandles, fetchLatestCandles, MARKETS, INTERVALS, rangesFor } from "@/lib/data";
 import { openBinanceKlineStream, mergeLiveCandle } from "@/lib/liveStream";
@@ -12,10 +13,16 @@ import { CHART_TYPES } from "@/lib/chartTypes";
 import { sma, ema, bollinger, closes } from "@/lib/indicators";
 import { getAlertsFor, addAlert, removeAlert, subscribeAlerts, checkAlerts, ensureNotificationPermission } from "@/lib/alerts";
 import { cn, fmtPrice, fmtPct } from "@/lib/utils";
-import { Bell, X } from "lucide-react";
+import { Bell, X, Scale } from "lucide-react";
 
 const DEFAULT_SYMBOL = { crypto: "BTCUSDT", stock: "AAPL" };
 const DRAW_COLORS = ["#38bdf8", "#f59e0b", "#f472b6", "#a78bfa", "#10b981", "#ef4444"];
+
+// The chart reopens on whatever you looked at last (market, symbol, timeframe).
+const LAST_CHART_KEY = "quant_last_chart";
+function loadLastChart() {
+  try { return JSON.parse(localStorage.getItem(LAST_CHART_KEY)) || {}; } catch { return {}; }
+}
 
 // Map the DRAW_TOOLS icon names to their imported components (avoids pulling
 // in the entire lucide-react namespace, which triples the bundle).
@@ -41,11 +48,17 @@ function pollMs(interval) {
 
 export default function Charts() {
   const [params, setParams] = useSearchParams();
-  const market = params.get("market") || "crypto";
-  const symbol = params.get("symbol") || DEFAULT_SYMBOL[market];
+  // Priority: explicit URL params (links from Screener/Watchlist) → the last
+  // symbol you looked at (persisted) → defaults.
+  const stored = useMemo(loadLastChart, []);
+  const market = params.get("market") || stored.market || "crypto";
+  const symbol =
+    params.get("symbol") ||
+    (stored.market === market && stored.symbol ? stored.symbol : null) ||
+    DEFAULT_SYMBOL[market];
 
-  const [interval, setIntervalId] = useState("1d");
-  const [range, setRange] = useState("1y");
+  const [interval, setIntervalId] = useState(() => stored.interval || "1d");
+  const [range, setRange] = useState(() => stored.range || "1y");
   const [chartType, setChartType] = useState("candles");
   const [indicators, setIndicators] = useState({ sma2050: true, ema200: false, bollinger: false });
   const [panes, setPanes] = useState({ rsi: false, macd: false }); // oscillator sub-charts
@@ -69,7 +82,17 @@ export default function Charts() {
   // Auto-annotation: the app detects and draws these from the data itself.
   const [autoDraw, setAutoDraw] = useState({ levels: false, trend: false, fvg: false, fib: false, patterns: false });
 
+  // Rule-based bias readout (mechanical long/short/neutral + SL/TP levels).
+  const [showBias, setShowBias] = useState(false);
+
   const chartKey = `${market}:${symbol}`;
+
+  // Remember what's on screen so the page reopens exactly here next time.
+  useEffect(() => {
+    try {
+      localStorage.setItem(LAST_CHART_KEY, JSON.stringify({ market, symbol, interval, range }));
+    } catch { /* private mode */ }
+  }, [market, symbol, interval, range]);
 
   // Keep interval/range valid together: switching to an intraday interval
   // must snap the range into the allowed set for that interval.
@@ -418,6 +441,11 @@ export default function Charts() {
             className="flex items-center gap-1.5 chip chip-idle">
             <Bell className="w-3.5 h-3.5" /> Alert
           </button>
+          <button onClick={() => setShowBias((v) => !v)}
+            title="Mechanical rule check: long/short bias + suggested SL/TP from detected structure. Not investment advice."
+            className={cn("flex items-center gap-1.5 chip", showBias ? "chip-active" : "chip-idle")}>
+            <Scale className="w-3.5 h-3.5" /> Bias check
+          </button>
           {showAlertBox && (
             <div className="flex flex-wrap items-center gap-2">
               <input
@@ -492,6 +520,12 @@ export default function Charts() {
           </>
         ) : null}
       </div>
+
+      {showBias && candles && (
+        <div className="mt-4">
+          <BiasPanel candles={candles} symbol={symbol} />
+        </div>
+      )}
     </div>
   );
 }
