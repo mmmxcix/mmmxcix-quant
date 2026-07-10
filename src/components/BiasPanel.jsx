@@ -111,44 +111,36 @@ export default function BiasPanel({ market, symbol, interval }) {
         </button>
       </div>
 
-      {/* Timeframe ladder */}
-      <div className="flex flex-wrap items-center gap-1.5 mb-2">
-        {tfs.map((tf) => {
-          const r = results[tf];
-          return (
-            <button key={tf} onClick={() => setSelected(tf)}
-              className={cn("flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 transition-colors",
-                selected === tf ? "border-accent/60 bg-accent/10" : "border-line hover:border-accent/30")}>
-              <span className={cn("font-mono text-xs", selected === tf ? "text-accent" : "text-text")}>{tf}</span>
-              {tf === interval && <span className="text-[9px] text-dim uppercase">chart</span>}
-              {r?.bias ? <VerdictChip verdict={r.bias.verdict} score={r.bias.score} />
-                : r?.error ? <span className="text-[10px] text-dim">n/a</span>
-                : <Loader2 className="w-3 h-3 animate-spin text-dim" />}
-            </button>
-          );
-        })}
-      </div>
-
-      {/* Confluence */}
-      {confluence && (
-        <div className={cn("rounded-lg border p-2.5 mb-3 text-xs leading-relaxed",
-          confluence.tone === "up" ? "border-up/40 bg-up/10 text-up"
-            : confluence.tone === "down" ? "border-down/40 bg-down/10 text-down"
-            : confluence.tone === "mixed" ? "border-yellow-500/40 bg-yellow-500/10 text-yellow-200/90"
-            : "border-line bg-bg/40 text-dim")}>
-          {confluence.text}
-        </div>
-      )}
-
       {sel ? (
-        <div className="grid lg:grid-cols-[1fr_280px] gap-4">
+        <div className="grid lg:grid-cols-[210px_1fr_280px] gap-4">
+          {/* Verdict card for the selected timeframe (the chart's by default) */}
+          <div className={cn("rounded-lg border p-4 flex flex-col items-center justify-center text-center",
+            sel.verdict === "long" ? "border-up/40 bg-up/10" : sel.verdict === "short" ? "border-down/40 bg-down/10" : "border-line bg-bg/40")}>
+            {sel.verdict === "long" ? <TrendingUp className="w-8 h-8 mb-1 text-up" />
+              : sel.verdict === "short" ? <TrendingDown className="w-8 h-8 mb-1 text-down" />
+              : <MinusCircle className="w-8 h-8 mb-1 text-dim" />}
+            <p className={cn("text-lg font-bold uppercase tracking-wide",
+              sel.verdict === "long" ? "text-up" : sel.verdict === "short" ? "text-down" : "text-dim")}>
+              {sel.verdict === "long" ? "Long bias" : sel.verdict === "short" ? "Short bias" : "Neutral"}
+            </p>
+            <p className="text-xs font-mono text-dim mt-1">score {sel.score > 0 ? "+" : ""}{sel.score} / ±{sel.maxScore}</p>
+            <p className="text-[10px] text-dim uppercase tracking-widest mt-1.5">
+              {selected} timeframe{selected === interval ? " (chart)" : ""}
+            </p>
+            {sel.verdict === "neutral" && (
+              <p className="text-[11px] text-dim mt-2 leading-relaxed">The rules disagree — by this playbook that means: no trade.</p>
+            )}
+            {sel.caution && (
+              <p className="flex items-start gap-1.5 text-[11px] text-yellow-400 mt-2 text-left leading-relaxed">
+                <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" /> {sel.caution}
+              </p>
+            )}
+          </div>
+
           {/* Rules for the selected timeframe */}
           <div className="rounded-lg border border-line bg-bg/30 p-3">
             <p className="text-[10px] text-dim uppercase tracking-widest mb-2">
-              The rules on the {selected} timeframe (fixed if-then, each ±1) — verdict:{" "}
-              <span className={sel.verdict === "long" ? "text-up" : sel.verdict === "short" ? "text-down" : "text-dim"}>
-                {sel.verdict} {sel.score > 0 ? `+${sel.score}` : sel.score}/±{sel.maxScore}
-              </span>
+              The rules (fixed if-then, each ±1)
             </p>
             <div className="grid sm:grid-cols-2 gap-x-4 gap-y-1.5">
               {sel.rules.map((r) => (
@@ -161,11 +153,6 @@ export default function BiasPanel({ market, symbol, interval }) {
                 </div>
               ))}
             </div>
-            {sel.caution && (
-              <p className="flex items-start gap-1.5 text-[11px] text-yellow-400 mt-2 leading-relaxed">
-                <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" /> {sel.caution}
-              </p>
-            )}
           </div>
 
           {/* Plan + horizon for the selected timeframe */}
@@ -225,6 +212,32 @@ export default function BiasPanel({ market, symbol, interval }) {
           {loading ? "Crunching the timeframes…" : "Not enough data for this timeframe."}
         </div>
       )}
+
+      {/* Compact multi-timeframe cross-check (click a chip to inspect it above) */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border border-line bg-bg/30 px-3 py-2 mt-3">
+        <span className="text-[10px] text-dim uppercase tracking-widest">Cross-check</span>
+        {tfs.map((tf) => {
+          const r = results[tf];
+          return (
+            <button key={tf} onClick={() => setSelected(tf)}
+              title={`Show the ${tf} breakdown above`}
+              className={cn("flex items-center gap-1.5 rounded-md px-1.5 py-0.5 transition-colors",
+                selected === tf ? "bg-accent/10" : "hover:bg-surface")}>
+              <span className={cn("font-mono text-[11px]", selected === tf ? "text-accent" : "text-dim")}>{tf}</span>
+              {r?.bias ? <VerdictChip verdict={r.bias.verdict} score={r.bias.score} />
+                : r?.error ? <span className="text-[10px] text-dim">n/a</span>
+                : <Loader2 className="w-3 h-3 animate-spin text-dim" />}
+            </button>
+          );
+        })}
+        {confluence && (
+          <span className={cn("text-[11px] leading-relaxed",
+            confluence.tone === "up" ? "text-up" : confluence.tone === "down" ? "text-down"
+              : confluence.tone === "mixed" ? "text-yellow-400" : "text-dim")}>
+            {confluence.text}
+          </span>
+        )}
+      </div>
 
       {/* Disclaimer — always visible, part of the feature */}
       <div className="flex items-start gap-2 rounded-lg border border-yellow-500/40 bg-yellow-500/10 p-3 mt-3">

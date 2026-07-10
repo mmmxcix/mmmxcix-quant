@@ -59,8 +59,13 @@ export default function AutoAnnotateLayer({ chart, series, containerRef, candles
   if (!chart || !series || !containerRef?.current || !ann) return null;
 
   const el = containerRef.current;
-  const width = el.clientWidth || 0;
-  const height = el.clientHeight || 0;
+  // Clip to the chart PANE: the container includes the price axis (right) and
+  // time axis (bottom), and zones/labels must never spill onto them.
+  let axisW = 0, axisH = 0;
+  try { axisW = chart.priceScale("right").width() || 0; } catch { /* not ready */ }
+  try { axisH = chart.timeScale().height() || 0; } catch { /* not ready */ }
+  const width = Math.max(0, (el.clientWidth || 0) - axisW);
+  const height = Math.max(0, (el.clientHeight || 0) - axisH);
   const toX = (time) => (time == null ? null : chart.timeScale().timeToCoordinate(time));
   const toY = (price) => (price == null ? null : series.priceToCoordinate(price));
   const lastTime = candles[candles.length - 1].time;

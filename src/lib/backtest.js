@@ -421,6 +421,144 @@ function strategy(ctx) {
 `;
 
 /**
+ * The Charts page's rule-based bias check as a backtestable strategy: six of
+ * its nine rules re-implemented causally (no look-ahead). Trendlines, S/R-room
+ * and double patterns are omitted — they need bilateral context that is too
+ * unstable to evaluate bar-by-bar.
+ */
+export const BIAS_STRATEGY_CODE = `// Bias Score strategy — the Charts "bias check" as testable code.
+//
+// Six fixed rules vote +1 (bullish) / -1 (bearish) / 0 each bar:
+//   1. close vs SMA50          2. SMA20 vs SMA50
+//   3. RSI(14) >55 / <45       4. MACD line vs signal line
+//   5. swing structure (HH+HL / LH+LL, pivots confirmed with 5-bar delay)
+//   6. last unfilled fair value gap within 80 bars (close-through = filled)
+// Score >= +2 -> long, <= -2 -> short, else flat. Exits via ATR bracket
+// (stop 1.5 ATR, target 2R) or when the score leaves the zone.
+//
+// Note: the Charts panel uses 9 rules (incl. trendlines, S/R room, patterns);
+// this code implements the 6 that can be computed causally per bar, so
+// results will differ from the live panel readout.
+
+const L = 5;          // pivot lookback (confirmation delay = L bars)
+const FVG_WINDOW = 80;
+const ENTER = 2;      // |score| needed to enter
+
+// Heavy arrays are computed once per candle array and reused every bar.
+let cachedFor = null;
+let A = null;
+
+function precompute(candles, ind) {
+  const closes = ind.closes(candles);
+  const n = candles.length;
+
+  // Confirmed swing pivots: pivot at p is usable from bar p + L onward.
+  const pivHi = [], pivLo = [];
+  for (let p = L; p < n - L; p++) {
+    let isH = true, isL = true;
+    for (let j = p - L; j <= p + L; j++) {
+      if (j === p) continue;
+      if (candles[j].high > candles[p].high) isH = false;
+      if (candles[j].low < candles[p].low) isL = false;
+      if (!isH && !isL) break;
+    }
+    if (isH) pivHi.push({ i: p, price: candles[p].high });
+    if (isL) pivLo.push({ i: p, price: candles[p].low });
+  }
+
+  // Fair value gaps with their (causal) close-through fill index.
+  const fvgs = [];
+  for (let g = 2; g < n; g++) {
+    const a = candles[g - 2], c = candles[g];
+    let kind = null, top = 0, bottom = 0;
+    if (c.low > a.high) { kind = 1; top = c.low; bottom = a.high; }
+    else if (a.low > c.high) { kind = -1; top = a.low; bottom = c.high; }
+    if (!kind) continue;
+    let fill = Infinity;
+    for (let j = g + 1; j < n; j++) {
+      if (kind === 1 && candles[j].close <= bottom) { fill = j; break; }
+      if (kind === -1 && candles[j].close >= top) { fill = j; break; }
+    }
+    fvgs.push({ i: g, kind, fill });
+  }
+
+  return {
+    sma20: ind.sma(closes, 20),
+    sma50: ind.sma(closes, 50),
+    rsi14: ind.rsi(closes, 14),
+    macd: ind.macd(closes),
+    atr14: ind.atr(candles, 14),
+    pivHi, pivLo, fvgs,
+  };
+}
+
+// Last two confirmed pivots strictly before bar i (array is index-sorted).
+function lastTwo(pivots, i) {
+  let a = null, b = null;
+  for (let k = pivots.length - 1; k >= 0; k--) {
+    if (pivots[k].i <= i - L) { if (!b) b = pivots[k]; else { a = pivots[k]; break; } }
+  }
+  return a && b ? [a, b] : null;
+}
+
+let stop = 0, target = 0, side = 0;
+
+function strategy(ctx) {
+  const { candles, index: i, close } = ctx;
+  if (cachedFor !== candles) { cachedFor = candles; A = precompute(candles, ctx.indicators); }
+  if (i < 60 || A.sma50[i] === null || A.rsi14[i] === null || A.atr14[i] === null) return "flat";
+
+  let score = 0;
+  // 1) price vs SMA50   2) SMA alignment
+  score += close > A.sma50[i] ? 1 : -1;
+  if (A.sma20[i] !== null) score += A.sma20[i] > A.sma50[i] ? 1 : -1;
+  // 3) RSI momentum
+  score += A.rsi14[i] > 55 ? 1 : A.rsi14[i] < 45 ? -1 : 0;
+  // 4) MACD vs signal
+  if (A.macd[i]) score += A.macd[i].macd > A.macd[i].signal ? 1 : -1;
+  // 5) swing structure
+  const hs = lastTwo(A.pivHi, i), ls = lastTwo(A.pivLo, i);
+  if (hs && ls) {
+    const hh = hs[1].price > hs[0].price, hl = ls[1].price > ls[0].price;
+    score += hh && hl ? 1 : !hh && !hl ? -1 : 0;
+  }
+  // 6) last unfilled FVG in the recent window (as of THIS bar)
+  for (let k = A.fvgs.length - 1; k >= 0; k--) {
+    const g = A.fvgs[k];
+    if (g.i > i) continue;
+    if (g.i < i - FVG_WINDOW) break;
+    if (g.fill <= i) continue; // already filled by now
+    score += g.kind;
+    break;
+  }
+
+  const atr = A.atr14[i];
+
+  // Holding: keep riding while the score stays on our side; brackets do exits.
+  if (ctx.position === "long" && side === 1) {
+    if (score >= 0) return { signal: "long", stop, target };
+    side = 0; return "flat";
+  }
+  if (ctx.position === "short" && side === -1) {
+    if (score <= 0) return { signal: "short", stop, target };
+    side = 0; return "flat";
+  }
+
+  // Flat: enter only on a clear score.
+  if (score >= ENTER) {
+    side = 1; stop = close - atr * 1.5; target = close + atr * 3;
+    return { signal: "long", stop, target };
+  }
+  if (score <= -ENTER) {
+    side = -1; stop = close + atr * 1.5; target = close - atr * 3;
+    return { signal: "short", stop, target };
+  }
+  side = 0;
+  return "flat";
+}
+`;
+
+/**
  * Compile user JavaScript source into a signalFn usable by runBacktest.
  *
  * The source must define `function strategy(ctx) { ... }` returning a position

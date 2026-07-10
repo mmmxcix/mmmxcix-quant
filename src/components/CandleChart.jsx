@@ -101,6 +101,7 @@ export default function CandleChart({
     if (showVolume) {
       volSeriesRef.current = chart.addHistogramSeries({
         priceFormat: { type: "volume" }, priceScaleId: "vol", color: "#1c2433",
+        lastValueVisible: false, priceLineVisible: false, // no confusing volume tag on the price axis
       });
       chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
     }
@@ -181,7 +182,12 @@ export default function CandleChart({
       chart.timeScale().setVisibleLogicalRange(view); // hold zoom/scroll on live refresh
     } else {
       exhaustedRef.current = false;
-      // Fresh load: zoom to the most recent candles at a readable size.
+      // Fresh load: manual price-axis scaling from the previous view must not
+      // survive (once the user drags the axis, lightweight-charts disables
+      // autoscale permanently — a monthly chart would be squeezed into the old
+      // intraday price window and render as unreadable full-height bars).
+      try { chart.priceScale("right").applyOptions({ autoScale: true }); } catch { /* scale gone */ }
+      // Zoom to the most recent candles at a readable size.
       const n = defaultVisibleBars(containerRef.current?.clientWidth);
       if (candles.length > n) {
         const lastIdx = candles.length - 1;

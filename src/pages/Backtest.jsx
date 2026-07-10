@@ -5,7 +5,7 @@ import CandleChart from "@/components/CandleChart";
 import SymbolSearch from "@/components/SymbolSearch";
 import MonteCarloPanel from "@/components/MonteCarloPanel";
 import { fetchCandles, MARKETS, INTERVALS, RANGES } from "@/lib/data";
-import { runBacktest, compileStrategy, DEFAULT_STRATEGY_CODE, ORB_STRATEGY_CODE } from "@/lib/backtest";
+import { runBacktest, compileStrategy, DEFAULT_STRATEGY_CODE, ORB_STRATEGY_CODE, BIAS_STRATEGY_CODE } from "@/lib/backtest";
 import { BUILT_IN_STRATEGIES } from "@/lib/strategies";
 import { cn, fmtNum, fmtPct } from "@/lib/utils";
 
@@ -251,6 +251,7 @@ export default function Backtest() {
                       onChange={(e) => {
                         if (e.target.value === "sma") setCode(DEFAULT_STRATEGY_CODE);
                         else if (e.target.value === "orb") setCode(ORB_STRATEGY_CODE);
+                        else if (e.target.value === "bias") setCode(BIAS_STRATEGY_CODE);
                       }}
                       title="Insert an example (replaces the editor)"
                       className="bg-transparent text-[11px] text-dim hover:text-text transition-colors cursor-pointer outline-none"
@@ -258,6 +259,7 @@ export default function Backtest() {
                       <option value="">Examples…</option>
                       <option value="sma">SMA Crossover</option>
                       <option value="orb">Opening Range Breakout</option>
+                      <option value="bias">Bias Score (rule-based)</option>
                     </select>
                     <button onClick={copyCode} title="Copy code"
                       className="flex items-center gap-1.5 text-[11px] text-dim hover:text-text transition-colors">
