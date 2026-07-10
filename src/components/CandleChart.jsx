@@ -23,6 +23,14 @@ const UP = "#10b981", DOWN = "#ef4444";
 // viewport must always show candles (i.e. max ~2/3 empty space on the right).
 const MIN_DATA_FRACTION = 1 / 3;
 
+// Fresh loads (new symbol/timeframe/range) zoom to a comfortable candle size
+// instead of squeezing the whole dataset into view: aim for ~14px per candle,
+// clamped so phones still show context and huge screens don't overzoom.
+function defaultVisibleBars(containerWidth) {
+  return Math.round(Math.min(110, Math.max(50, (containerWidth || 800) / 14)));
+}
+const RIGHT_PAD_BARS = 8; // small breathing room after the latest candle
+
 function addPriceSeries(chart, type) {
   if (type === "line") {
     return chart.addLineSeries({ color: "#2dd4bf", lineWidth: 2, priceLineVisible: false });
@@ -173,7 +181,17 @@ export default function CandleChart({
       chart.timeScale().setVisibleLogicalRange(view); // hold zoom/scroll on live refresh
     } else {
       exhaustedRef.current = false;
-      chart.timeScale().fitContent();
+      // Fresh load: zoom to the most recent candles at a readable size.
+      const n = defaultVisibleBars(containerRef.current?.clientWidth);
+      if (candles.length > n) {
+        const lastIdx = candles.length - 1;
+        chart.timeScale().setVisibleLogicalRange({
+          from: lastIdx - n + 0.5,
+          to: lastIdx + RIGHT_PAD_BARS,
+        });
+      } else {
+        chart.timeScale().fitContent();
+      }
     }
     prevFirstTimeRef.current = candles[0].time;
   }, [candles, chartType]);
