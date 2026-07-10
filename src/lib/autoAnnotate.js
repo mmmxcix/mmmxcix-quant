@@ -117,18 +117,21 @@ export function detectTrendlines(candles, { lookback = 5 } = {}) {
 }
 
 /**
- * Fair value gaps (3-candle imbalances). Bullish: candle[i].low sits above
- * candle[i-2].high — the middle candle moved so fast it left untraded prices.
- * Gaps are tracked forward: fully traded-through gaps are dropped, partially
- * filled gaps are clipped to their unfilled remainder.
- * @returns {{ kind:"bull"|"bear", top, bottom, fromTime, index }[]}
+ * Fair value gaps — strict 3-candle imbalances. Bullish: candle[i].low sits
+ * above candle[i-2].high; the zone is EXACTLY that gap, frozen at formation
+ * (later candles never resize it, so the box always matches the three candles
+ * that created it). Forward tracking only classifies:
+ *   - fully traded through (price reached the far edge) → gap removed,
+ *   - touched but not filled → kept, flagged `tested` (drawn fainter).
+ * The still-forming last candle can't create a gap (it could still un-form).
+ * @returns {{ kind:"bull"|"bear", top, bottom, fromTime, index, tested }[]}
  */
-export function detectFVGs(candles, { maxCount = 6, minMult = 0.25 } = {}) {
+export function detectFVGs(candles, { maxCount = 6, minMult = 0.1 } = {}) {
   const n = candles.length;
   if (n < 4) return [];
   const unit = avgRange(candles);
   const raw = [];
-  for (let i = 2; i < n; i++) {
+  for (let i = 2; i < n - 1; i++) {
     const a = candles[i - 2], c = candles[i];
     if (c.low > a.high && c.low - a.high >= unit * minMult) {
       raw.push({ kind: "bull", top: c.low, bottom: a.high, fromTime: candles[i - 1].time, index: i });
@@ -139,18 +142,18 @@ export function detectFVGs(candles, { maxCount = 6, minMult = 0.25 } = {}) {
 
   const active = [];
   for (const g of raw) {
-    let { top, bottom } = g;
     let filled = false;
+    let tested = false;
     for (let j = g.index + 1; j < n; j++) {
       if (g.kind === "bull") {
-        if (candles[j].low <= bottom) { filled = true; break; }
-        if (candles[j].low < top) top = candles[j].low; // partially filled from above
+        if (candles[j].low <= g.bottom) { filled = true; break; }
+        if (candles[j].low < g.top) tested = true;
       } else {
-        if (candles[j].high >= top) { filled = true; break; }
-        if (candles[j].high > bottom) bottom = candles[j].high; // partially filled from below
+        if (candles[j].high >= g.top) { filled = true; break; }
+        if (candles[j].high > g.bottom) tested = true;
       }
     }
-    if (!filled && top - bottom >= unit * 0.12) active.push({ ...g, top, bottom });
+    if (!filled) active.push({ ...g, tested });
   }
   return active.slice(-maxCount);
 }

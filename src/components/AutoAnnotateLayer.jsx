@@ -65,6 +65,15 @@ export default function AutoAnnotateLayer({ chart, series, containerRef, candles
   const toY = (price) => (price == null ? null : series.priceToCoordinate(price));
   const lastTime = candles[candles.length - 1].time;
   const lastX = toX(lastTime) ?? width;
+  // Times scrolled off the left edge yield null coordinates — clamp them to
+  // x=0 so zones/lines that START off-screen still render their visible part.
+  const visRange = chart.timeScale().getVisibleRange?.() || null;
+  const toXClamped = (time) => {
+    const x = toX(time);
+    if (x != null) return x;
+    if (visRange && time != null && time < visRange.from) return 0;
+    return null;
+  };
 
   const shapes = [];
 
@@ -85,9 +94,14 @@ export default function AutoAnnotateLayer({ chart, series, containerRef, candles
 
   // ── Trendlines ──────────────────────────────────────────────────────────
   for (const tl of ann.trendlines) {
-    const x1 = toX(tl.p1.time), y1 = toY(tl.p1.price);
+    // If the first pivot scrolled off-screen, fall back to the second pivot
+    // (the anchor) — the visible part of the line stays identical.
+    let a = tl.p1;
+    let x1 = toX(a.time);
+    if (x1 == null && tl.anchor) { a = tl.anchor; x1 = toX(a.time); }
+    const y1 = toY(a.price);
     const x2 = toX(tl.p2.time), y2 = toY(tl.p2.price);
-    if (x1 == null || y1 == null || x2 == null || y2 == null) continue;
+    if (x1 == null || y1 == null || x2 == null || y2 == null || x1 === x2) continue;
     const c = tl.kind === "up" ? COL.up : COL.down;
     shapes.push(
       <g key={`tl-${tl.kind}`}>
@@ -101,19 +115,23 @@ export default function AutoAnnotateLayer({ chart, series, containerRef, candles
   }
 
   // ── Fair value gaps ─────────────────────────────────────────────────────
+  // The zone is the frozen 3-candle gap; `tested` gaps (touched but not
+  // filled) render fainter so fresh imbalances stand out.
   for (const g of ann.fvgs) {
-    const x1 = toX(g.fromTime);
+    const x1 = toXClamped(g.fromTime);
     const yT = toY(g.top), yB = toY(g.bottom);
     if (x1 == null || yT == null || yB == null) continue;
     const c = g.kind === "bull" ? COL.fvgBull : COL.fvgBear;
     const w = Math.max(0, lastX - x1);
     if (w <= 0) continue;
+    const fillO = g.tested ? 0.05 : 0.12;
+    const strokeO = g.tested ? 0.22 : 0.45;
     shapes.push(
       <g key={`fvg-${g.fromTime}-${g.kind}`}>
-        <rect x={x1} y={yT} width={w} height={Math.max(1, yB - yT)} fill={c} fillOpacity={0.1}
-          stroke={c} strokeOpacity={0.4} strokeWidth={1} strokeDasharray="3 3" />
-        <text x={x1 + 3} y={yT + 10} fontSize={8} fontFamily="monospace" fill={c} fillOpacity={0.85}>
-          FVG
+        <rect x={x1} y={yT} width={w} height={Math.max(1, yB - yT)} fill={c} fillOpacity={fillO}
+          stroke={c} strokeOpacity={strokeO} strokeWidth={1} strokeDasharray="3 3" />
+        <text x={x1 + 3} y={Math.min(yT + 10, yB - 2)} fontSize={8} fontFamily="monospace" fill={c} fillOpacity={g.tested ? 0.5 : 0.85}>
+          {g.tested ? "FVG ·tested" : "FVG"}
         </text>
       </g>
     );
@@ -122,7 +140,7 @@ export default function AutoAnnotateLayer({ chart, series, containerRef, candles
   // ── Auto Fibonacci ──────────────────────────────────────────────────────
   if (ann.fib) {
     const { p1, p2 } = ann.fib;
-    const xa = toX(p1.time), xb = toX(p2.time);
+    const xa = toXClamped(p1.time), xb = toXClamped(p2.time);
     if (xa != null && xb != null) {
       const left = Math.min(xa, xb);
       for (const lv of fibLevels(p1, p2)) {
