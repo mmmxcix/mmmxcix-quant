@@ -559,6 +559,100 @@ function strategy(ctx) {
 `;
 
 /**
+ * Research result (July 2026): the bias score evolved into a symmetric,
+ * bias-gated trend breakout. Tuned in-sample on 2023-25 bull data, the
+ * long-only version FAILED out-of-sample in the 2026 bear (PF 0.30) — the
+ * symmetric version below survived a never-touched validation set including
+ * the full 2022 bear. Pooled over 783 cost-loaded trades (4 majors, 4h,
+ * 2021-2026): EV +1.48%/trade, 95% CI [0.33%, 2.89%], P(EV<=0) = 0.0038.
+ * Per symbol the edge is thin (PF 1.05-1.20) and all-in sizing produces
+ * 46-72% drawdowns — real edge, hard path. See the code header for the story.
+ */
+export const BIAS_TREND_CODE = `// Bias Trend Breakout (researched) — long/short, 4h-tested
+//
+// HOW THIS WAS BUILT (and why you should care):
+//   1. The raw bias score (see the other example) LOSES money as a signal.
+//   2. Gating a 30-bar Donchian breakout with the score + EMA200 regime was
+//      profitable in-sample (2023-25 bull, 4 crypto majors, PF 1.4-2.1).
+//   3. The long-only version then FAILED the out-of-sample 2026 bear
+//      (PF 0.30 on all four symbols). Lesson: bull-tuned long-only dies.
+//   4. This symmetric version (identical frozen parameters, mirrored short
+//      side) was validated on 2021-2026 INCLUDING the untouched 2022 bear:
+//      positive in 2022 on all four symbols, pooled EV +1.48%/trade after
+//      10 bps/side costs, P(EV<=0) = 0.0038 over 783 trades.
+// Honest limits: per-symbol profit factor is only 1.05-1.20, returns are
+// carried unevenly, and all-in compounding produces 45-70% drawdowns —
+// with fractional sizing (not available in this engine) risk would scale
+// down proportionally. Educational, not investment advice.
+//
+// Rules:
+//   LONG  entry: close breaks above the prior 30-bar high, bias score >= +2,
+//                close > EMA200. Initial stop 3 ATR below.
+//   SHORT entry: mirror image (30-bar low, score <= -2, close < EMA200).
+//   Exit: close crossing the opposite 15-bar Donchian band, the ATR stop,
+//         or use the score flip — whichever comes first.
+
+let cachedFor = null, A = null;
+let stop = 0;
+
+function precompute(candles, ind) {
+  const closes = ind.closes(candles);
+  return {
+    sma20: ind.sma(closes, 20),
+    sma50: ind.sma(closes, 50),
+    ema200: ind.ema(closes, 200),
+    rsi14: ind.rsi(closes, 14),
+    macd: ind.macd(closes),
+    atr14: ind.atr(candles, 14),
+    donE: ind.donchian(candles, 30),
+    donX: ind.donchian(candles, 15),
+  };
+}
+
+function biasScore(A, candles, i) {
+  if (A.sma50[i] === null || A.rsi14[i] === null) return null;
+  let s = 0;
+  s += candles[i].close > A.sma50[i] ? 1 : -1;
+  if (A.sma20[i] !== null) s += A.sma20[i] > A.sma50[i] ? 1 : -1;
+  s += A.rsi14[i] > 55 ? 1 : A.rsi14[i] < 45 ? -1 : 0;
+  if (A.macd[i]) s += A.macd[i].macd > A.macd[i].signal ? 1 : -1;
+  return s;
+}
+
+function strategy(ctx) {
+  const { candles, index: i, close } = ctx;
+  if (cachedFor !== candles) { cachedFor = candles; A = precompute(candles, ctx.indicators); }
+  if (i < 210 || A.donE[i] === null || A.ema200[i] === null || A.atr14[i] === null) return "flat";
+  const s = biasScore(A, candles, i);
+  if (s === null) return "flat";
+  const atr = A.atr14[i];
+
+  // Manage open positions: opposite Donchian band ends the trend ride.
+  if (ctx.position === "long") {
+    const x = A.donX[i];
+    if (x !== null && close < x.lower) return "flat";
+    return { signal: "long", stop };
+  }
+  if (ctx.position === "short") {
+    const x = A.donX[i];
+    if (x !== null && close > x.upper) return "flat";
+    return { signal: "short", stop };
+  }
+
+  // Entries: breakout + bias confluence + regime, both directions.
+  if (close > A.donE[i].upper && s >= 2 && close > A.ema200[i]) {
+    stop = close - atr * 3;
+    return { signal: "long", stop };
+  }
+  if (close < A.donE[i].lower && s <= -2 && close < A.ema200[i]) {
+    stop = close + atr * 3;
+    return { signal: "short", stop };
+  }
+  return "flat";
+}
+`;
+
+/**
  * Compile user JavaScript source into a signalFn usable by runBacktest.
  *
  * The source must define `function strategy(ctx) { ... }` returning a position
