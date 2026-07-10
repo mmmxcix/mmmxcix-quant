@@ -67,8 +67,14 @@ function rayEnd(x1, y1, x2, y2, w, h) {
  *   chartKey       persistence + reload key, e.g. "crypto:BTCUSDT"
  *   activeTool     one of DRAW_TOOLS ids or null; null = chart interactive
  *   color          hex color applied to newly-created drawings
+ *   candles        candle array for magnet snapping (optional)
+ *   snap           when true, placed points snap to the nearest candle's OHLC
  *   onToolConsumed callback fired after a drawing commits (parent resets tool)
  */
+
+// Vertical pixel distance within which a point locks onto an O/H/L/C value.
+const SNAP_PX = 9;
+
 export default function ChartDrawLayer({
   chart,
   series,
@@ -76,6 +82,8 @@ export default function ChartDrawLayer({
   chartKey,
   activeTool,
   color = "#38bdf8",
+  candles = null,
+  snap = false,
   onToolConsumed,
 }) {
   const overlayRef = useRef(null);
@@ -164,6 +172,36 @@ export default function ChartDrawLayer({
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   }
 
+  // Magnet: lock x onto the nearest candle's time; lock y onto that candle's
+  // nearest O/H/L/C when the cursor is within SNAP_PX of it. Falls back to the
+  // free position over whitespace (no candle under the cursor).
+  function magnetize(x, y) {
+    if (!snap || !candles?.length) return { pt: fromXY(x, y), x, y, onOhlc: false };
+    const t = chart.timeScale().coordinateToTime(x);
+    if (t == null) return { pt: fromXY(x, y), x, y, onOhlc: false };
+    // Binary search the nearest candle by time (candles are ascending).
+    let lo = 0, hi = candles.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (candles[mid].time < t) lo = mid + 1;
+      else hi = mid;
+    }
+    if (lo > 0 && Math.abs(candles[lo - 1].time - t) <= Math.abs(candles[lo].time - t)) lo -= 1;
+    const c = candles[lo];
+    const sx = toX(c.time) ?? x;
+    let best = null;
+    for (const price of [c.open, c.high, c.low, c.close]) {
+      const py = toY(price);
+      if (py == null) continue;
+      const d = Math.abs(py - y);
+      if (best === null || d < best.d) best = { price, y: py, d };
+    }
+    if (best && best.d <= SNAP_PX) {
+      return { pt: { time: c.time, price: best.price }, x: sx, y: best.y, onOhlc: true };
+    }
+    return { pt: { time: c.time, price: series.coordinateToPrice(y) }, x: sx, y, onOhlc: false };
+  }
+
   function commit(type, pts) {
     const d = {
       id: newId(),
@@ -179,7 +217,7 @@ export default function ChartDrawLayer({
   function handleClick(e) {
     if (!placing) return;
     const { x, y } = localXY(e);
-    const pt = fromXY(x, y);
+    const { pt } = magnetize(x, y);
     const need = POINTS_REQUIRED[activeTool] || 2;
     const next = [...pendingRef.current, pt];
     if (next.length >= need) {
@@ -193,8 +231,9 @@ export default function ChartDrawLayer({
 
   function handleMove(e) {
     if (!placing) return;
-    mouseRef.current = localXY(e);
-    if (pendingRef.current.length) forceRender();
+    const { x, y } = localXY(e);
+    mouseRef.current = snap ? magnetize(x, y) : { x, y, onOhlc: false };
+    forceRender(); // always: the magnet dot tracks the cursor even pre-click
   }
 
   function handleLeave() {
@@ -283,6 +322,19 @@ export default function ChartDrawLayer({
   // In-progress preview (from committed pending points to the cursor).
   const preview = placing ? renderPreview(activeTool, pendingRef.current, mouseRef.current, { toX, toY, width, height, color }) : null;
 
+  // Magnet indicator: filled dot = locked onto an O/H/L/C value, ring = locked
+  // onto the candle column only.
+  const magnetDot = placing && snap && mouseRef.current ? (
+    mouseRef.current.onOhlc ? (
+      <g pointerEvents="none">
+        <circle cx={mouseRef.current.x} cy={mouseRef.current.y} r={4.5} fill={color} stroke="#0b0e14" strokeWidth={1.5} />
+        <circle cx={mouseRef.current.x} cy={mouseRef.current.y} r={8} fill="none" stroke={color} strokeWidth={1} strokeOpacity={0.5} />
+      </g>
+    ) : (
+      <circle cx={mouseRef.current.x} cy={mouseRef.current.y} r={4} fill="none" stroke={color} strokeWidth={1.2} strokeOpacity={0.7} pointerEvents="none" />
+    )
+  ) : null;
+
   return (
     <div
       ref={overlayRef}
@@ -298,6 +350,7 @@ export default function ChartDrawLayer({
       >
         {shapes}
         {preview}
+        {magnetDot}
         {handles}
       </svg>
     </div>

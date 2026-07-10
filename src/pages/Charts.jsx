@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { TrendingUp, Minus, MoveHorizontal, AlignVerticalJustifyCenter, Square, GitBranch, Trash2, Pencil } from "lucide-react";
+import { TrendingUp, Minus, MoveHorizontal, AlignVerticalJustifyCenter, Square, GitBranch, Trash2, Pencil, Magnet, Wand2 } from "lucide-react";
 import CandleChart from "@/components/CandleChart";
 import SymbolSearch from "@/components/SymbolSearch";
 import ChartDrawLayer, { DRAW_TOOLS } from "@/components/ChartDrawLayer";
+import AutoAnnotateLayer from "@/components/AutoAnnotateLayer";
 import IndicatorPane from "@/components/IndicatorPane";
 import { fetchCandles, fetchOlderCandles, fetchLatestCandles, MARKETS, INTERVALS, rangesFor } from "@/lib/data";
 import { openBinanceKlineStream, mergeLiveCandle } from "@/lib/liveStream";
@@ -64,6 +65,9 @@ export default function Charts() {
   // Drawing state
   const [activeTool, setActiveTool] = useState(null);
   const [drawColor, setDrawColor] = useState(DRAW_COLORS[0]);
+  const [magnet, setMagnet] = useState(true); // crosshair + drawings snap to candles
+  // Auto-annotation: the app detects and draws these from the data itself.
+  const [autoDraw, setAutoDraw] = useState({ levels: false, trend: false, fvg: false, fib: false, patterns: false });
 
   const chartKey = `${market}:${symbol}`;
 
@@ -317,8 +321,40 @@ export default function Charts() {
           </label>
         </div>
 
+        {/* Auto-draw: the app detects and draws these from the data itself */}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-dim">
+          <span className="flex items-center gap-1 text-[#a78bfa]" title="Automatically detected and drawn from the data">
+            <Wand2 className="w-3.5 h-3.5" /> Auto
+          </span>
+          {[
+            ["levels", "S/R levels"],
+            ["trend", "Trendlines"],
+            ["fvg", "FVG"],
+            ["fib", "Fibonacci"],
+            ["patterns", "Patterns"],
+          ].map(([key, label]) => (
+            <label key={key} className="flex items-center gap-1.5 cursor-pointer select-none">
+              <input type="checkbox" checked={autoDraw[key]}
+                onChange={(e) => setAutoDraw((v) => ({ ...v, [key]: e.target.checked }))}
+                className="accent-[#a78bfa]" />
+              {label}
+            </label>
+          ))}
+        </div>
+
         {/* Drawing toolbar */}
         <div className="flex items-center gap-1 sm:ml-auto">
+          <button
+            title={magnet ? "Magnet on: crosshair & drawings snap to candles (OHLC)" : "Magnet off"}
+            onClick={() => setMagnet((v) => !v)}
+            className={cn(
+              "p-2 sm:p-1.5 rounded-md border transition-colors",
+              magnet ? "border-accent/60 text-accent bg-accent/10" : "border-line text-dim hover:text-text"
+            )}
+          >
+            <Magnet className="w-4 h-4" />
+          </button>
+          <span className="h-4 w-px bg-line mx-0.5" />
           {DRAW_TOOLS.map((tool) => {
             const Icon = TOOL_ICONS[tool.icon] || Pencil;
             const isActive = activeTool === tool.id && tool.id !== "clear";
@@ -424,19 +460,31 @@ export default function Charts() {
               chartType={chartType}
               overlays={overlays}
               height={chartHeight()}
+              magnet={magnet}
               onNeedOlder={loadOlder}
               onChartReady={(chart, series) => { setMainChart(chart); setMainSeries(series); }}
             >
               {({ chart, series, containerRef }) => (
-                <ChartDrawLayer
-                  chart={chart}
-                  series={series}
-                  containerRef={containerRef}
-                  chartKey={chartKey}
-                  activeTool={activeTool}
-                  color={drawColor}
-                  onToolConsumed={() => setActiveTool(null)}
-                />
+                <>
+                  <AutoAnnotateLayer
+                    chart={chart}
+                    series={series}
+                    containerRef={containerRef}
+                    candles={candles}
+                    show={autoDraw}
+                  />
+                  <ChartDrawLayer
+                    chart={chart}
+                    series={series}
+                    containerRef={containerRef}
+                    chartKey={chartKey}
+                    activeTool={activeTool}
+                    color={drawColor}
+                    candles={candles}
+                    snap={magnet}
+                    onToolConsumed={() => setActiveTool(null)}
+                  />
+                </>
               )}
             </CandleChart>
             {panes.rsi && <IndicatorPane candles={candles} type="rsi" mainChart={mainChart} />}

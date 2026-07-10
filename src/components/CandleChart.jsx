@@ -55,6 +55,7 @@ export default function CandleChart({
   markers = [],
   showVolume = true,
   height = 440,
+  magnet = false, // crosshair snaps to the hovered candle instead of floating free
   onNeedOlder,
   onChartReady,
   children,
@@ -176,6 +177,13 @@ export default function CandleChart({
     }
     prevFirstTimeRef.current = candles[0].time;
   }, [candles, chartType]);
+
+  // Crosshair magnet: snap the crosshair to the bar under the cursor.
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    chart.applyOptions({ crosshair: { mode: magnet ? CrosshairMode.Magnet : CrosshairMode.Normal } });
+  }, [magnet, chartEpoch]);
 
   // Trade markers (backtest buy/sell arrows). lightweight-charts renders
   // markers on the main series; line/area series support them too.

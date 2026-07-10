@@ -50,6 +50,8 @@ const SECTIONS = [
     features: [
       "Intervals 1s–1M with infinite scroll into history; limited future scroll.",
       "Drawing tools: trend lines, horizontals (SL/TP), rays, rectangles, Fibonacci retracements — persisted per symbol.",
+      "Magnet mode: the crosshair and every drawing snap onto the candles (exact O/H/L/C values) — no more eyeballing levels.",
+      "Auto-draw: the app detects and draws support/resistance levels, trendlines, fair value gaps (FVG, with fill tracking), an automatic Fibonacci of the dominant swing, and double tops/bottoms — straight from the data.",
       "Overlays (SMA 20/50, EMA 200) and sub-panes (RSI, MACD).",
       "Price alerts: set above/below levels; the browser notifies you when they trigger (tab must stay open).",
       "Crypto updates tick-by-tick over WebSocket; stocks poll the latest bar.",
