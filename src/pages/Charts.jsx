@@ -60,7 +60,7 @@ export default function Charts() {
   const [interval, setIntervalId] = useState(() => stored.interval || "1d");
   const [range, setRange] = useState(() => stored.range || "1y");
   const [chartType, setChartType] = useState("candles");
-  const [indicators, setIndicators] = useState({ sma2050: true, ema200: false, bollinger: false });
+  const [indicators, setIndicators] = useState({ sma2050: false, ema200: false, bollinger: false });
   const [panes, setPanes] = useState({ rsi: false, macd: false }); // oscillator sub-charts
   const [candles, setCandles] = useState(null);
   const [error, setError] = useState(null);

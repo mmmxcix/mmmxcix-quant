@@ -127,15 +127,36 @@ export function detectTrendlines(candles, { lookback = 5 } = {}) {
  * Only gaps from the recent `window` of bars compete for the maxCount slots —
  * without that, ancient unfilled gaps far from the current price hog every
  * slot and starve the gaps the user is actually looking at.
+ *
+ * Two rules learned from live data:
+ *   - The three candles must be truly CONSECUTIVE in time. Live-merged arrays
+ *     can have holes (WebSocket drops, sleeping tabs), and treating candles
+ *     across a hole as neighbors fabricates phantom gaps.
+ *   - A gap is consumed only when a candle CLOSES beyond its far edge. A wick
+ *     poking through marks it `tested` but leaves it active — the common
+ *     trader convention (wicks probe, closes decide).
  * @returns {{ kind:"bull"|"bear", top, bottom, fromTime, index, tested }[]}
  */
 export function detectFVGs(candles, { maxCount = 12, minMult = 0.1, window = 400 } = {}) {
   const n = candles.length;
   if (n < 4) return [];
   const unit = avgRange(candles);
+
+  // Typical bar spacing (median of deltas) — used to reject formations that
+  // span data holes or session boundaries.
+  const deltas = [];
+  for (let i = Math.max(1, n - 50); i < n; i++) deltas.push(candles[i].time - candles[i - 1].time);
+  deltas.sort((a, b) => a - b);
+  const spacing = deltas[Math.floor(deltas.length / 2)] || 0;
+  const contiguous = (i) =>
+    spacing > 0 &&
+    candles[i].time - candles[i - 1].time <= spacing * 1.5 &&
+    candles[i - 1].time - candles[i - 2].time <= spacing * 1.5;
+
   const start = Math.max(2, n - window);
   const raw = [];
   for (let i = start; i < n - 1; i++) {
+    if (!contiguous(i)) continue;
     const a = candles[i - 2], c = candles[i];
     if (c.low > a.high && c.low - a.high >= unit * minMult) {
       raw.push({ kind: "bull", top: c.low, bottom: a.high, fromTime: candles[i - 1].time, index: i });
@@ -150,10 +171,10 @@ export function detectFVGs(candles, { maxCount = 12, minMult = 0.1, window = 400
     let tested = false;
     for (let j = g.index + 1; j < n; j++) {
       if (g.kind === "bull") {
-        if (candles[j].low <= g.bottom) { filled = true; break; }
+        if (candles[j].close <= g.bottom) { filled = true; break; }
         if (candles[j].low < g.top) tested = true;
       } else {
-        if (candles[j].high >= g.top) { filled = true; break; }
+        if (candles[j].close >= g.top) { filled = true; break; }
         if (candles[j].high > g.bottom) tested = true;
       }
     }
