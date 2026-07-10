@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { Calculator, Scale, Crosshair, Activity, Clock, TrendingUp } from "lucide-react";
+import { Calculator, Scale, Crosshair, Activity, TrendingUp } from "lucide-react";
 import { cn, fmtNum, fmtPct } from "@/lib/utils";
+import WorldClock from "@/components/WorldClock";
 
 /* ── shared bits ──────────────────────────────────────────────────── */
 
@@ -296,93 +297,7 @@ function AtrStopTool() {
   );
 }
 
-/* ── 5. Handelszeiten ─────────────────────────────────────────────── */
-
-const SESSIONS = [
-  { name: "Sydney", startUtc: 22 * 60, endUtc: 7 * 60 },
-  { name: "Tokio", startUtc: 0, endUtc: 9 * 60 },
-  { name: "London", startUtc: 8 * 60, endUtc: 16 * 60 + 30 },
-  { name: "New York", startUtc: 14 * 60 + 30, endUtc: 21 * 60 },
-];
-
-function utcMinutesToLocalLabel(mins) {
-  const d = new Date();
-  d.setUTCHours(Math.floor(mins / 60), mins % 60, 0, 0);
-  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-}
-
-function SessionsTool() {
-  const [now, setNow] = useState(() => new Date());
-
-  useEffect(() => {
-    const id = setInterval(() => setNow(new Date()), 1000);
-    return () => clearInterval(id);
-  }, []);
-
-  const utcDay = now.getUTCDay();
-  const isWeekend = utcDay === 0 || utcDay === 6;
-  const utcMins = now.getUTCHours() * 60 + now.getUTCMinutes();
-
-  const sessions = SESSIONS.map((s) => {
-    const wraps = s.startUtc > s.endUtc;
-    const open =
-      !isWeekend &&
-      (wraps ? utcMins >= s.startUtc || utcMins < s.endUtc : utcMins >= s.startUtc && utcMins < s.endUtc);
-    return {
-      ...s,
-      open,
-      range: `${utcMinutesToLocalLabel(s.startUtc)}–${utcMinutesToLocalLabel(s.endUtc)}`,
-    };
-  });
-
-  const openNames = sessions.filter((s) => s.open).map((s) => s.name);
-  const londonNyOverlap = openNames.includes("London") && openNames.includes("New York");
-
-  return (
-    <ToolCard icon={Clock} title="Market hours">
-      <p className="font-mono text-2xl font-semibold tracking-tight">
-        {now.toLocaleTimeString()}
-        <span className="text-xs text-dim font-sans font-normal ml-2">
-          Local time · {now.toLocaleDateString("en-US", { weekday: "long" })}
-        </span>
-      </p>
-      <div className="space-y-2">
-        {sessions.map((s) => (
-          <div key={s.name} className="flex items-center justify-between gap-4 text-sm">
-            <div className="flex items-center gap-2">
-              <span className={cn("w-2 h-2 rounded-full shrink-0", s.open ? "bg-up" : "bg-line")} />
-              <span>{s.name}</span>
-              <span className="text-xs text-dim font-mono">{s.range}</span>
-            </div>
-            <span className={cn("text-xs font-medium", s.open ? "text-up" : "text-dim")}>
-              {s.open ? "Open" : "Closed"}
-            </span>
-          </div>
-        ))}
-        <div className="flex items-center justify-between gap-4 text-sm">
-          <div className="flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full shrink-0 bg-up" />
-            <span>Crypto</span>
-          </div>
-          <span className="text-xs font-medium text-up">Open 24/7</span>
-        </div>
-      </div>
-      {isWeekend && (
-        <p className="text-xs text-dim">Weekend — traditional markets closed.</p>
-      )}
-      {londonNyOverlap && (
-        <p className="text-xs text-accent">
-          London/New York overlap — highest liquidity.
-        </p>
-      )}
-      {!londonNyOverlap && openNames.length >= 2 && (
-        <p className="text-xs text-dim">Overlap {openNames.join("/")}.</p>
-      )}
-    </ToolCard>
-  );
-}
-
-/* ── 6. Zinseszins/Compounding ────────────────────────────────────── */
+/* ── 6. Compounding ───────────────────────────────────────────────── */
 
 function CompoundingTool() {
   const [start, setStart] = useState("10000");
@@ -437,12 +352,15 @@ export default function Tools() {
       <p className="text-[10px] tracking-[0.3em] text-dim uppercase mb-1">Tools</p>
       <h1 className="text-2xl font-bold mb-6">Trader tools</h1>
 
+      <div className="mb-4">
+        <WorldClock />
+      </div>
+
       <div className="grid md:grid-cols-2 gap-4">
         <PositionSizeTool />
         <RiskRewardTool />
         <PivotTool />
         <AtrStopTool />
-        <SessionsTool />
         <CompoundingTool />
       </div>
 

@@ -140,7 +140,8 @@ const SECTIONS = [
     features: [
       "Position size calculator (account, risk %, stop distance → size).",
       "Risk/Reward calculator and ATR-based stop calculator.",
-      "Pivot points, market-hours clock (which session is live), compounding calculator.",
+      "World market clock: one live clock per exchange (NY, Chicago futures, Zurich, London, Frankfurt, Tokyo, Hong Kong, Sydney, crypto) with open/closed/lunch status, session progress, and countdowns to the next open or close.",
+      "Pivot points and a compounding calculator.",
     ],
     tips: ["Position size BEFORE every trade, from the calculator — never from feel. It's the one habit that keeps accounts alive."],
   },
