@@ -73,7 +73,8 @@ function rayEnd(x1, y1, x2, y2, w, h) {
  */
 
 // Vertical pixel distance within which a point locks onto an O/H/L/C value.
-const SNAP_PX = 9;
+// Generous on purpose — the magnet should feel sticky, not accidental.
+const SNAP_PX = 14;
 
 export default function ChartDrawLayer({
   chart,

@@ -85,6 +85,14 @@ export default function Charts() {
   // Rule-based bias readout (mechanical long/short/neutral + SL/TP levels).
   const [showBias, setShowBias] = useState(false);
 
+  // Esc cancels an active drawing tool.
+  useEffect(() => {
+    if (!activeTool) return;
+    const onKey = (e) => { if (e.key === "Escape") setActiveTool(null); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [activeTool]);
+
   const chartKey = `${market}:${symbol}`;
 
   // Remember what's on screen so the page reopens exactly here next time.
@@ -368,8 +376,19 @@ export default function Charts() {
         {/* Drawing toolbar */}
         <div className="flex items-center gap-1 sm:ml-auto">
           <button
-            title={magnet ? "Magnet on: crosshair & drawings snap to candles (OHLC)" : "Magnet off"}
-            onClick={() => setMagnet((v) => !v)}
+            title={magnet
+              ? "Magnet on: drawing points snap to O/H/L/C, crosshair price sticks to the close"
+              : "Magnet off: free drawing, crosshair price follows the mouse"}
+            onClick={() =>
+              setMagnet((v) => {
+                const next = !v;
+                setToast(next
+                  ? "Magnet ON — drawing points snap to candle O/H/L/C, crosshair price sticks to the close"
+                  : "Magnet OFF — drawings place freely, crosshair price follows the mouse");
+                setTimeout(() => setToast(null), 3500);
+                return next;
+              })
+            }
             className={cn(
               "p-2 sm:p-1.5 rounded-md border transition-colors",
               magnet ? "border-accent/60 text-accent bg-accent/10" : "border-line text-dim hover:text-text"
@@ -430,7 +449,10 @@ export default function Charts() {
 
       {activeTool && activeTool !== "clear" && (
         <p className="text-[11px] text-accent mb-2">
-          Drawing active: {DRAW_TOOLS.find((t) => t.id === activeTool)?.label} — click on the chart. Esc to cancel.
+          Drawing active: {DRAW_TOOLS.find((t) => t.id === activeTool)?.label} — click on the chart, Esc cancels.{" "}
+          {magnet
+            ? "Magnet: points snap to candle O/H/L/C (filled dot = locked)."
+            : "Magnet off: free placement."}
         </p>
       )}
 
