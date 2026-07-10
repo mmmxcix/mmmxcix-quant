@@ -137,6 +137,7 @@ const QUANT_LEVELS = [
           { type: "formula", text: "MACD = EMA_12 − EMA_26" },
           { type: "formula", text: "Signal = EMA_9(MACD)" },
           { type: "p", text: "The MACD line is the difference between a fast (12) and a slow (26) EMA. The signal line, in turn, is a 9-period EMA of the MACD line. The histogram shows the gap between the two: MACD minus signal." },
+          { type: "diagram", id: "indicator-macd", caption: "MACD line, signal line, and histogram — the bullish signal is the MACD crossing above the signal line." },
           { type: "h", text: "Signals" },
           { type: "ul", items: [
             "MACD crosses the signal line from below to above: bullish signal.",
@@ -236,6 +237,7 @@ const QUANT_LEVELS = [
           { type: "p", text: "Almost every strategy belongs to one of two basic families. They rest on opposite assumptions about how prices behave." },
           { type: "h", text: "Trend-following" },
           { type: "p", text: "Trend-following assumes that a move already underway will continue: what rises keeps rising. It buys strength and sells weakness, typically using moving averages or breakouts. Trend-followers have many small losses and a few big winners." },
+          { type: "diagram", id: "pattern-trend-structure", caption: "What a trend actually is: higher highs and higher lows going up, lower highs and lower lows going down." },
           { type: "h", text: "Mean reversion" },
           { type: "p", text: "Mean reversion assumes that prices return to an average: excesses correct themselves. It buys weakness and sells strength, often using RSI or Bollinger Bands. Many small winners are offset by a few, but painful, losses." },
           { type: "ul", items: [
@@ -271,11 +273,12 @@ const QUANT_LEVELS = [
         minutes: 5,
         body: [
           { type: "p", text: "The Risk/Reward ratio (R:R) relates the potential gain to the risked loss of a trade. It answers the question: how much can I win, measured against what I'm risking?" },
-          { type: "formula", text: "CRV = (Take-Profit − Einstieg) / (Einstieg − Stop-Loss)" },
+          { type: "formula", text: "R:R = (take-profit − entry) / (entry − stop-loss)" },
+          { type: "diagram", id: "trade-bracket", caption: "A 2:1 trade fully specified before entry: the target sits two risk-units (+2R) above entry, the stop one (−1R) below." },
           { type: "p", text: "An R:R of 3 means the targeted gain is three times as large as the risk. The higher the R:R, the less often you need to be right to be profitable." },
           { type: "h", text: "Break-even win rate" },
           { type: "p", text: "From the R:R follows the minimum hit rate at which a strategy becomes cost-neutral. Below it the strategy loses money, above it it makes money." },
-          { type: "formula", text: "Break-even-Winrate = 1 / (1 + CRV)" },
+          { type: "formula", text: "Break-even win rate = 1 / (1 + R:R)" },
           { type: "p", text: "With an R:R of 2, the break-even win rate is about 33%: you can lose two out of three trades and still be at zero. This shows why a good R:R can matter more than a high hit rate." },
           { type: "tip", text: "In the tool: the R:R calculator on the Tools page gives you the ratio and the required hit rate directly from your entry, stop, and target." },
         ],
@@ -292,6 +295,7 @@ const QUANT_LEVELS = [
             "Volatility-based: as a multiple of the ATR (Average True Range), so the stop fits the normal fluctuation.",
             "Not too tight: a stop set within the noise gets triggered by random moves.",
           ] },
+          { type: "diagram", id: "stop-trailing", caption: "A trailing stop steps up under each higher low, locking in gains until the trend finally breaks." },
           { type: "p", text: "A trailing stop follows the price up as it rises, locking in ongoing gains without rigidly capping the target. What matters is consistency: a stop only helps if you leave it in place instead of moving it lower as the position falls into a loss." },
           { type: "tip", text: "In the tool: the ATR stops calculator on the Tools page suggests volatility-appropriate stop distances; Price alerts on the Charts page warn you when a threshold is reached." },
         ],

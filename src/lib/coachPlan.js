@@ -97,7 +97,7 @@ export const COACH_PLAN = [
     ],
     tasks: [
       { id: "p2-platform", label: "Set up a free futures sim (NinjaTrader and/or TradingView)", href: "https://ninjatrader.com", detail: "NinjaTrader is free for sim + backtesting with real futures data; TradingView paper trading works too." },
-      { id: "p2-port", label: "Port the validated strategy to futures data (MNQ 5m)", detail: "Ask Claude to translate your lab strategy to Pine Script or NinjaScript and explain it line by line." },
+      { id: "p2-port", label: "Port the validated strategy to futures data (MNQ 5m)", lesson: academyLink("futures-prop", "fp-running-code-live"), detail: "Ask Claude to translate your lab strategy to Pine Script or NinjaScript and explain it line by line. The lesson covers how code runs live: manual, semi-auto, broker APIs." },
       { id: "p2-rules", label: "Apply prop-firm rules to the sim yourself", lesson: academyLink("futures-prop", "fp-rules-drawdown"), detail: "Simulate the trailing drawdown and daily loss limit from day one — you're rehearsing the evaluation." },
       { id: "p2-journal", label: "Journal 40+ trades (screenshot, plan vs. actual, violations)", lesson: academyLink("futures-prop", "fp-sim-phase"), detail: "Every deviation from the written rules counts as an error regardless of P/L." },
       { id: "p2-mc", label: "Re-run the numbers: MC drawdown vs. loss limit", lesson: academyLink("futures-prop", "fp-validation-toolkit"), detail: "The 95th-percentile Monte-Carlo drawdown — not the single backtest — decides your size." },

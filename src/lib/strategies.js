@@ -1,7 +1,7 @@
 // strategies.js — built-in parameterized strategies for the backtester.
 //
 // Each entry in BUILT_IN_STRATEGIES is:
-//   { id, name, description /* German */, params: [{ key, label, default, min, max, step }],
+//   { id, name, description, params: [{ key, label, default, min, max, step }],
 //     build(params) => signalFn }
 //
 // Performance: build() returns a signalFn whose indicator arrays are computed
@@ -43,10 +43,10 @@ export const BUILT_IN_STRATEGIES = [
     id: "sma-crossover",
     name: "SMA Crossover",
     description:
-      "Kauft, wenn der schnelle gleitende Durchschnitt über den langsamen steigt, und verkauft beim Kreuzen nach unten.",
+      "Buys when the fast moving average crosses above the slow one, and sells on the cross back down.",
     params: [
-      { key: "fast", label: "Schnelle Periode", default: 20, min: 2, max: 200, step: 1 },
-      { key: "slow", label: "Langsame Periode", default: 50, min: 5, max: 400, step: 1 },
+      { key: "fast", label: "Fast period", default: 20, min: 2, max: 200, step: 1 },
+      { key: "slow", label: "Slow period", default: 50, min: 5, max: 400, step: 1 },
     ],
     build({ fast = 20, slow = 50 } = {}) {
       return (ctx) => {
@@ -63,10 +63,10 @@ export const BUILT_IN_STRATEGIES = [
     id: "ema-crossover",
     name: "EMA Crossover",
     description:
-      "Wie das SMA-Crossover, nutzt aber exponentielle Durchschnitte, die schneller auf neue Kurse reagieren.",
+      "Like the SMA crossover, but uses exponential averages that react faster to new prices.",
     params: [
-      { key: "fast", label: "Schnelle Periode", default: 12, min: 2, max: 200, step: 1 },
-      { key: "slow", label: "Langsame Periode", default: 26, min: 5, max: 400, step: 1 },
+      { key: "fast", label: "Fast period", default: 12, min: 2, max: 200, step: 1 },
+      { key: "slow", label: "Slow period", default: 26, min: 5, max: 400, step: 1 },
     ],
     build({ fast = 12, slow = 26 } = {}) {
       return (ctx) => {
@@ -83,11 +83,11 @@ export const BUILT_IN_STRATEGIES = [
     id: "rsi-mean-reversion",
     name: "RSI Mean Reversion",
     description:
-      "Kauft in überverkaufte Märkte (RSI unter dem Schwellwert) und verkauft, sobald sich der RSI wieder erholt hat.",
+      "Buys into oversold markets (RSI below the threshold) and sells once the RSI has recovered.",
     params: [
-      { key: "period", label: "RSI-Periode", default: 14, min: 2, max: 100, step: 1 },
-      { key: "oversold", label: "Überverkauft-Schwelle", default: 30, min: 5, max: 50, step: 1 },
-      { key: "exitLevel", label: "Ausstiegs-Level", default: 55, min: 30, max: 90, step: 1 },
+      { key: "period", label: "RSI period", default: 14, min: 2, max: 100, step: 1 },
+      { key: "oversold", label: "Oversold threshold", default: 30, min: 5, max: 50, step: 1 },
+      { key: "exitLevel", label: "Exit level", default: 55, min: 30, max: 90, step: 1 },
     ],
     build({ period = 14, oversold = 30, exitLevel = 55 } = {}) {
       return (ctx) => {
@@ -108,10 +108,10 @@ export const BUILT_IN_STRATEGIES = [
     id: "momentum-roc",
     name: "Momentum (ROC)",
     description:
-      "Ist investiert, solange die prozentuale Kursänderung über dem Schwellwert liegt, und geht sonst in Cash.",
+      "Stays invested while the percentage rate of change is above the threshold, otherwise sits in cash.",
     params: [
-      { key: "period", label: "ROC-Periode", default: 20, min: 2, max: 200, step: 1 },
-      { key: "threshold", label: "Schwellwert (%)", default: 0, min: -20, max: 20, step: 0.5 },
+      { key: "period", label: "ROC period", default: 20, min: 2, max: 200, step: 1 },
+      { key: "threshold", label: "Threshold (%)", default: 0, min: -20, max: 20, step: 0.5 },
     ],
     build({ period = 20, threshold = 0 } = {}) {
       return (ctx) => {
@@ -127,10 +127,10 @@ export const BUILT_IN_STRATEGIES = [
     id: "bollinger-mean-reversion",
     name: "Bollinger Mean Reversion",
     description:
-      "Kauft, wenn der Kurs unter das untere Bollinger-Band fällt, und verkauft bei Rückkehr zur Mittellinie.",
+      "Buys when price drops below the lower Bollinger Band and sells on the return to the middle line.",
     params: [
-      { key: "period", label: "Periode", default: 20, min: 5, max: 200, step: 1 },
-      { key: "mult", label: "Standardabweichungen", default: 2, min: 0.5, max: 4, step: 0.1 },
+      { key: "period", label: "Period", default: 20, min: 5, max: 200, step: 1 },
+      { key: "mult", label: "Std deviations", default: 2, min: 0.5, max: 4, step: 0.1 },
     ],
     build({ period = 20, mult = 2 } = {}) {
       return (ctx) => {
@@ -153,12 +153,12 @@ export const BUILT_IN_STRATEGIES = [
     id: "opening-range-breakout",
     name: "Opening Range Breakout (Intraday)",
     description:
-      "Bildet aus den ersten N Balken jedes UTC-Tages eine Eröffnungs-Range und handelt den Ausbruch: Stop auf der Gegenseite der Range, Take-Profit als Vielfaches (R) der Range-Breite. Long und Short, ein Trade pro Tag. Für Intraday-Intervalle (z. B. 5m).",
+      "Builds an opening range from the first N bars of each UTC day and trades the breakout: stop on the far side of the range, take-profit as a multiple (R) of the range width. Long and short, one trade per day. For intraday intervals (e.g. 5m).",
     params: [
-      { key: "rangeBars", label: "Range-Balken", default: 6, min: 1, max: 120, step: 1 },
-      { key: "targetR", label: "Take-Profit (R)", default: 1, min: 0.25, max: 10, step: 0.25 },
-      { key: "stopBufferPct", label: "Stop-Puffer (%)", default: 0, min: 0, max: 2, step: 0.05 },
-      { key: "longOnly", label: "Nur Long (1/0)", default: 0, min: 0, max: 1, step: 1 },
+      { key: "rangeBars", label: "Range bars", default: 6, min: 1, max: 120, step: 1 },
+      { key: "targetR", label: "Take-profit (R)", default: 1, min: 0.25, max: 10, step: 0.25 },
+      { key: "stopBufferPct", label: "Stop buffer (%)", default: 0, min: 0, max: 2, step: 0.05 },
+      { key: "longOnly", label: "Long only (1/0)", default: 0, min: 0, max: 1, step: 1 },
     ],
     build({ rangeBars = 6, targetR = 1, stopBufferPct = 0, longOnly = 0 } = {}) {
       // Per-run closure state (runBacktest calls the signalFn once per bar,
@@ -205,10 +205,10 @@ export const BUILT_IN_STRATEGIES = [
     id: "donchian-breakout",
     name: "Donchian Breakout",
     description:
-      "Kauft beim Ausbruch über das Hoch der letzten N Kerzen und verkauft beim Bruch des Tiefs des Ausstiegskanals.",
+      "Buys the breakout above the high of the last N candles and sells when the exit channel low breaks.",
     params: [
-      { key: "period", label: "Eintritts-Periode", default: 20, min: 5, max: 200, step: 1 },
-      { key: "exitPeriod", label: "Ausstiegs-Periode", default: 10, min: 2, max: 200, step: 1 },
+      { key: "period", label: "Entry period", default: 20, min: 5, max: 200, step: 1 },
+      { key: "exitPeriod", label: "Exit period", default: 10, min: 2, max: 200, step: 1 },
     ],
     build({ period = 20, exitPeriod = 10 } = {}) {
       return (ctx) => {

@@ -87,6 +87,7 @@ export const PROP_FIRM_COURSE = {
               "Lunch (12:00–13:30 NY): volume dries up, ranges get choppy.",
               "The close (15:00–16:00 NY): second volume peak, rebalancing flows.",
             ] },
+            { type: "diagram", id: "session-clock", caption: "The futures day in Swiss time: RTH runs 15:30–22:00, and the 15:30–17:30 open is where ORB strategies live." },
             { type: "h", text: "Time zones will bite you" },
             { type: "p", text: "New York switches between EST (UTC−5) and EDT (UTC−4). A strategy coded as \"9:30 NY open\" must handle daylight saving. In this site's backtester, ctx.session times are UTC — the NY open is 14:30 UTC in summer and 15:30 UTC in winter. From Switzerland, the NY open is 15:30 local time. Getting this wrong silently ruins an intraday backtest." },
             { type: "tip", text: "In the tool: the Tools page has a market-hours clock. When you code session strategies in the Backtest editor, ctx.session.minuteOfDay is UTC — convert deliberately." },
@@ -209,7 +210,7 @@ export const PROP_FIRM_COURSE = {
           minutes: 7,
           body: [
             { type: "p", text: "The Opening Range Breakout (ORB) is the classic intraday futures strategy and a perfect study object: simple enough to understand completely, rich enough to teach every concept — sessions, brackets, R-multiples, and validation." },
-            { type: "diagram", id: "pattern-breakout", caption: "The core idea: a defined range, then trading the break of it." },
+            { type: "diagram", id: "pattern-orb", caption: "The whole ORB trade in one picture: opening range, entry on the break, stop at the range low, target one range-width above." },
             { type: "h", text: "The recipe" },
             { type: "ul", items: [
               "1. Define the opening range: high and low of the first N minutes after the session open (e.g. 30 minutes after 9:30 NY).",
@@ -336,6 +337,31 @@ export const PROP_FIRM_COURSE = {
             { type: "h", text: "Exit criteria (the go/no-go gate)" },
             { type: "p", text: "Move to a paid evaluation only when, over at least 2–3 months and ~40+ trades: your sim expectancy is positive after costs, your max drawdown stayed under ~60% of the prop firm's limit at your size, and your rule-violation rate is near zero. If any of these fail, the simulator just saved you months of fees — that is the system working." },
             { type: "tip", text: "The sim phase feels like a delay. It isn't — it is the cheapest place you will ever discover problems. Every issue found here costs $0; the same issue in an evaluation costs a reset, and in a funded account a payout." },
+          ],
+        },
+        {
+          id: "fp-running-code-live",
+          title: "Running your code live: brokers, APIs & prop firms",
+          minutes: 9,
+          body: [
+            { type: "p", text: "A backtest is a calculation; live trading needs something that watches the market and places orders. There are exactly three ways to bridge that gap, with rising automation — and where you are allowed to use each one differs sharply between your own broker and a prop firm." },
+            { type: "h", text: "Model 1 — the code signals, you execute (works everywhere)" },
+            { type: "p", text: "Your strategy runs on a charting platform (this site's backtester for research, TradingView or NinjaTrader live) and produces signals; you place the bracket order by hand. This is allowed at every prop firm, needs zero infrastructure, and — underrated — trains exactly the discipline that automation would otherwise hide. Everyone should start here, and many profitable traders never leave." },
+            { type: "h", text: "Model 2 — semi-automated, you supervise" },
+            { type: "p", text: "The strategy fires orders itself while you sit in front of it, able to intervene. Concretely: a NinjaTrader strategy enabled on a live chart, or a TradingView alert sent through a webhook bridge (services like PickMyTrade or PineConnector) into a futures platform such as Tradovate. Most prop firms tolerate this WHILE you are present — but the rulebook of your specific firm decides, so get it confirmed in writing before connecting anything." },
+            { type: "h", text: "Model 3 — fully automated via a broker API (your own account only)" },
+            { type: "p", text: "On your own brokerage account, nobody stops you from full automation. At IBKR the standard path is: run TWS or the headless IB Gateway, connect a script through the API (in Python typically the ib_insync library, or the newer Web API), subscribe to data, compute your signal, and submit bracket orders programmatically. IBKR gives every account a full paper-trading twin — your bot should run there for weeks before it touches a real order." },
+            { type: "p", text: "Prop firms are the opposite: evaluation and funded accounts generally expose NO public API, and unattended bots are banned outright. If your dream is a fully autonomous system, that dream lives on your own IBKR account at your own risk — the prop-firm path is Models 1 and 2." },
+            { type: "formula", text: "The live loop your code must implement:\ndata → signal → risk check (size, daily loss) → order → fill confirmation → log → repeat" },
+            { type: "h", text: "The safety kit for ANY automation" },
+            { type: "ul", items: [
+              "Kill switch: one command (or one button) that cancels all orders, flattens all positions, and stops the bot.",
+              "Hard limits in code: max position size and max daily loss checked BEFORE every order, independent of the strategy logic.",
+              "Log everything: every signal, order, fill, and error with timestamps — when something goes wrong, the log is all you have.",
+              "Handle disconnects: the bot must know what its position is after a crash or reconnect, not assume it.",
+              "Alerts to your phone for fills, errors, and the daily-loss limit — supervised automation means you actually know what it is doing.",
+            ] },
+            { type: "tip", text: "Ladder of trust: stay on Model 1 until your first funded payouts, move to Model 2 only when execution errors — not the strategy — are provably your bottleneck, and touch Model 3 only on your own account with money you can lose. Never skip a rung." },
           ],
         },
         {

@@ -13,7 +13,7 @@ export default function SymbolSearch({
   market,
   value,
   onSelect,
-  placeholder = "Symbol oder Name suchen…",
+  placeholder = "Search symbol or name…",
   className,
 }) {
   const [input, setInput] = useState(value || "");
