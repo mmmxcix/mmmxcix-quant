@@ -19,6 +19,22 @@ const fmtP = (v) => {
 };
 
 /**
+ * How long until a target k ATRs away is plausibly hit — pure math, no AI:
+ *   - fastBars: price marching straight at its typical per-bar range (k bars).
+ *   - typicalBars: random-walk scaling — net displacement grows with the
+ *     square root of time, so covering k ATRs of net distance typically takes
+ *     ~k² bars. Real moves land between the two.
+ * @returns {null|{k, fastBars, typicalBars, fastSec, typicalSec}}
+ */
+export function estimateHorizon(entry, target, atrValue, tfSeconds) {
+  if (!(atrValue > 0) || !(tfSeconds > 0) || !isFinite(entry) || !isFinite(target)) return null;
+  const k = Math.abs(target - entry) / atrValue;
+  const fastBars = Math.max(1, Math.ceil(k));
+  const typicalBars = Math.max(fastBars, Math.ceil(k * k));
+  return { k, fastBars, typicalBars, fastSec: fastBars * tfSeconds, typicalSec: typicalBars * tfSeconds };
+}
+
+/**
  * Compute the rule-based bias and a structure-derived trade plan.
  * @param {Array} candles ascending OHLCV
  * @returns {null | {

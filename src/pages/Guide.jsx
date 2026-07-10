@@ -55,7 +55,7 @@ const SECTIONS = [
       "Auto-draw: the app detects and draws support/resistance levels, trendlines, fair value gaps (FVG, with fill tracking), an automatic Fibonacci of the dominant swing, and double tops/bottoms — straight from the data.",
       "Overlays (SMA 20/50, EMA 200) and sub-panes (RSI, MACD).",
       "Price alerts: set above/below levels; the browser notifies you when they trigger (tab must stay open).",
-      "Bias check: a fixed, mechanical rule set (trend, structure, RSI, MACD, trendlines, FVG, S/R distance, patterns) votes long/short/neutral and derives stop/target suggestions from the detected structure — fully auditable, explicitly not investment advice.",
+      "Bias check: a fixed, mechanical rule set votes long/short/neutral on SEVERAL timeframes at once (each on the same fixed lookback), shows how aligned they are, derives stop/target suggestions from the detected structure, and estimates the time-to-target from ATR math — fully auditable, explicitly not investment advice.",
       "Crypto updates tick-by-tick over WebSocket; stocks poll the latest bar.",
       "The page remembers the last symbol and timeframe you viewed and reopens right there.",
     ],

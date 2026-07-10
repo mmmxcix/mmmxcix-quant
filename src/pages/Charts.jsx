@@ -78,7 +78,7 @@ export default function Charts() {
   // Drawing state
   const [activeTool, setActiveTool] = useState(null);
   const [drawColor, setDrawColor] = useState(DRAW_COLORS[0]);
-  const [magnet, setMagnet] = useState(true); // crosshair + drawings snap to candles
+  const [magnet, setMagnet] = useState(false); // crosshair + drawings snap to candles (opt-in)
   // Auto-annotation: the app detects and draws these from the data itself.
   const [autoDraw, setAutoDraw] = useState({ levels: false, trend: false, fvg: false, fib: false, patterns: false });
 
@@ -543,9 +543,9 @@ export default function Charts() {
         ) : null}
       </div>
 
-      {showBias && candles && (
+      {showBias && (
         <div className="mt-4">
-          <BiasPanel candles={candles} symbol={symbol} />
+          <BiasPanel market={market} symbol={symbol} interval={interval} />
         </div>
       )}
     </div>
