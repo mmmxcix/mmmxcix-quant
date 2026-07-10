@@ -94,11 +94,13 @@ export function computeBias(candles) {
     hasUp && !hasDown ? 1 : hasDown && !hasUp ? -1 : 0,
     hasUp && !hasDown ? "intact ascending support line" : hasDown && !hasUp ? "intact descending resistance line" : "none / both");
 
-  // 7) Most recent unfilled fair value gap.
-  const lastFvg = fvgs[fvgs.length - 1];
-  vote("fvg", "Latest unfilled FVG",
+  // 7) Most recent unfilled fair value gap NEAR the current price (within
+  // 5 ATR) — a stale gap far away says nothing about today's balance.
+  const nearFvgs = fvgs.filter((g) => Math.min(Math.abs(entry - g.top), Math.abs(entry - g.bottom)) <= atr14 * 5 || (entry >= g.bottom && entry <= g.top));
+  const lastFvg = nearFvgs[nearFvgs.length - 1];
+  vote("fvg", "Unfilled FVG near price",
     lastFvg ? (lastFvg.kind === "bull" ? 1 : -1) : 0,
-    lastFvg ? `${lastFvg.kind === "bull" ? "bullish" : "bearish"} gap ${fmtP(lastFvg.bottom)}–${fmtP(lastFvg.top)}` : "none active");
+    lastFvg ? `${lastFvg.kind === "bull" ? "bullish" : "bearish"} gap ${fmtP(lastFvg.bottom)}–${fmtP(lastFvg.top)}` : "none within 5 ATR");
 
   // 8) Room to the next level: closer to support favors long, and vice versa.
   const supBelow = levels.filter((l) => l.price < entry).sort((a, b) => b.price - a.price)[0] || null;

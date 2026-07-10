@@ -3,22 +3,44 @@ import { NavLink, Link, useLocation } from "react-router-dom";
 import { LayoutDashboard, CandlestickChart, FlaskConical, Newspaper, Compass, Wrench, Activity, Scale, Star, Briefcase, Radar, GraduationCap, Sigma, Menu, X, Target, Dices, BookOpenCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-const NAV = [
-  { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
-  { to: "/monitor", label: "Monitor", icon: Activity },
-  { to: "/screener", label: "Screener", icon: Radar },
-  { to: "/charts", label: "Charts", icon: CandlestickChart },
-  { to: "/options", label: "Options", icon: Sigma },
-  { to: "/watchlist", label: "Watchlist", icon: Star },
-  { to: "/portfolio", label: "Portfolio", icon: Briefcase },
-  { to: "/backtest", label: "Backtest", icon: FlaskConical },
-  { to: "/lab", label: "Lab", icon: Dices },
-  { to: "/compare", label: "Compare", icon: Scale },
-  { to: "/tools", label: "Tools", icon: Wrench },
-  { to: "/academy", label: "Academy", icon: GraduationCap },
-  { to: "/guide", label: "Guide", icon: BookOpenCheck },
-  { to: "/news", label: "News", icon: Newspaper },
-  { to: "/resources", label: "Resources", icon: Compass },
+// Four functional groups: follow the markets → manage what you hold →
+// build and test strategies → learn the craft.
+const NAV_GROUPS = [
+  {
+    label: "Markets",
+    items: [
+      { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
+      { to: "/monitor", label: "Monitor", icon: Activity },
+      { to: "/charts", label: "Charts", icon: CandlestickChart },
+      { to: "/screener", label: "Screener", icon: Radar },
+      { to: "/news", label: "News", icon: Newspaper },
+    ],
+  },
+  {
+    label: "Trading",
+    items: [
+      { to: "/watchlist", label: "Watchlist", icon: Star },
+      { to: "/portfolio", label: "Portfolio", icon: Briefcase },
+      { to: "/options", label: "Options", icon: Sigma },
+    ],
+  },
+  {
+    label: "Strategy",
+    items: [
+      { to: "/backtest", label: "Backtest", icon: FlaskConical },
+      { to: "/lab", label: "Lab", icon: Dices },
+      { to: "/compare", label: "Compare", icon: Scale },
+      { to: "/tools", label: "Tools", icon: Wrench },
+    ],
+  },
+  {
+    label: "Learn",
+    items: [
+      { to: "/academy", label: "Academy", icon: GraduationCap },
+      { to: "/guide", label: "Guide", icon: BookOpenCheck },
+      { to: "/resources", label: "Resources", icon: Compass },
+    ],
+  },
 ];
 
 // The private Coach page only appears in the nav once the dev token exists in
@@ -43,23 +65,36 @@ function useDevNav() {
 
 function NavItems({ onNavigate }) {
   const isDev = useDevNav();
-  const items = isDev ? [...NAV, { to: "/coach", label: "Coach", icon: Target }] : NAV;
-  return items.map(({ to, label, icon: Icon, end }) => (
-    <NavLink
-      key={to}
-      to={to}
-      end={end}
-      onClick={onNavigate}
-      className={({ isActive }) =>
-        cn(
-          "flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm transition-colors",
-          isActive ? "bg-accent/10 text-accent" : "text-dim hover:text-text hover:bg-surface"
-        )
-      }
-    >
-      <Icon className="w-4 h-4 shrink-0" />
-      {label}
-    </NavLink>
+  const groups = isDev
+    ? NAV_GROUPS.map((g) =>
+        g.label === "Learn"
+          ? { ...g, items: [...g.items, { to: "/coach", label: "Coach", icon: Target }] }
+          : g
+      )
+    : NAV_GROUPS;
+  return groups.map((group, gi) => (
+    <div key={group.label}>
+      <p className={cn("px-3 text-[9px] font-semibold uppercase tracking-[0.2em] text-dim/60", gi === 0 ? "mb-1" : "mt-4 mb-1")}>
+        {group.label}
+      </p>
+      {group.items.map(({ to, label, icon: Icon, end }) => (
+        <NavLink
+          key={to}
+          to={to}
+          end={end}
+          onClick={onNavigate}
+          className={({ isActive }) =>
+            cn(
+              "flex items-center gap-2.5 rounded-lg px-3 py-[7px] text-sm transition-colors",
+              isActive ? "bg-accent/10 text-accent" : "text-dim hover:text-text hover:bg-surface"
+            )
+          }
+        >
+          <Icon className="w-4 h-4 shrink-0" />
+          {label}
+        </NavLink>
+      ))}
+    </div>
   ));
 }
 
@@ -95,7 +130,7 @@ export default function Layout({ children }) {
           <p className="text-[10px] tracking-[0.3em] text-dim uppercase">MMMXCIX</p>
           <p className="text-lg font-bold text-text tracking-tight">Quant</p>
         </div>
-        <nav className="flex flex-col gap-1">
+        <nav className="flex flex-col gap-1 overflow-y-auto pr-1 -mr-1">
           <NavItems />
         </nav>
         <div className="mt-auto px-3 pb-2 space-y-2">

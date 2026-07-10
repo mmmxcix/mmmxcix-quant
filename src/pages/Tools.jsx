@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Calculator, Scale, Crosshair, Activity, TrendingUp } from "lucide-react";
 import { cn, fmtNum, fmtPct } from "@/lib/utils";
-import WorldClock from "@/components/WorldClock";
 
 /* ── shared bits ──────────────────────────────────────────────────── */
 
@@ -351,10 +350,6 @@ export default function Tools() {
     <div>
       <p className="text-[10px] tracking-[0.3em] text-dim uppercase mb-1">Tools</p>
       <h1 className="text-2xl font-bold mb-6">Trader tools</h1>
-
-      <div className="mb-4">
-        <WorldClock />
-      </div>
 
       <div className="grid md:grid-cols-2 gap-4">
         <PositionSizeTool />

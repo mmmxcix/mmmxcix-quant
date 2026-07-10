@@ -124,14 +124,18 @@ export function detectTrendlines(candles, { lookback = 5 } = {}) {
  *   - fully traded through (price reached the far edge) → gap removed,
  *   - touched but not filled → kept, flagged `tested` (drawn fainter).
  * The still-forming last candle can't create a gap (it could still un-form).
+ * Only gaps from the recent `window` of bars compete for the maxCount slots —
+ * without that, ancient unfilled gaps far from the current price hog every
+ * slot and starve the gaps the user is actually looking at.
  * @returns {{ kind:"bull"|"bear", top, bottom, fromTime, index, tested }[]}
  */
-export function detectFVGs(candles, { maxCount = 6, minMult = 0.1 } = {}) {
+export function detectFVGs(candles, { maxCount = 12, minMult = 0.1, window = 400 } = {}) {
   const n = candles.length;
   if (n < 4) return [];
   const unit = avgRange(candles);
+  const start = Math.max(2, n - window);
   const raw = [];
-  for (let i = 2; i < n - 1; i++) {
+  for (let i = start; i < n - 1; i++) {
     const a = candles[i - 2], c = candles[i];
     if (c.low > a.high && c.low - a.high >= unit * minMult) {
       raw.push({ kind: "bull", top: c.low, bottom: a.high, fromTime: candles[i - 1].time, index: i });

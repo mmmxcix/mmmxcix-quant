@@ -14,9 +14,10 @@ import { cn } from "@/lib/utils";
 const SECTIONS = [
   {
     id: "dashboard", icon: LayoutDashboard, title: "Dashboard", to: "/",
-    what: "Your landing view: last price and day-over-day change for the default watchlist, with jump-offs into the rest of the app.",
+    what: "Your landing view: market pulse, the world market clock, and jump-offs into the rest of the app.",
     features: [
       "Quick market pulse across crypto and stock benchmarks (BTC, ETH, SPY, QQQ, big tech).",
+      "World market clock: one live clock per exchange (NY, Chicago futures, Zurich, London, Frankfurt, Tokyo, Hong Kong, Sydney, crypto) with open/closed/lunch status, session progress, and countdowns to the next open or close.",
       "Click any symbol to open it in Charts.",
     ],
     tips: ["Use it as a 10-second orientation, then move to Monitor or your own Watchlist — those are the working views."],
@@ -144,7 +145,6 @@ const SECTIONS = [
     features: [
       "Position size calculator (account, risk %, stop distance → size).",
       "Risk/Reward calculator and ATR-based stop calculator.",
-      "World market clock: one live clock per exchange (NY, Chicago futures, Zurich, London, Frankfurt, Tokyo, Hong Kong, Sydney, crypto) with open/closed/lunch status, session progress, and countdowns to the next open or close.",
       "Pivot points and a compounding calculator.",
     ],
     tips: ["Position size BEFORE every trade, from the calculator — never from feel. It's the one habit that keeps accounts alive."],

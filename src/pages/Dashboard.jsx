@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { FlaskConical, Newspaper, ArrowUpRight } from "lucide-react";
 import { fetchCandles, WATCHLIST } from "@/lib/data";
+import WorldClock from "@/components/WorldClock";
 import { cn, fmtPrice, fmtPct } from "@/lib/utils";
 
 // Last price + day-over-day change per watchlist entry.
@@ -87,6 +88,10 @@ export default function Dashboard() {
             })}
           </tbody>
         </table>
+      </div>
+
+      <div className="mb-8">
+        <WorldClock />
       </div>
 
       <div className="grid sm:grid-cols-2 gap-4">

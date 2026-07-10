@@ -44,7 +44,7 @@ export const DAY_TRADING_COURSE = {
               "Crypto: 24/7, but the biggest moves still cluster during US hours — you don't need to trade at 3 a.m.",
             ] },
             { type: "p", text: "Mind daylight saving: the US switches about two weeks before Europe, so for a few days each March and October/November the NY open shifts to 14:30 or 16:30 Swiss time. Check the actual open before you trade those weeks." },
-            { type: "tip", text: "In the tool: use the Tools market-hours clock to see which sessions are live, and watch for the volume surge in the opening hour on the Charts view." },
+            { type: "tip", text: "In the tool: the Dashboard's world market clock shows every session live with countdowns to the next open/close — and watch for the volume surge in the opening hour on the Charts view." },
           ],
         },
         {

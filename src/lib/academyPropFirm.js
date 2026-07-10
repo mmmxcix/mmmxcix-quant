@@ -90,7 +90,7 @@ export const PROP_FIRM_COURSE = {
             { type: "diagram", id: "session-clock", caption: "The futures day in Swiss time: RTH runs 15:30–22:00, and the 15:30–17:30 open is where ORB strategies live." },
             { type: "h", text: "Time zones will bite you" },
             { type: "p", text: "New York switches between EST (UTC−5) and EDT (UTC−4). A strategy coded as \"9:30 NY open\" must handle daylight saving. In this site's backtester, ctx.session times are UTC — the NY open is 14:30 UTC in summer and 15:30 UTC in winter. From Switzerland, the NY open is 15:30 local time. Getting this wrong silently ruins an intraday backtest." },
-            { type: "tip", text: "In the tool: the Tools page has a market-hours clock. When you code session strategies in the Backtest editor, ctx.session.minuteOfDay is UTC — convert deliberately." },
+            { type: "tip", text: "In the tool: the Dashboard's world clock shows the CME session live in Swiss time. When you code session strategies in the Backtest editor, ctx.session.minuteOfDay is UTC — convert deliberately." },
           ],
         },
       ],
