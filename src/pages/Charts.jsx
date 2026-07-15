@@ -8,7 +8,7 @@ import AutoAnnotateLayer from "@/components/AutoAnnotateLayer";
 import BiasPanel from "@/components/BiasPanel";
 import IndicatorPane from "@/components/IndicatorPane";
 import { fetchCandles, fetchOlderCandles, fetchLatestCandles, MARKETS, INTERVALS, rangesFor } from "@/lib/data";
-import { openBinanceKlineStream, mergeLiveCandle } from "@/lib/liveStream";
+import { openBinanceKlineStream, mergeLiveCandle, mergeTickPrice } from "@/lib/liveStream";
 import { CHART_TYPES } from "@/lib/chartTypes";
 import { sma, ema, bollinger, closes } from "@/lib/indicators";
 import { getAlertsFor, addAlert, removeAlert, subscribeAlerts, checkAlerts, ensureNotificationPermission } from "@/lib/alerts";
@@ -161,6 +161,9 @@ export default function Charts() {
         symbol,
         interval: bIv,
         onCandle: (c) => setCandles((prev) => mergeLiveCandle(prev, c)),
+        // Every trade moves the last candle instantly (throttled) — the kline
+        // stream alone only refreshes every ~2s, which reads as "stale".
+        onTick: (price) => setCandles((prev) => mergeTickPrice(prev, price)),
         onStatus: (s) => setLive(s === "live"),
       });
       return () => { close(); setLive(false); };

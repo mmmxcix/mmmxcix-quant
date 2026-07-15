@@ -66,9 +66,12 @@ function normalizeSignal(raw) {
  *                                                  position, session, indicators }.
  * @param {number}  [options.initialCapital=10000]
  * @param {number}  [options.feeBps=10]     Fee per side in basis points.
+ * @param {number}  [options.positionPct=100]  Percent of current equity deployed
+ *                  per trade (fractional sizing; the rest sits in cash). 100 =
+ *                  the classic all-in model.
  * @returns {{ equity:Array, buyHold:Array, trades:Array, metrics:Object, warnings:string[] }}
  */
-export function runBacktest({ candles, signalFn, initialCapital = 10000, feeBps = 10 }) {
+export function runBacktest({ candles, signalFn, initialCapital = 10000, feeBps = 10, positionPct = 100 }) {
   const warnings = [];
 
   const emptyResult = () => ({
@@ -99,6 +102,7 @@ export function runBacktest({ candles, signalFn, initialCapital = 10000, feeBps 
   }
 
   const fee = feeBps / 10000;
+  const posFrac = Math.min(100, Math.max(1, positionPct)) / 100;
   const n = candles.length;
 
   // --- Portfolio state -----------------------------------------------------
@@ -129,8 +133,11 @@ export function runBacktest({ candles, signalFn, initialCapital = 10000, feeBps 
   const openPosition = (sig, price, i, stop, target) => {
     dir = sig === "long" ? 1 : -1;
     entryEquity = equityVal;
-    equityAfterEntry = equityVal * (1 - fee); // entry fee reduces working capital
-    units = price > 0 ? equityAfterEntry / price : 0;
+    // Deploy only posFrac of equity; the remainder stays in cash. The entry
+    // fee is charged on the deployed notional only.
+    const committed = equityVal * posFrac;
+    equityAfterEntry = equityVal - committed * fee;
+    units = price > 0 ? (committed * (1 - fee)) / price : 0;
     entryPrice = price;
     entryTime = candles[i].time;
     entryIndex = i;

@@ -78,27 +78,50 @@ function intervalDef(id) {
   return def;
 }
 
+// Seconds per Binance interval string — drives how many klines a range needs.
+const BINANCE_INTERVAL_SEC = {
+  "1s": 1, "1m": 60, "5m": 300, "15m": 900, "30m": 1800,
+  "1h": 3600, "2h": 7200, "4h": 14400, "1d": 86400, "1w": 604800, "1M": 2592000,
+};
+
+// Hard cap on candles per dataset — keeps charts and backtests responsive
+// while still giving e.g. 2.7 years of 4h or 16 years of daily data.
+const MAX_CRYPTO_BARS = 6000;
+
 async function fetchBinance(symbol, interval, rangeDays) {
-  // Binance caps at 1000 klines per call — enough for 1000 days daily or
-  // ~40 days hourly, fine for v1. Filter by range client-side.
-  const url = `${BINANCE}/klines?symbol=${encodeURIComponent(symbol.toUpperCase())}&interval=${interval}&limit=1000`;
-  const res = await fetch(url);
-  if (!res.ok) {
-    if (res.status === 400) throw new Error(`Symbol "${symbol}" not found on Binance (e.g. BTCUSDT).`);
-    throw new Error(`Binance error ${res.status}`);
-  }
-  const rows = await res.json();
+  // Binance caps at 1000 klines per call; paginate backwards with endTime
+  // until the range (or the MAX_CRYPTO_BARS cap) is covered.
+  const sec = BINANCE_INTERVAL_SEC[interval] || 86400;
+  const need = Math.min(MAX_CRYPTO_BARS, Math.ceil((rangeDays * 86400) / sec));
   const cutoff = Date.now() / 1000 - rangeDays * 86400;
-  return rows
-    .map((r) => ({
-      time: Math.floor(r[0] / 1000),
-      open: +r[1],
-      high: +r[2],
-      low: +r[3],
-      close: +r[4],
-      volume: +r[5],
-    }))
-    .filter((c) => c.time >= cutoff);
+
+  let out = [];
+  let end = Date.now();
+  while (out.length < need) {
+    const url = `${BINANCE}/klines?symbol=${encodeURIComponent(symbol.toUpperCase())}&interval=${interval}&endTime=${end}&limit=1000`;
+    const res = await fetch(url);
+    if (!res.ok) {
+      if (res.status === 400) throw new Error(`Symbol "${symbol}" not found on Binance (e.g. BTCUSDT).`);
+      throw new Error(`Binance error ${res.status}`);
+    }
+    const rows = await res.json();
+    if (!Array.isArray(rows) || rows.length === 0) break;
+    out = [
+      ...rows.map((r) => ({
+        time: Math.floor(r[0] / 1000),
+        open: +r[1],
+        high: +r[2],
+        low: +r[3],
+        close: +r[4],
+        volume: +r[5],
+      })),
+      ...out,
+    ];
+    end = rows[0][0] - 1;
+    if (rows.length < 1000) break; // history exhausted
+    if (out[0].time <= cutoff) break; // range covered
+  }
+  return out.filter((c) => c.time >= cutoff).slice(-MAX_CRYPTO_BARS);
 }
 
 async function fetchYahoo(symbol, yahooInterval, yahooRange) {

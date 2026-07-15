@@ -8,8 +8,17 @@
 
 const WS_BASE = "wss://stream.binance.com:9443/ws";
 
-export function openBinanceKlineStream({ symbol, interval, onCandle, onStatus }) {
-  const streamName = `${symbol.toLowerCase()}@kline_${interval}`;
+// Minimum ms between tick callbacks — every executed trade arrives on the
+// aggTrade stream (can be dozens/second on majors); 250ms keeps the UI feeling
+// live without render storms.
+const TICK_THROTTLE_MS = 250;
+
+export function openBinanceKlineStream({ symbol, interval, onCandle, onTick, onStatus }) {
+  // Combined stream: kline (authoritative candle) + aggTrade (instant price).
+  const streamName = onTick
+    ? `${symbol.toLowerCase()}@kline_${interval}/${symbol.toLowerCase()}@aggTrade`
+    : `${symbol.toLowerCase()}@kline_${interval}`;
+  let lastTickAt = 0;
   let ws = null;
   let closedByUs = false;
   let retry = 0;
@@ -17,7 +26,11 @@ export function openBinanceKlineStream({ symbol, interval, onCandle, onStatus })
 
   const connect = () => {
     try {
-      ws = new WebSocket(`${WS_BASE}/${streamName}`);
+      // Single stream uses the raw endpoint; multiple streams need the
+      // combined endpoint, which wraps payloads in { stream, data }.
+      ws = new WebSocket(onTick
+        ? `wss://stream.binance.com:9443/stream?streams=${streamName}`
+        : `${WS_BASE}/${streamName}`);
     } catch {
       scheduleReconnect();
       return;
@@ -28,7 +41,19 @@ export function openBinanceKlineStream({ symbol, interval, onCandle, onStatus })
     ws.onmessage = (ev) => {
       let msg;
       try { msg = JSON.parse(ev.data); } catch { return; }
-      const k = msg?.k;
+      const payload = msg?.data ?? msg; // combined vs raw format
+
+      // aggTrade: instant last price, throttled.
+      if (payload?.e === "aggTrade" && onTick) {
+        const now = Date.now();
+        if (now - lastTickAt >= TICK_THROTTLE_MS) {
+          lastTickAt = now;
+          onTick(+payload.p);
+        }
+        return;
+      }
+
+      const k = payload?.k;
       if (!k) return;
       onCandle({
         time: Math.floor(k.t / 1000),
@@ -94,4 +119,21 @@ export function mergeLiveCandle(prev, live) {
     return [...prev, { time: live.time, open: live.open, high: live.high, low: live.low, close: live.close, volume: live.volume }];
   }
   return prev; // older than last but >= first: ignore (already settled)
+}
+
+// Merge a live TICK price into the forming (last) candle: update close and
+// stretch high/low. The kline stream remains authoritative — the next kline
+// message overwrites whatever the ticks painted.
+export function mergeTickPrice(prev, price) {
+  if (!prev || prev.length === 0 || !(price > 0)) return prev;
+  const last = prev[prev.length - 1];
+  if (last.close === price && price <= last.high && price >= last.low) return prev;
+  const next = prev.slice();
+  next[next.length - 1] = {
+    ...last,
+    close: price,
+    high: Math.max(last.high, price),
+    low: Math.min(last.low, price),
+  };
+  return next;
 }

@@ -64,6 +64,7 @@ export default function CandleChart({
   showVolume = true,
   height = 440,
   magnet = false, // crosshair snaps to the hovered candle instead of floating free
+  fitAll = false, // always show the whole dataset (backtest results: every marker visible)
   onNeedOlder,
   onChartReady,
   children,
@@ -187,9 +188,10 @@ export default function CandleChart({
       // autoscale permanently — a monthly chart would be squeezed into the old
       // intraday price window and render as unreadable full-height bars).
       try { chart.priceScale("right").applyOptions({ autoScale: true }); } catch { /* scale gone */ }
-      // Zoom to the most recent candles at a readable size.
+      // Zoom to the most recent candles at a readable size — unless the caller
+      // wants the whole dataset in view (backtest results with trade markers).
       const n = defaultVisibleBars(containerRef.current?.clientWidth);
-      if (candles.length > n) {
+      if (!fitAll && candles.length > n) {
         const lastIdx = candles.length - 1;
         chart.timeScale().setVisibleLogicalRange({
           from: lastIdx - n + 0.5,

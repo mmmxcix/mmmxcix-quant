@@ -31,6 +31,7 @@ export default function Backtest() {
   const [code, setCode] = useState(DEFAULT_STRATEGY_CODE);
   const [capital, setCapital] = useState(10000);
   const [feeBps, setFeeBps] = useState(10);
+  const [positionPct, setPositionPct] = useState(100);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState(null);
   const [result, setResult] = useState(null);
@@ -118,7 +119,7 @@ export default function Backtest() {
     try {
       const signalFn = mode === "builder" ? strategy.build(effectiveParams) : compileStrategy(code);
       const candles = await fetchCandles({ market, symbol: symbol.trim().toUpperCase(), interval, range });
-      const res = runBacktest({ candles, signalFn, initialCapital: capital, feeBps });
+      const res = runBacktest({ candles, signalFn, initialCapital: capital, feeBps, positionPct });
       setResult({ ...res, candles, symbol: symbol.trim().toUpperCase(), candleCount: candles.length });
     } catch (e) {
       setError(e.message);
@@ -138,14 +139,17 @@ export default function Backtest() {
 
   // Entry/exit arrows on the price chart — direction-aware so you can see
   // exactly where the strategy went long or short and how it got out.
+  // lightweight-charts silently drops unsorted markers, so sort by time
+  // (entries before exits on the same bar for readability).
   const tradeMarkers = useMemo(() => {
     if (!result?.trades) return [];
     const out = [];
     for (const t of result.trades) {
       const short = t.side === "short";
-      out.push({ time: t.entryTime, side: short ? "sell" : "buy", text: short ? "Short" : "Long" });
-      out.push({ time: t.exitTime, side: short ? "buy" : "sell", text: short ? "Cover" : "Sell" });
+      out.push({ time: t.entryTime, side: short ? "sell" : "buy", text: short ? "Short" : "Long", order: 0 });
+      out.push({ time: t.exitTime, side: short ? "buy" : "sell", text: short ? "Cover" : "Sell", order: 1 });
     }
+    out.sort((a, b) => a.time - b.time || a.order - b.order);
     return out;
   }, [result]);
 
@@ -192,7 +196,7 @@ export default function Backtest() {
                 </button>
               ))}
             </div>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-3 gap-2">
               <label className="text-xs text-dim">
                 Starting capital
                 <input type="number" value={capital} min={100}
@@ -202,6 +206,11 @@ export default function Backtest() {
                 Fee (bps/side)
                 <input type="number" value={feeBps} min={0} max={100}
                   onChange={(e) => setFeeBps(+e.target.value || 0)} className="input-base w-full mt-1 font-mono" />
+              </label>
+              <label className="text-xs text-dim" title="Percent of equity deployed per trade — drawdowns scale roughly with this">
+                Position (%)
+                <input type="number" value={positionPct} min={1} max={100} step={5}
+                  onChange={(e) => setPositionPct(+e.target.value || 100)} className="input-base w-full mt-1 font-mono" />
               </label>
             </div>
           </div>
@@ -374,7 +383,7 @@ export default function Backtest() {
                   Price with entries/exits — <span className="text-up">▲ Buy</span>{" "}
                   <span className="text-down">▼ Sell</span> ({result.symbol})
                 </p>
-                <CandleChart candles={result.candles} markers={tradeMarkers} height={300} showVolume={false} />
+                <CandleChart candles={result.candles} markers={tradeMarkers} height={300} showVolume={false} fitAll />
               </div>
 
               <div className="rounded-xl border border-line lg-glass p-3">
