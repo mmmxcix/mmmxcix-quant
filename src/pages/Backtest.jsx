@@ -4,6 +4,7 @@ import EquityChart from "@/components/EquityChart";
 import CandleChart from "@/components/CandleChart";
 import SymbolSearch from "@/components/SymbolSearch";
 import MonteCarloPanel from "@/components/MonteCarloPanel";
+import ValidationPanel from "@/components/ValidationPanel";
 import { fetchCandles, MARKETS, INTERVALS, RANGES } from "@/lib/data";
 import { runBacktest, compileStrategy, DEFAULT_STRATEGY_CODE, ORB_STRATEGY_CODE, BIAS_STRATEGY_CODE, BIAS_TREND_CODE } from "@/lib/backtest";
 import { BUILT_IN_STRATEGIES } from "@/lib/strategies";
@@ -393,6 +394,19 @@ export default function Backtest() {
                 </p>
                 <EquityChart series={equitySeries} />
               </div>
+
+              {result.trades.length >= 10 && (
+                <ValidationPanel
+                  mode={mode}
+                  strategy={strategy}
+                  code={code}
+                  compile={compileStrategy}
+                  candles={result.candles}
+                  feeBps={feeBps}
+                  positionPct={positionPct}
+                  result={result}
+                />
+              )}
 
               {result.trades.length >= 10 && (
                 <div className="rounded-xl border border-line lg-glass p-4">

@@ -107,6 +107,7 @@ const SECTIONS = [
       "AI generator (dev token): describe a strategy in plain language, get runnable code.",
       "Results: equity vs. buy & hold, trade markers on the price chart, full metrics (CAGR, Sharpe, max DD, win rate, profit factor, exposure).",
       "Monte Carlo panel under every result: bootstraps your actual trades into 1000 alternate orderings — P(loss), percentile fan, drawdown distribution vs. a prop-firm loss limit.",
+      "Validation pipeline under every result: walk-forward analysis (builder) / k-fold consistency (code), Deflated Sharpe Ratio (corrects for how many variants you tried), and a price-noise robustness test — each with an explicit pass/fail verdict.",
       "Trade list with side, exit reason (signal/stop/target), duration and P/L per trade.",
     ],
     tips: [
