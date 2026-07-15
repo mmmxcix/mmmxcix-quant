@@ -2,8 +2,9 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   Compass, Lock, KeyRound, Loader2, Check, Circle, ChevronRight,
-  ExternalLink, GraduationCap, Flag, AlertTriangle,
+  ExternalLink, GraduationCap, Flag, AlertTriangle, Cpu, RefreshCw,
 } from "lucide-react";
+import { fmtPrice } from "@/lib/utils";
 import { COACH_PLAN, getCoachDone, setCoachDone, subscribeCoach, courseLessonIds } from "@/lib/coachPlan";
 import { getCompleted, subscribeProgress } from "@/lib/academyProgress";
 import { cn } from "@/lib/utils";
@@ -21,6 +22,68 @@ function taskIsDone(task, manualDone, academyDone) {
     return ids.length > 0 && ids.every((id) => academyDone.has(id));
   }
   return manualDone.has(task.id);
+}
+
+// Live status of the local lab agent (the 24/7 process on the user's PC that
+// pushes its state to /api/lab). Private: reads with the dev token.
+function LabStatus() {
+  const [data, setData] = useState(undefined); // undefined=loading, null=none
+  const [busy, setBusy] = useState(false);
+
+  const load = async () => {
+    setBusy(true);
+    try {
+      const token = localStorage.getItem("quant_dev_token") || "";
+      const res = await fetch("/api/lab", { headers: { "x-lab-token": token } });
+      const out = await res.json();
+      setData(res.ok ? out.state : null);
+    } catch {
+      setData(null);
+    } finally {
+      setBusy(false);
+    }
+  };
+  useEffect(() => { load(); }, []);
+
+  const age = data?.receivedAt ? Math.round((Date.now() - data.receivedAt) / 60000) : null;
+  const online = age !== null && age < 45; // fresh within ~3 schedule ticks
+
+  return (
+    <div className="rounded-xl border border-line lg-glass p-4 mb-6">
+      <div className="flex items-center gap-2 mb-2">
+        <Cpu className="w-4 h-4 text-accent" />
+        <p className="text-sm font-semibold">Lab agent (your PC)</p>
+        {data !== undefined && (
+          <span className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+            online ? "border-up/40 bg-up/10 text-up" : "border-line bg-bg text-dim"}`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${online ? "bg-up" : "bg-dim/50"}`} />
+            {online ? "online" : "offline"}
+          </span>
+        )}
+        <button onClick={load} disabled={busy} className="ml-auto flex items-center gap-1.5 chip chip-idle !text-[11px]">
+          {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />} Refresh
+        </button>
+      </div>
+      {data === undefined ? (
+        <p className="text-xs text-dim">Checking…</p>
+      ) : data === null ? (
+        <p className="text-xs text-dim leading-relaxed">
+          No state received yet. Set up the local agent (n8n + Node) using the tutorial in the repo
+          (<span className="font-mono">docs/LAB_AGENT_TUTORIAL.md</span>) — once it pushes, its status appears here.
+        </p>
+      ) : (
+        <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs font-mono">
+          <span className="text-dim">last push <span className="text-text">{age === 0 ? "just now" : `${age}m ago`}</span></span>
+          <span className="text-dim">mode <span className="text-text">{data.mode || "–"}</span></span>
+          <span className="text-dim">strategies <span className="text-text">{data.strategies?.length ?? 0}</span></span>
+          {data.prices && Object.entries(data.prices).slice(0, 3).map(([s, p]) => (
+            <span key={s} className="text-dim">{s.replace("USDT", "")} <span className="text-text">{fmtPrice(p)}</span></span>
+          ))}
+          {data.note && <span className="text-dim italic font-sans w-full">“{data.note}”</span>}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function TaskRow({ task, done, onToggle }) {
@@ -203,6 +266,8 @@ export default function Coach() {
         gates between them. Course tasks tick themselves off as you finish Academy lessons;
         everything else you check off manually. Progress is stored in this browser.
       </p>
+
+      <LabStatus />
 
       {/* Overall progress + next up */}
       <div className="rounded-xl border border-line lg-glass p-4 mb-6">
