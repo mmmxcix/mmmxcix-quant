@@ -299,16 +299,18 @@ export function runBacktest({ candles, signalFn, initialCapital = 10000, feeBps 
     sharpe = std > 0 ? (mean / std) * Math.sqrt(periodsPerYear) : 0;
   }
 
-  // Max drawdown on the equity curve.
-  let peak = -Infinity;
-  let maxDrawdownPct = 0;
-  for (const point of equity) {
-    if (point.value > peak) peak = point.value;
-    if (peak > 0) {
-      const dd = ((peak - point.value) / peak) * 100;
-      if (dd > maxDrawdownPct) maxDrawdownPct = dd;
+  // Max drawdown on the equity curve (and on buy & hold, for a fair
+  // risk-adjusted comparison — B&H's pain is otherwise invisible).
+  const maxDD = (curve) => {
+    let peak = -Infinity, dd = 0;
+    for (const point of curve) {
+      if (point.value > peak) peak = point.value;
+      if (peak > 0) dd = Math.max(dd, ((peak - point.value) / peak) * 100);
     }
-  }
+    return dd;
+  };
+  const maxDrawdownPct = maxDD(equity);
+  const buyHoldMaxDrawdownPct = maxDD(buyHold);
 
   // Trade statistics.
   const wins = trades.filter((t) => t.pnl > 0);
@@ -328,6 +330,7 @@ export function runBacktest({ candles, signalFn, initialCapital = 10000, feeBps 
       cagrPct,
       sharpe,
       maxDrawdownPct,
+      buyHoldMaxDrawdownPct,
       winRatePct,
       profitFactor,
       tradeCount: trades.length,

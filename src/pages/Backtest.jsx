@@ -139,6 +139,15 @@ export default function Backtest() {
       // Data sanity: if the source silently delivered a coarser granularity
       // than requested (Yahoo does this for long intraday ranges), say so
       // loudly — indicator periods would mean something entirely different.
+      // Zero trades is almost always a setup mismatch — say why instead of
+      // showing a silent all-zero result.
+      if (res.metrics.tradeCount === 0) {
+        res.warnings.unshift(
+          mode === "builder" && strategyId === "opening-range-breakout" && !["1s","1m","5m","15m","30m","1h","2h","4h"].includes(interval)
+            ? "ORB needs an INTRADAY interval (e.g. 5m or 15m): on daily candles every bar starts a new day, so an opening range can never form — the strategy stays flat forever."
+            : "No trades were made — the entry conditions never triggered on this data (check interval, range and parameters)."
+        );
+      }
       if (candles.length >= 3) {
         const spac = [];
         for (let i = 1; i < candles.length; i++) spac.push(candles[i].time - candles[i - 1].time);
@@ -427,6 +436,7 @@ export default function Backtest() {
                   tone={m.cagrPct >= 0 ? "text-up" : "text-down"} />
                 <MetricCard label="Sharpe" value={fmtNum(m.sharpe)} tone="text-text" />
                 <MetricCard label="Max drawdown" value={fmtPct(-Math.abs(m.maxDrawdownPct))} tone="text-down" />
+                <MetricCard label="B&H max drawdown" value={fmtPct(-Math.abs(m.buyHoldMaxDrawdownPct ?? 0))} tone="text-down" />
                 <MetricCard label="Win rate" value={fmtPct(m.winRatePct).replace("+", "")} tone="text-text" />
                 <MetricCard label="Profit factor" value={fmtNum(m.profitFactor)} tone="text-text" />
                 <MetricCard label="Trades · Exposure" value={`${m.tradeCount} · ${fmtNum(m.exposurePct, 0)}%`} tone="text-text" />
