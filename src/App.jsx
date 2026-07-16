@@ -16,6 +16,7 @@ import Academy from "@/pages/Academy";
 import Coach from "@/pages/Coach";
 import Lab from "@/pages/Lab";
 import Guide from "@/pages/Guide";
+import Registry from "@/pages/Registry";
 import Impressum from "@/pages/Impressum";
 import Datenschutz from "@/pages/Datenschutz";
 import Nutzung from "@/pages/Nutzung";
@@ -38,6 +39,7 @@ export default function App() {
                 <Route path="/charts" element={<Charts />} />
                 <Route path="/backtest" element={<Backtest />} />
                 <Route path="/lab" element={<Lab />} />
+                <Route path="/registry" element={<Registry />} />
                 <Route path="/compare" element={<Compare />} />
                 <Route path="/monitor" element={<Monitor />} />
                 <Route path="/screener" element={<Screener />} />

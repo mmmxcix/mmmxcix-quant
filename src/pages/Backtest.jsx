@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
-import { Play, AlertTriangle, Sparkles, Copy, Check, KeyRound, Loader2 } from "lucide-react";
+import { Play, AlertTriangle, Sparkles, Copy, Check, KeyRound, Loader2, Boxes } from "lucide-react";
+import { Link } from "react-router-dom";
 import EquityChart from "@/components/EquityChart";
 import CandleChart from "@/components/CandleChart";
 import SymbolSearch from "@/components/SymbolSearch";
@@ -8,6 +9,7 @@ import ValidationPanel from "@/components/ValidationPanel";
 import { fetchCandles, MARKETS, INTERVALS, RANGES } from "@/lib/data";
 import { runBacktest, compileStrategy, DEFAULT_STRATEGY_CODE, ORB_STRATEGY_CODE, BIAS_STRATEGY_CODE, BIAS_TREND_CODE } from "@/lib/backtest";
 import { BUILT_IN_STRATEGIES } from "@/lib/strategies";
+import { saveEntry } from "@/lib/registry";
 import { cn, fmtNum, fmtPct } from "@/lib/utils";
 
 const DEFAULT_SYMBOL = { crypto: "BTCUSDT", stock: "SPY" };
@@ -36,6 +38,8 @@ export default function Backtest() {
   const [running, setRunning] = useState(false);
   const [error, setError] = useState(null);
   const [result, setResult] = useState(null);
+  const [verdicts, setVerdicts] = useState({ wf: null, dsr: null, noise: null });
+  const [saved, setSaved] = useState(false);
 
   // AI code generation: the Anthropic key never reaches the browser — the
   // Pages Function /api/generate holds it server-side; access requires the
@@ -122,12 +126,35 @@ export default function Backtest() {
       const candles = await fetchCandles({ market, symbol: symbol.trim().toUpperCase(), interval, range });
       const res = runBacktest({ candles, signalFn, initialCapital: capital, feeBps, positionPct });
       setResult({ ...res, candles, symbol: symbol.trim().toUpperCase(), candleCount: candles.length });
+      setVerdicts({ wf: null, dsr: null, noise: null });
+      setSaved(false);
     } catch (e) {
       setError(e.message);
       setResult(null);
     } finally {
       setRunning(false);
     }
+  };
+
+  const saveToRegistry = () => {
+    if (!result) return;
+    saveEntry({
+      name: mode === "builder" ? strategy.name : "Code strategy",
+      market, symbol: symbol.trim().toUpperCase(), interval, range,
+      mode,
+      strategyId: mode === "builder" ? strategyId : null,
+      params: mode === "builder" ? effectiveParams : null,
+      code: mode === "code" ? code : null,
+      positionPct, feeBps,
+      metrics: result.metrics,
+      equity: result.equity,
+      tradeReturns: result.trades.map((t) => t.pnlPct / 100),
+      validation: verdicts,
+      // A strategy that passed every run validation earns "validated" straight away.
+      status: verdicts.wf === "pass" && verdicts.dsr === "pass" && verdicts.noise === "pass" ? "validated" : "factory",
+    });
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2500);
   };
 
   const equitySeries = useMemo(() => {
@@ -379,6 +406,20 @@ export default function Backtest() {
                 <MetricCard label="Trades · Exposure" value={`${m.tradeCount} · ${fmtNum(m.exposurePct, 0)}%`} tone="text-text" />
               </div>
 
+              {/* Save to the Strategy Registry (the lab notebook) */}
+              <div className="flex flex-wrap items-center gap-3">
+                <button onClick={saveToRegistry} disabled={saved}
+                  className={cn("flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm transition-colors",
+                    saved ? "border-up/50 text-up bg-up/10" : "border-line text-dim hover:text-accent hover:border-accent/40")}>
+                  {saved ? <Check className="w-4 h-4" /> : <Boxes className="w-4 h-4" />}
+                  {saved ? "Saved to registry" : "Save to registry"}
+                </button>
+                <span className="text-[11px] text-dim">
+                  Captures metrics {verdicts.wf || verdicts.dsr || verdicts.noise ? "+ the validation verdicts you've run" : "(run the validation below to also capture its verdicts)"} ·{" "}
+                  <Link to="/registry" className="text-accent hover:underline">open Registry</Link>
+                </span>
+              </div>
+
               <div className="rounded-xl border border-line lg-glass p-3">
                 <p className="text-xs text-dim px-2 pt-1 pb-2">
                   Price with entries/exits — <span className="text-up">▲ Buy</span>{" "}
@@ -405,6 +446,7 @@ export default function Backtest() {
                   feeBps={feeBps}
                   positionPct={positionPct}
                   result={result}
+                  onVerdicts={setVerdicts}
                 />
               )}
 

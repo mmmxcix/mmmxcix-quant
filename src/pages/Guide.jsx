@@ -118,6 +118,19 @@ const SECTIONS = [
     ],
   },
   {
+    id: "registry", icon: BookOpenCheck, title: "Registry", to: "/registry",
+    what: "Your strategy notebook: save backtests and move each through a lifecycle — Factory → Validated → Paper → Graveyard — with a correlation matrix.",
+    features: [
+      "Save any backtest (metrics + validation verdicts) from the Backtest page.",
+      "Lifecycle columns: promote survivors, bury failures in the graveyard, revive later.",
+      "Correlation matrix over validated/paper strategies — spot cluster risk before combining them.",
+    ],
+    tips: [
+      "A strategy that passes all three validation checks lands straight in 'Validated'; everything else starts in 'Factory'.",
+      "Aim for low correlations between paper strategies — teal cells (uncorrelated) mean they won't all lose on the same day.",
+    ],
+  },
+  {
     id: "lab", icon: Dices, title: "Lab", to: "/lab",
     what: "The Monte-Carlo playground: define an edge as pure numbers (win rate, avg win/loss in R, risk per trade) and watch 1000 alternate histories of it.",
     features: [

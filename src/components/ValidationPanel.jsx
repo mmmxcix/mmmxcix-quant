@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ShieldCheck, ShieldAlert, Loader2, Play, FlaskConical, Waves, SigmaSquare } from "lucide-react";
 import { walkForwardBuilder, kFoldCode, noiseTest, deflatedSharpe, equityReturns } from "@/lib/validation";
 import { cn, fmtNum, fmtPct } from "@/lib/utils";
@@ -27,7 +27,7 @@ function Card({ icon: Icon, title, children }) {
   );
 }
 
-export default function ValidationPanel({ mode, strategy, code, compile, candles, feeBps, positionPct, result }) {
+export default function ValidationPanel({ mode, strategy, code, compile, candles, feeBps, positionPct, result, onVerdicts }) {
   const [wf, setWf] = useState(null);
   const [wfBusy, setWfBusy] = useState(false);
   const [noise, setNoise] = useState(null);
@@ -38,6 +38,16 @@ export default function ValidationPanel({ mode, strategy, code, compile, candles
     if (!result?.equity?.length) return null;
     return deflatedSharpe(equityReturns(result.equity), trials);
   }, [result, trials]);
+
+  // Report the three verdicts upward so "Save to registry" can capture them.
+  useEffect(() => {
+    if (!onVerdicts) return;
+    onVerdicts({
+      wf: wf && !wf.error ? wf.verdict : null,
+      dsr: dsr ? (dsr.dsr >= 0.95 ? "pass" : "fail") : null,
+      noise: noise && !noise.error ? noise.verdict : null,
+    });
+  }, [wf, dsr, noise, onVerdicts]);
 
   const runWf = () => {
     setWfBusy(true);

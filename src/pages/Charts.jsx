@@ -8,7 +8,7 @@ import AutoAnnotateLayer from "@/components/AutoAnnotateLayer";
 import BiasPanel from "@/components/BiasPanel";
 import IndicatorPane from "@/components/IndicatorPane";
 import { fetchCandles, fetchOlderCandles, fetchLatestCandles, MARKETS, INTERVALS, rangesFor } from "@/lib/data";
-import { openBinanceKlineStream, mergeLiveCandle, mergeTickPrice } from "@/lib/liveStream";
+import { openBinanceKlineStream, mergeLiveCandle } from "@/lib/liveStream";
 import { CHART_TYPES } from "@/lib/chartTypes";
 import { sma, ema, bollinger, closes } from "@/lib/indicators";
 import { getAlertsFor, addAlert, removeAlert, subscribeAlerts, checkAlerts, ensureNotificationPermission } from "@/lib/alerts";
@@ -66,6 +66,7 @@ export default function Charts() {
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
   const [live, setLive] = useState(false); // WS connected (crypto real-time)
+  const [livePrice, setLivePrice] = useState(null); // latest tick, drives the forming candle only
   const [mainChart, setMainChart] = useState(null); // for pane time-sync
   const [mainSeries, setMainSeries] = useState(null); // for alert price lines
 
@@ -161,12 +162,13 @@ export default function Charts() {
         symbol,
         interval: bIv,
         onCandle: (c) => setCandles((prev) => mergeLiveCandle(prev, c)),
-        // Every trade moves the last candle instantly (throttled) — the kline
-        // stream alone only refreshes every ~2s, which reads as "stale".
-        onTick: (price) => setCandles((prev) => mergeTickPrice(prev, price)),
+        // Every trade updates only the forming candle (imperative series.update
+        // in CandleChart) — no page re-render, so it ticks smoothly like a pro
+        // terminal. The kline stream keeps the array authoritative.
+        onTick: (price) => setLivePrice(price),
         onStatus: (s) => setLive(s === "live"),
       });
-      return () => { close(); setLive(false); };
+      return () => { close(); setLive(false); setLivePrice(null); };
     }
 
     // Stocks: polling fallback.
@@ -514,6 +516,7 @@ export default function Charts() {
               overlays={overlays}
               height={chartHeight()}
               magnet={magnet}
+              livePrice={livePrice}
               onNeedOlder={loadOlder}
               onChartReady={(chart, series) => { setMainChart(chart); setMainSeries(series); }}
             >

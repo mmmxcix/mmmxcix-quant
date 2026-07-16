@@ -9,9 +9,10 @@
 const WS_BASE = "wss://stream.binance.com:9443/ws";
 
 // Minimum ms between tick callbacks — every executed trade arrives on the
-// aggTrade stream (can be dozens/second on majors); 250ms keeps the UI feeling
-// live without render storms.
-const TICK_THROTTLE_MS = 250;
+// aggTrade stream (can be dozens/second on majors). Ticks only repaint the
+// forming candle imperatively, so a fast cadence stays cheap; 120ms (~8/s)
+// reads as smoothly live like a pro terminal.
+const TICK_THROTTLE_MS = 120;
 
 export function openBinanceKlineStream({ symbol, interval, onCandle, onTick, onStatus }) {
   // Combined stream: kline (authoritative candle) + aggTrade (instant price).

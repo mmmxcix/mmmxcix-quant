@@ -65,6 +65,7 @@ export default function CandleChart({
   height = 440,
   magnet = false, // crosshair snaps to the hovered candle instead of floating free
   fitAll = false, // always show the whole dataset (backtest results: every marker visible)
+  livePrice = null, // latest tick price — updates the forming candle imperatively
   onNeedOlder,
   onChartReady,
   children,
@@ -210,6 +211,26 @@ export default function CandleChart({
     if (!chart) return;
     chart.applyOptions({ crosshair: { mode: magnet ? CrosshairMode.Magnet : CrosshairMode.Normal } });
   }, [magnet, chartEpoch]);
+
+  // Live tick: repaint ONLY the forming (last) candle via series.update(), so
+  // price ticks in real time without re-rendering the page or recomputing
+  // indicators. Heikin-Ashi is skipped (its last bar depends on the whole
+  // recomputation) — it still updates on the ~2s kline cadence.
+  useEffect(() => {
+    const series = priceSeriesRef.current;
+    if (!series || livePrice == null || !candles?.length || chartType === "heikin-ashi") return;
+    const last = candles[candles.length - 1];
+    const bar = {
+      ...last,
+      close: livePrice,
+      high: Math.max(last.high, livePrice),
+      low: Math.min(last.low, livePrice),
+    };
+    try {
+      if (chartType === "line" || chartType === "area") series.update({ time: bar.time, value: bar.close });
+      else series.update({ time: bar.time, open: bar.open, high: bar.high, low: bar.low, close: bar.close });
+    } catch { /* series torn down / stale time */ }
+  }, [livePrice, chartType, candles]);
 
   // Trade markers (backtest buy/sell arrows). lightweight-charts renders
   // markers on the main series; line/area series support them too.
