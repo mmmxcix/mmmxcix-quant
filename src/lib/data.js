@@ -79,10 +79,12 @@ function intervalDef(id) {
 }
 
 // Seconds per Binance interval string — drives how many klines a range needs.
-const BINANCE_INTERVAL_SEC = {
+// Seconds per interval id (used for pagination math and data-sanity checks).
+export const INTERVAL_SECONDS = {
   "1s": 1, "1m": 60, "5m": 300, "15m": 900, "30m": 1800,
   "1h": 3600, "2h": 7200, "4h": 14400, "1d": 86400, "1w": 604800, "1M": 2592000,
 };
+const BINANCE_INTERVAL_SEC = INTERVAL_SECONDS;
 
 // Hard cap on candles per dataset — keeps charts and backtests responsive
 // while still giving e.g. 2.7 years of 4h or 16 years of daily data.

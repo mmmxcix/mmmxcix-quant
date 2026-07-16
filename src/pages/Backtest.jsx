@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Play, AlertTriangle, Sparkles, Copy, Check, KeyRound, Loader2, Boxes } from "lucide-react";
 import { Link } from "react-router-dom";
 import EquityChart from "@/components/EquityChart";
@@ -6,7 +6,7 @@ import CandleChart from "@/components/CandleChart";
 import SymbolSearch from "@/components/SymbolSearch";
 import MonteCarloPanel from "@/components/MonteCarloPanel";
 import ValidationPanel from "@/components/ValidationPanel";
-import { fetchCandles, MARKETS, INTERVALS, RANGES } from "@/lib/data";
+import { fetchCandles, MARKETS, INTERVALS, rangesFor, INTERVAL_SECONDS } from "@/lib/data";
 import { runBacktest, compileStrategy, DEFAULT_STRATEGY_CODE, ORB_STRATEGY_CODE, BIAS_STRATEGY_CODE, BIAS_TREND_CODE } from "@/lib/backtest";
 import { BUILT_IN_STRATEGIES } from "@/lib/strategies";
 import { saveEntry } from "@/lib/registry";
@@ -104,6 +104,17 @@ export default function Backtest() {
     [strategyId]
   );
 
+  // Only ranges that actually exist for the chosen interval (e.g. Yahoo has
+  // no multi-year hourly data — it would silently degrade to monthly bars and
+  // quietly wreck the test). Snap the range when the interval changes.
+  const validRanges = useMemo(() => rangesFor(interval), [interval]);
+  useEffect(() => {
+    if (!validRanges.some((r) => r.id === range)) {
+      setRange(validRanges[validRanges.length - 1].id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [interval]);
+
   const effectiveParams = useMemo(() => {
     const out = {};
     for (const p of strategy.params) out[p.key] = paramValues[p.key] ?? p.default;
@@ -125,6 +136,21 @@ export default function Backtest() {
       const signalFn = mode === "builder" ? strategy.build(effectiveParams) : compileStrategy(code);
       const candles = await fetchCandles({ market, symbol: symbol.trim().toUpperCase(), interval, range });
       const res = runBacktest({ candles, signalFn, initialCapital: capital, feeBps, positionPct });
+      // Data sanity: if the source silently delivered a coarser granularity
+      // than requested (Yahoo does this for long intraday ranges), say so
+      // loudly — indicator periods would mean something entirely different.
+      if (candles.length >= 3) {
+        const spac = [];
+        for (let i = 1; i < candles.length; i++) spac.push(candles[i].time - candles[i - 1].time);
+        spac.sort((a, b) => a - b);
+        const med = spac[Math.floor(spac.length / 2)];
+        const want = INTERVAL_SECONDS[interval] || 0;
+        if (want > 0 && med > want * 3) {
+          res.warnings.unshift(
+            `Data mismatch: you requested ${interval} candles but the source delivered ~${Math.round(med / 86400) >= 1 ? Math.round(med / 86400) + "-day" : Math.round(med / 3600) + "-hour"} bars for this range. Indicator periods now mean something else — pick a shorter range or a larger interval.`
+          );
+        }
+      }
       setResult({ ...res, candles, symbol: symbol.trim().toUpperCase(), candleCount: candles.length });
       setVerdicts({ wf: null, dsr: null, noise: null });
       setSaved(false);
@@ -217,7 +243,7 @@ export default function Backtest() {
               ))}
             </div>
             <div className="flex flex-wrap gap-1">
-              {RANGES.map((r) => (
+              {validRanges.map((r) => (
                 <button key={r.id} onClick={() => setRange(r.id)}
                   className={cn("chip font-mono", range === r.id ? "chip-active" : "chip-idle")}>
                   {r.label}
