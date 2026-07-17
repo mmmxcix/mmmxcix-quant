@@ -2,10 +2,50 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── Theme tokens ───────────────────────────────────────────────────
+   Light is the default look; [data-theme="dark"] flips it. Colors are
+   RGB triplets so Tailwind's rgb(var(--c-*) / <alpha-value>) works. */
+:root {
+  --c-bg: 243 244 250;
+  --c-surface: 255 255 255;
+  --c-line: 221 225 235;
+  --c-text: 15 19 32;
+  --c-dim: 75 84 104;
+  --c-accent: 13 148 136;   /* deep teal — readable on light */
+  --c-up: 14 159 102;
+  --c-down: 229 72 77;
+
+  --glass-bg: rgba(255, 255, 255, 0.72);
+  --glass-bg2: rgba(255, 255, 255, 0.55);
+  --glass-border: rgba(17, 21, 40, 0.10);
+  --glass-hairline: rgba(13, 148, 136, 0.30);
+  --glass-shadow: 0 1px 2px rgba(17, 21, 40, 0.05), 0 14px 34px -14px rgba(17, 21, 40, 0.16);
+  --frost-bg: rgba(255, 255, 255, 0.58);
+  --grain: 0.05;
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  --c-bg: 10 14 20;
+  --c-surface: 16 21 31;
+  --c-line: 28 36 51;
+  --c-text: 226 232 240;
+  --c-dim: 100 116 139;
+  --c-accent: 45 212 191;   /* teal glow */
+  --c-up: 16 185 129;
+  --c-down: 239 68 68;
+
+  --glass-bg: rgba(22, 26, 40, 0.55);
+  --glass-bg2: rgba(28, 32, 48, 0.42);
+  --glass-border: rgba(255, 255, 255, 0.09);
+  --glass-hairline: rgba(45, 212, 191, 0.22);
+  --glass-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 20px 44px -18px rgba(0, 0, 0, 0.6);
+  --frost-bg: rgba(10, 14, 20, 0.5);
+  --grain: 0.07;
+  color-scheme: dark;
+}
+
 @layer base {
-  html {
-    color-scheme: dark;
-  }
   body {
     @apply bg-bg text-text font-sans antialiased;
     overflow-x: hidden; /* mobile safety: wide tables scroll in their own container */
@@ -18,17 +58,17 @@
     background: transparent;
   }
   ::-webkit-scrollbar-thumb {
-    background: #1c2433;
+    background: rgb(var(--c-line));
     border-radius: 5px;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: #2a3547;
+    background: rgb(var(--c-dim) / 0.6);
   }
 }
 
 @layer components {
   .input-base {
-    @apply bg-bg border border-line rounded-lg px-3 py-2 text-sm text-text outline-none focus:border-accent/50 transition-colors placeholder:text-dim/60;
+    @apply bg-surface border border-line rounded-lg px-3 py-2 text-sm text-text outline-none focus:border-accent/50 transition-colors placeholder:text-dim/60;
   }
   .btn-accent {
     @apply bg-accent/15 border border-accent/40 text-accent rounded-lg px-4 py-2 text-sm font-semibold hover:bg-accent/25 transition-colors disabled:opacity-40 disabled:cursor-not-allowed;
@@ -47,7 +87,23 @@
   }
 }
 
+/* Fine grain texture layer (mounted in Layout). Sits above the ambient
+   gradient + dither, below all content. */
+.grain-layer {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  opacity: var(--grain);
+  mix-blend-mode: soft-light;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='150' height='150'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
 @keyframes slidein {
   from { transform: translateX(100%); }
   to { transform: translateX(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .grain-layer { opacity: calc(var(--grain) * 0.7); }
 }

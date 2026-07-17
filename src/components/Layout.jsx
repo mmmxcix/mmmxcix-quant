@@ -1,7 +1,33 @@
 import { useState, useEffect } from "react";
 import { NavLink, Link, useLocation } from "react-router-dom";
-import { LayoutDashboard, CandlestickChart, FlaskConical, Newspaper, Compass, Wrench, Activity, Scale, Star, Briefcase, Radar, GraduationCap, Sigma, Menu, X, Target, Dices, BookOpenCheck, Boxes, Telescope, Shield, Network } from "lucide-react";
+import { LayoutDashboard, CandlestickChart, FlaskConical, Newspaper, Compass, Wrench, Activity, Scale, Star, Briefcase, Radar, GraduationCap, Sigma, Menu, X, Target, Dices, BookOpenCheck, Boxes, Telescope, Shield, Network, Sun, Moon } from "lucide-react";
 import { cn } from "@/lib/utils";
+import DitherBackground from "@/components/DitherBackground";
+
+function useTheme() {
+  const get = () => (typeof document !== "undefined" && document.documentElement.dataset.theme === "dark" ? "dark" : "light");
+  const [t, setT] = useState(get);
+  const toggle = () => {
+    const n = t === "dark" ? "light" : "dark";
+    document.documentElement.dataset.theme = n;
+    try { localStorage.setItem("theme", n); } catch { /* private mode */ }
+    setT(n);
+  };
+  return [t, toggle];
+}
+
+function ThemeToggle({ className }) {
+  const [t, toggle] = useTheme();
+  return (
+    <button
+      onClick={toggle}
+      aria-label="Toggle light or dark theme"
+      className={cn("inline-flex items-center justify-center rounded-lg border border-line text-dim hover:text-text transition-colors", className)}
+    >
+      {t === "dark" ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+    </button>
+  );
+}
 
 // Four functional groups: follow the markets → manage what you hold →
 // build and test strategies → learn the craft.
@@ -130,6 +156,8 @@ export default function Layout({ children }) {
   return (
     <div className="min-h-screen">
       <div className="ambient-bg" aria-hidden="true" />
+      <DitherBackground />
+      <div className="grain-layer" aria-hidden="true" />
 
       {/* Desktop sidebar */}
       <aside className="hidden md:flex fixed inset-y-0 left-0 w-56 flex-col border-r border-line lg-frost p-4">
@@ -141,6 +169,7 @@ export default function Layout({ children }) {
           <NavItems />
         </nav>
         <div className="mt-auto px-3 pb-2 space-y-2">
+          <ThemeToggle className="w-8 h-8" />
           <p className="text-[10px] text-dim/60 leading-relaxed">
             Not investment advice. Backtests are hypothetical — past performance guarantees nothing.
           </p>
@@ -153,13 +182,16 @@ export default function Layout({ children }) {
         <p className="text-sm font-bold">
           <span className="text-dim tracking-[0.25em] text-[10px] uppercase mr-2">MMMXCIX</span>Quant
         </p>
-        <button
-          onClick={() => setDrawerOpen(true)}
-          aria-label="Open menu"
-          className="p-2 -mr-2 rounded-lg text-dim hover:text-text active:bg-surface transition-colors"
-        >
-          <Menu className="w-5 h-5" />
-        </button>
+        <div className="flex items-center gap-1">
+          <ThemeToggle className="w-9 h-9" />
+          <button
+            onClick={() => setDrawerOpen(true)}
+            aria-label="Open menu"
+            className="p-2 -mr-2 rounded-lg text-dim hover:text-text active:bg-surface transition-colors"
+          >
+            <Menu className="w-5 h-5" />
+          </button>
+        </div>
       </header>
 
       {/* Mobile slide-out drawer */}
