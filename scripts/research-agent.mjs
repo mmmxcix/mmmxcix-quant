@@ -64,6 +64,9 @@ const TOPICS = [
   { name: "prediction", re: /predict|forecast|drift|signal/i },
 ];
 const topicsOf = (text) => TOPICS.filter((t) => t.re.test(text)).map((t) => t.name);
+// A paper must clear this to be worth an LLM call — kills off-topic finance
+// (M&A, ESG, energy-systems) that a loose source query can drag in.
+const RELEVANCE = /\b(trading|strateg|backtest|portfolio|momentum|reversal|mean.?reversion|volatilit|arbitrage|factor|alpha|signal|returns?|price|asset|stock|equit|futures|forecast|anomal)\b/i;
 
 async function harvestArxiv(max) {
   const cats = ["q-fin.TR", "q-fin.PM", "q-fin.ST", "q-fin.CP", "q-fin.RM", "q-fin.MF"];
@@ -93,7 +96,11 @@ function reconstructAbstract(inv) {
   return words.join(" ").replace(/\s+/g, " ").trim();
 }
 async function harvestOpenAlex(max) {
-  const url = `https://api.openalex.org/works?search=quantitative+trading+strategy+market+anomaly&sort=publication_date:desc&per-page=${max}&mailto=admin@mmmxcix.com`;
+  // Require "trading strategy" in title/abstract + recency; relevance-ranked
+  // (default sort). Far fewer false positives than a bare `search=`.
+  const since = new Date(Date.now() - 730 * 864e5).toISOString().slice(0, 10);
+  const filter = `title_and_abstract.search:trading strategy,from_publication_date:${since}`;
+  const url = `https://api.openalex.org/works?filter=${filter.replace(/ /g, "%20")}&per-page=${max}&mailto=admin@mmmxcix.com`;
   const data = await (await fetch(url, { headers: { "user-agent": "mmmxcix-research/0.2" } })).json();
   const out = [];
   for (const w of data?.results || []) {
@@ -143,13 +150,15 @@ function brainSources(st) {
 }
 function buildBrain(st) {
   const CAP = 120;
+  // Backfill topics from the title for legacy entries saved before tagging, so
+  // the graph links up immediately instead of waiting for the store to churn.
   const cNodes = (st.candidates || []).slice(0, 30).map((c) => ({
     id: c.id, label: (c.name || "").slice(0, 52), outcome: "candidate",
-    source: c.source || "?", topics: c.topics || [], dsr: c.dsr,
+    source: c.source || "?", topics: (c.topics && c.topics.length) ? c.topics : topicsOf(c.name || ""), dsr: c.dsr,
   }));
   const gNodes = (st.graveyard || []).slice(0, CAP - cNodes.length).map((g, i) => ({
     id: `g_${i}`, label: (g.title || "").slice(0, 52), outcome: "graveyard",
-    source: g.source || "?", topics: g.topics || [], reason: g.reason,
+    source: g.source || "?", topics: (g.topics && g.topics.length) ? g.topics : topicsOf(g.title || ""), reason: g.reason,
   }));
   const nodes = [...cNodes, ...gNodes];
   // edges: nodes sharing ≥1 topic, capped per node so the graph stays legible
@@ -289,7 +298,7 @@ const st = load();
 // In until-hit mode pull a deeper pool per source so there's enough supply.
 const papers = await harvest(UNTIL_HIT ? 40 : 15);
 const limit = UNTIL_HIT ? HARD_CAP : MAX_PAPERS_PER_RUN;
-const fresh = papers.filter((p) => !st.seen.includes(p.id) && (p.topics?.length > 0)).slice(0, limit);
+const fresh = papers.filter((p) => !st.seen.includes(p.id) && (p.topics?.length > 0) && RELEVANCE.test(`${p.title} ${p.abstract}`)).slice(0, limit);
 console.log(`papers: ${papers.length} harvested, ${fresh.length} fresh+promising this run${UNTIL_HIT ? ` (until-hit, cap ${HARD_CAP})` : ""}`);
 
 const datasets = fresh.length
