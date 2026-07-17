@@ -23,6 +23,7 @@ function useWatchlistQuotes() {
             key: `${w.market}:${w.symbol}`,
             price: last.close,
             changePct: ((last.close - prev.close) / prev.close) * 100,
+            spark: candles.slice(-30).map((c) => c.close),
           };
         })
       );
@@ -42,6 +43,19 @@ function useWatchlistQuotes() {
   return { quotes, loading };
 }
 
+// Tiny inline sparkline from the last ~30 daily closes. Theme-aware stroke.
+function Sparkline({ data, up }) {
+  if (!data || data.length < 2) return <span className="text-dim/40 text-xs">—</span>;
+  const w = 66, h = 22, min = Math.min(...data), max = Math.max(...data), rng = max - min || 1;
+  const pts = data.map((v, i) => `${(i / (data.length - 1)) * w},${(h - 2 - ((v - min) / rng) * (h - 4)).toFixed(1)}`).join(" ");
+  return (
+    <svg width={w} height={h} className="inline-block align-middle" aria-hidden="true">
+      <polyline points={pts} fill="none" strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round"
+        className={up ? "stroke-up" : "stroke-down"} />
+    </svg>
+  );
+}
+
 export default function Dashboard() {
   const { quotes, loading } = useWatchlistQuotes();
   const navigate = useNavigate();
@@ -59,6 +73,7 @@ export default function Dashboard() {
               <th className="px-4 py-3 font-medium hidden sm:table-cell">Market</th>
               <th className="px-4 py-3 font-medium text-right">Price</th>
               <th className="px-4 py-3 font-medium text-right">1D</th>
+              <th className="px-4 py-3 font-medium text-right hidden lg:table-cell">Trend</th>
             </tr>
           </thead>
           <tbody>
@@ -77,11 +92,25 @@ export default function Dashboard() {
                   <td className="px-4 py-3 text-dim hidden sm:table-cell">
                     {w.market === "crypto" ? "Crypto" : "Stocks"}
                   </td>
-                  <td className="px-4 py-3 text-right font-mono">
+                  <td className="px-4 py-3 text-right font-mono tabular-nums">
                     {loading && !q ? <span className="text-dim">…</span> : fmtPrice(q?.price)}
                   </td>
-                  <td className={cn("px-4 py-3 text-right font-mono", q?.changePct > 0 ? "text-up" : q?.changePct < 0 ? "text-down" : "text-dim")}>
-                    {loading && !q ? "…" : fmtPct(q?.changePct)}
+                  <td className="px-4 py-3 text-right">
+                    {loading && !q ? (
+                      <span className="text-dim">…</span>
+                    ) : (
+                      <span className={cn(
+                        "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-mono font-semibold tabular-nums",
+                        q?.changePct > 0 ? "bg-up/10 text-up" : q?.changePct < 0 ? "bg-down/10 text-down" : "bg-line/50 text-dim"
+                      )}>
+                        {fmtPct(q?.changePct)}
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 hidden lg:table-cell">
+                    <div className="flex justify-end">
+                      <Sparkline data={q?.spark} up={(q?.changePct ?? 0) >= 0} />
+                    </div>
                   </td>
                 </tr>
               );

@@ -2,22 +2,34 @@ import { useEffect, useRef, useState } from "react";
 import { createChart, CrosshairMode } from "lightweight-charts";
 import { toSeriesData } from "@/lib/chartTypes";
 
-const THEME = {
-  layout: { background: { color: "transparent" }, textColor: "#64748b" },
-  grid: {
-    vertLines: { color: "#141a26" },
-    horzLines: { color: "#141a26" },
-  },
-  crosshair: { mode: CrosshairMode.Normal },
-  rightPriceScale: { borderColor: "#1c2433" },
-  timeScale: {
-    borderColor: "#1c2433",
-    timeVisible: true,
-    secondsVisible: false,
-  },
-};
-
-const UP = "#10b981", DOWN = "#ef4444";
+// Chart colours are read from the app's theme tokens so the chart matches the
+// light/dark UI. Grid/border pick per-theme neutrals; series colours come from
+// the --c-* variables (rgb triplets).
+function chartColors() {
+  const dark = document.documentElement.dataset.theme === "dark";
+  const rgb = (name, a) => {
+    const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim().split(/\s+/).map(Number);
+    if (v.length < 3 || v.some(Number.isNaN)) return null;
+    return a != null ? `rgba(${v[0]},${v[1]},${v[2]},${a})` : `rgb(${v[0]},${v[1]},${v[2]})`;
+  };
+  const grid = dark ? "#141a26" : "rgba(17,21,40,0.06)";
+  const border = dark ? "#1c2433" : "rgba(17,21,40,0.12)";
+  return {
+    up: rgb("--c-up") || "#10b981",
+    down: rgb("--c-down") || "#ef4444",
+    accent: rgb("--c-accent") || "#2dd4bf",
+    wickUp: rgb("--c-up", 0.53) || "rgba(16,185,129,0.53)",
+    wickDown: rgb("--c-down", 0.53) || "rgba(239,68,68,0.53)",
+    accentTop: rgb("--c-accent", 0.28) || "rgba(45,212,191,0.28)",
+    accentBottom: rgb("--c-accent", 0.02) || "rgba(45,212,191,0.02)",
+    vol: dark ? "#1c2433" : "rgba(17,21,40,0.10)",
+    layout: { background: { color: "transparent" }, textColor: rgb("--c-dim") || "#64748b" },
+    grid: { vertLines: { color: grid }, horzLines: { color: grid } },
+    crosshair: { mode: CrosshairMode.Normal },
+    rightPriceScale: { borderColor: border },
+    timeScale: { borderColor: border, timeVisible: true, secondsVisible: false },
+  };
+}
 
 // Scrolling into the future is allowed, but at least this fraction of the
 // viewport must always show candles (i.e. max ~2/3 empty space on the right).
@@ -31,23 +43,23 @@ function defaultVisibleBars(containerWidth) {
 }
 const RIGHT_PAD_BARS = 8; // small breathing room after the latest candle
 
-function addPriceSeries(chart, type) {
+function addPriceSeries(chart, type, c) {
   if (type === "line") {
-    return chart.addLineSeries({ color: "#2dd4bf", lineWidth: 2, priceLineVisible: false });
+    return chart.addLineSeries({ color: c.accent, lineWidth: 2, priceLineVisible: false });
   }
   if (type === "area") {
     return chart.addAreaSeries({
-      lineColor: "#2dd4bf", topColor: "rgba(45,212,191,0.28)", bottomColor: "rgba(45,212,191,0.02)",
+      lineColor: c.accent, topColor: c.accentTop, bottomColor: c.accentBottom,
       lineWidth: 2, priceLineVisible: false,
     });
   }
   if (type === "bars") {
-    return chart.addBarSeries({ upColor: UP, downColor: DOWN });
+    return chart.addBarSeries({ upColor: c.up, downColor: c.down });
   }
   // candles + heikin-ashi both use a candlestick series
   return chart.addCandlestickSeries({
-    upColor: UP, downColor: DOWN, borderUpColor: UP, borderDownColor: DOWN,
-    wickUpColor: UP + "88", wickDownColor: DOWN + "88",
+    upColor: c.up, downColor: c.down, borderUpColor: c.up, borderDownColor: c.down,
+    wickUpColor: c.wickUp, wickDownColor: c.wickDown,
   });
 }
 
@@ -88,21 +100,47 @@ export default function CandleChart({
   // Bump this so children (draw layer) re-attach when the chart is rebuilt.
   const [chartEpoch, setChartEpoch] = useState(0);
 
+  // Re-apply chart colours when the light/dark theme flips (no chart rebuild).
+  useEffect(() => {
+    const apply = () => {
+      const chart = chartRef.current;
+      if (!chart) return;
+      const c = chartColors();
+      chart.applyOptions({ layout: c.layout, grid: c.grid, rightPriceScale: c.rightPriceScale, timeScale: c.timeScale });
+      if (volSeriesRef.current) { try { volSeriesRef.current.applyOptions({ color: c.vol }); } catch { /* noop */ } }
+      const ps = priceSeriesRef.current;
+      if (ps) {
+        try {
+          ps.applyOptions({
+            color: c.accent, lineColor: c.accent, topColor: c.accentTop, bottomColor: c.accentBottom,
+            upColor: c.up, downColor: c.down, borderUpColor: c.up, borderDownColor: c.down,
+            wickUpColor: c.wickUp, wickDownColor: c.wickDown,
+          });
+        } catch { /* options not valid for this series type — harmless */ }
+      }
+    };
+    const obs = new MutationObserver(apply);
+    obs.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    return () => obs.disconnect();
+  }, []);
+
   // (Re)create the chart when mount-time options or the series TYPE change.
   useEffect(() => {
     if (!containerRef.current) return;
+    const col = chartColors();
     const chart = createChart(containerRef.current, {
-      ...THEME,
+      layout: col.layout, grid: col.grid, crosshair: col.crosshair,
+      rightPriceScale: col.rightPriceScale, timeScale: col.timeScale,
       height,
       width: containerRef.current.clientWidth,
     });
     chartRef.current = chart;
-    priceSeriesRef.current = addPriceSeries(chart, chartType);
+    priceSeriesRef.current = addPriceSeries(chart, chartType, col);
     prevFirstTimeRef.current = null;
 
     if (showVolume) {
       volSeriesRef.current = chart.addHistogramSeries({
-        priceFormat: { type: "volume" }, priceScaleId: "vol", color: "#1c2433",
+        priceFormat: { type: "volume" }, priceScaleId: "vol", color: col.vol,
         lastValueVisible: false, priceLineVisible: false, // no confusing volume tag on the price axis
       });
       chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
