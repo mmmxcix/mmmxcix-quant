@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { Calculator, Scale, Crosshair, Activity, TrendingUp } from "lucide-react";
+import { Calculator, Scale, Crosshair, Activity, TrendingUp, Satellite } from "lucide-react";
 import { cn, fmtNum, fmtPct } from "@/lib/utils";
+import { getGatewayUrl, setGatewayUrl, ibkrActive, setIbkrEnabled, checkGateway } from "@/lib/ibkr";
 
 /* ── shared bits ──────────────────────────────────────────────────── */
 
@@ -343,9 +344,101 @@ function CompoundingTool() {
   );
 }
 
+/* ── 7. IBKR live data (dev only) ─────────────────────────────────── */
+
+// Real-time stock quotes from a locally running IBKR Client Portal Gateway.
+// Personal use through the user's own brokerage subscriptions — that's why
+// the card only exists behind the dev token and the data never leaves the
+// browser ↔ localhost hop.
+function IbkrTool() {
+  const [url, setUrl] = useState(getGatewayUrl());
+  const [enabled, setEnabled] = useState(ibkrActive());
+  const [status, setStatus] = useState(null); // null | {ok, authenticated?, error?}
+  const [testing, setTesting] = useState(false);
+
+  const test = async () => {
+    setTesting(true);
+    setGatewayUrl(url);
+    setStatus(await checkGateway());
+    setTesting(false);
+  };
+
+  const toggle = () => {
+    setGatewayUrl(url);
+    setIbkrEnabled(!enabled);
+    setEnabled(!enabled);
+  };
+
+  return (
+    <ToolCard icon={Satellite} title="IBKR live quotes (dev)">
+      <p className="text-xs text-dim leading-relaxed">
+        Streams real-time stock quotes from your local IBKR Client Portal Gateway into every
+        quote view (Monitor, Watchlist, Portfolio, Dashboard), with Yahoo as automatic fallback.
+        Personal use only — works while the gateway runs on this machine.
+      </p>
+      <label className="text-xs text-dim block">
+        Gateway URL
+        <input
+          type="text"
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          placeholder="https://localhost:5000"
+          className="input-base w-full mt-1 font-mono"
+        />
+      </label>
+      <div className="flex items-center gap-2">
+        <button onClick={test} disabled={testing} className="chip chip-idle">
+          {testing ? "Testing…" : "Test connection"}
+        </button>
+        <button onClick={toggle} className={cn("chip", enabled ? "chip-active" : "chip-idle")}>
+          {enabled ? "Enabled — quotes go live" : "Enable live quotes"}
+        </button>
+      </div>
+      {status && (
+        <p className={cn("text-xs", status.ok && status.authenticated ? "text-up" : "text-down")}>
+          {status.ok
+            ? status.authenticated
+              ? "Connected & authenticated — live data available."
+              : "Gateway reachable, but not logged in — open the gateway URL and sign in."
+            : status.error}
+        </p>
+      )}
+      <div className="pt-1 border-t border-line/60">
+        <p className="text-[11px] text-dim leading-relaxed">
+          Setup: 1) run IBKR's Client Portal Gateway and log in at{" "}
+          <span className="font-mono">{url || "https://localhost:5000"}</span> · 2) in the gateway's{" "}
+          <span className="font-mono">conf.yaml</span> set{" "}
+          <span className="font-mono">cors: origin.allowed</span> to this site's origin and{" "}
+          <span className="font-mono">allowCredentials: true</span>, then restart it · 3) open the
+          gateway URL in this browser once and accept the self-signed certificate.
+        </p>
+      </div>
+    </ToolCard>
+  );
+}
+
+// Same dev-gating pattern as the Coach nav entry (Layout.jsx).
+function useDevToken() {
+  const read = () => {
+    try { return !!localStorage.getItem("quant_dev_token"); } catch { return false; }
+  };
+  const [isDev, setIsDev] = useState(read);
+  useEffect(() => {
+    const update = () => setIsDev(read());
+    window.addEventListener("quant-dev-token", update);
+    window.addEventListener("storage", update);
+    return () => {
+      window.removeEventListener("quant-dev-token", update);
+      window.removeEventListener("storage", update);
+    };
+  }, []);
+  return isDev;
+}
+
 /* ── page ─────────────────────────────────────────────────────────── */
 
 export default function Tools() {
+  const isDev = useDevToken();
   return (
     <div>
       <p className="text-[10px] tracking-[0.3em] text-dim uppercase mb-1">Tools</p>
@@ -357,6 +450,7 @@ export default function Tools() {
         <PivotTool />
         <AtrStopTool />
         <CompoundingTool />
+        {isDev && <IbkrTool />}
       </div>
 
       <p className="text-xs text-dim mt-6">

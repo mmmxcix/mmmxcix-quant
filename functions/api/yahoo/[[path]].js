@@ -75,9 +75,19 @@ export async function onRequest({ request, params }) {
     }
   }
 
-  // Fundamentals and key stats change at most daily — cache them much longer
-  // than quotes so a 40-symbol anomaly scan stays cheap at the edge.
-  const ttl = isOptions ? 60 : isSummary || isTimeseries ? 3600 : 300;
+  // Cache tiers: fundamentals change at most daily (1h). Chart requests split
+  // by freshness need — the Charts page polls the forming bar (intraday
+  // intervals) and the quote layer polls range=5d, so those must not sit in a
+  // 5-minute edge cache; long history requests can.
+  let ttl = 300;
+  if (isOptions) ttl = 60;
+  else if (isSummary || isTimeseries) ttl = 3600;
+  else if (isChart) {
+    const interval = url.searchParams.get("interval") || "";
+    const range = url.searchParams.get("range") || "";
+    const isIntraday = /[mh]$/.test(interval) && !interval.endsWith("mo");
+    if (isIntraday || range === "1d" || range === "5d") ttl = 30;
+  }
   const target = `https://query1.finance.yahoo.com/${path}${search}`;
   const upstream = await fetch(target, {
     headers,

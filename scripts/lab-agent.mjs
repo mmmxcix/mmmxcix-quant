@@ -173,10 +173,19 @@ if (summaries.some((x) => !x.error)) {
 }
 saveLocal(local);
 
+// The research agent writes state.research into the SAME state object; read
+// the current state first so we don't clobber its counters when we push ours.
+let priorResearch = null;
+try {
+  const cur = await (await fetch(`${SITE}/api/lab`, { headers: { "x-lab-token": TOKEN } })).json();
+  priorResearch = cur?.state?.research || null;
+} catch { /* first run / offline */ }
+
 const state = {
   agent: "lab-agent v0.2",
   mode: published.length ? "paper" : "idle",
   lastRunAt: Date.now(),
+  research: priorResearch, // preserve the research loop's stats
   strategies: summaries,
   combined: summaries.some((x) => !x.error)
     ? {

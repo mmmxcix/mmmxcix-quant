@@ -4,12 +4,20 @@
 // Crypto: ONE Binance 24hr-ticker call covers every symbol (public CORS API).
 // Stocks/indices/FX/futures: the /api/yahoo proxy v8 chart endpoint. Do NOT
 // switch to v7/finance/quote — that endpoint is auth-gated and returns 401.
+//
+// Dev-only upgrade: with the IBKR gateway feature enabled (Tools page, dev
+// token required), stock quotes come real-time from the local Client Portal
+// Gateway in one batch, with Yahoo as automatic per-symbol fallback.
+
+import { ibkrActive, fetchIbkrQuotes } from "./ibkr.js";
 
 const YAHOO_CHART = "/api/yahoo/v8/finance/chart";
 const BINANCE_24H = "https://api.binance.com/api/v3/ticker/24hr";
 
-// Module-level cache so tab revisits within the TTL are instant.
-const TTL_MS = 120_000;
+// Module-level cache so tab revisits within the TTL are instant. Kept short:
+// the edge cache already serves 30s for quote-style requests, so a long
+// client TTL would only add staleness on top.
+const TTL_MS = 30_000;
 const cache = new Map(); // symbol -> { at: ms epoch, quote: { price, changePct } }
 
 function getCached(symbol) {
@@ -85,16 +93,38 @@ async function mapLimit(items, limit, fn) {
 export async function fetchQuotes(entries) {
   const out = new Map();
   const misses = [];
+  const useIbkr = ibkrActive();
 
   for (const e of entries) {
-    const hit = getCached(e.symbol);
+    // With IBKR live quotes on, stocks always bypass the client cache — the
+    // gateway is local and rate-limit-free, so caching only adds staleness.
+    const hit = useIbkr && e.market !== "crypto" ? null : getCached(e.symbol);
     if (hit) out.set(e.symbol, { ...e, ...hit });
     else misses.push(e);
   }
 
   const cryptoMisses = misses.filter((e) => e.market === "crypto");
-  const stockMisses = misses.filter((e) => e.market !== "crypto");
+  let stockMisses = misses.filter((e) => e.market !== "crypto");
   const jobs = [];
+
+  if (stockMisses.length && useIbkr) {
+    try {
+      const live = await fetchIbkrQuotes(stockMisses.map((e) => e.symbol));
+      const rest = [];
+      for (const e of stockMisses) {
+        const q = live.get(e.symbol.toUpperCase());
+        if (q) {
+          setCached(e.symbol, q); // fallback freshness if IBKR drops mid-session
+          out.set(e.symbol, { ...e, ...q, source: "ibkr" });
+        } else {
+          rest.push(e);
+        }
+      }
+      stockMisses = rest;
+    } catch {
+      /* gateway down — full Yahoo fallback below */
+    }
+  }
 
   if (cryptoMisses.length) {
     jobs.push(

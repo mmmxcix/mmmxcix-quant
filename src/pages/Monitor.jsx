@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { RefreshCw } from "lucide-react";
 import { fetchQuotes } from "@/lib/quotes";
+import { ibkrActive, subscribeIbkr } from "@/lib/ibkr";
 import { cn, fmtPrice, fmtPct } from "@/lib/utils";
 
 // Bloomberg-terminal-style market overview: static panel config here, data
@@ -155,11 +156,21 @@ export default function Monitor() {
   const [quotes, setQuotes] = useState(null); // null until first load → skeletons
   const [loading, setLoading] = useState(true);
   const [updatedAt, setUpdatedAt] = useState(null);
+  const [ibkr, setIbkr] = useState(ibkrActive());
   const navigate = useNavigate();
   const aliveRef = useRef(true);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  useEffect(() => {
+    const update = () => setIbkr(ibkrActive());
+    const unsub = subscribeIbkr(update);
+    window.addEventListener("storage", update);
+    return () => { unsub(); window.removeEventListener("storage", update); };
+  }, []);
+
+  // Background ticks are silent so the refresh spinner doesn't flicker at the
+  // fast IBKR cadence.
+  const load = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const map = await fetchQuotes(ALL_ENTRIES);
       if (!aliveRef.current) return;
@@ -169,19 +180,21 @@ export default function Monitor() {
       // fetchQuotes tolerates per-symbol failures; on a total failure we keep
       // the previous data on screen instead of blanking the page.
     } finally {
-      if (aliveRef.current) setLoading(false);
+      if (aliveRef.current && !silent) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
     aliveRef.current = true;
     load();
-    const id = setInterval(load, 60_000);
+    // With IBKR live quotes the gateway is local and rate-limit-free — poll
+    // fast. Crypto stays served from the 30s client cache either way.
+    const id = setInterval(() => load(true), ibkr ? 3_000 : 30_000);
     return () => {
       aliveRef.current = false;
       clearInterval(id);
     };
-  }, [load]);
+  }, [load, ibkr]);
 
   return (
     <div>
@@ -191,6 +204,11 @@ export default function Monitor() {
           <h1 className="text-2xl font-bold">Monitor</h1>
         </div>
         <div className="flex items-center gap-3">
+          {ibkr && (
+            <span className="flex items-center gap-1.5 rounded-lg border border-accent/40 bg-accent/10 px-2.5 py-1 text-xs text-accent font-mono">
+              <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse" /> IBKR live
+            </span>
+          )}
           {updatedAt && (
             <span className="text-xs text-dim font-mono">
               As of: {updatedAt.toLocaleTimeString("de-CH", { hour12: false })}

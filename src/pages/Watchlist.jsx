@@ -13,7 +13,7 @@ import {
 } from "@/lib/portfolio";
 import { cn, fmtPrice, fmtPct } from "@/lib/utils";
 
-const REFRESH_MS = 60_000;
+const REFRESH_MS = 30_000;
 
 // SymbolSearch only hands back a ticker string — resolve a display name from the
 // search index so stored entries carry something human. Falls back to the raw

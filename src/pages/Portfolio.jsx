@@ -13,7 +13,7 @@ import {
 } from "@/lib/portfolio";
 import { cn, fmtNum, fmtPrice, fmtPct } from "@/lib/utils";
 
-const REFRESH_MS = 60_000;
+const REFRESH_MS = 30_000;
 
 async function resolveName(market, symbol) {
   try {

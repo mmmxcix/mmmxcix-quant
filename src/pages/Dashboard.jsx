@@ -35,7 +35,7 @@ function useWatchlistQuotes() {
       setLoading(false);
     };
     load();
-    const id = setInterval(load, 60000); // keep dashboard quotes fresh
+    const id = setInterval(load, 30000); // keep dashboard quotes fresh
     return () => { alive = false; clearInterval(id); };
   }, []);
 
