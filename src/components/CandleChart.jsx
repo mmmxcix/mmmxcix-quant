@@ -31,6 +31,10 @@ function chartColors() {
   };
 }
 
+// Volume-bar + trade-marker tint. Kept as hex (concatenated with an alpha
+// suffix below) and green/red reads correctly on both themes.
+const UP = "#10b981", DOWN = "#ef4444";
+
 // Scrolling into the future is allowed, but at least this fraction of the
 // viewport must always show candles (i.e. max ~2/3 empty space on the right).
 const MIN_DATA_FRACTION = 1 / 3;
