@@ -47,7 +47,6 @@ const NAV_GROUPS = [
     items: [
       { to: "/watchlist", label: "Watchlist", icon: Star },
       { to: "/portfolio", label: "Portfolio", icon: Briefcase },
-      { to: "/options", label: "Options", icon: Sigma },
     ],
   },
   {
@@ -55,17 +54,13 @@ const NAV_GROUPS = [
     items: [
       { to: "/backtest", label: "Backtest", icon: FlaskConical },
       { to: "/cortex", label: "Cortex", icon: Cpu },
-      { to: "/anomalies", label: "Anomalies", icon: Telescope },
-      { to: "/compare", label: "Compare", icon: Scale },
       { to: "/tools", label: "Tools", icon: Wrench },
     ],
   },
   {
     label: "Learn",
     items: [
-      { to: "/academy", label: "Academy", icon: GraduationCap },
-      { to: "/guide", label: "Guide", icon: BookOpenCheck },
-      { to: "/resources", label: "Resources", icon: Compass },
+      { to: "/learn", label: "Academy", icon: GraduationCap },
     ],
   },
 ];
