@@ -104,8 +104,9 @@ export const DAY_TRADING_COURSE = {
           minutes: 7,
           body: [
             { type: "p", text: "The two markets reward different habits. Knowing the structural differences up front saves you from expensive surprises." },
-            { type: "h", text: "The PDT rule (US stocks)" },
-            { type: "p", text: "In US margin accounts, the Pattern Day Trader rule requires a minimum equity of $25,000 to place four or more day trades within five business days. Below that threshold your day trades are restricted. Crypto has no PDT rule, which is one reason many small accounts start there." },
+            { type: "h", text: "The PDT rule is history (US stocks)" },
+            { type: "p", text: "For 25 years, the Pattern Day Trader rule required $25,000 minimum equity to place four or more day trades within five business days in a US margin account. In April 2026 the SEC approved FINRA's replacement, effective June 4, 2026: the PDT designation and the $25,000 minimum are gone, replaced by real-time intraday margin standards — your equity must cover your actual intraday exposure at all times (25% maintenance margin, applied during the day, not just overnight). The Reg-T minimum of $2,000 for any margin account remains, and brokers may phase the change in until October 2027, so check your broker's status." },
+            { type: "p", text: "Practical effect: small accounts can now day trade US stocks without the artificial 3-trades-per-week cap. What has NOT changed: position size is still bounded by margin, cash accounts still wait for settlement, and the discipline the rule used to enforce is now entirely your job." },
             { type: "h", text: "Leverage, perps and funding (crypto)" },
             { type: "p", text: "Crypto exchanges offer perpetual futures (perps) with high leverage. Leverage magnifies both gains and losses and can liquidate your position. Perps also charge a funding rate — a periodic payment between longs and shorts — which is a real cost and, as you will see later, a tradable signal." },
             { type: "h", text: "Fees, liquidity and tax" },

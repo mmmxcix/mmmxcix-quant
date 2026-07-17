@@ -415,7 +415,7 @@ export const PROP_FIRM_COURSE = {
             ] },
             { type: "h", text: "What changes at IBKR" },
             { type: "ul", items: [
-              "Futures need no PDT minimum; commissions per micro round-turn are comparable to prop data costs.",
+              "No day-trade count limits: futures never had a PDT rule, and since June 2026 the $25k PDT minimum is abolished for US stocks too (replaced by real-time intraday margin standards).",
               "No trailing drawdown, no daily limits, no consistency rules — YOU must now be the risk department. Keep the prop-firm limits as personal rules; they were protecting you.",
               "Automation is your own business now: IBKR has real APIs, and the semi-automated setup can become fully automated at your own risk.",
               "Taxes: you handle reporting yourself (in Switzerland, private capital gains are generally tax-free, but frequent trading can be classified as professional trading — get advice before scaling)." ,
