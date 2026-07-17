@@ -23,7 +23,7 @@ import { kFoldCode, noiseTest, deflatedSharpe, equityReturns } from "../src/lib/
 const SITE = process.env.LAB_SITE || "https://quant.mmmxcix.com";
 const TOKEN = process.env.LAB_TOKEN;
 const RESEARCH_FILE = join(homedir(), ".mmmxcix-research.json");
-const MAX_PAPERS_PER_RUN = 3;   // stay well inside the free AI tier
+const MAX_PAPERS_PER_RUN = +(process.env.LAB_RESEARCH_PAPERS || 2); // gentle on the free AI tier
 const FEE_BPS = 10;
 
 if (!TOKEN) { console.error("LAB_TOKEN is not set."); process.exit(1); }
@@ -55,6 +55,10 @@ async function harvest() {
 }
 
 // ── 2. abstract → strategy code via the site's own AI endpoint ─────────────
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Rate limits are infrastructure noise, not strategy failures: retry with
+// backoff, and signal "SKIP" (don't bury, don't mark seen) if still limited.
 async function generateStrategy(paper) {
   const abstract = paper.abstract.slice(0, 1250);
   const prompt =
@@ -62,14 +66,20 @@ async function generateStrategy(paper) {
     `Extract the single most testable systematic trading rule implied by this paper and implement it ` +
     `as strategy(ctx). Keep it SIMPLE (max 3 parameters, hardcoded as const). Long and/or short. ` +
     `Prefer robust logic over precision. Name nothing after the paper; just implement the rule.`;
-  const res = await fetch(`${SITE}/api/generate`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ token: TOKEN, prompt }),
-  });
-  const out = await res.json().catch(() => ({}));
-  if (!res.ok || !out.code) throw new Error(out.error || `generate HTTP ${res.status}`);
-  return out.code;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const res = await fetch(`${SITE}/api/generate`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: TOKEN, prompt }),
+    });
+    const out = await res.json().catch(() => ({}));
+    if (res.ok && out.code) return out.code;
+    if (res.status === 429 || out.error === "rate_limited") {
+      if (attempt < 3) { console.log(`  rate-limited, retry ${attempt}/2 in ${attempt * 45}s…`); await sleep(attempt * 45000); continue; }
+      const e = new Error("rate_limited"); e.skip = true; throw e;
+    }
+    throw new Error(out.error || `generate HTTP ${res.status}`);
+  }
 }
 
 // ── 3. data + validation gauntlet ───────────────────────────────────────────
@@ -159,11 +169,14 @@ const datasets = fresh.length
   : [];
 
 const newCandidates = [];
+let firstPaper = true;
 for (const paper of fresh) {
-  st.seen = [...st.seen, paper.id].slice(-500);
-  st.papersRead++;
+  if (!firstPaper) await sleep(20000); // stay under the free tier's per-minute cap
+  firstPaper = false;
   try {
     const code = await generateStrategy(paper);
+    st.seen = [...st.seen, paper.id].slice(-500); // only consumed once generation succeeded
+    st.papersRead++;
     st.attempts++; // global data-mining counter — raises the DSR bar forever
     const verdict = gauntlet(code, datasets, st.attempts);
     if (verdict.pass) {
@@ -185,8 +198,13 @@ for (const paper of fresh) {
       console.log(`✗ graveyard: ${paper.title.slice(0, 50)} — ${verdict.reason}`);
     }
   } catch (e) {
-    st.graveyard = [{ title: paper.title.slice(0, 70), reason: `gen: ${e.message.slice(0, 60)}`, at: Date.now() }, ...st.graveyard].slice(0, 200);
-    console.log(`✗ generation failed: ${e.message}`);
+    if (e.skip) {
+      console.log(`~ skipped (infra: ${e.message}) — paper stays fresh for the next run`);
+    } else {
+      st.seen = [...st.seen, paper.id].slice(-500);
+      st.graveyard = [{ title: paper.title.slice(0, 70), reason: `gen: ${e.message.slice(0, 60)}`, at: Date.now() }, ...st.graveyard].slice(0, 200);
+      console.log(`✗ generation failed: ${e.message}`);
+    }
   }
 }
 save(st);

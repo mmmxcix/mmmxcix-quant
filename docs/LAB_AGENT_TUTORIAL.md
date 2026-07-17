@@ -113,10 +113,53 @@ Monitor darf ausgehen, der Rechner nicht. Wenn der PC nachts aus ist, ist das ü
 2. Der Agent pusht **nur Anzeigedaten** (Zahlen, Status). Keine API-Keys, keine Secrets in den State legen.
 3. n8n bleibt auf localhost (nicht ins Internet freigeben) — es muss von außen nicht erreichbar sein, denn dein PC ruft immer nur raus.
 
-## Wie es weitergeht (Threepio-Phasen)
+## Schritt 7 — Der autonome Research-Agent (2. Workflow, täglich)
 
-- **Phase 2 (Website):** Strategy Registry — Strategien mit Lebenszyklus (Factory → Validated → Paper → Graveyard) und Korrelations-Matrix.
-- **Phase 3 (dieser Agent):** `computeState()` wächst zum echten Paper-Trader: Er führt die validierten Strategien auf Live-Daten aus, loggt virtuelle Trades und pusht Combined Equity → die Website wird zum Portfolio HQ.
-- **Phase 4 (Research-Loop):** Claude Code liest Papers, destilliert Ideen zu Strategie-Code, jagt sie durch die Validierungs-Pipeline — Überlebende wandern in die Registry, der Rest in den Graveyard.
+Neben dem Paper-Trader (`lab-agent.mjs`, alle 15 min) gibt es jetzt den **Research-Agent** (`research-agent.mjs`): Er liest die neuesten Quant-Papers von arXiv, lässt deine eigene KI-API daraus Strategie-Code extrahieren, jagt jeden Kandidaten durch die volle Validierungs-Pipeline (k-Fold, Noise-Test, Deflated Sharpe mit globalem Versuchszähler) und speichert die Überlebenden auf der Website. Das ist genau der „KI researched von selbst"-Teil aus dem Video.
 
-*Kein Investment-Advice; das System handelt in den Phasen 1–3 ausschließlich mit virtuellem Geld.*
+**Von Hand testen:**
+```powershell
+cd C:\Users\gilap\Documents\GitHub\mmmxcix-quant
+node scripts\research-agent.mjs
+```
+Erwartete Ausgabe: `arXiv: 25 papers, N fresh…` und pro Paper entweder `✓ CANDIDATE`, `✗ graveyard: … (Grund)` oder `~ skipped (rate-limited)`.
+
+**In n8n als zweiten Workflow anlegen** (nicht alle 15 min — einmal täglich reicht und schont das KI-Kontingent):
+1. **Create Workflow** → Name `Research Agent`.
+2. **Schedule Trigger** → *Trigger Interval*: **Days**, *Days Between Triggers*: **1** (z. B. Trigger at Hour 3 nachts).
+3. **Execute Command** → `node C:\Users\gilap\Documents\GitHub\mmmxcix-quant\scripts\research-agent.mjs`.
+4. **Save** → **Active**.
+
+**Wo die Ergebnisse landen:** Coach-Seite → Karte „Lab agent" → Block **Research loop** (Zähler: papers read / strategies tried / graveyard / candidates). Die Überlebenden erscheinen in der **Registry** unter „Agent research candidates" mit Ein-Klick-Import.
+
+### Wichtig: das KI-Kontingent (Gemini Free Tier)
+Der Research-Agent braucht deine KI-API (`/api/generate`). Aktuell läuft die über den **kostenlosen Gemini-Tarif**, der ein **tägliches Limit** hat. Symptom: `~ skipped (rate-limited)`. Das ist kein Fehler — die Papers bleiben „frisch" und werden beim nächsten Lauf erneut versucht. Optionen:
+- **Nichts tun:** einmal täglich laufen lassen; das Kontingent reicht meist für 1–2 Papers/Tag → über Wochen sammeln sich Kandidaten an.
+- **Weniger pro Lauf:** Umgebungsvariable `LAB_RESEARCH_PAPERS=1` setzen.
+- **Mehr Durchsatz:** einen bezahlten `ANTHROPIC_API_KEY` als Cloudflare-Secret hinterlegen (der Endpoint bevorzugt ihn dann automatisch) — dann verschwindet das Limit praktisch.
+
+## Kontrollen & Handgriffe
+
+| Was | Wie |
+|---|---|
+| Läuft n8n? | Browser: http://localhost:5678 · oder `pm2 status` |
+| Letzte Läufe ansehen | n8n → Workflow → **Executions** (rote = Fehler mit Log) |
+| Paper-Trader von Hand | `node scripts\lab-agent.mjs` |
+| Research von Hand | `node scripts\research-agent.mjs` |
+| Status auf der Website | Coach-Seite → Lab-agent-Karte → Refresh |
+| Kandidaten sehen/importieren | Registry-Seite → „Agent research candidates" |
+
+## Sicherheit — die drei Regeln
+
+1. **Token nur als Umgebungsvariable**, nie in Dateien/Commits (der Endpoint prüft ihn serverseitig, Lesen UND Schreiben sind damit geschützt — Fremde sehen deinen Lab-Zustand nicht).
+2. Die Agents pushen **nur Anzeigedaten** (Zahlen, Status, Strategie-Code). Keine API-Keys, keine Secrets in den State legen — der KI-Schlüssel bleibt serverseitig in Cloudflare.
+3. n8n bleibt auf localhost (nicht ins Internet freigeben) — es muss von außen nicht erreichbar sein, denn dein PC ruft immer nur raus.
+
+## Die Threepio-Phasen (alle live)
+
+- **Phase 1:** Validierungs-Pipeline im Backtest (Walk-Forward, Deflated Sharpe, Noise-Test). ✅
+- **Phase 2:** Strategy Registry mit Lebenszyklus (Factory → Validated → Paper → Graveyard) + Korrelations-Matrix. ✅
+- **Phase 3:** Paper-Trader (`lab-agent.mjs`) führt die veröffentlichten Strategien virtuell aus → Portfolio HQ auf der Coach-Seite. ✅
+- **Phase 4:** Research-Agent (`research-agent.mjs`) liest Papers → KI-Code → Validierung → Kandidaten/Graveyard, autonom. ✅
+
+*Kein Investment-Advice; das System handelt ausschließlich mit virtuellem Geld.*
