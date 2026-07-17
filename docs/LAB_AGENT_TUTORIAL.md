@@ -132,11 +132,28 @@ Erwartete Ausgabe: `arXiv: 25 papers, N fresh…` und pro Paper entweder `✓ CA
 
 **Wo die Ergebnisse landen:** Coach-Seite → Karte „Lab agent" → Block **Research loop** (Zähler: papers read / strategies tried / graveyard / candidates). Die Überlebenden erscheinen in der **Registry** unter „Agent research candidates" mit Ein-Klick-Import.
 
-### Wichtig: das KI-Kontingent (Gemini Free Tier)
-Der Research-Agent braucht deine KI-API (`/api/generate`). Aktuell läuft die über den **kostenlosen Gemini-Tarif**, der ein **tägliches Limit** hat. Symptom: `~ skipped (rate-limited)`. Das ist kein Fehler — die Papers bleiben „frisch" und werden beim nächsten Lauf erneut versucht. Optionen:
-- **Nichts tun:** einmal täglich laufen lassen; das Kontingent reicht meist für 1–2 Papers/Tag → über Wochen sammeln sich Kandidaten an.
+### Wichtig: die KI-Anbieter-Kette (alle kostenlos)
+Der Research-Agent braucht deine KI-API (`/api/generate`). Der Endpoint probiert die Anbieter in **fester Reihenfolge** durch und fällt bei **jedem** Fehler (Rate-Limit, Ausfall, leere Antwort) automatisch zum nächsten:
+
+| Priorität | Anbieter | Modell | Freies Kontingent | Cloudflare-Secret |
+|---|---|---|---|---|
+| 1 *(optional, später)* | Anthropic | `claude-sonnet-5` | bezahlt (beste Qualität) | `ANTHROPIC_API_KEY` |
+| 2 | **Mistral** | Codestral (Code-Spezialist) | 1 Mrd. Tokens/Monat | `MISTRAL_API_KEY` |
+| 3 | Groq | Llama 3.3 70B | 14'400 Calls/Tag | `GROQ_API_KEY` |
+| 4 | Google Gemini | Flash | ~1'500 Calls/Tag | `GEMINI_API_KEY` |
+
+**Warum diese Reihenfolge:** *Mistral Codestral* ist ein auf Code spezialisiertes Modell → schreibt die besten Strategien. *Groq* ist zwar schnell, läuft aber auf dem generalistischen Llama → zweite Wahl fürs Programmieren, dafür quasi unbegrenzt als Absicherung. *Gemini* bleibt der letzte Fallback. Sobald ein `ANTHROPIC_API_KEY` gesetzt ist, klemmt er sich automatisch ganz vorne dazu.
+
+**Keys erstellen (je 2 Minuten, keine Kreditkarte):**
+1. **Mistral:** console.mistral.ai → Anmelden → *API Keys* → *Create new key*. (Für das freie „Experiment"-Kontingent das Training auf deinen Daten in den Einstellungen aktivieren — für uns unkritisch, wir senden nur öffentliche arXiv-Abstracts.)
+2. **Groq:** console.groq.com → Anmelden → *API Keys* → *Create API Key*.
+3. Beide in **Cloudflare** hinterlegen: Pages → dein Projekt → *Settings* → *Environment variables* → als **Secret** `MISTRAL_API_KEY` und `GROQ_API_KEY` hinzufügen (Production). Danach einmal *Retry deployment*.
+
+**Datenschutz:** Alle drei dürfen bedenkenlos genutzt werden — wir schicken nur öffentliche Paper-Abstracts und die Bitte, generischen Strategie-Code zu schreiben. Nichts Persönliches, keine Secrets; dein Dev-Token sieht das LLM nie (er authentifiziert nur deinen Endpoint).
+
+Symptom `~ skipped (rate-limited)` erscheint erst, wenn **alle** gesetzten Anbieter gleichzeitig limitiert sind — dann bleiben die Papers „frisch" und werden beim nächsten Lauf erneut versucht. Weitere Stellschrauben:
 - **Weniger pro Lauf:** Umgebungsvariable `LAB_RESEARCH_PAPERS=1` setzen.
-- **Mehr Durchsatz:** einen bezahlten `ANTHROPIC_API_KEY` als Cloudflare-Secret hinterlegen (der Endpoint bevorzugt ihn dann automatisch) — dann verschwindet das Limit praktisch.
+- **Mehr Durchsatz:** einen bezahlten `ANTHROPIC_API_KEY` als Cloudflare-Secret hinterlegen (der Endpoint bevorzugt ihn dann automatisch).
 
 ## Kontrollen & Handgriffe
 

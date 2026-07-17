@@ -10,12 +10,20 @@
 //
 // Required Cloudflare Pages env vars (Production):
 //   DEV_ACCESS_TOKEN   (Secret)  — long random string, shared only with devs
-//   plus AT LEAST ONE provider key:
-//   ANTHROPIC_API_KEY  (Secret)  — sk-ant-... (paid, best quality)
-//   GEMINI_API_KEY     (Secret)  — from aistudio.google.com (free tier)
-// Anthropic is preferred when both are set.
+//   plus AT LEAST ONE provider key. Tried in this fixed priority order, each
+//   falling through to the next on ANY failure (rate limit, error, empty):
+//   1. ANTHROPIC_API_KEY (Secret) — sk-ant-… (paid, best quality; optional)
+//   2. MISTRAL_API_KEY   (Secret) — console.mistral.ai (FREE, code-specialised
+//                                   Codestral; 1B tokens/month) — best free code
+//   3. GROQ_API_KEY      (Secret) — console.groq.com (FREE, fast; 14,400/day)
+//   4. GEMINI_API_KEY    (Secret) — aistudio.google.com (FREE, final fallback)
+// All four are free to send public arXiv abstracts through — no secret or
+// personal data ever enters a prompt (the dev token authenticates the endpoint
+// only; the LLM sees the prompt, never the token).
 
 const ANTHROPIC_MODEL = "claude-sonnet-5";
+const MISTRAL_MODEL = "codestral-latest"; // Mistral's code-specialised model
+const GROQ_MODEL = "llama-3.3-70b-versatile";
 // Free-tier quotas differ wildly per model — on 429/404 we walk down this
 // list instead of failing (flash-lite has the most generous free limits).
 const GEMINI_MODELS = ["gemini-flash-latest", "gemini-2.5-flash", "gemini-flash-lite-latest", "gemini-2.5-flash-lite"];
@@ -79,6 +87,86 @@ function extractCode(text) {
   return (fenced ? fenced[1] : text).trim();
 }
 
+// ── provider callers ────────────────────────────────────────────────────────
+// Each returns { text } on success or { status } on failure. A caller never
+// throws; the chain below walks to the next provider on any non-success.
+
+async function callAnthropic(env, userMsg) {
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": env.ANTHROPIC_API_KEY,
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify({
+      model: ANTHROPIC_MODEL,
+      max_tokens: 2500,
+      system: SYSTEM_PROMPT,
+      messages: [{ role: "user", content: userMsg }],
+    }),
+  });
+  if (!res.ok) return { status: res.status };
+  const data = await res.json();
+  const text = (data?.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n");
+  return text ? { text } : { status: 502 };
+}
+
+// Mistral and Groq both speak the OpenAI /chat/completions dialect, so one
+// caller serves both — only base URL, key and model differ. The API key goes
+// in the Authorization header (never the URL), so it can't leak into logs.
+async function callOpenAICompatible(baseUrl, apiKey, model, userMsg) {
+  const res = await fetch(`${baseUrl}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      max_tokens: 2500,
+      temperature: 0.3,
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: userMsg },
+      ],
+    }),
+  });
+  if (!res.ok) return { status: res.status };
+  const data = await res.json();
+  const text = data?.choices?.[0]?.message?.content || "";
+  return text ? { text } : { status: 502 };
+}
+
+async function callGemini(env, userMsg) {
+  // Models are tried in order; 429/404 falls through to the next one.
+  let lastStatus = 502;
+  for (const model of GEMINI_MODELS) {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+          contents: [{ role: "user", parts: [{ text: userMsg }] }],
+          generationConfig: { maxOutputTokens: 2500, temperature: 0.4 },
+        }),
+      }
+    );
+    if (res.ok) {
+      const data = await res.json();
+      const text = (data?.candidates?.[0]?.content?.parts || []).map((p) => p.text || "").join("\n");
+      if (text) return { text };
+      lastStatus = 502;
+      continue;
+    }
+    lastStatus = res.status;
+    if (res.status !== 429 && res.status !== 404) break; // real error — stop walking models
+  }
+  return { status: lastStatus };
+}
+
 export async function onRequest({ request, env }) {
   if (request.method === "OPTIONS") {
     return new Response(null, {
@@ -91,8 +179,9 @@ export async function onRequest({ request, env }) {
   }
   if (request.method !== "POST") return json({ error: "method_not_allowed" }, 405);
 
-  if (!env.DEV_ACCESS_TOKEN || (!env.ANTHROPIC_API_KEY && !env.GEMINI_API_KEY)) {
-    return json({ error: "not_configured", hint: "Set DEV_ACCESS_TOKEN plus ANTHROPIC_API_KEY or GEMINI_API_KEY as Cloudflare secrets." }, 503);
+  const hasProvider = env.ANTHROPIC_API_KEY || env.MISTRAL_API_KEY || env.GROQ_API_KEY || env.GEMINI_API_KEY;
+  if (!env.DEV_ACCESS_TOKEN || !hasProvider) {
+    return json({ error: "not_configured", hint: "Set DEV_ACCESS_TOKEN plus at least one provider key (MISTRAL_API_KEY, GROQ_API_KEY, GEMINI_API_KEY or ANTHROPIC_API_KEY) as Cloudflare secrets." }, 503);
   }
 
   let body;
@@ -115,70 +204,33 @@ export async function onRequest({ request, env }) {
   if (prompt.length > MAX_PROMPT_CHARS) return json({ error: "prompt_too_long" }, 400);
 
   const userMsg = `Create a backtest strategy: ${prompt}`;
-  let res, text;
 
-  if (env.ANTHROPIC_API_KEY) {
-    res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": env.ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: ANTHROPIC_MODEL,
-        max_tokens: 2500,
-        system: SYSTEM_PROMPT,
-        messages: [{ role: "user", content: userMsg }],
-      }),
-    });
-    if (!res.ok) {
-      // Never forward upstream error bodies — they can reference account details.
-      return json({ error: res.status === 429 ? "rate_limited" : "upstream_error" }, res.status === 429 ? 429 : 502);
+  // Fixed priority chain — best code model first, each falling through to the
+  // next on ANY failure (rate limit, error, empty). Only keys that exist are
+  // attempted, so the chain adapts to whichever secrets are set.
+  const chain = [];
+  if (env.ANTHROPIC_API_KEY) chain.push(() => callAnthropic(env, userMsg));
+  if (env.MISTRAL_API_KEY) chain.push(() => callOpenAICompatible("https://api.mistral.ai/v1", env.MISTRAL_API_KEY, MISTRAL_MODEL, userMsg));
+  if (env.GROQ_API_KEY) chain.push(() => callOpenAICompatible("https://api.groq.com/openai/v1", env.GROQ_API_KEY, GROQ_MODEL, userMsg));
+  if (env.GEMINI_API_KEY) chain.push(() => callGemini(env, userMsg));
+
+  let text = "";
+  let lastStatus = 502;
+  for (const attempt of chain) {
+    let r;
+    try {
+      r = await attempt();
+    } catch {
+      lastStatus = 502; // network/parse fault — try the next provider
+      continue;
     }
-    const data = await res.json();
-    text = (data?.content || [])
-      .filter((b) => b.type === "text")
-      .map((b) => b.text)
-      .join("\n");
-  } else {
-    // Google Gemini (free tier) — key from aistudio.google.com. Sent via
-    // header, not the URL, so it can never end up in logs of intermediaries.
-    // Models are tried in order; 429/404 falls through to the next one.
-    let lastStatus = 502;
-    for (const model of GEMINI_MODELS) {
-      res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
-        {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            "x-goog-api-key": env.GEMINI_API_KEY,
-          },
-          body: JSON.stringify({
-            systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
-            contents: [{ role: "user", parts: [{ text: userMsg }] }],
-            generationConfig: { maxOutputTokens: 2500, temperature: 0.4 },
-          }),
-        }
-      );
-      if (res.ok) {
-        const data = await res.json();
-        text = (data?.candidates?.[0]?.content?.parts || [])
-          .map((p) => p.text || "")
-          .join("\n");
-        if (text) break;
-        lastStatus = 502;
-        continue;
-      }
-      lastStatus = res.status;
-      if (res.status !== 429 && res.status !== 404) break; // real error — stop
-    }
-    if (!text) {
-      return json({ error: lastStatus === 429 ? "rate_limited" : "upstream_error" }, lastStatus === 429 ? 429 : 502);
-    }
+    if (r.text) { text = r.text; break; }
+    lastStatus = r.status || 502;
   }
 
-  if (!text) return json({ error: "empty_response" }, 502);
+  if (!text) {
+    // Never forward upstream error bodies — they can reference account details.
+    return json({ error: lastStatus === 429 ? "rate_limited" : "upstream_error" }, lastStatus === 429 ? 429 : 502);
+  }
   return json({ code: extractCode(text) });
 }
