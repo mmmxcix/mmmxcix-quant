@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { NavLink, Link, useLocation } from "react-router-dom";
-import { LayoutDashboard, CandlestickChart, FlaskConical, Newspaper, Compass, Wrench, Activity, Scale, Star, Briefcase, Radar, GraduationCap, Sigma, Menu, X, Target, Dices, BookOpenCheck, Boxes, Telescope, Shield, Network, Sun, Moon } from "lucide-react";
+import { LayoutDashboard, CandlestickChart, FlaskConical, Newspaper, Compass, Wrench, Activity, Scale, Star, Briefcase, Radar, GraduationCap, Sigma, Menu, X, Target, BookOpenCheck, Telescope, Cpu, Sun, Moon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import DitherBackground from "@/components/DitherBackground";
 
@@ -54,8 +54,7 @@ const NAV_GROUPS = [
     label: "Strategy",
     items: [
       { to: "/backtest", label: "Backtest", icon: FlaskConical },
-      { to: "/registry", label: "Registry", icon: Boxes },
-      { to: "/lab", label: "Lab", icon: Dices },
+      { to: "/cortex", label: "Cortex", icon: Cpu },
       { to: "/anomalies", label: "Anomalies", icon: Telescope },
       { to: "/compare", label: "Compare", icon: Scale },
       { to: "/tools", label: "Tools", icon: Wrench },
@@ -92,11 +91,8 @@ function useDevNav() {
 }
 
 // Private, dev-token-gated nav entries, injected per group when a token exists.
+// (RiskGate + Brain Vault are now tabs inside the Cortex hub.)
 const DEV_ITEMS = {
-  Strategy: [
-    { to: "/riskgate", label: "RiskGate", icon: Shield },
-    { to: "/brain", label: "Brain Vault", icon: Network },
-  ],
   Learn: [{ to: "/coach", label: "Coach", icon: Target }],
 };
 

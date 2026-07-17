@@ -1,4 +1,4 @@
-// riskGate.js — the RiskGate (Threepio, the missing piece vs. the "real" 3PO).
+// riskGate.js — the RiskGate (Cortex — the live risk layer).
 //
 // Every proposed ENTRY (a strategy going flat → long/short) passes through the
 // gate before it is allowed to fill. The gate FAILS CLOSED: if any rule is

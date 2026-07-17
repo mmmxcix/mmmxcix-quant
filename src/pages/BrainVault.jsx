@@ -155,7 +155,7 @@ export default function BrainVault() {
 
   return (
     <div>
-      <p className="text-[10px] tracking-[0.3em] text-dim uppercase mb-1">Threepio</p>
+      <p className="text-[10px] tracking-[0.3em] text-dim uppercase mb-1">Cortex</p>
       <div className="flex items-center gap-3 mb-4">
         <h1 className="text-2xl font-bold">Brain Vault</h1>
         <Network className="w-5 h-5 text-accent" />
@@ -223,7 +223,7 @@ export default function BrainVault() {
           <p className="text-[11px] text-dim/70 leading-relaxed">
             Every paper the agent reads — from arXiv and OpenAlex — lands here. Survivors (green) cleared the full
             validation gauntlet; buried nodes (red) failed and are kept as a record. Hover a node for its source,
-            verdict and topics. This is our answer to the “real” 3PO's brain vault, built from our own honest data.
+            verdict and topics — every paper the research agent has read, built from our own honest data.
           </p>
         </div>
       )}

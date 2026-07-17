@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import Layout from "@/components/Layout";
 import Dashboard from "@/pages/Dashboard";
 import Charts from "@/pages/Charts";
@@ -14,12 +14,9 @@ import Screener from "@/pages/Screener";
 import Options from "@/pages/Options";
 import Academy from "@/pages/Academy";
 import Coach from "@/pages/Coach";
-import Lab from "@/pages/Lab";
 import Anomalies from "@/pages/Anomalies";
 import Guide from "@/pages/Guide";
-import Registry from "@/pages/Registry";
-import RiskGate from "@/pages/RiskGate";
-import BrainVault from "@/pages/BrainVault";
+import Cortex from "@/pages/Cortex";
 import Impressum from "@/pages/Impressum";
 import Datenschutz from "@/pages/Datenschutz";
 import Nutzung from "@/pages/Nutzung";
@@ -41,11 +38,13 @@ export default function App() {
                 <Route path="/" element={<Dashboard />} />
                 <Route path="/charts" element={<Charts />} />
                 <Route path="/backtest" element={<Backtest />} />
-                <Route path="/lab" element={<Lab />} />
+                <Route path="/cortex" element={<Navigate to="/cortex/registry" replace />} />
+                <Route path="/cortex/:tab" element={<Cortex />} />
+                <Route path="/registry" element={<Navigate to="/cortex/registry" replace />} />
+                <Route path="/lab" element={<Navigate to="/cortex/paper" replace />} />
+                <Route path="/riskgate" element={<Navigate to="/cortex/riskgate" replace />} />
+                <Route path="/brain" element={<Navigate to="/cortex/brain" replace />} />
                 <Route path="/anomalies" element={<Anomalies />} />
-                <Route path="/registry" element={<Registry />} />
-                <Route path="/riskgate" element={<RiskGate />} />
-                <Route path="/brain" element={<BrainVault />} />
                 <Route path="/compare" element={<Compare />} />
                 <Route path="/monitor" element={<Monitor />} />
                 <Route path="/screener" element={<Screener />} />
