@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
-import { FlaskConical, Newspaper, ArrowUpRight } from "lucide-react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { FlaskConical, Newspaper, ArrowUpRight, LayoutDashboard, Star, Activity } from "lucide-react";
 import { fetchCandles, WATCHLIST } from "@/lib/data";
 import WorldClock from "@/components/WorldClock";
+import WatchlistPage from "@/pages/Watchlist";
+import MonitorPage from "@/pages/Monitor";
 import { cn, fmtPrice, fmtPct } from "@/lib/utils";
 
 // Last price + day-over-day change per watchlist entry.
@@ -56,15 +58,11 @@ function Sparkline({ data, up }) {
   );
 }
 
-export default function Dashboard() {
+function Overview() {
   const { quotes, loading } = useWatchlistQuotes();
   const navigate = useNavigate();
-
   return (
-    <div>
-      <p className="text-[10px] tracking-[0.3em] text-dim uppercase mb-1">Overview</p>
-      <h1 className="text-2xl font-bold mb-8">Dashboard</h1>
-
+    <>
       <div className="rounded-xl border border-line lg-glass overflow-hidden mb-8">
         <table className="w-full text-sm">
           <thead>
@@ -141,6 +139,42 @@ export default function Dashboard() {
           <p className="text-sm text-dim">CNBC, Yahoo Finance, CoinDesk and MarketWatch — bundled in one place.</p>
         </Link>
       </div>
+    </>
+  );
+}
+
+// Dashboard = the Markets overview hub. Overview · Watchlist · Monitor are
+// tabs (?view=…); old /watchlist and /monitor routes redirect into them.
+const TABS = [
+  { id: "overview", label: "Overview", icon: LayoutDashboard },
+  { id: "watchlist", label: "Watchlist", icon: Star },
+  { id: "monitor", label: "Monitor", icon: Activity },
+];
+
+export default function Dashboard() {
+  const [params, setParams] = useSearchParams();
+  const view = params.get("view") || "overview";
+  const setView = (v) => setParams(v === "overview" ? {} : { view: v });
+
+  return (
+    <div>
+      <p className="text-[10px] tracking-[0.3em] text-dim uppercase mb-1">Markets</p>
+      <nav className="flex gap-1 mb-6 border-b border-line overflow-x-auto">
+        {TABS.map((t) => (
+          <button
+            key={t.id}
+            onClick={() => setView(t.id)}
+            className={cn(
+              "inline-flex items-center gap-2 px-3.5 py-2.5 text-sm font-medium border-b-2 -mb-px whitespace-nowrap transition-colors",
+              view === t.id ? "border-accent text-accent" : "border-transparent text-dim hover:text-text"
+            )}
+          >
+            <t.icon className="w-4 h-4" />
+            {t.label}
+          </button>
+        ))}
+      </nav>
+      {view === "watchlist" ? <WatchlistPage /> : view === "monitor" ? <MonitorPage /> : <Overview />}
     </div>
   );
 }

@@ -4,8 +4,6 @@ import Dashboard from "@/pages/Dashboard";
 import Charts from "@/pages/Charts";
 import News from "@/pages/News";
 import Tools from "@/pages/Tools";
-import Monitor from "@/pages/Monitor";
-import Watchlist from "@/pages/Watchlist";
 import Coach from "@/pages/Coach";
 import Cortex from "@/pages/Cortex";
 import { BacktestHub, PortfolioHub, ScreenerHub, LearnHub } from "@/pages/hubs";
@@ -37,8 +35,8 @@ export default function App() {
                 <Route path="/" element={<Dashboard />} />
                 <Route path="/charts" element={<Charts />} />
                 <Route path="/news" element={<News />} />
-                <Route path="/monitor" element={<Monitor />} />
-                <Route path="/watchlist" element={<Watchlist />} />
+                <Route path="/watchlist" element={<Redir to="/?view=watchlist" />} />
+                <Route path="/monitor" element={<Redir to="/?view=monitor" />} />
                 <Route path="/tools" element={<Tools />} />
                 <Route path="/coach" element={<Coach />} />
 

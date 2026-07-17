@@ -36,17 +36,9 @@ const NAV_GROUPS = [
     label: "Markets",
     items: [
       { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
-      { to: "/monitor", label: "Monitor", icon: Activity },
       { to: "/charts", label: "Charts", icon: CandlestickChart },
       { to: "/screener", label: "Screener", icon: Radar },
       { to: "/news", label: "News", icon: Newspaper },
-    ],
-  },
-  {
-    label: "Trading",
-    items: [
-      { to: "/watchlist", label: "Watchlist", icon: Star },
-      { to: "/portfolio", label: "Portfolio", icon: Briefcase },
     ],
   },
   {
@@ -54,6 +46,7 @@ const NAV_GROUPS = [
     items: [
       { to: "/backtest", label: "Backtest", icon: FlaskConical },
       { to: "/cortex", label: "Cortex", icon: Cpu },
+      { to: "/portfolio", label: "Portfolio", icon: Briefcase },
       { to: "/tools", label: "Tools", icon: Wrench },
     ],
   },
