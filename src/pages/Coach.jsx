@@ -83,6 +83,29 @@ function LabStatus() {
             {data.note && <span className="text-dim italic font-sans w-full">“{data.note}”</span>}
           </div>
 
+          {/* Research loop stats (autonomous paper→strategy pipeline) */}
+          {data.research && (
+            <div className="mt-3 border-t border-line pt-3">
+              <p className="text-[10px] text-dim uppercase tracking-widest mb-1.5">Research loop</p>
+              <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs font-mono">
+                <span className="text-dim">papers read <span className="text-text">{data.research.papersRead}</span></span>
+                <span className="text-dim">strategies tried <span className="text-text">{data.research.attempts}</span></span>
+                <span className="text-dim">graveyard <span className="text-down">{data.research.graveyard}</span></span>
+                <span className="text-dim">candidates <span className="text-up">{data.research.candidates}</span></span>
+              </div>
+              {data.research.lastGraveyard?.length > 0 && (
+                <p className="text-[10px] text-dim/80 mt-1.5 leading-relaxed">
+                  latest burials: {data.research.lastGraveyard.map((g) => `"${g.title.slice(0, 40)}…" (${g.reason})`).join(" · ")}
+                </p>
+              )}
+              {data.research.candidates > 0 && (
+                <p className="text-[11px] text-up mt-1">
+                  → survivors wait in the <Link to="/registry" className="underline">Registry</Link> under “Agent research candidates”.
+                </p>
+              )}
+            </div>
+          )}
+
           {/* Portfolio HQ — paper strategies executed by the agent */}
           {data.mode === "paper" && data.strategies?.length > 0 && (
             <div className="mt-3 border-t border-line pt-3">

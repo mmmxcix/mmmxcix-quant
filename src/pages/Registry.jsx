@@ -2,9 +2,78 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Boxes, Trash2, Skull, ShieldCheck, FlaskConical, Rocket, Grid3x3, Info, Send, Loader2, Check } from "lucide-react";
 import {
-  getEntries, subscribeRegistry, setStatus, removeEntry, STATUS_META, correlationMatrix,
+  getEntries, subscribeRegistry, setStatus, removeEntry, STATUS_META, correlationMatrix, saveEntry,
 } from "@/lib/registry";
 import { cn, fmtPct, fmtNum } from "@/lib/utils";
+
+// Survivors of the autonomous research loop (pushed by the PC's research
+// agent into lab:candidates). Private: only renders when the dev token exists.
+function AgentCandidates() {
+  const [items, setItems] = useState(undefined); // undefined = loading/no token
+  const [imported, setImported] = useState({});
+  const token = (() => { try { return localStorage.getItem("quant_dev_token") || ""; } catch { return ""; } })();
+
+  useEffect(() => {
+    if (!token) { setItems(null); return; }
+    fetch("/api/lab?what=candidates", { headers: { "x-lab-token": token } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((out) => setItems(out?.candidates?.items || []))
+      .catch(() => setItems([]));
+  }, [token]);
+
+  if (!token || items === null || items === undefined || items.length === 0) return null;
+
+  const importOne = (c) => {
+    const m = c.metrics?.BTC4h || Object.values(c.metrics || {})[0] || {};
+    saveEntry({
+      name: `[research] ${c.name.slice(0, 50)}`,
+      market: "crypto", symbol: "BTCUSDT", interval: "4h", range: "max",
+      mode: "code", code: c.code, positionPct: 100, feeBps: 10,
+      metrics: { totalReturnPct: m.ret ?? 0, profitFactor: m.pf ?? 0, maxDrawdownPct: m.dd ?? 0, tradeCount: m.n ?? 0 },
+      equity: [],
+      validation: { wf: "pass", dsr: "pass", noise: "pass" }, // it survived the agent's gauntlet
+      status: "factory", // still: re-run it yourself before trusting it
+    });
+    setImported((s) => ({ ...s, [c.id]: true }));
+  };
+
+  return (
+    <div className="rounded-xl border border-accent/30 lg-glass p-4 mb-6">
+      <div className="flex items-center gap-2 mb-1">
+        <FlaskConical className="w-4 h-4 text-accent" />
+        <p className="text-sm font-semibold">Agent research candidates</p>
+        <span className="text-[10px] text-dim uppercase tracking-wide">· found &amp; validated by your research agent · private</span>
+      </div>
+      <p className="text-[11px] text-dim mb-3">
+        Each survived: profitable on BTC 4h AND SPY 1d after costs, k-fold, noise test, and the Deflated Sharpe hurdle
+        at the agent's cumulative trial count. Import, then re-run in the Backtest yourself before promoting.
+      </p>
+      <div className="space-y-2">
+        {items.map((c) => (
+          <div key={c.id} className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border border-line bg-bg/40 px-3 py-2">
+            <span className="text-sm text-text flex-1 min-w-[200px]">{c.name}</span>
+            {c.metrics?.BTC4h && (
+              <span className="text-[11px] font-mono text-dim">
+                BTC4h <span className={c.metrics.BTC4h.ret >= 0 ? "text-up" : "text-down"}>{c.metrics.BTC4h.ret}%</span> · PF {c.metrics.BTC4h.pf}
+              </span>
+            )}
+            {c.metrics?.SPY1d && (
+              <span className="text-[11px] font-mono text-dim">
+                SPY <span className={c.metrics.SPY1d.ret >= 0 ? "text-up" : "text-down"}>{c.metrics.SPY1d.ret}%</span>
+              </span>
+            )}
+            <span className="text-[11px] font-mono text-dim">DSR {c.dsr}%</span>
+            {c.paper && <a href={c.paper} target="_blank" rel="noopener noreferrer" className="text-[11px] text-accent hover:underline">paper</a>}
+            <button onClick={() => importOne(c)} disabled={imported[c.id]}
+              className={cn("chip !text-[11px]", imported[c.id] ? "chip-idle text-up" : "chip-idle hover:text-accent")}>
+              {imported[c.id] ? "✓ imported" : "Import to Registry"}
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 const COLS = [
   { id: "factory", icon: FlaskConical, tone: "text-accent" },
@@ -202,6 +271,8 @@ export default function Registry() {
         through its lifecycle: <span className="text-accent">Factory</span> → <span className="text-up">Validated</span> → <span className="text-blue-400">Paper</span>,
         or bury the failures in the <span className="text-dim">Graveyard</span>. Stored in this browser.
       </p>
+
+      <AgentCandidates />
 
       {entries.length === 0 ? (
         <div className="rounded-xl border border-line lg-glass p-8 text-center text-sm text-dim">

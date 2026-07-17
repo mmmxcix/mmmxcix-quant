@@ -3,9 +3,11 @@
 // its state here; the site reads it back. Cloudflare cannot reach into a home
 // network, so the PC always initiates.
 //
-// Two channels, both under the same token:
+// Three channels, all under the same token:
 //   lab:state       agent → site   (equity, positions, heartbeat)
 //   lab:strategies  site  → agent  (paper-status registry entries to execute)
+//   lab:candidates  agent → site   (research survivors; MERGED by id, capped,
+//                                   so good strategies accumulate on the site)
 //
 // Storage: the existing SUBSCRIBERS KV namespace, keys prefixed "lab:" — no
 // new bindings or dashboard work. Auth: DEV_ACCESS_TOKEN (same secret as the
@@ -51,14 +53,14 @@ export async function onRequest({ request, env }) {
   if (request.method === "GET") {
     const token = request.headers.get("x-lab-token") || "";
     if (!safeEqual(token, env.DEV_ACCESS_TOKEN)) return json({ error: "unauthorized" }, 401);
-    const what = new URL(request.url).searchParams.get("what") === "strategies" ? "lab:strategies" : "lab:state";
-    const raw = await env.SUBSCRIBERS.get(what);
-    if (!raw) return json({ ok: true, [what === "lab:strategies" ? "strategies" : "state"]: null });
+    const whatParam = new URL(request.url).searchParams.get("what");
+    const field = whatParam === "strategies" ? "strategies" : whatParam === "candidates" ? "candidates" : "state";
+    const raw = await env.SUBSCRIBERS.get(`lab:${field}`);
+    if (!raw) return json({ ok: true, [field]: null });
     try {
-      const parsed = JSON.parse(raw);
-      return json({ ok: true, [what === "lab:strategies" ? "strategies" : "state"]: parsed });
+      return json({ ok: true, [field]: JSON.parse(raw) });
     } catch {
-      return json({ ok: true, [what === "lab:strategies" ? "strategies" : "state"]: null });
+      return json({ ok: true, [field]: null });
     }
   }
 
@@ -81,6 +83,22 @@ export async function onRequest({ request, env }) {
     if (payload.length > MAX_STATE_BYTES) return json({ error: "strategies_too_large", max: MAX_STATE_BYTES }, 413);
     await env.SUBSCRIBERS.put("lab:strategies", payload);
     return json({ ok: true, published: body.strategies.length, bytes: payload.length });
+  }
+
+  // Research candidates ACCUMULATE: merge by id with what's already stored
+  // (newest first), so survivors persist on the site across agent runs.
+  if (Array.isArray(body?.candidates)) {
+    let existing = [];
+    try { existing = JSON.parse((await env.SUBSCRIBERS.get("lab:candidates")) || "{}").items || []; } catch { /* fresh */ }
+    const byId = new Map();
+    for (const c of [...body.candidates, ...existing]) {
+      if (c && c.id && !byId.has(c.id)) byId.set(c.id, c);
+    }
+    const items = [...byId.values()].slice(0, 20);
+    const payload = JSON.stringify({ items, updatedAt: Date.now() });
+    if (payload.length > MAX_STATE_BYTES) return json({ error: "candidates_too_large", max: MAX_STATE_BYTES }, 413);
+    await env.SUBSCRIBERS.put("lab:candidates", payload);
+    return json({ ok: true, stored: items.length, bytes: payload.length });
   }
 
   const state = body?.state;
