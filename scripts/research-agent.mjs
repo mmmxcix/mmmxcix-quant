@@ -47,22 +47,124 @@ function load() {
 }
 function save(st) { writeFileSync(RESEARCH_FILE, JSON.stringify(st)); }
 
-// ── 1. harvest arXiv q-fin ──────────────────────────────────────────────────
-const KEYWORDS = /momentum|reversal|mean.?reversion|trend|volatility|seasonal|anomal|predict|alpha|factor|intraday|breakout|pairs|cross.?section|overreaction|drift/i;
+// ── 1. harvest — MULTIPLE sources, like the real 3PO (not just arXiv) ────────
+// Each paper is tagged with the research topics it touches; those tags both
+// decide relevance and become the EDGES of the brain-vault knowledge graph.
+const TOPICS = [
+  { name: "momentum", re: /\bmomentum\b/i },
+  { name: "reversal", re: /reversal|mean.?reversion|overreaction/i },
+  { name: "trend", re: /\btrend|breakout\b/i },
+  { name: "volatility", re: /volatilit|garch|\bvix\b/i },
+  { name: "seasonality", re: /seasonal|calendar effect|day.of.week|turn.of.month/i },
+  { name: "factor", re: /\bfactor|cross.?section|anomal|alpha\b/i },
+  { name: "intraday", re: /intraday|high.frequency|microstructure|order.?flow/i },
+  { name: "pairs/arb", re: /pairs trading|cointegrat|stat.?arb|arbitrage/i },
+  { name: "ml", re: /machine learning|neural|deep learning|reinforcement|lstm|transformer/i },
+  { name: "risk", re: /drawdown|tail risk|hedg|value.at.risk|\bvar\b/i },
+  { name: "prediction", re: /predict|forecast|drift|signal/i },
+];
+const topicsOf = (text) => TOPICS.filter((t) => t.re.test(text)).map((t) => t.name);
 
-async function harvest(max = 25) {
-  const url = `https://export.arxiv.org/api/query?search_query=cat:q-fin.TR+OR+cat:q-fin.PM+OR+cat:q-fin.ST&sortBy=submittedDate&sortOrder=descending&max_results=${max}`;
-  const xml = await (await fetch(url, { headers: { "user-agent": "mmmxcix-research/0.1" } })).text();
-  const entries = [];
+async function harvestArxiv(max) {
+  const cats = ["q-fin.TR", "q-fin.PM", "q-fin.ST", "q-fin.CP", "q-fin.RM", "q-fin.MF"];
+  const q = cats.map((c) => `cat:${c}`).join("+OR+");
+  const url = `https://export.arxiv.org/api/query?search_query=${q}&sortBy=submittedDate&sortOrder=descending&max_results=${max}`;
+  const xml = await (await fetch(url, { headers: { "user-agent": "mmmxcix-research/0.2" } })).text();
+  const out = [];
   const re = /<entry>([\s\S]*?)<\/entry>/g;
   let m;
   while ((m = re.exec(xml))) {
     const block = m[1];
     const pick = (tag) => (block.match(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)</${tag}>`)) || [])[1]?.replace(/\s+/g, " ").trim() || "";
     const id = pick("id");
-    entries.push({ id, title: pick("title"), abstract: pick("summary"), published: pick("published"), link: id });
+    if (!id) continue;
+    const title = pick("title"), abstract = pick("summary");
+    out.push({ id, title, abstract, published: pick("published"), link: id, source: "arXiv", topics: topicsOf(`${title} ${abstract}`) });
   }
-  return entries;
+  return out;
+}
+
+// OpenAlex — free, no key, ~250M works. Abstracts arrive as an inverted index
+// (word → positions) which we reconstruct. mailto = the polite request pool.
+function reconstructAbstract(inv) {
+  if (!inv || typeof inv !== "object") return "";
+  const words = [];
+  for (const [word, positions] of Object.entries(inv)) for (const p of positions) words[p] = word;
+  return words.join(" ").replace(/\s+/g, " ").trim();
+}
+async function harvestOpenAlex(max) {
+  const url = `https://api.openalex.org/works?search=quantitative+trading+strategy+market+anomaly&sort=publication_date:desc&per-page=${max}&mailto=admin@mmmxcix.com`;
+  const data = await (await fetch(url, { headers: { "user-agent": "mmmxcix-research/0.2" } })).json();
+  const out = [];
+  for (const w of data?.results || []) {
+    const title = (w.title || "").replace(/\s+/g, " ").trim();
+    if (!title) continue;
+    const abstract = reconstructAbstract(w.abstract_inverted_index);
+    const doi = w.doi ? String(w.doi).replace(/^https?:\/\/doi\.org\//, "") : "";
+    out.push({
+      id: w.id, title, abstract, published: w.publication_date || "",
+      link: doi ? `https://doi.org/${doi}` : w.id, source: "OpenAlex", topics: topicsOf(`${title} ${abstract}`),
+    });
+  }
+  return out;
+}
+
+// Merge sources, interleaved for diversity, deduped by normalised title.
+async function harvest(maxPerSource) {
+  const [a, o] = await Promise.all([
+    harvestArxiv(maxPerSource).catch((e) => { console.error("arXiv:", e.message); return []; }),
+    harvestOpenAlex(maxPerSource).catch((e) => { console.error("OpenAlex:", e.message); return []; }),
+  ]);
+  const seen = new Set();
+  const merged = [];
+  const max = Math.max(a.length, o.length);
+  for (let i = 0; i < max; i++) {
+    for (const arr of [a, o]) {
+      const p = arr[i];
+      if (!p) continue;
+      const key = p.title.toLowerCase().replace(/[^a-z0-9]+/g, "").slice(0, 60);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      merged.push(p);
+    }
+  }
+  console.log(`sources: arXiv ${a.length}, OpenAlex ${o.length} → ${merged.length} unique`);
+  return merged;
+}
+
+// ── brain vault: build the knowledge graph the site renders ─────────────────
+function brainSources(st) {
+  const counts = {};
+  for (const x of [...(st.candidates || []), ...(st.graveyard || [])]) {
+    const s = x.source || "?";
+    counts[s] = (counts[s] || 0) + 1;
+  }
+  return counts;
+}
+function buildBrain(st) {
+  const CAP = 120;
+  const cNodes = (st.candidates || []).slice(0, 30).map((c) => ({
+    id: c.id, label: (c.name || "").slice(0, 52), outcome: "candidate",
+    source: c.source || "?", topics: c.topics || [], dsr: c.dsr,
+  }));
+  const gNodes = (st.graveyard || []).slice(0, CAP - cNodes.length).map((g, i) => ({
+    id: `g_${i}`, label: (g.title || "").slice(0, 52), outcome: "graveyard",
+    source: g.source || "?", topics: g.topics || [], reason: g.reason,
+  }));
+  const nodes = [...cNodes, ...gNodes];
+  // edges: nodes sharing ≥1 topic, capped per node so the graph stays legible
+  const edges = [];
+  const deg = {};
+  for (let i = 0; i < nodes.length; i++) {
+    for (let j = i + 1; j < nodes.length; j++) {
+      const shared = (nodes[i].topics || []).find((t) => (nodes[j].topics || []).includes(t));
+      if (shared && (deg[i] || 0) < 4 && (deg[j] || 0) < 4) {
+        edges.push({ a: i, b: j, topic: shared });
+        deg[i] = (deg[i] || 0) + 1; deg[j] = (deg[j] || 0) + 1;
+      }
+    }
+  }
+  return { nodes, edges, sources: brainSources(st), stats: { papersRead: st.papersRead || 0, candidates: (st.candidates || []).length, graveyard: (st.graveyard || []).length } };
 }
 
 // ── 2. abstract → strategy code via the site's own AI endpoint ─────────────
@@ -184,11 +286,11 @@ function gauntlet(code, datasets, globalTrials) {
 
 // ── main ────────────────────────────────────────────────────────────────────
 const st = load();
-// In until-hit mode pull a deeper pool so there's enough supply to reach a hit.
-const papers = await harvest(UNTIL_HIT ? 60 : 25);
+// In until-hit mode pull a deeper pool per source so there's enough supply.
+const papers = await harvest(UNTIL_HIT ? 40 : 15);
 const limit = UNTIL_HIT ? HARD_CAP : MAX_PAPERS_PER_RUN;
-const fresh = papers.filter((p) => !st.seen.includes(p.id) && KEYWORDS.test(p.title + " " + p.abstract)).slice(0, limit);
-console.log(`arXiv: ${papers.length} papers, ${fresh.length} fresh+promising this run${UNTIL_HIT ? ` (until-hit, cap ${HARD_CAP})` : ""}`);
+const fresh = papers.filter((p) => !st.seen.includes(p.id) && (p.topics?.length > 0)).slice(0, limit);
+console.log(`papers: ${papers.length} harvested, ${fresh.length} fresh+promising this run${UNTIL_HIT ? ` (until-hit, cap ${HARD_CAP})` : ""}`);
 
 const datasets = fresh.length
   ? [
@@ -231,6 +333,8 @@ for (const paper of fresh) {
         id: `rc_${Date.now().toString(36)}`,
         name: paper.title.slice(0, 70),
         paper: paper.link,
+        source: paper.source,
+        topics: paper.topics,
         code,
         metrics: verdict.metrics,
         dsr: verdict.dsr,
@@ -251,7 +355,7 @@ for (const paper of fresh) {
       }
       if (UNTIL_HIT) { console.log(`  ↳ hit after ${processed} paper(s) — stopping early (until-hit mode)`); break; }
     } else {
-      st.graveyard = [{ title: paper.title.slice(0, 70), reason: verdict.reason, at: Date.now() }, ...st.graveyard].slice(0, 200);
+      st.graveyard = [{ title: paper.title.slice(0, 70), reason: verdict.reason, source: paper.source, topics: paper.topics, at: Date.now() }, ...st.graveyard].slice(0, 200);
       console.log(`✗ graveyard: ${paper.title.slice(0, 50)} — ${verdict.reason}`);
     }
   } catch (e) {
@@ -259,43 +363,68 @@ for (const paper of fresh) {
       console.log(`~ skipped (infra: ${e.message}) — paper stays fresh for the next run`);
     } else {
       st.seen = [...st.seen, paper.id].slice(-500);
-      st.graveyard = [{ title: paper.title.slice(0, 70), reason: `gen: ${e.message.slice(0, 60)}`, at: Date.now() }, ...st.graveyard].slice(0, 200);
+      st.graveyard = [{ title: paper.title.slice(0, 70), reason: `gen: ${e.message.slice(0, 60)}`, source: paper.source, topics: paper.topics, at: Date.now() }, ...st.graveyard].slice(0, 200);
       console.log(`✗ generation failed: ${e.message}`);
     }
   }
 }
-st.autoPromoted = (st.autoPromoted || 0) + toPromote.length; // lifetime count
 save(st);
 
-// push candidates (accumulating channel) + research summary (merged into state by the paper agent’s next run too)
+// Read the current lab state ONCE — used both to gate promotion on portfolio
+// health (RiskGate) and to preserve paper state when we merge our summary in.
+const cur = await (await fetch(`${SITE}/api/lab`, { headers: { "x-lab-token": TOKEN } })).json().catch(() => ({}));
+
+// candidates always accumulate on the site
 if (newCandidates.length) {
   const r = await fetch(`${SITE}/api/lab`, {
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ token: TOKEN, candidates: newCandidates }),
   });
-  console.log(`candidates pushed: ${(await r.json()).stored ?? "?"} stored on site`);
+  console.log(`candidates pushed: ${(await r.json().catch(() => ({}))).stored ?? "?"} stored on site`);
 }
 
-// auto-promotions: merge into the paper portfolio (server caps + tags them)
-if (toPromote.length) {
+// auto-promotion — gated by RiskGate: don't add risk to a full or drawn-down
+// book (portfolio health from the paper agent's last report).
+let promoteHold = "";
+const rg = cur?.state?.riskgate;
+if (rg) {
+  const openN = rg.activeLimits?.openPositions ?? 0, maxN = rg.rules?.maxSimultaneousPositions ?? 5;
+  const dd = rg.activeLimits?.combinedDrawdownPct ?? 0, maxDd = rg.rules?.maxCombinedDrawdownPct ?? 20;
+  if (openN >= maxN) promoteHold = `portfolio full (${openN}/${maxN})`;
+  else if (dd > maxDd) promoteHold = `drawdown ${dd}% > ${maxDd}%`;
+}
+if (toPromote.length && !promoteHold) {
   const r = await fetch(`${SITE}/api/lab`, {
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ token: TOKEN, promote: toPromote }),
   });
   const o = await r.json().catch(() => ({}));
+  st.autoPromoted = (st.autoPromoted || 0) + toPromote.length; save(st);
   console.log(`🤖 auto-promoted ${toPromote.length} → paper portfolio (active autos: ${o.autoActive ?? "?"}/${o.cap ?? "?"})`);
+} else if (toPromote.length) {
+  console.log(`🚦 auto-promotion held by RiskGate: ${promoteHold} — ${toPromote.length} kept as candidates`);
 }
 
+// brain vault: push the knowledge graph (nodes = papers, edges = shared topics)
+try {
+  const r = await fetch(`${SITE}/api/lab`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ token: TOKEN, brain: buildBrain(st) }),
+  });
+  const o = await r.json().catch(() => ({}));
+  console.log(`brain pushed: ${o.nodes ?? "?"} nodes / ${o.edges ?? "?"} edges`);
+} catch (e) { console.error("brain push failed:", e.message); }
+
 // merge research stats into lab:state (read-modify-write so paper state stays)
-const cur = await (await fetch(`${SITE}/api/lab`, { headers: { "x-lab-token": TOKEN } })).json().catch(() => ({}));
 const state = { ...(cur?.state || {}), research: {
   papersRead: st.papersRead,
   attempts: st.attempts,
   graveyard: st.graveyard.length,
   candidates: st.candidates.length,
   autoPromoted: st.autoPromoted || 0,
+  sources: brainSources(st),
   lastRun: Date.now(),
-  latest: fresh.map((p) => ({ title: p.title.slice(0, 80), link: p.link })),
+  latest: fresh.map((p) => ({ title: p.title.slice(0, 80), link: p.link, source: p.source })),
   lastGraveyard: st.graveyard.slice(0, 3).map((g) => ({ title: g.title, reason: g.reason })),
 } };
 const push = await fetch(`${SITE}/api/lab`, {
@@ -304,4 +433,4 @@ const push = await fetch(`${SITE}/api/lab`, {
 });
 const hitThisRun = newCandidates.length > 0;
 if (UNTIL_HIT && !hitThisRun) console.log(`until-hit: no survivor in ${processed} papers (cap ${HARD_CAP} / supply exhausted) — will resume next run`);
-console.log(`research run done: read ${processed}, attempts total ${st.attempts}, graveyard ${st.graveyard.length}, candidates ${st.candidates.length} → push ${(await push.json()).ok ? "ok" : "FAILED"}`);
+console.log(`research run done: read ${processed}, attempts total ${st.attempts}, graveyard ${st.graveyard.length}, candidates ${st.candidates.length} → push ${(await push.json().catch(() => ({}))).ok ? "ok" : "FAILED"}`);

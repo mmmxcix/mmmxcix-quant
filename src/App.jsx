@@ -18,6 +18,8 @@ import Lab from "@/pages/Lab";
 import Anomalies from "@/pages/Anomalies";
 import Guide from "@/pages/Guide";
 import Registry from "@/pages/Registry";
+import RiskGate from "@/pages/RiskGate";
+import BrainVault from "@/pages/BrainVault";
 import Impressum from "@/pages/Impressum";
 import Datenschutz from "@/pages/Datenschutz";
 import Nutzung from "@/pages/Nutzung";
@@ -42,6 +44,8 @@ export default function App() {
                 <Route path="/lab" element={<Lab />} />
                 <Route path="/anomalies" element={<Anomalies />} />
                 <Route path="/registry" element={<Registry />} />
+                <Route path="/riskgate" element={<RiskGate />} />
+                <Route path="/brain" element={<BrainVault />} />
                 <Route path="/compare" element={<Compare />} />
                 <Route path="/monitor" element={<Monitor />} />
                 <Route path="/screener" element={<Screener />} />

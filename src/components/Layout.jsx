@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { NavLink, Link, useLocation } from "react-router-dom";
-import { LayoutDashboard, CandlestickChart, FlaskConical, Newspaper, Compass, Wrench, Activity, Scale, Star, Briefcase, Radar, GraduationCap, Sigma, Menu, X, Target, Dices, BookOpenCheck, Boxes, Telescope } from "lucide-react";
+import { LayoutDashboard, CandlestickChart, FlaskConical, Newspaper, Compass, Wrench, Activity, Scale, Star, Briefcase, Radar, GraduationCap, Sigma, Menu, X, Target, Dices, BookOpenCheck, Boxes, Telescope, Shield, Network } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // Four functional groups: follow the markets → manage what you hold →
@@ -65,14 +65,19 @@ function useDevNav() {
   return isDev;
 }
 
+// Private, dev-token-gated nav entries, injected per group when a token exists.
+const DEV_ITEMS = {
+  Strategy: [
+    { to: "/riskgate", label: "RiskGate", icon: Shield },
+    { to: "/brain", label: "Brain Vault", icon: Network },
+  ],
+  Learn: [{ to: "/coach", label: "Coach", icon: Target }],
+};
+
 function NavItems({ onNavigate }) {
   const isDev = useDevNav();
   const groups = isDev
-    ? NAV_GROUPS.map((g) =>
-        g.label === "Learn"
-          ? { ...g, items: [...g.items, { to: "/coach", label: "Coach", icon: Target }] }
-          : g
-      )
+    ? NAV_GROUPS.map((g) => (DEV_ITEMS[g.label] ? { ...g, items: [...g.items, ...DEV_ITEMS[g.label]] } : g))
     : NAV_GROUPS;
   return groups.map((group, gi) => (
     <div key={group.label}>

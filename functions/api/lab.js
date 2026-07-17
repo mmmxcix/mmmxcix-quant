@@ -62,7 +62,10 @@ export async function onRequest({ request, env }) {
     const token = request.headers.get("x-lab-token") || "";
     if (!safeEqual(token, env.DEV_ACCESS_TOKEN)) return json({ error: "unauthorized" }, 401);
     const whatParam = new URL(request.url).searchParams.get("what");
-    const field = whatParam === "strategies" ? "strategies" : whatParam === "candidates" ? "candidates" : "state";
+    const field = whatParam === "strategies" ? "strategies"
+      : whatParam === "candidates" ? "candidates"
+      : whatParam === "brain" ? "brain"
+      : "state";
     const raw = await env.SUBSCRIBERS.get(`lab:${field}`);
     if (!raw) return json({ ok: true, [field]: null });
     try {
@@ -137,6 +140,15 @@ export async function onRequest({ request, env }) {
     if (payload.length > MAX_STATE_BYTES) return json({ error: "candidates_too_large", max: MAX_STATE_BYTES }, 413);
     await env.SUBSCRIBERS.put("lab:candidates", payload);
     return json({ ok: true, stored: items.length, bytes: payload.length });
+  }
+
+  // Brain vault: the research agent's knowledge graph (papers as nodes, shared
+  // topics as edges). Its own channel because it can be larger than the state.
+  if (body?.brain && typeof body.brain === "object") {
+    const payload = JSON.stringify({ ...body.brain, updatedAt: Date.now() });
+    if (payload.length > MAX_STATE_BYTES) return json({ error: "brain_too_large", max: MAX_STATE_BYTES }, 413);
+    await env.SUBSCRIBERS.put("lab:brain", payload);
+    return json({ ok: true, nodes: (body.brain.nodes || []).length, edges: (body.brain.edges || []).length, bytes: payload.length });
   }
 
   const state = body?.state;

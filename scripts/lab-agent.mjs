@@ -20,6 +20,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { runBacktest, compileStrategy } from "../src/lib/backtest.js";
 import { BUILT_IN_STRATEGIES } from "../src/lib/strategies.js";
+import { DEFAULT_RULES, evaluateEntry, drawdownPct, dayLossPct as computeDayLoss } from "../src/lib/riskGate.js";
 
 const SITE = process.env.LAB_SITE || "https://quant.mmmxcix.com";
 const TOKEN = process.env.LAB_TOKEN;
@@ -143,6 +144,19 @@ const local = loadLocal();
 const summaries = [];
 let note = published.length === 0 ? "no strategies published — bury or promote some in the Registry" : "";
 
+// ── RiskGate: every new entry passes through here; it fails closed ───────────
+const todayKey = Math.floor(Date.now() / 86400000);
+if (!local.day || local.day.key !== todayKey) local.day = { key: todayKey, entries: 0 };
+const rules = { ...DEFAULT_RULES, ...(local.riskRules || {}) };
+const priorHist = local.combinedHistory || [];
+const gateBase = {
+  combinedDrawdownPct: drawdownPct(priorHist),
+  dayLossPct: computeDayLoss(priorHist),
+  hourUtc: new Date().getUTCHours(),
+};
+const countOpen = () => Object.values(local.strategies || {}).filter((p) => p && p.position && p.position !== "flat").length;
+const gateBlocked = [];
+
 for (const s of published) {
   try {
     const candles = s.market === "crypto"
@@ -150,10 +164,28 @@ for (const s of published) {
       : await fetchStock(s.symbol, s.interval);
     if (candles.length < 60) throw new Error("too little data");
     const price = candles[candles.length - 1].close;
-    const target = desiredPosition(s, candles);
+    let target = desiredPosition(s, candles);
 
     const ps = local.strategies[s.id] || { equity: START_EQUITY, position: "flat", units: 0, trades: [] };
+
+    // Gate any move INTO a position (fresh entry OR flip). Exits pass freely.
+    if (target !== "flat" && target !== ps.position) {
+      const g = evaluateEntry({ rules, ctx: {
+        now: Date.now(), hourUtc: gateBase.hourUtc, openPositions: countOpen(),
+        combinedDrawdownPct: gateBase.combinedDrawdownPct, dayLossPct: gateBase.dayLossPct,
+        tradesToday: local.day.entries,
+      } });
+      if (!g.allow) {
+        const reason = g.verdicts.filter((x) => x.status === "block").map((x) => x.rule).join(", ");
+        gateBlocked.push({ name: s.name, reason });
+        console.log(`⛔ RiskGate blocked ${s.name}: ${reason}`);
+        target = "flat"; // fails closed — flatten rather than enter
+      }
+    }
+
+    const posBefore = ps.position;
     const trade = applyTarget(ps, target, price, s.feeBps, s.positionPct);
+    if (ps.position !== "flat" && ps.position !== posBefore) local.day.entries++; // real entry/flip
     if (trade) { ps.trades = [...(ps.trades || []), trade].slice(-10); console.log(`${s.name}: ${trade.side} closed ${trade.pnlPct}%`); }
     local.strategies[s.id] = ps;
 
@@ -186,11 +218,33 @@ try {
   priorResearch = cur?.state?.research || null;
 } catch { /* first run / offline */ }
 
+const gateCtx = {
+  now: Date.now(), hourUtc: gateBase.hourUtc, openPositions: countOpen(),
+  combinedDrawdownPct: gateBase.combinedDrawdownPct, dayLossPct: gateBase.dayLossPct,
+  tradesToday: local.day.entries,
+};
+const riskgate = {
+  armed: true,
+  rules,
+  checkedAt: Date.now(),
+  activeLimits: {
+    hourUtc: gateBase.hourUtc,
+    openPositions: gateCtx.openPositions,
+    combinedDrawdownPct: +gateBase.combinedDrawdownPct.toFixed(1),
+    dayLossPct: +gateBase.dayLossPct.toFixed(1),
+    tradesToday: local.day.entries,
+  },
+  verdicts: evaluateEntry({ rules, ctx: gateCtx }).verdicts,
+  blocked: gateBlocked.slice(0, 10),
+  blockedCount: gateBlocked.length,
+};
+
 const state = {
-  agent: "lab-agent v0.2",
+  agent: "lab-agent v0.3",
   mode: published.length ? "paper" : "idle",
   lastRunAt: Date.now(),
   research: priorResearch, // preserve the research loop's stats
+  riskgate,
   strategies: summaries,
   combined: summaries.some((x) => !x.error)
     ? {
