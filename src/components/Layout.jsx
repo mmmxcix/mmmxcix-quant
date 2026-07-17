@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { NavLink, Link, useLocation } from "react-router-dom";
-import { LayoutDashboard, CandlestickChart, FlaskConical, Newspaper, Compass, Wrench, Activity, Scale, Star, Briefcase, Radar, GraduationCap, Sigma, Menu, X, Target, Dices, BookOpenCheck, Boxes } from "lucide-react";
+import { LayoutDashboard, CandlestickChart, FlaskConical, Newspaper, Compass, Wrench, Activity, Scale, Star, Briefcase, Radar, GraduationCap, Sigma, Menu, X, Target, Dices, BookOpenCheck, Boxes, Telescope } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // Four functional groups: follow the markets → manage what you hold →
@@ -30,6 +30,7 @@ const NAV_GROUPS = [
       { to: "/backtest", label: "Backtest", icon: FlaskConical },
       { to: "/registry", label: "Registry", icon: Boxes },
       { to: "/lab", label: "Lab", icon: Dices },
+      { to: "/anomalies", label: "Anomalies", icon: Telescope },
       { to: "/compare", label: "Compare", icon: Scale },
       { to: "/tools", label: "Tools", icon: Wrench },
     ],

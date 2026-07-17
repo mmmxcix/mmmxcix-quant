@@ -15,6 +15,7 @@ import Options from "@/pages/Options";
 import Academy from "@/pages/Academy";
 import Coach from "@/pages/Coach";
 import Lab from "@/pages/Lab";
+import Anomalies from "@/pages/Anomalies";
 import Guide from "@/pages/Guide";
 import Registry from "@/pages/Registry";
 import Impressum from "@/pages/Impressum";
@@ -39,6 +40,7 @@ export default function App() {
                 <Route path="/charts" element={<Charts />} />
                 <Route path="/backtest" element={<Backtest />} />
                 <Route path="/lab" element={<Lab />} />
+                <Route path="/anomalies" element={<Anomalies />} />
                 <Route path="/registry" element={<Registry />} />
                 <Route path="/compare" element={<Compare />} />
                 <Route path="/monitor" element={<Monitor />} />

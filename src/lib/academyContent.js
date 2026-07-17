@@ -9,6 +9,7 @@
 import { DAY_TRADING_COURSE } from "./academyDayTrading";
 import { OPTIONS_COURSE } from "./academyOptions";
 import { PROP_FIRM_COURSE } from "./academyPropFirm";
+import { ANOMALIES_COURSE } from "./academyAnomalies";
 
 // The original four levels — the general quant learning path.
 const QUANT_LEVELS = [
@@ -379,6 +380,7 @@ export const COURSES = [
   DAY_TRADING_COURSE,
   PROP_FIRM_COURSE,
   OPTIONS_COURSE,
+  ANOMALIES_COURSE,
 ];
 
 // Back-compat: the flat level list of the first course.

@@ -145,6 +145,119 @@ export function expectancyR({ winRate, avgWinR, avgLossR }) {
   return wr * avgWinR - (1 - wr) * avgLossR;
 }
 
+/**
+ * Drawdown topology — simulate GBM-with-fat-tails portfolio paths and map how
+ * the DRAWDOWN distribution evolves over the horizon (the "topology" surface
+ * from the Anomalies page): z = path density at (day, drawdown depth).
+ *
+ * Model: daily return = μ·dt + σ·√dt·ε where ε ~ N(0,1), except with
+ * probability `fatProb` the shock is scaled by `fatScale` (a crude but
+ * effective two-regime fat-tail mixture).
+ *
+ * @param {Object} opts
+ * @param {number} [opts.muPct=12]     Annual drift in %.
+ * @param {number} [opts.sigmaPct=22]  Annual vol in %.
+ * @param {number} [opts.days=252]     Horizon in trading days.
+ * @param {number} [opts.paths=2000]
+ * @param {number} [opts.fatProb=0.05] P(fat shock) per day.
+ * @param {number} [opts.fatScale=4]   Shock multiplier on fat days.
+ * @param {number} [opts.seed=7]
+ * @param {number} [opts.gridW=64]     Surface columns (time).
+ * @param {number} [opts.gridH=40]     Surface rows (drawdown depth).
+ * @returns {{
+ *   surface: number[][],          // gridH×gridW, log-scaled density 0..1 (row 0 = 0% DD)
+ *   ddMax: number,                // depth (fraction) of the last row
+ *   medianDD: {x,y}[], p95DD: {x,y}[],  // per-day drawdown quantiles (x = day, y = %)
+ *   finals: number[],             // terminal equity multiples (start = 1)
+ *   stats: { medianMaxDDPct, p95MaxDDPct, var95Pct, pDD20Pct, medianTerminalPct },
+ * }}
+ */
+export function simulateDrawdownTopology({
+  muPct = 12, sigmaPct = 22, days = 252, paths = 2000,
+  fatProb = 0.05, fatScale = 4, seed = 7, gridW = 64, gridH = 40,
+} = {}) {
+  const dt = 1 / 252;
+  const drift = (muPct / 100) * dt;
+  const vol = (sigmaPct / 100) * Math.sqrt(dt);
+  const rand = mulberry32(seed);
+  // Box-Muller, consuming two uniforms per normal.
+  const normal = () => {
+    const u = Math.max(rand(), 1e-12);
+    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * rand());
+  };
+
+  const m = Math.max(10, Math.floor(days));
+  const p = Math.max(50, Math.floor(paths));
+  const dd = Array.from({ length: m }, () => new Float64Array(p)); // dd[day][path]
+  const finals = new Array(p);
+  const maxDDs = new Array(p);
+
+  for (let j = 0; j < p; j++) {
+    let e = 1, peak = 1, maxDD = 0;
+    for (let i = 0; i < m; i++) {
+      let shock = normal();
+      if (rand() < fatProb) shock *= fatScale;
+      e *= 1 + drift + vol * shock;
+      if (e < 0) e = 0;
+      if (e > peak) peak = e;
+      const d = peak > 0 ? (peak - e) / peak : 1;
+      dd[i][j] = d;
+      if (d > maxDD) maxDD = d;
+    }
+    finals[j] = e;
+    maxDDs[j] = maxDD;
+  }
+
+  // Per-day drawdown quantiles (as % lines over the surface).
+  const medianDD = new Array(m), p95DD = new Array(m);
+  const scratch = new Float64Array(p);
+  const q = (qq) => {
+    const pos = (p - 1) * qq;
+    const lo = Math.floor(pos), hi = Math.ceil(pos);
+    return lo === hi ? scratch[lo] : scratch[lo] + (scratch[hi] - scratch[lo]) * (pos - lo);
+  };
+  for (let i = 0; i < m; i++) {
+    scratch.set(dd[i]);
+    scratch.sort();
+    medianDD[i] = { x: i + 1, y: q(0.5) * 100 };
+    p95DD[i] = { x: i + 1, y: q(0.95) * 100 };
+  }
+
+  // Density surface: bucket (day → column, drawdown depth → row), log-scale
+  // the counts so the long tail stays visible, normalize to 0..1.
+  const ddMax = Math.max(0.05, quantile(maxDDs, 0.99));
+  const surface = Array.from({ length: gridH }, () => new Array(gridW).fill(0));
+  for (let i = 0; i < m; i++) {
+    const col = Math.min(gridW - 1, Math.floor((i / m) * gridW));
+    for (let j = 0; j < p; j++) {
+      let row = Math.floor((dd[i][j] / ddMax) * gridH);
+      if (row >= gridH) row = gridH - 1;
+      surface[row][col] += 1;
+    }
+  }
+  let zMax = 0;
+  for (const row of surface) for (const v of row) { if (v > zMax) zMax = v; }
+  const logMax = Math.log1p(zMax);
+  for (const row of surface) {
+    for (let c = 0; c < gridW; c++) row[c] = logMax > 0 ? Math.log1p(row[c]) / logMax : 0;
+  }
+
+  return {
+    surface,
+    ddMax,
+    medianDD,
+    p95DD,
+    finals,
+    stats: {
+      medianMaxDDPct: quantile(maxDDs, 0.5) * 100,
+      p95MaxDDPct: quantile(maxDDs, 0.95) * 100,
+      var95Pct: (quantile(finals, 0.05) - 1) * 100,
+      pDD20Pct: (maxDDs.filter((d) => d >= 0.2).length / p) * 100,
+      medianTerminalPct: (quantile(finals, 0.5) - 1) * 100,
+    },
+  };
+}
+
 /** Histogram bins for the drawdown distribution: [{ x0, x1, count }]. */
 export function histogram(values, binCount = 24) {
   if (!values.length) return [];

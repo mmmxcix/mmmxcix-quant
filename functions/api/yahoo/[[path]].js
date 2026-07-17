@@ -1,9 +1,11 @@
 // Thin server-side proxy for Yahoo Finance (browsers can't call it directly
 // because of CORS). Mirrors the vite dev proxy in vite.config.js.
 //
-// Allowed endpoints: chart (v8), search (v1), and option chains (v7). The v7
-// options endpoint requires Yahoo's "crumb" + cookie anti-bot handshake, which
-// this proxy performs (and caches) transparently; v8/v1 do not.
+// Allowed endpoints: chart (v8), search (v1), option chains (v7), quote
+// summaries (v10, for the anomaly screens: short interest & key stats), and
+// the fundamentals timeseries (ws/, for balance-sheet items like accruals).
+// v7/v10 require Yahoo's "crumb" + cookie anti-bot handshake, which this
+// proxy performs (and caches) transparently; v8/v1/ws do not.
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
@@ -48,7 +50,9 @@ export async function onRequest({ request, params }) {
   const isChart = path.startsWith("v8/finance/");
   const isSearch = path.startsWith("v1/finance/");
   const isOptions = path.startsWith("v7/finance/options/");
-  if (!isChart && !isSearch && !isOptions) {
+  const isSummary = path.startsWith("v10/finance/quoteSummary/");
+  const isTimeseries = path.startsWith("ws/fundamentals-timeseries/");
+  if (!isChart && !isSearch && !isOptions && !isSummary && !isTimeseries) {
     return new Response(JSON.stringify({ error: "unsupported path" }), {
       status: 400,
       headers: { "content-type": "application/json" },
@@ -58,7 +62,7 @@ export async function onRequest({ request, params }) {
   const headers = { "user-agent": UA };
   let search = url.search;
 
-  if (isOptions) {
+  if (isOptions || isSummary || isTimeseries) {
     try {
       const { cookie, crumb } = await getSession();
       if (cookie) headers.cookie = cookie;
@@ -71,17 +75,20 @@ export async function onRequest({ request, params }) {
     }
   }
 
+  // Fundamentals and key stats change at most daily — cache them much longer
+  // than quotes so a 40-symbol anomaly scan stays cheap at the edge.
+  const ttl = isOptions ? 60 : isSummary || isTimeseries ? 3600 : 300;
   const target = `https://query1.finance.yahoo.com/${path}${search}`;
   const upstream = await fetch(target, {
     headers,
-    cf: { cacheTtl: isOptions ? 60 : 300, cacheEverything: true },
+    cf: { cacheTtl: ttl, cacheEverything: true },
   });
   return new Response(upstream.body, {
     status: upstream.status,
     headers: {
       "content-type": "application/json",
       "access-control-allow-origin": "*",
-      "cache-control": `public, max-age=${isOptions ? 60 : 300}`,
+      "cache-control": `public, max-age=${ttl}`,
     },
   });
 }

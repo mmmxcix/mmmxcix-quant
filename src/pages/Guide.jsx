@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import {
   BookOpenCheck, ChevronDown, ChevronRight, LayoutDashboard, Activity, Radar,
   CandlestickChart, Sigma, Star, Briefcase, FlaskConical, Dices, Scale, Wrench,
-  GraduationCap, Newspaper, Compass, Lightbulb, Route, Sparkles,
+  GraduationCap, Newspaper, Compass, Lightbulb, Route, Sparkles, Telescope,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -144,6 +144,23 @@ const SECTIONS = [
     ],
   },
   {
+    id: "anomalies", icon: Telescope, title: "Anomalies", to: "/anomalies",
+    what: "Six classic quant results recomputed live instead of retold: three published return anomalies over a 40-stock universe, plus three pieces of risk geometry.",
+    features: [
+      "Betting Against Beta: the full factor construction on live prices — rolling betas, monthly rebalance, levered low-β leg vs shorted high-β leg, equity curves vs SPY, and the 'flat security market line' scatter.",
+      "Accruals (Sloan 1996): the whole universe ranked by (net income − operating cash flow) / assets from the latest annual filings — cash-backed vs paper earnings.",
+      "Short Interest: short % of float, days-to-cover and month-over-month change per stock, with 'crowded' flags.",
+      "Correlation Regimes: rolling average pairwise correlation across a 6-asset basket (stocks, bonds, gold, BTC) with stress shading, plus calm-vs-stress correlation matrices side by side.",
+      "Drawdown Topology: thousands of fat-tailed Monte-Carlo paths rendered as a rotatable 3D drawdown surface, with quantile lines, terminal distribution and VaR.",
+      "Greeks Manifold: the P&L, gamma and theta surfaces of calls, puts and straddles over spot × time — the option as the surface it actually is.",
+      "Every module carries a 'reality check' box: what post-publication research says is left of the edge.",
+    ],
+    tips: [
+      "Read the matching Academy course (Anomalies & Factor Investing) alongside — each tab has a lesson explaining the why.",
+      "The point is calibration, not signals: these modules show how documented edges behave TODAY, costs excluded, on a small universe. Treat them as lenses, not trade lists.",
+    ],
+  },
+  {
     id: "compare", icon: Scale, title: "Compare", to: "/compare",
     what: "Compare assets against each other: normalized performance, DCA simulation, and dividend-reinvestment growth.",
     features: [
@@ -165,7 +182,7 @@ const SECTIONS = [
   },
   {
     id: "academy", icon: GraduationCap, title: "Academy", to: "/academy",
-    what: "Structured courses from zero to self-sufficient: Quant Foundations, Day Trading, Futures & Prop-Firm Trading, Options & Derivatives.",
+    what: "Structured courses from zero to self-sufficient: Quant Foundations, Day Trading, Futures & Prop-Firm Trading, Options & Derivatives, and Anomalies & Factor Investing.",
     features: [
       "Levels and lessons with progress tracking, diagrams, formulas, and 'in the tool' pointers.",
       "The Futures & Prop-Firm track is the roadmap course for funded trading (rules, validation, execution path).",
@@ -195,6 +212,7 @@ const WORKFLOWS = [
     title: "The strategy pipeline (the core loop)",
     steps: [
       { text: "Learn the concept", to: "/academy", label: "Academy" },
+      { text: "Study documented edges on live data", to: "/anomalies", label: "Anomalies" },
       { text: "Sanity-check the edge as numbers", to: "/lab", label: "Lab" },
       { text: "Build & backtest with fees", to: "/backtest", label: "Backtest" },
       { text: "Stress it: Monte Carlo + out-of-sample", to: "/backtest", label: "MC panel" },
@@ -295,6 +313,7 @@ export default function Guide() {
         <p className="text-sm text-dim leading-relaxed">
           <span className="text-text">Learn</span> in the Academy →{" "}
           <span className="text-text">explore</span> markets in Monitor, Screener and Charts →{" "}
+          <span className="text-text">study documented edges</span> live on the Anomalies page →{" "}
           <span className="text-text">build and test</span> strategies in the Backtest lab →{" "}
           <span className="text-text">stress-test</span> them with Monte Carlo in the Lab →{" "}
           <span className="text-text">prepare execution</span> with the Tools calculators, alerts, and the simulated

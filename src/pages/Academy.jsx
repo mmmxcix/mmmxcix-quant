@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams, Link } from "react-router-dom";
-import { GraduationCap, Clock, ChevronRight, ArrowLeft, Lightbulb, Check, Circle, Compass, BookOpen, Zap, Sigma, Trophy } from "lucide-react";
+import { GraduationCap, Clock, ChevronRight, ArrowLeft, Lightbulb, Check, Circle, Compass, BookOpen, Zap, Sigma, Trophy, Telescope } from "lucide-react";
 import { COURSES } from "@/lib/academyContent";
 import { getCompleted, setDone, subscribeProgress } from "@/lib/academyProgress";
 import AcademyDiagram from "@/components/AcademyDiagram";
 import { cn } from "@/lib/utils";
 
-const COURSE_ICON = { "quant-foundations": BookOpen, "day-trading": Zap, "futures-prop": Trophy, "options-derivatives": Sigma };
+const COURSE_ICON = { "quant-foundations": BookOpen, "day-trading": Zap, "futures-prop": Trophy, "options-derivatives": Sigma, "anomalies-factors": Telescope };
 
 // Renders one content block. Only fixed block types — plain text, no HTML.
 function Block({ block }) {
@@ -176,6 +176,7 @@ export default function Academy() {
             <Link to="/backtest" className="chip chip-idle">Backtest</Link>
             <Link to="/screener" className="chip chip-idle">Screener</Link>
             <Link to="/options" className="chip chip-idle">Options</Link>
+            <Link to="/anomalies" className="chip chip-idle">Anomalies</Link>
             <Link to="/resources" className="chip chip-idle">Resources</Link>
           </div>
         </div>

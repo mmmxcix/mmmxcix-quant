@@ -6,7 +6,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 // emphasized zero line, an optional vertical marker (e.g. spot), shaded
 // profit/loss regions for a single payoff series, and a hover readout.
 //
-// series: [{ label, color, points: [{x, y}] }]
+// series: [{ label, color, points: [{x, y}], scatter?: true }]
+// bands: vertical background regions [{ x0, x1, color?, opacity? }] — used for
+// e.g. stress-regime shading behind the lines.
 export default function XYLineChart({
   series,
   height = 300,
@@ -16,6 +18,7 @@ export default function XYLineChart({
   fmtY = (v) => String(Math.round(v)),
   shadeZero = false, // green above 0 / red below 0 for the first series
   zeroLine = true,
+  bands = [],
 }) {
   const wrapRef = useRef(null);
   const [w, setW] = useState(640);
@@ -102,6 +105,21 @@ export default function XYLineChart({
           <text key={i} x={sx(t)} y={height - 8} textAnchor="middle" fontSize="10" fill="#64748b" fontFamily="monospace">{fmtX(t)}</text>
         ))}
 
+        {/* vertical background bands (e.g. stress regimes) */}
+        {(bands || []).map((b, i) =>
+          b.x1 >= xMin && b.x0 <= xMax ? (
+            <rect
+              key={`band${i}`}
+              x={sx(Math.max(b.x0, xMin))}
+              y={pad.t}
+              width={Math.max(1, sx(Math.min(b.x1, xMax)) - sx(Math.max(b.x0, xMin)))}
+              height={ih}
+              fill={b.color || "#ef4444"}
+              opacity={b.opacity ?? 0.08}
+            />
+          ) : null
+        )}
+
         {/* shaded P/L regions for the first series */}
         {shadeZero && first.length > 1 && (
           <>
@@ -124,9 +142,18 @@ export default function XYLineChart({
         )}
 
         {/* series */}
-        {(series || []).map((s, i) => (
-          <path key={i} d={path(s.points)} fill="none" stroke={s.color} strokeWidth="2" />
-        ))}
+        {(series || []).map((s, i) =>
+          s.scatter ? (
+            <g key={i}>
+              {s.points.map((p, j) => (
+                <circle key={j} cx={sx(p.x)} cy={sy(p.y)} r="3.5"
+                  fill={s.color} fillOpacity="0.85" stroke="#0a0e14" strokeWidth="1" />
+              ))}
+            </g>
+          ) : (
+            <path key={i} d={path(s.points)} fill="none" stroke={s.color} strokeWidth="2" />
+          )
+        )}
 
         {/* hover */}
         {hover && (
