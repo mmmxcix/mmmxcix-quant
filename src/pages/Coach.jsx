@@ -92,6 +92,9 @@ function LabStatus() {
                 <span className="text-dim">strategies tried <span className="text-text">{data.research.attempts}</span></span>
                 <span className="text-dim">graveyard <span className="text-down">{data.research.graveyard}</span></span>
                 <span className="text-dim">candidates <span className="text-up">{data.research.candidates}</span></span>
+                {data.research.autoPromoted > 0 && (
+                  <span className="text-dim">auto-promoted <span className="text-accent">{data.research.autoPromoted}</span></span>
+                )}
               </div>
               {data.research.lastGraveyard?.length > 0 && (
                 <p className="text-[10px] text-dim/80 mt-1.5 leading-relaxed">

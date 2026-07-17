@@ -199,11 +199,27 @@ export async function onRequest({ request, env }) {
   // Cheap token check (no AI call) — used by the private Coach page gate.
   if (body?.validate === true) return json({ ok: true });
 
-  const prompt = String(body?.prompt || "").trim();
-  if (!prompt) return json({ error: "empty_prompt" }, 400);
-  if (prompt.length > MAX_PROMPT_CHARS) return json({ error: "prompt_too_long" }, 400);
-
-  const userMsg = `Create a backtest strategy: ${prompt}`;
+  // Two modes share the provider chain below:
+  //  • repair: fix code that failed to compile (bounded by code length, not the
+  //    user-prompt cap, since generated code can be longer than a prompt).
+  //  • generate: turn a natural-language request into a fresh strategy.
+  const repair = body?.repair;
+  let userMsg;
+  if (repair && typeof repair.code === "string") {
+    const brokenCode = repair.code.slice(0, 8000);
+    const err = String(repair.error || "unknown error").slice(0, 300);
+    userMsg =
+      `The following strategy code failed to compile with this error:\n"${err}"\n\n` +
+      "Return a corrected version that satisfies ALL the rules above — in particular it MUST define " +
+      "`function strategy(ctx)` (or `const strategy = (ctx) => { … }`). Change as little as possible and " +
+      "keep the original trading logic; return ONLY the corrected JavaScript, no prose.\n\n" +
+      "```javascript\n" + brokenCode + "\n```";
+  } else {
+    const prompt = String(body?.prompt || "").trim();
+    if (!prompt) return json({ error: "empty_prompt" }, 400);
+    if (prompt.length > MAX_PROMPT_CHARS) return json({ error: "prompt_too_long" }, 400);
+    userMsg = `Create a backtest strategy: ${prompt}`;
+  }
 
   // Fixed priority chain — best code model first, each falling through to the
   // next on ANY failure (rate limit, error, empty). Only keys that exist are

@@ -13,9 +13,11 @@
 // the strategy's own fee. Positions persist across runs in ~/.mmmxcix-lab.json.
 // All money is virtual. Not investment advice.
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync, openSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { runBacktest, compileStrategy } from "../src/lib/backtest.js";
 import { BUILT_IN_STRATEGIES } from "../src/lib/strategies.js";
 
@@ -24,6 +26,9 @@ const TOKEN = process.env.LAB_TOKEN;
 const STATE_FILE = join(homedir(), ".mmmxcix-lab.json");
 const START_EQUITY = 10000;
 const WARMUP_BARS = 500; // enough for EMA200 + stateful strategies
+// How often this 15-min paper run also kicks off ONE research cycle, so the
+// research agent needs no separate n8n workflow. Set LAB_AUTO_RESEARCH=0 to opt out.
+const RESEARCH_EVERY_MS = +(process.env.LAB_RESEARCH_EVERY_H || 20) * 3600 * 1000;
 const YAHOO_INTERVAL = { "1m": "1m", "5m": "5m", "15m": "15m", "30m": "30m", "1h": "60m", "1d": "1d", "1w": "1wk", "1M": "1mo" };
 const YAHOO_RANGE = { "1m": "5d", "5m": "1mo", "15m": "1mo", "30m": "3mo", "1h": "3mo", "1d": "2y", "1w": "10y", "1M": "max" };
 
@@ -206,3 +211,28 @@ const push = await fetch(`${SITE}/api/lab`, {
 const out = await push.json().catch(() => ({}));
 if (!push.ok || !out.ok) { console.error("push failed:", push.status, out); process.exit(1); }
 console.log(`paper run complete: ${summaries.length} strategies, combined ${combined ? combined.toFixed(0) : "-"} → pushed ${out.bytes} bytes`);
+
+// ── auto-schedule research (no separate n8n workflow) ───────────────────────
+// Every ~20h this paper run also fires ONE research cycle, spawned DETACHED so
+// it never slows the 15-min paper push. Its logs go to ~/.mmmxcix-research.log;
+// results land on the Coach page. Disable with LAB_AUTO_RESEARCH=0.
+if (process.env.LAB_AUTO_RESEARCH !== "0") {
+  try {
+    const last = local.lastResearchAt || 0;
+    if (Date.now() - last >= RESEARCH_EVERY_MS) {
+      local.lastResearchAt = Date.now();
+      saveLocal(local); // mark BEFORE spawn so a crashing research can't hammer every 15 min
+      const researchPath = fileURLToPath(new URL("./research-agent.mjs", import.meta.url));
+      const logFd = openSync(join(homedir(), ".mmmxcix-research.log"), "a");
+      const child = spawn(process.execPath, [researchPath], {
+        detached: true,
+        stdio: ["ignore", logFd, logFd],
+        env: process.env, // carries LAB_TOKEN
+      });
+      child.unref();
+      console.log(`research due (>${RESEARCH_EVERY_MS / 3.6e6}h) → spawned detached (log: ~/.mmmxcix-research.log)`);
+    }
+  } catch (e) {
+    console.error("research auto-schedule skipped:", e.message);
+  }
+}

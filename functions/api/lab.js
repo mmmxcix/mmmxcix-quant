@@ -15,6 +15,14 @@
 // state is the owner's private data.
 
 const MAX_STATE_BYTES = 64 * 1024;
+// The "Deckel": at most this many research-auto-promoted strategies are ever
+// paper-traded at once. Enforced server-side so it holds no matter which
+// producer (agent or Registry) last wrote. Newest auto-promotions win.
+const AUTO_PROMOTE_CAP = 5;
+
+async function readStrategyItems(env) {
+  try { return JSON.parse((await env.SUBSCRIBERS.get("lab:strategies")) || "{}").items || []; } catch { return []; }
+}
 
 function json(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -78,11 +86,41 @@ export async function onRequest({ request, env }) {
     return json({ error: "unauthorized" }, 401);
   }
 
+  // Registry's "Publish to agent": the user's manual paper list. Preserve any
+  // research-auto-promoted strategies already stored, so a manual publish never
+  // wipes the autonomous ones (and vice-versa).
   if (Array.isArray(body?.strategies)) {
-    const payload = JSON.stringify({ items: body.strategies, publishedAt: Date.now() });
+    const existingAuto = (await readStrategyItems(env)).filter((s) => s && s.auto);
+    const manual = body.strategies.map((s) => ({ ...s, auto: false }));
+    const byId = new Map();
+    for (const s of [...manual, ...existingAuto]) if (s && s.id && !byId.has(s.id)) byId.set(s.id, s);
+    const items = [...byId.values()];
+    const payload = JSON.stringify({ items, publishedAt: Date.now() });
     if (payload.length > MAX_STATE_BYTES) return json({ error: "strategies_too_large", max: MAX_STATE_BYTES }, 413);
     await env.SUBSCRIBERS.put("lab:strategies", payload);
-    return json({ ok: true, published: body.strategies.length, bytes: payload.length });
+    return json({ ok: true, published: manual.length, autoKept: existingAuto.length, bytes: payload.length });
+  }
+
+  // Research auto-promotion: the agent pushes strategies that cleared the DSR
+  // threshold. They MERGE with the manual list, are capped server-side, and are
+  // tagged auto:true so the paper-trader and the preservation logic above can
+  // tell them apart. Newest auto-promotions win when over the cap.
+  if (Array.isArray(body?.promote)) {
+    const existing = await readStrategyItems(env);
+    const manual = existing.filter((s) => s && !s.auto);
+    const incoming = body.promote
+      .filter((s) => s && s.id && typeof s.code === "string")
+      .map((s) => ({ ...s, auto: true }));
+    const byId = new Map();
+    for (const s of [...incoming, ...existing.filter((s) => s && s.auto)]) {
+      if (s.id && !byId.has(s.id)) byId.set(s.id, s);
+    }
+    const autoItems = [...byId.values()].slice(0, AUTO_PROMOTE_CAP);
+    const items = [...manual, ...autoItems];
+    const payload = JSON.stringify({ items, publishedAt: Date.now() });
+    if (payload.length > MAX_STATE_BYTES) return json({ error: "strategies_too_large", max: MAX_STATE_BYTES }, 413);
+    await env.SUBSCRIBERS.put("lab:strategies", payload);
+    return json({ ok: true, promoted: incoming.length, autoActive: autoItems.length, cap: AUTO_PROMOTE_CAP, bytes: payload.length });
   }
 
   // Research candidates ACCUMULATE: merge by id with what's already stored

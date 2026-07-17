@@ -25,6 +25,10 @@ const TOKEN = process.env.LAB_TOKEN;
 const RESEARCH_FILE = join(homedir(), ".mmmxcix-research.json");
 const MAX_PAPERS_PER_RUN = +(process.env.LAB_RESEARCH_PAPERS || 2); // gentle on the free AI tier
 const FEE_BPS = 10;
+// Auto-promotion: a survivor whose Deflated Sharpe clears this (stricter than
+// the 95% gauntlet gate) is pushed straight into the paper portfolio, up to a
+// server-enforced cap. The math earns the promotion; no human click needed.
+const AUTO_PROMOTE_DSR = +(process.env.LAB_AUTO_PROMOTE_DSR || 97);
 
 if (!TOKEN) { console.error("LAB_TOKEN is not set."); process.exit(1); }
 
@@ -80,6 +84,22 @@ async function generateStrategy(paper) {
     }
     throw new Error(out.error || `generate HTTP ${res.status}`);
   }
+}
+
+// Self-repair: when generated code won't even compile, send it back once with
+// the error and ask the model to fix the signature/format. One extra call, only
+// on failure — cheap insurance against a model that ignored the naming contract.
+async function repairStrategy(code, error) {
+  const res = await fetch(`${SITE}/api/generate`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ token: TOKEN, repair: { code: String(code).slice(0, 8000), error: String(error).slice(0, 300) } }),
+  });
+  const out = await res.json().catch(() => ({}));
+  if (res.ok && out.code) return out.code;
+  const e = new Error(out.error || `repair HTTP ${res.status}`);
+  if (res.status === 429 || out.error === "rate_limited") e.skip = true;
+  throw e;
 }
 
 // ── 3. data + validation gauntlet ───────────────────────────────────────────
@@ -169,12 +189,28 @@ const datasets = fresh.length
   : [];
 
 const newCandidates = [];
+const toPromote = [];
 let firstPaper = true;
 for (const paper of fresh) {
   if (!firstPaper) await sleep(20000); // stay under the free tier's per-minute cap
   firstPaper = false;
   try {
-    const code = await generateStrategy(paper);
+    let code = await generateStrategy(paper);
+    // Self-repair probe: if it won't compile, ask the model to fix it once.
+    try {
+      compileStrategy(code);
+    } catch (ce) {
+      console.log(`  ⚠ won't compile (${ce.message.slice(0, 45)}) — repair attempt…`);
+      try {
+        const fixed = await repairStrategy(code, ce.message);
+        compileStrategy(fixed); // throws if still broken → keep original, gauntlet buries it
+        code = fixed;
+        console.log("  ✓ repaired");
+      } catch (re) {
+        if (re.skip) throw re; // rate-limited repair → treat as infra skip, paper stays fresh
+        console.log(`  ✗ repair failed (${String(re.message || "").slice(0, 40)})`);
+      }
+    }
     st.seen = [...st.seen, paper.id].slice(-500); // only consumed once generation succeeded
     st.papersRead++;
     st.attempts++; // global data-mining counter — raises the DSR bar forever
@@ -193,6 +229,15 @@ for (const paper of fresh) {
       st.candidates = [cand, ...st.candidates].slice(0, 20);
       newCandidates.push(cand);
       console.log(`✓ CANDIDATE: ${cand.name} (DSR ${cand.dsr}%)`);
+      // Auto-promote the strongest survivors straight into the paper portfolio.
+      if (cand.dsr >= AUTO_PROMOTE_DSR) {
+        toPromote.push({
+          id: cand.id, name: `🤖 ${cand.name}`, mode: "code", code: cand.code,
+          market: "crypto", symbol: "BTCUSDT", interval: "4h",
+          feeBps: FEE_BPS, positionPct: 100, dsr: cand.dsr, paper: cand.paper,
+        });
+        console.log(`  🤖 auto-promote queued (DSR ${cand.dsr}% ≥ ${AUTO_PROMOTE_DSR}%)`);
+      }
     } else {
       st.graveyard = [{ title: paper.title.slice(0, 70), reason: verdict.reason, at: Date.now() }, ...st.graveyard].slice(0, 200);
       console.log(`✗ graveyard: ${paper.title.slice(0, 50)} — ${verdict.reason}`);
@@ -207,6 +252,7 @@ for (const paper of fresh) {
     }
   }
 }
+st.autoPromoted = (st.autoPromoted || 0) + toPromote.length; // lifetime count
 save(st);
 
 // push candidates (accumulating channel) + research summary (merged into state by the paper agent’s next run too)
@@ -218,6 +264,16 @@ if (newCandidates.length) {
   console.log(`candidates pushed: ${(await r.json()).stored ?? "?"} stored on site`);
 }
 
+// auto-promotions: merge into the paper portfolio (server caps + tags them)
+if (toPromote.length) {
+  const r = await fetch(`${SITE}/api/lab`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ token: TOKEN, promote: toPromote }),
+  });
+  const o = await r.json().catch(() => ({}));
+  console.log(`🤖 auto-promoted ${toPromote.length} → paper portfolio (active autos: ${o.autoActive ?? "?"}/${o.cap ?? "?"})`);
+}
+
 // merge research stats into lab:state (read-modify-write so paper state stays)
 const cur = await (await fetch(`${SITE}/api/lab`, { headers: { "x-lab-token": TOKEN } })).json().catch(() => ({}));
 const state = { ...(cur?.state || {}), research: {
@@ -225,6 +281,7 @@ const state = { ...(cur?.state || {}), research: {
   attempts: st.attempts,
   graveyard: st.graveyard.length,
   candidates: st.candidates.length,
+  autoPromoted: st.autoPromoted || 0,
   lastRun: Date.now(),
   latest: fresh.map((p) => ({ title: p.title.slice(0, 80), link: p.link })),
   lastGraveyard: st.graveyard.slice(0, 3).map((g) => ({ title: g.title, reason: g.reason })),

@@ -113,24 +113,33 @@ Monitor darf ausgehen, der Rechner nicht. Wenn der PC nachts aus ist, ist das ü
 2. Der Agent pusht **nur Anzeigedaten** (Zahlen, Status). Keine API-Keys, keine Secrets in den State legen.
 3. n8n bleibt auf localhost (nicht ins Internet freigeben) — es muss von außen nicht erreichbar sein, denn dein PC ruft immer nur raus.
 
-## Schritt 7 — Der autonome Research-Agent (2. Workflow, täglich)
+## Schritt 7 — Der autonome Research-Agent (läuft von selbst, KEIN 2. Workflow nötig)
 
-Neben dem Paper-Trader (`lab-agent.mjs`, alle 15 min) gibt es jetzt den **Research-Agent** (`research-agent.mjs`): Er liest die neuesten Quant-Papers von arXiv, lässt deine eigene KI-API daraus Strategie-Code extrahieren, jagt jeden Kandidaten durch die volle Validierungs-Pipeline (k-Fold, Noise-Test, Deflated Sharpe mit globalem Versuchszähler) und speichert die Überlebenden auf der Website. Das ist genau der „KI researched von selbst"-Teil aus dem Video.
+Neben dem Paper-Trader (`lab-agent.mjs`, alle 15 min) gibt es den **Research-Agent** (`research-agent.mjs`): Er liest die neuesten Quant-Papers von arXiv, lässt deine eigene KI-API daraus Strategie-Code extrahieren, jagt jeden Kandidaten durch die volle Validierungs-Pipeline (k-Fold, Noise-Test, Deflated Sharpe mit globalem Versuchszähler) und speichert die Überlebenden auf der Website. Das ist genau der „KI researched von selbst"-Teil aus dem Video.
 
-**Von Hand testen:**
+**Du musst dafür nichts mehr in n8n anlegen.** Der Paper-Trader startet den Research-Agent automatisch mit: Alle ~20 Stunden fährt einer der 15-Minuten-Läufe zusätzlich **einen** Research-Zyklus hoch (detached gestartet, damit der Paper-Push nie langsamer wird). Der dein bestehender **Lab Agent**-Workflow reicht also für alles.
+
+- **Ausschalten:** Umgebungsvariable `LAB_AUTO_RESEARCH=0` setzen.
+- **Takt ändern:** `LAB_RESEARCH_EVERY_H=12` (z. B. alle 12 h statt 20).
+- **Logs des Hintergrund-Laufs:** `C:\Users\gilap\.mmmxcix-research.log`.
+
+**Von Hand testen (optional, zum Debuggen):**
 ```powershell
 cd C:\Users\gilap\Documents\GitHub\mmmxcix-quant
 node scripts\research-agent.mjs
 ```
-Erwartete Ausgabe: `arXiv: 25 papers, N fresh…` und pro Paper entweder `✓ CANDIDATE`, `✗ graveyard: … (Grund)` oder `~ skipped (rate-limited)`.
+Erwartete Ausgabe: `arXiv: 25 papers, N fresh…` und pro Paper entweder `✓ CANDIDATE`, `✗ graveyard: … (Grund)`, `~ skipped` — und bei sehr guten Treffern `🤖 auto-promoted … → paper portfolio`.
 
-**In n8n als zweiten Workflow anlegen** (nicht alle 15 min — einmal täglich reicht und schont das KI-Kontingent):
-1. **Create Workflow** → Name `Research Agent`.
-2. **Schedule Trigger** → *Trigger Interval*: **Days**, *Days Between Triggers*: **1** (z. B. Trigger at Hour 3 nachts).
-3. **Execute Command** → `node C:\Users\gilap\Documents\GitHub\mmmxcix-quant\scripts\research-agent.mjs`.
-4. **Save** → **Active**.
+### Voll-Autonomie: Auto-Promotion mit Deckel
+Ein Kandidat, dessen **Deflated Sharpe ≥ 97 %** liegt (strenger als die 95 %-Hürde zum Überleben), wandert **automatisch** ins Paper-Portfolio — ohne dass du in der Registry klicken musst. Damit findet, testet UND handelt das System selbstständig, genau wie im Video.
+- **Deckel:** Maximal **5** solcher Auto-Strategien laufen gleichzeitig (serverseitig erzwungen; die neuesten verdrängen die ältesten). Deine manuell veröffentlichten Strategien bleiben davon unberührt — beide koexistieren.
+- **Erkennbar:** Auto-Strategien tragen ein 🤖 im Namen (im Portfolio HQ auf der Coach-Seite).
+- **Schwelle ändern:** `LAB_AUTO_PROMOTE_DSR=98` (strenger) bzw. niedriger, wenn du mehr durchlassen willst.
 
-**Wo die Ergebnisse landen:** Coach-Seite → Karte „Lab agent" → Block **Research loop** (Zähler: papers read / strategies tried / graveyard / candidates). Die Überlebenden erscheinen in der **Registry** unter „Agent research candidates" mit Ein-Klick-Import.
+### Selbst-Reparatur des generierten Codes
+Wenn das KI-Modell mal Code liefert, der nicht kompiliert (falscher Funktionsname o. ä.), schickt der Agent den Fehler **einmal** ans Modell zurück und bittet um eine Korrektur, statt sofort zu beerdigen. Das hebt die Trefferquote spürbar und kostet nur bei Fehlschlag einen Extra-Call.
+
+**Wo die Ergebnisse landen:** Coach-Seite → Karte „Lab agent" → Block **Research loop** (Zähler: papers read / strategies tried / graveyard / candidates / **auto-promoted**). Die Überlebenden erscheinen in der **Registry** unter „Agent research candidates" mit Ein-Klick-Import; die Auto-Promotions zusätzlich direkt im **Portfolio HQ**.
 
 ### Wichtig: die KI-Anbieter-Kette (alle kostenlos)
 Der Research-Agent braucht deine KI-API (`/api/generate`). Der Endpoint probiert die Anbieter in **fester Reihenfolge** durch und fällt bei **jedem** Fehler (Rate-Limit, Ausfall, leere Antwort) automatisch zum nächsten:
