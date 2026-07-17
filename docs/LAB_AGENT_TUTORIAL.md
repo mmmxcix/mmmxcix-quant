@@ -117,11 +117,16 @@ Monitor darf ausgehen, der Rechner nicht. Wenn der PC nachts aus ist, ist das ü
 
 Neben dem Paper-Trader (`lab-agent.mjs`, alle 15 min) gibt es den **Research-Agent** (`research-agent.mjs`): Er liest die neuesten Quant-Papers von arXiv, lässt deine eigene KI-API daraus Strategie-Code extrahieren, jagt jeden Kandidaten durch die volle Validierungs-Pipeline (k-Fold, Noise-Test, Deflated Sharpe mit globalem Versuchszähler) und speichert die Überlebenden auf der Website. Das ist genau der „KI researched von selbst"-Teil aus dem Video.
 
-**Du musst dafür nichts mehr in n8n anlegen.** Der Paper-Trader startet den Research-Agent automatisch mit: Alle ~20 Stunden fährt einer der 15-Minuten-Läufe zusätzlich **einen** Research-Zyklus hoch (detached gestartet, damit der Paper-Push nie langsamer wird). Der dein bestehender **Lab Agent**-Workflow reicht also für alles.
+**Zwei Wege — du brauchst nur EINEN:**
 
-- **Ausschalten:** Umgebungsvariable `LAB_AUTO_RESEARCH=0` setzen.
-- **Takt ändern:** `LAB_RESEARCH_EVERY_H=12` (z. B. alle 12 h statt 20).
-- **Logs des Hintergrund-Laufs:** `C:\Users\gilap\.mmmxcix-research.log`.
+- **A) Automatisch (kein 2. Workflow nötig):** Der Paper-Trader startet den Research-Agent von selbst mit — alle ~20 h fährt einer der 15-Min-Läufe zusätzlich **einen** Research-Zyklus hoch (detached, damit der Paper-Push schnell bleibt). Steuerung: `LAB_RESEARCH_EVERY_H=12` (Takt), Logs in `C:\Users\gilap\.mmmxcix-research.log`.
+- **B) Eigener n8n-Workflow (sichtbar, empfohlen wenn du die Läufe in n8n sehen willst):** einen täglichen `Research Agent`-Workflow anlegen (Schedule *Days → 1*, Command `node …\research-agent.mjs`) **und** die Auto-Variante mit `LAB_AUTO_RESEARCH=0` abschalten, sonst läuft Research doppelt.
+
+> ⚠️ Nie beide gleichzeitig aktiv lassen. Wenn du einen eigenen Workflow hast → `LAB_AUTO_RESEARCH=0`. Wenn nicht → Variable weglassen (bzw. `1`).
+
+**Immer bis ein Treffer kommt (optional):** `LAB_RESEARCH_UNTIL_HIT=1` lässt den Agent pro Lauf so lange Papers lesen, bis **eine** Strategie durch die Pipeline kommt — gedeckelt durch `LAB_RESEARCH_MAX` (Default 12), damit ein magerer Tag nicht ewig läuft oder das Kontingent leert. **Wichtig, ehrlich:** Jeder Versuch hebt die globale Deflated-Sharpe-Hürde (Anti-Overfitting) — mehr Lesen macht jeden einzelnen Treffer also *schwerer*, nicht leichter. Der Deckel ist die ehrliche Bremse. Nur mit einem **täglichen** Takt sinnvoll (nicht alle 15 min).
+
+> Nach dem Ändern von Umgebungsvariablen: **n8n einmal neu starten** (`pm2 restart n8n` oder Prozess schließen/öffnen), damit die Läufe die neuen Werte erben.
 
 **Von Hand testen (optional, zum Debuggen):**
 ```powershell

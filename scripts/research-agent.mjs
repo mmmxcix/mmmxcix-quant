@@ -29,6 +29,13 @@ const FEE_BPS = 10;
 // the 95% gauntlet gate) is pushed straight into the paper portfolio, up to a
 // server-enforced cap. The math earns the promotion; no human click needed.
 const AUTO_PROMOTE_DSR = +(process.env.LAB_AUTO_PROMOTE_DSR || 97);
+// "Until-hit" mode: keep reading papers until ONE clears the gauntlet, then
+// stop early. Bounded by HARD_CAP so a barren night can't run forever or drain
+// the LLM quota. NOTE: every attempt raises the global Deflated-Sharpe bar
+// (anti-overfitting), so forcing more reads makes each pass harder — the cap is
+// the honest brake. Opt in with LAB_RESEARCH_UNTIL_HIT=1.
+const UNTIL_HIT = process.env.LAB_RESEARCH_UNTIL_HIT === "1";
+const HARD_CAP = +(process.env.LAB_RESEARCH_MAX || 12);
 
 if (!TOKEN) { console.error("LAB_TOKEN is not set."); process.exit(1); }
 
@@ -43,8 +50,8 @@ function save(st) { writeFileSync(RESEARCH_FILE, JSON.stringify(st)); }
 // ── 1. harvest arXiv q-fin ──────────────────────────────────────────────────
 const KEYWORDS = /momentum|reversal|mean.?reversion|trend|volatility|seasonal|anomal|predict|alpha|factor|intraday|breakout|pairs|cross.?section|overreaction|drift/i;
 
-async function harvest() {
-  const url = "https://export.arxiv.org/api/query?search_query=cat:q-fin.TR+OR+cat:q-fin.PM+OR+cat:q-fin.ST&sortBy=submittedDate&sortOrder=descending&max_results=25";
+async function harvest(max = 25) {
+  const url = `https://export.arxiv.org/api/query?search_query=cat:q-fin.TR+OR+cat:q-fin.PM+OR+cat:q-fin.ST&sortBy=submittedDate&sortOrder=descending&max_results=${max}`;
   const xml = await (await fetch(url, { headers: { "user-agent": "mmmxcix-research/0.1" } })).text();
   const entries = [];
   const re = /<entry>([\s\S]*?)<\/entry>/g;
@@ -177,9 +184,11 @@ function gauntlet(code, datasets, globalTrials) {
 
 // ── main ────────────────────────────────────────────────────────────────────
 const st = load();
-const papers = await harvest();
-const fresh = papers.filter((p) => !st.seen.includes(p.id) && KEYWORDS.test(p.title + " " + p.abstract)).slice(0, MAX_PAPERS_PER_RUN);
-console.log(`arXiv: ${papers.length} papers, ${fresh.length} fresh+promising this run`);
+// In until-hit mode pull a deeper pool so there's enough supply to reach a hit.
+const papers = await harvest(UNTIL_HIT ? 60 : 25);
+const limit = UNTIL_HIT ? HARD_CAP : MAX_PAPERS_PER_RUN;
+const fresh = papers.filter((p) => !st.seen.includes(p.id) && KEYWORDS.test(p.title + " " + p.abstract)).slice(0, limit);
+console.log(`arXiv: ${papers.length} papers, ${fresh.length} fresh+promising this run${UNTIL_HIT ? ` (until-hit, cap ${HARD_CAP})` : ""}`);
 
 const datasets = fresh.length
   ? [
@@ -191,9 +200,11 @@ const datasets = fresh.length
 const newCandidates = [];
 const toPromote = [];
 let firstPaper = true;
+let processed = 0; // papers actually evaluated this run (may stop early on a hit)
 for (const paper of fresh) {
   if (!firstPaper) await sleep(20000); // stay under the free tier's per-minute cap
   firstPaper = false;
+  processed++;
   try {
     let code = await generateStrategy(paper);
     // Self-repair probe: if it won't compile, ask the model to fix it once.
@@ -238,6 +249,7 @@ for (const paper of fresh) {
         });
         console.log(`  🤖 auto-promote queued (DSR ${cand.dsr}% ≥ ${AUTO_PROMOTE_DSR}%)`);
       }
+      if (UNTIL_HIT) { console.log(`  ↳ hit after ${processed} paper(s) — stopping early (until-hit mode)`); break; }
     } else {
       st.graveyard = [{ title: paper.title.slice(0, 70), reason: verdict.reason, at: Date.now() }, ...st.graveyard].slice(0, 200);
       console.log(`✗ graveyard: ${paper.title.slice(0, 50)} — ${verdict.reason}`);
@@ -290,4 +302,6 @@ const push = await fetch(`${SITE}/api/lab`, {
   method: "POST", headers: { "content-type": "application/json" },
   body: JSON.stringify({ token: TOKEN, state }),
 });
-console.log(`research run done: read ${fresh.length}, attempts total ${st.attempts}, graveyard ${st.graveyard.length}, candidates ${st.candidates.length} → push ${(await push.json()).ok ? "ok" : "FAILED"}`);
+const hitThisRun = newCandidates.length > 0;
+if (UNTIL_HIT && !hitThisRun) console.log(`until-hit: no survivor in ${processed} papers (cap ${HARD_CAP} / supply exhausted) — will resume next run`);
+console.log(`research run done: read ${processed}, attempts total ${st.attempts}, graveyard ${st.graveyard.length}, candidates ${st.candidates.length} → push ${(await push.json()).ok ? "ok" : "FAILED"}`);
