@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Boxes, Trash2, ChevronRight, Skull, ShieldCheck, FlaskConical, Rocket, Grid3x3, Info } from "lucide-react";
+import { Boxes, Trash2, Skull, ShieldCheck, FlaskConical, Rocket, Grid3x3, Info, Send, Loader2, Check } from "lucide-react";
 import {
   getEntries, subscribeRegistry, setStatus, removeEntry, STATUS_META, correlationMatrix,
 } from "@/lib/registry";
@@ -117,6 +117,63 @@ function CorrMatrix({ entries }) {
   );
 }
 
+// Publish the paper-status strategies to the site's KV so the local lab agent
+// (the user's PC) can fetch and execute them. Needs the dev token.
+function PublishToAgent({ entries }) {
+  const paper = entries.filter((e) => e.status === "paper");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState(null);
+
+  const publish = async () => {
+    const token = (() => { try { return localStorage.getItem("quant_dev_token") || ""; } catch { return ""; } })();
+    if (!token) { setMsg({ err: true, text: "Dev token missing — unlock the Coach page once in this browser first." }); return; }
+    setBusy(true);
+    setMsg(null);
+    try {
+      const payload = paper.map((e) => ({
+        id: e.id, name: e.name, market: e.market, symbol: e.symbol, interval: e.interval,
+        mode: e.mode, strategyId: e.strategyId, params: e.params, code: e.code,
+        positionPct: e.positionPct ?? 100, feeBps: e.feeBps ?? 10,
+      }));
+      const res = await fetch("/api/lab", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ token, strategies: payload }),
+      });
+      const out = await res.json().catch(() => ({}));
+      if (!res.ok || !out.ok) throw new Error(out.error || `HTTP ${res.status}`);
+      setMsg({ err: false, text: `${out.published} strategies published — the agent picks them up on its next run (≤15 min).` });
+    } catch (e) {
+      setMsg({ err: true, text: `Publish failed: ${e.message}` });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-wrap items-center gap-3 rounded-xl border border-line lg-glass px-4 py-3 mb-6">
+      <Rocket className="w-4 h-4 text-blue-400" />
+      <p className="text-sm text-text">
+        Paper trading: <span className="font-mono text-blue-400">{paper.length}</span> strategies in Paper status
+      </p>
+      <button onClick={publish} disabled={busy || paper.length === 0}
+        className={cn("flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm transition-colors",
+          paper.length === 0 ? "border-line text-dim/50" : "border-blue-400/40 text-blue-400 hover:bg-blue-400/10")}>
+        {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+        Publish to agent
+      </button>
+      {msg && (
+        <span className={cn("flex items-center gap-1 text-xs", msg.err ? "text-down" : "text-up")}>
+          {!msg.err && <Check className="w-3.5 h-3.5" />} {msg.text}
+        </span>
+      )}
+      <span className="text-[11px] text-dim w-full sm:w-auto">
+        Your PC's lab agent executes published strategies with virtual money and reports equity to the Coach page.
+      </span>
+    </div>
+  );
+}
+
 export default function Registry() {
   const [entries, setEntries] = useState(getEntries());
   useEffect(() => subscribeRegistry(() => setEntries(getEntries())), []);
@@ -152,6 +209,7 @@ export default function Registry() {
         </div>
       ) : (
         <>
+          <PublishToAgent entries={entries} />
           <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-4 mb-8">
             {COLS.map((col) => {
               const Icon = col.icon;

@@ -72,15 +72,65 @@ function LabStatus() {
           (<span className="font-mono">docs/LAB_AGENT_TUTORIAL.md</span>) — once it pushes, its status appears here.
         </p>
       ) : (
-        <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs font-mono">
-          <span className="text-dim">last push <span className="text-text">{age === 0 ? "just now" : `${age}m ago`}</span></span>
-          <span className="text-dim">mode <span className="text-text">{data.mode || "–"}</span></span>
-          <span className="text-dim">strategies <span className="text-text">{data.strategies?.length ?? 0}</span></span>
-          {data.prices && Object.entries(data.prices).slice(0, 3).map(([s, p]) => (
-            <span key={s} className="text-dim">{s.replace("USDT", "")} <span className="text-text">{fmtPrice(p)}</span></span>
-          ))}
-          {data.note && <span className="text-dim italic font-sans w-full">“{data.note}”</span>}
-        </div>
+        <>
+          <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs font-mono">
+            <span className="text-dim">last push <span className="text-text">{age === 0 ? "just now" : `${age}m ago`}</span></span>
+            <span className="text-dim">mode <span className="text-text">{data.mode || "–"}</span></span>
+            <span className="text-dim">strategies <span className="text-text">{data.strategies?.length ?? 0}</span></span>
+            {data.prices && Object.entries(data.prices).slice(0, 3).map(([s, p]) => (
+              <span key={s} className="text-dim">{s.replace("USDT", "")} <span className="text-text">{fmtPrice(p)}</span></span>
+            ))}
+            {data.note && <span className="text-dim italic font-sans w-full">“{data.note}”</span>}
+          </div>
+
+          {/* Portfolio HQ — paper strategies executed by the agent */}
+          {data.mode === "paper" && data.strategies?.length > 0 && (
+            <div className="mt-3 border-t border-line pt-3">
+              {data.combined && (
+                <div className="flex flex-wrap items-center gap-x-6 gap-y-1 mb-2 text-sm font-mono">
+                  <span className="text-dim text-xs uppercase tracking-widest font-sans">Combined equity</span>
+                  <span className="text-text font-semibold">{fmtPrice(data.combined.equity)}</span>
+                  <span className={data.combined.returnPct >= 0 ? "text-up" : "text-down"}>
+                    {data.combined.returnPct >= 0 ? "+" : ""}{data.combined.returnPct}%
+                  </span>
+                  <span className="text-[10px] text-dim font-sans">virtual money · paper trading</span>
+                </div>
+              )}
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs font-mono">
+                  <thead>
+                    <tr className="text-left text-dim border-b border-line">
+                      <th className="py-1.5 pr-3 font-medium font-sans">Strategy</th>
+                      <th className="py-1.5 pr-3 font-medium font-sans">Symbol</th>
+                      <th className="py-1.5 pr-3 font-medium font-sans">Position</th>
+                      <th className="py-1.5 pr-3 font-medium font-sans text-right">Equity</th>
+                      <th className="py-1.5 pr-3 font-medium font-sans text-right">Return</th>
+                      <th className="py-1.5 font-medium font-sans text-right">Trades</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.strategies.map((s) => (
+                      <tr key={s.id} className="border-b border-line/40 last:border-0">
+                        <td className="py-1.5 pr-3 text-text">{s.name}</td>
+                        <td className="py-1.5 pr-3 text-dim">{s.symbol} · {s.interval}</td>
+                        <td className="py-1.5 pr-3">
+                          {s.error
+                            ? <span className="text-down" title={s.error}>error</span>
+                            : <span className={s.position === "long" ? "text-up" : s.position === "short" ? "text-down" : "text-dim"}>{s.position}</span>}
+                        </td>
+                        <td className="py-1.5 pr-3 text-right text-text">{s.error ? "–" : fmtPrice(s.equity)}</td>
+                        <td className={`py-1.5 pr-3 text-right ${s.returnPct >= 0 ? "text-up" : "text-down"}`}>
+                          {s.error ? "–" : `${s.returnPct >= 0 ? "+" : ""}${s.returnPct}%`}
+                        </td>
+                        <td className="py-1.5 text-right text-dim">{s.error ? "–" : s.tradeCount}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </>
       )}
     </div>
   );

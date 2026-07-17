@@ -3,6 +3,10 @@
 // its state here; the site reads it back. Cloudflare cannot reach into a home
 // network, so the PC always initiates.
 //
+// Two channels, both under the same token:
+//   lab:state       agent → site   (equity, positions, heartbeat)
+//   lab:strategies  site  → agent  (paper-status registry entries to execute)
+//
 // Storage: the existing SUBSCRIBERS KV namespace, keys prefixed "lab:" — no
 // new bindings or dashboard work. Auth: DEV_ACCESS_TOKEN (same secret as the
 // AI generator), constant-time compared. Reads are token-gated too: the lab
@@ -42,20 +46,24 @@ export async function onRequest({ request, env }) {
     return json({ error: "not_configured" }, 503);
   }
 
-  // ── GET: the site (private Lab/Coach view) reads the last pushed state ──
+  // ── GET: token-gated reads. Default = agent state; ?what=strategies =
+  // the published paper strategies (what the PC agent should execute). ─────
   if (request.method === "GET") {
     const token = request.headers.get("x-lab-token") || "";
     if (!safeEqual(token, env.DEV_ACCESS_TOKEN)) return json({ error: "unauthorized" }, 401);
-    const raw = await env.SUBSCRIBERS.get("lab:state");
-    if (!raw) return json({ ok: true, state: null });
+    const what = new URL(request.url).searchParams.get("what") === "strategies" ? "lab:strategies" : "lab:state";
+    const raw = await env.SUBSCRIBERS.get(what);
+    if (!raw) return json({ ok: true, [what === "lab:strategies" ? "strategies" : "state"]: null });
     try {
-      return json({ ok: true, state: JSON.parse(raw) });
+      const parsed = JSON.parse(raw);
+      return json({ ok: true, [what === "lab:strategies" ? "strategies" : "state"]: parsed });
     } catch {
-      return json({ ok: true, state: null });
+      return json({ ok: true, [what === "lab:strategies" ? "strategies" : "state"]: null });
     }
   }
 
-  // ── POST: the PC agent pushes { token, state } ──────────────────────────
+  // ── POST: { token, state } from the agent, or { token, strategies } from
+  // the Registry's publish button. ─────────────────────────────────────────
   if (request.method !== "POST") return json({ error: "method_not_allowed" }, 405);
 
   let body;
@@ -67,8 +75,16 @@ export async function onRequest({ request, env }) {
   if (!safeEqual(String(body?.token || ""), env.DEV_ACCESS_TOKEN)) {
     return json({ error: "unauthorized" }, 401);
   }
+
+  if (Array.isArray(body?.strategies)) {
+    const payload = JSON.stringify({ items: body.strategies, publishedAt: Date.now() });
+    if (payload.length > MAX_STATE_BYTES) return json({ error: "strategies_too_large", max: MAX_STATE_BYTES }, 413);
+    await env.SUBSCRIBERS.put("lab:strategies", payload);
+    return json({ ok: true, published: body.strategies.length, bytes: payload.length });
+  }
+
   const state = body?.state;
-  if (!state || typeof state !== "object") return json({ error: "state_required" }, 400);
+  if (!state || typeof state !== "object") return json({ error: "state_or_strategies_required" }, 400);
 
   const payload = JSON.stringify({ ...state, receivedAt: Date.now() });
   if (payload.length > MAX_STATE_BYTES) return json({ error: "state_too_large", max: MAX_STATE_BYTES }, 413);
