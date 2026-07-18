@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { ShieldCheck, ShieldAlert, RefreshCw, Ban, Radar } from "lucide-react";
+import { ShieldCheck, ShieldAlert, RefreshCw, Ban, Radar, Link2 } from "lucide-react";
 import { RULE_META, DEFAULT_RULES } from "@/lib/riskGate";
+import { PROFILES, PROFILE_IDS, DEFAULT_PROFILE } from "@/lib/profiles";
 import { cn } from "@/lib/utils";
 
 // RiskGate — the guard every paper entry passes through. Fails closed: a
@@ -20,8 +21,9 @@ function ruleValue(key, rules) {
 }
 
 export default function RiskGate() {
-  const [data, setData] = useState(undefined); // undefined=loading, null=none
+  const [raw, setRaw] = useState(undefined); // undefined=loading, null=none
   const [busy, setBusy] = useState(false);
+  const [profile, setProfile] = useState(DEFAULT_PROFILE);
   const token = (() => { try { return localStorage.getItem(TOKEN_KEY) || ""; } catch { return ""; } })();
 
   const load = async () => {
@@ -29,11 +31,15 @@ export default function RiskGate() {
     try {
       const res = await fetch("/api/lab", { headers: { "x-lab-token": token } });
       const out = await res.json();
-      setData(res.ok ? (out.state?.riskgate ?? null) : null);
-    } catch { setData(null); } finally { setBusy(false); }
+      setRaw(res.ok ? (out.state?.riskgate ?? null) : null);
+    } catch { setRaw(null); } finally { setBusy(false); }
   };
-  useEffect(() => { if (token) load(); else setData(null); /* eslint-disable-next-line */ }, []);
+  useEffect(() => { if (token) load(); else setRaw(null); /* eslint-disable-next-line */ }, []);
 
+  // Two books now. Older agent builds pushed a single flat report, so fall back
+  // to it rather than rendering an empty page against pre-profile state.
+  const data = raw?.byProfile?.[profile] || raw;
+  const hasProfiles = !!raw?.byProfile;
   const armed = !!data?.armed;
 
   return (
@@ -69,6 +75,51 @@ export default function RiskGate() {
 
       {token && data && (
         <div className="space-y-6 stagger">
+          {/* Two books, two rule sets. Prop dies at a shallow drawdown; private
+              tolerates a deep one but demands a better payoff for it. */}
+          {hasProfiles && (
+            <div className="flex flex-wrap items-center gap-2">
+              {PROFILE_IDS.map((pid) => {
+                const p = PROFILES[pid];
+                const active = pid === profile;
+                const book = raw.byProfile[pid];
+                return (
+                  <button key={pid} onClick={() => setProfile(pid)}
+                    className={cn(
+                      "rounded-lg border px-3 py-1.5 text-left transition-colors",
+                      active ? "border-accent/50 bg-accent/5" : "border-line hover:border-dim"
+                    )}>
+                    <span className={cn("text-sm font-semibold", active ? "text-text" : "text-dim")}>{p.label}</span>
+                    <span className="ml-2 text-[11px] font-mono text-dim">
+                      {book?.activeLimits?.openPositions ?? 0}/{book?.rules?.maxSimultaneousPositions ?? "—"} open
+                      {book?.blockedCount > 0 && <span className="text-down"> · {book.blockedCount} blocked</span>}
+                    </span>
+                  </button>
+                );
+              })}
+              <p className="w-full text-[11px] text-dim/70 mt-0.5">{PROFILES[profile]?.blurb}</p>
+            </div>
+          )}
+
+          {/* IBKR paper mirroring status — only shown once it is switched on. */}
+          {raw?.ibkr?.enabled && (
+            <section className={cn(
+              "rounded-xl border p-4 text-sm",
+              raw.ibkr.account ? "border-up/30 bg-up/5" : "border-down/30 bg-down/5"
+            )}>
+              <div className="flex items-center gap-2">
+                <Link2 className="w-4 h-4" />
+                <span className="font-semibold">IBKR paper mirroring</span>
+                <span className="ml-auto font-mono text-xs">
+                  {raw.ibkr.account ? `armed · ${raw.ibkr.account}` : "not armed"}
+                </span>
+              </div>
+              {(raw.ibkr.log || []).map((l, i) => (
+                <p key={i} className={cn("text-[11px] mt-1", l.level === "error" ? "text-down" : "text-dim")}>{l.msg}</p>
+              ))}
+            </section>
+          )}
+
           {/* Gate radar — live pass/block per rule */}
           <section className="rounded-xl border border-line lg-glass p-5 hover-lift">
             <div className="flex items-center gap-2 mb-3">

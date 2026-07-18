@@ -96,6 +96,16 @@ function LabStatus() {
                   <span className="text-dim">auto-promoted <span className="text-accent">{data.research.autoPromoted}</span></span>
                 )}
               </div>
+              {/* Per-source yield: a feed that quietly went dead shows up here
+                  instead of only in the 3am log. */}
+              {data.research.sourceYield && (
+                <p className="text-[10px] text-dim/80 mt-1.5">
+                  last harvest: {Object.entries(data.research.sourceYield).map(([s, n]) => `${s} ${n}`).join(" · ")}
+                  {data.research.fullTextRate != null && (
+                    <span className="text-dim"> · full text on {data.research.fullTextRate}%</span>
+                  )}
+                </p>
+              )}
               {data.research.lastGraveyard?.length > 0 && (
                 <p className="text-[10px] text-dim/80 mt-1.5 leading-relaxed">
                   latest burials: {data.research.lastGraveyard.map((g) => `"${g.title.slice(0, 40)}…" (${g.reason})`).join(" · ")}
@@ -104,6 +114,27 @@ function LabStatus() {
               {data.research.candidates > 0 && (
                 <p className="text-[11px] text-up mt-1">
                   → survivors wait in the <Link to="/registry" className="underline">Registry</Link> under “Agent research candidates”.
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* Daytime re-validation — the half that promotes without you */}
+          {data.revalidate && (
+            <div className="mt-3 border-t border-line pt-3">
+              <p className="text-[10px] text-dim uppercase tracking-widest mb-1.5">Re-validation (daytime)</p>
+              <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs font-mono">
+                <span className="text-dim">checked <span className="text-text">{data.revalidate.checked}</span></span>
+                <span className="text-dim">held up <span className="text-up">{data.revalidate.survived}</span></span>
+                <span className="text-dim">decayed <span className="text-down">{data.revalidate.decayed}</span></span>
+                <span className="text-dim">promoted <span className="text-accent">{data.revalidate.promoted}</span></span>
+              </div>
+              {data.revalidate.held?.length > 0 && (
+                <p className="text-[10px] text-dim/80 mt-1.5">held by RiskGate: {data.revalidate.held.join(" · ")}</p>
+              )}
+              {data.revalidate.lastDecayed?.length > 0 && (
+                <p className="text-[10px] text-dim/80 mt-1.5 leading-relaxed">
+                  decayed: {data.revalidate.lastDecayed.map((d) => `"${d.title.slice(0, 36)}…" (${d.reason})`).join(" · ")}
                 </p>
               )}
             </div>

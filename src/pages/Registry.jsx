@@ -5,6 +5,10 @@ import {
   getEntries, subscribeRegistry, setStatus, removeEntry, STATUS_META, correlationMatrix, saveEntry,
 } from "@/lib/registry";
 import { cn, fmtPct, fmtNum } from "@/lib/utils";
+import { PROFILES } from "@/lib/profiles";
+import CopyButton from "@/components/CopyButton";
+
+const PROFILE_LABEL = Object.fromEntries(Object.entries(PROFILES).map(([id, p]) => [id, p.label]));
 
 // Survivors of the autonomous research loop (pushed by the PC's research
 // agent into lab:candidates). Private: only renders when the dev token exists.
@@ -46,28 +50,50 @@ function AgentCandidates() {
       </div>
       <p className="text-[11px] text-dim mb-3">
         Each survived: profitable on BTC 4h AND SPY 1d after costs, k-fold, noise test, and the Deflated Sharpe hurdle
-        at the agent's cumulative trial count. Import, then re-run in the Backtest yourself before promoting.
+        at the agent's cumulative trial count — then re-checked on fresh data by the daytime re-validator. The badge
+        shows which account regime it qualified for. Copy the code, or import it to re-run in the Backtest yourself.
       </p>
       <div className="space-y-2">
         {items.map((c) => (
-          <div key={c.id} className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border border-line bg-bg/40 px-3 py-2">
-            <span className="text-sm text-text flex-1 min-w-[200px]">{c.name}</span>
-            {c.metrics?.BTC4h && (
+          <div key={c.id} className="rounded-lg border border-line bg-bg/40 px-3 py-2">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+              <span className="text-sm text-text flex-1 min-w-[200px]">{c.name}</span>
+              {(c.profiles || []).map((p) => (
+                <span key={p} className={cn(
+                  "text-[9px] uppercase tracking-wide rounded px-1.5 py-0.5 font-semibold",
+                  p === "prop" ? "bg-accent/15 text-accent" : "bg-up/10 text-up"
+                )}>{PROFILE_LABEL[p] || p}</span>
+              ))}
+              {c.metrics?.BTC4h && (
+                <span className="text-[11px] font-mono text-dim">
+                  BTC4h <span className={c.metrics.BTC4h.ret >= 0 ? "text-up" : "text-down"}>{c.metrics.BTC4h.ret}%</span> · PF {c.metrics.BTC4h.pf} · dd {c.metrics.BTC4h.dd}%
+                </span>
+              )}
+              {c.metrics?.SPY1d && (
+                <span className="text-[11px] font-mono text-dim">
+                  SPY <span className={c.metrics.SPY1d.ret >= 0 ? "text-up" : "text-down"}>{c.metrics.SPY1d.ret}%</span>
+                </span>
+              )}
               <span className="text-[11px] font-mono text-dim">
-                BTC4h <span className={c.metrics.BTC4h.ret >= 0 ? "text-up" : "text-down"}>{c.metrics.BTC4h.ret}%</span> · PF {c.metrics.BTC4h.pf}
+                DSR {c.dsr}%
+                {c.revalidatedDsr != null && c.revalidatedDsr !== c.dsr && (
+                  <span className={c.revalidatedDsr >= c.dsr ? "text-up" : "text-dim"}> → {c.revalidatedDsr}%</span>
+                )}
               </span>
-            )}
-            {c.metrics?.SPY1d && (
-              <span className="text-[11px] font-mono text-dim">
-                SPY <span className={c.metrics.SPY1d.ret >= 0 ? "text-up" : "text-down"}>{c.metrics.SPY1d.ret}%</span>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 mt-1.5">
+              <span className="text-[10px] text-dim/70">
+                {c.source}{c.kind && c.kind !== "paper" ? ` · ${c.kind}` : ""}
+                {c.readFullText ? " · full text" : " · abstract only"}
               </span>
-            )}
-            <span className="text-[11px] font-mono text-dim">DSR {c.dsr}%</span>
-            {c.paper && <a href={c.paper} target="_blank" rel="noopener noreferrer" className="text-[11px] text-accent hover:underline">paper</a>}
-            <button onClick={() => importOne(c)} disabled={imported[c.id]}
-              className={cn("chip !text-[11px]", imported[c.id] ? "chip-idle text-up" : "chip-idle hover:text-accent")}>
-              {imported[c.id] ? "✓ imported" : "Import to Registry"}
-            </button>
+              {c.paper && <a href={c.paper} target="_blank" rel="noopener noreferrer" className="text-[11px] text-accent hover:underline">source</a>}
+              <span className="flex-1" />
+              <CopyButton text={c.code} label="Copy code" />
+              <button onClick={() => importOne(c)} disabled={imported[c.id]}
+                className={cn("chip !text-[11px]", imported[c.id] ? "chip-idle text-up" : "chip-idle hover:text-accent")}>
+                {imported[c.id] ? "✓ imported" : "Import to Registry"}
+              </button>
+            </div>
           </div>
         ))}
       </div>

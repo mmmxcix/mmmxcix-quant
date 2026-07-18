@@ -28,6 +28,10 @@ const GROQ_MODEL = "llama-3.3-70b-versatile";
 // list instead of failing (flash-lite has the most generous free limits).
 const GEMINI_MODELS = ["gemini-flash-latest", "gemini-2.5-flash", "gemini-flash-lite-latest", "gemini-2.5-flash-lite"];
 const MAX_PROMPT_CHARS = 2000;
+// Research documents (paper bodies, article text, video transcripts) are read
+// whole rather than as abstracts, so they get their own, larger ceiling. Sized
+// to stay comfortably inside the smallest provider context in the chain.
+const MAX_RESEARCH_CHARS = 12000;
 
 const SYSTEM_PROMPT = `You are a quant strategy generator for a browser-based backtesting tool.
 Respond with JavaScript code ONLY — no markdown fences, no explanatory text before or after.
@@ -199,13 +203,31 @@ export async function onRequest({ request, env }) {
   // Cheap token check (no AI call) — used by the private Coach page gate.
   if (body?.validate === true) return json({ ok: true });
 
-  // Two modes share the provider chain below:
-  //  • repair: fix code that failed to compile (bounded by code length, not the
-  //    user-prompt cap, since generated code can be longer than a prompt).
+  // Three modes share the provider chain below:
+  //  • repair:   fix code that failed to compile (bounded by code length, not the
+  //              user-prompt cap, since generated code can be longer than a prompt).
+  //  • research: distil a source DOCUMENT (paper body, article, video transcript)
+  //              into one strategy. Also exempt from MAX_PROMPT_CHARS — the whole
+  //              point is that a full text beats an abstract, and a 2000-char cap
+  //              would truncate it back to abstract length. Still bounded, and
+  //              still behind the same dev token.
   //  • generate: turn a natural-language request into a fresh strategy.
   const repair = body?.repair;
+  const research = body?.research;
   let userMsg;
-  if (repair && typeof repair.code === "string") {
+  if (research && typeof research.text === "string") {
+    const doc = research.text.slice(0, MAX_RESEARCH_CHARS);
+    const title = String(research.title || "untitled").slice(0, 200);
+    const kind = String(research.kind || "document").slice(0, 20);
+    userMsg =
+      `Source ${kind}: "${title}"\n\n` +
+      `--- BEGIN SOURCE ---\n${doc}\n--- END SOURCE ---\n\n` +
+      "Extract the single most testable systematic trading rule this source implies, and implement it " +
+      "as `strategy(ctx)`. Prefer a rule the source actually states (lookback, threshold, rebalance) " +
+      "over one you invent. Keep it SIMPLE (max 3 parameters, hardcoded as const). Long and/or short. " +
+      "Prefer robust logic over precision. Name nothing after the source; just implement the rule. " +
+      "If the source describes no testable rule, implement the closest defensible interpretation.";
+  } else if (repair && typeof repair.code === "string") {
     const brokenCode = repair.code.slice(0, 8000);
     const err = String(repair.error || "unknown error").slice(0, 300);
     userMsg =
