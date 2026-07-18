@@ -179,7 +179,7 @@ function CorrMatrix({ entries }) {
       </table>
       <p className="flex items-center gap-1.5 text-[10px] text-dim mt-2">
         <Info className="w-3 h-3" />
-        <span className="text-[#2dd4bf]">Teal = uncorrelated/opposite</span> (good — diversified),{" "}
+        <span className="text-accent">Teal = uncorrelated/opposite</span> (good — diversified),{" "}
         <span className="text-down">red = move together</span> (cluster risk: they lose on the same days).
       </p>
     </div>

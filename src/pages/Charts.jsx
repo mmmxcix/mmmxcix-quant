@@ -15,6 +15,33 @@ import { getAlertsFor, addAlert, removeAlert, subscribeAlerts, checkAlerts, ensu
 import { cn, fmtPrice, fmtPct } from "@/lib/utils";
 import { Bell, X, Scale } from "lucide-react";
 
+// Compact price header above the chart — last price (live tick if streaming),
+// change vs the previous bar, and the current bar's OHLC.
+function PriceHeader({ candles, livePrice }) {
+  if (!candles || candles.length < 2) return null;
+  const bar = candles[candles.length - 1];
+  const prev = candles[candles.length - 2];
+  const px = livePrice ?? bar.close;
+  const ch = prev.close ? ((px - prev.close) / prev.close) * 100 : 0;
+  return (
+    <div className="flex flex-wrap items-baseline gap-x-4 gap-y-2 px-1 pb-3 mb-3 border-b border-line">
+      <span className="font-mono text-2xl sm:text-3xl font-bold tabular-nums leading-none">{fmtPrice(px)}</span>
+      <span className={cn(
+        "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-mono font-semibold tabular-nums",
+        ch >= 0 ? "bg-up/10 text-up" : "bg-down/10 text-down"
+      )}>
+        {ch >= 0 ? "▲" : "▼"} {fmtPct(ch)}
+      </span>
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs font-mono text-dim sm:ml-auto">
+        <span>O <b className="text-text font-semibold">{fmtPrice(bar.open)}</b></span>
+        <span>H <b className="text-text font-semibold">{fmtPrice(bar.high)}</b></span>
+        <span>L <b className="text-text font-semibold">{fmtPrice(bar.low)}</b></span>
+        <span>C <b className="text-text font-semibold">{fmtPrice(bar.close)}</b></span>
+      </div>
+    </div>
+  );
+}
+
 const DEFAULT_SYMBOL = { crypto: "BTCUSDT", stock: "AAPL" };
 const DRAW_COLORS = ["#38bdf8", "#f59e0b", "#f472b6", "#a78bfa", "#10b981", "#ef4444"];
 
@@ -327,32 +354,32 @@ export default function Charts() {
           <label className="flex items-center gap-1.5 cursor-pointer select-none">
             <input type="checkbox" checked={indicators.sma2050}
               onChange={(e) => setIndicators((v) => ({ ...v, sma2050: e.target.checked }))}
-              className="accent-[#2dd4bf]" />
+              className="accent-accent" />
             SMA 20/50
           </label>
           <label className="flex items-center gap-1.5 cursor-pointer select-none">
             <input type="checkbox" checked={indicators.ema200}
               onChange={(e) => setIndicators((v) => ({ ...v, ema200: e.target.checked }))}
-              className="accent-[#2dd4bf]" />
+              className="accent-accent" />
             EMA 200
           </label>
           <label className="flex items-center gap-1.5 cursor-pointer select-none">
             <input type="checkbox" checked={indicators.bollinger}
               onChange={(e) => setIndicators((v) => ({ ...v, bollinger: e.target.checked }))}
-              className="accent-[#2dd4bf]" />
+              className="accent-accent" />
             Bollinger
           </label>
           <span className="h-3 w-px bg-line" />
           <label className="flex items-center gap-1.5 cursor-pointer select-none">
             <input type="checkbox" checked={panes.rsi}
               onChange={(e) => setPanes((v) => ({ ...v, rsi: e.target.checked }))}
-              className="accent-[#2dd4bf]" />
+              className="accent-accent" />
             RSI
           </label>
           <label className="flex items-center gap-1.5 cursor-pointer select-none">
             <input type="checkbox" checked={panes.macd}
               onChange={(e) => setPanes((v) => ({ ...v, macd: e.target.checked }))}
-              className="accent-[#2dd4bf]" />
+              className="accent-accent" />
             MACD
           </label>
         </div>
@@ -504,6 +531,7 @@ export default function Charts() {
       )}
 
       <div className="rounded-xl border border-line lg-glass p-3">
+        {!error && candles && <PriceHeader candles={candles} livePrice={livePrice} />}
         {error ? (
           <div className="h-96 flex items-center justify-center text-sm text-down px-6 text-center">{error}</div>
         ) : loading && !candles ? (
