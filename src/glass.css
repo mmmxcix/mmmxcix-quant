@@ -15,9 +15,15 @@
    including the negative-z layers — so the dither shows THROUGH glass.
    ═══════════════════════════════════════════════════════════════ */
 
-html,
-body {
+/* The page background lives on <html> ONLY. If <body> also had an opaque
+   background it would paint over the negative-z layers below (CSS paints
+   negative z-index before in-flow block backgrounds) and the dither/ambient/
+   grain would be invisible. */
+html {
   background-color: rgb(var(--c-bg));
+}
+body {
+  background-color: transparent;
 }
 
 /* ── Background layers ─────────────────────────────────────────── */
@@ -67,8 +73,8 @@ body {
   bottom: -32vmax;
   left: -24vmax;
   background: radial-gradient(circle at center,
-    rgba(130, 120, 255, 0.09) 0%,
-    rgba(130, 120, 255, 0.03) 40%,
+    rgb(var(--c-accent) / 0.07) 0%,
+    rgb(var(--c-accent) / 0.025) 40%,
     transparent 68%);
   animation: ambient-drift-b 96s ease-in-out infinite alternate;
 }

@@ -5,52 +5,56 @@
 /* ── Theme tokens ───────────────────────────────────────────────────
    Light is the default look; [data-theme="dark"] flips it. Colors are
    RGB triplets so Tailwind's rgb(var(--c-*) / <alpha-value>) works. */
+/* Light = white / silver / graphite. Monochrome by design: the only colour on
+   the page is the semantic up/down, which makes the data the loudest thing. */
 :root {
-  --c-bg: 243 244 250;
+  --c-bg: 250 250 251;      /* #fafafb */
   --c-surface: 255 255 255;
-  --c-line: 221 225 235;
-  --c-text: 15 19 32;
-  --c-dim: 75 84 104;
-  --c-accent: 85 78 224;    /* #554ee0 deep iris — same identity as dark */
-  --c-up: 14 159 102;
-  --c-down: 229 72 77;
+  --c-line: 228 228 231;    /* #e4e4e7 silver */
+  --c-text: 12 12 15;       /* #0c0c0f */
+  --c-dim: 113 113 122;     /* #71717a */
+  --c-accent: 24 24 26;     /* #18181a graphite — the accent IS the ink */
+  --c-up: 21 143 96;        /* #158f60 */
+  --c-down: 202 58 66;      /* #ca3a42 */
 
-  --glass-bg: rgba(255, 255, 255, 0.72);
-  --glass-bg2: rgba(255, 255, 255, 0.55);
-  --glass-border: rgba(17, 21, 40, 0.10);
-  --glass-hairline: rgba(13, 148, 136, 0.30);
-  --glass-shadow: 0 1px 2px rgba(17, 21, 40, 0.05), 0 14px 34px -14px rgba(17, 21, 40, 0.16);
-  --frost-bg: rgba(255, 255, 255, 0.58);
+  --glass-bg: rgba(255, 255, 255, 0.74);
+  --glass-bg2: rgba(255, 255, 255, 0.58);
+  --glass-border: rgba(12, 12, 15, 0.10);
+  --glass-hairline: rgba(12, 12, 15, 0.16);
+  --glass-shadow: 0 1px 2px rgba(12, 12, 15, 0.05), 0 14px 34px -14px rgba(12, 12, 15, 0.16);
+  --frost-bg: rgba(255, 255, 255, 0.62);
   --grain: 0.05;
   color-scheme: light;
 }
 
-/* Dark = obsidian near-black + iris. Deliberately NOT the navy/teal every
-   generated finance dashboard uses: the premium feel comes from restraint —
-   true near-black, crisp near-white type, one luminous accent. */
+/* Dark = the charcoal ramp: 0C0C0F · 18181A · 29292B · 38383A · 4C4C4E.
+   Monochrome, high-contrast type, no coloured accent — the restraint is what
+   makes it read expensive. */
 :root[data-theme="dark"] {
-  --c-bg: 9 9 12;           /* #09090c obsidian */
-  --c-surface: 20 20 26;    /* #14141a */
-  --c-line: 40 40 50;       /* #282832 */
-  --c-text: 244 244 248;    /* #f4f4f8 */
-  --c-dim: 148 148 162;     /* #9494a2 */
-  --c-accent: 141 134 255;  /* #8d86ff luminous iris */
-  --c-up: 52 199 123;       /* #34c77b */
-  --c-down: 244 92 102;     /* #f45c66 */
+  --c-bg: 12 12 15;         /* #0c0c0f */
+  --c-surface: 24 24 26;    /* #18181a */
+  --c-line: 41 41 43;       /* #29292b */
+  --c-text: 244 244 245;    /* #f4f4f5 */
+  --c-dim: 138 138 143;     /* #8a8a8f */
+  --c-accent: 250 250 250;  /* near-white — the accent IS the light */
+  --c-up: 63 178 127;       /* #3fb27f */
+  --c-down: 229 72 77;      /* #e5484d */
 
-  --glass-bg: rgba(24, 24, 31, 0.58);
-  --glass-bg2: rgba(32, 32, 40, 0.45);
+  --glass-bg: rgba(24, 24, 26, 0.60);
+  --glass-bg2: rgba(41, 41, 43, 0.45);
   --glass-border: rgba(255, 255, 255, 0.09);
-  --glass-hairline: rgba(141, 134, 255, 0.30);
-  --glass-shadow: 0 1px 2px rgba(0, 0, 0, 0.55), 0 22px 46px -18px rgba(0, 0, 0, 0.75);
-  --frost-bg: rgba(9, 9, 12, 0.55);
+  --glass-hairline: rgba(255, 255, 255, 0.20);
+  --glass-shadow: 0 1px 2px rgba(0, 0, 0, 0.55), 0 22px 46px -18px rgba(0, 0, 0, 0.8);
+  --frost-bg: rgba(12, 12, 15, 0.58);
   --grain: 0.07;
   color-scheme: dark;
 }
 
 @layer base {
+  /* bg lives on <html> (see glass.css) so the negative-z background layers
+     stay visible; body must NOT paint an opaque background over them. */
   body {
-    @apply bg-bg text-text font-sans antialiased;
+    @apply text-text font-sans antialiased;
     overflow-x: hidden; /* mobile safety: wide tables scroll in their own container */
   }
   ::-webkit-scrollbar {
@@ -111,7 +115,7 @@
    Page entry, staggered card reveals and self-drawing chart lines.
    All of it collapses to nothing under prefers-reduced-motion. */
 @keyframes viewIn {
-  from { opacity: 0; transform: translateY(10px); }
+  from { opacity: 0; transform: translateY(16px); }
   to   { opacity: 1; transform: none; }
 }
 @keyframes cardIn {
