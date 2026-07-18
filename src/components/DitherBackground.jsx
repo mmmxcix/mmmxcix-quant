@@ -1,45 +1,108 @@
 import { useEffect, useRef } from "react";
 
-// DitherBackground — a subtle flowing wave + ordered-dither field, cursor-
-// reactive, rendered with raw WebGL (no dependency). Sits behind all content
-// (z-index -2, see .dither-bg in glass.css); the frosted panels blur it as they
-// pass over. Theme-aware: reads the --c-accent token and dims for light/dark.
-// If WebGL is unavailable it renders nothing — the ambient gradient + grain
-// still carry the background.
+// DitherBackground — a faithful port of React Bits' <Dither /> wave shader
+// (reactbits.dev/backgrounds/dither): Perlin `cnoise` → turbulence fbm with a
+// domain warp, a mouse dent, then 8×8 ordered-Bayer quantisation on pixelated
+// coordinates. Ported into a plain WebGL canvas instead of pulling in three +
+// @react-three/fiber + postprocessing (~600 kB) for a background layer.
+//
+// Sits behind all content (z-index -2, see .dither-bg in glass.css) and is
+// tinted with the theme's accent token. No WebGL → renders nothing; the ambient
+// gradient + grain still carry the background.
 
 const VS = "attribute vec2 p;void main(){gl_Position=vec4(p,0.,1.);}";
-const FS = `precision mediump float;
-uniform vec2 uRes;uniform float uTime;uniform vec2 uMouse;uniform vec3 uCol;uniform float uAlpha;
-float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
-float noise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);
-  float a=hash(i),b=hash(i+vec2(1.,0.)),c=hash(i+vec2(0.,1.)),d=hash(i+vec2(1.,1.));
-  return mix(mix(a,b,f.x),mix(c,d,f.x),f.y);}
-float fbm(vec2 p){float s=0.,a=.5;for(int i=0;i<5;i++){s+=a*noise(p);p*=2.02;a*=.5;}return s;}
-float B2(vec2 a){a=floor(a);return fract(a.x/2.+a.y*a.y*.75);}
+
+const FS = `precision highp float;
+uniform vec2 uRes;
+uniform float uTime;
+uniform vec2 uMouse;
+uniform vec3 uCol;
+uniform float uAlpha;
+uniform float uColorNum;
+uniform float uPixelSize;
+uniform float uWaveSpeed;
+uniform float uWaveFrequency;
+uniform float uWaveAmplitude;
+uniform float uMouseRadius;
+
+vec4 mod289(vec4 x){ return x - floor(x * (1.0/289.0)) * 289.0; }
+vec4 permute(vec4 x){ return mod289(((x * 34.0) + 1.0) * x); }
+vec4 taylorInvSqrt(vec4 r){ return 1.79284291400159 - 0.85373472095314 * r; }
+vec2 fade(vec2 t){ return t*t*t*(t*(t*6.0-15.0)+10.0); }
+
+float cnoise(vec2 P){
+  vec4 Pi = floor(P.xyxy) + vec4(0.0,0.0,1.0,1.0);
+  vec4 Pf = fract(P.xyxy) - vec4(0.0,0.0,1.0,1.0);
+  Pi = mod289(Pi);
+  vec4 ix = Pi.xzxz;
+  vec4 iy = Pi.yyww;
+  vec4 fx = Pf.xzxz;
+  vec4 fy = Pf.yyww;
+  vec4 i = permute(permute(ix) + iy);
+  vec4 gx = fract(i * (1.0/41.0)) * 2.0 - 1.0;
+  vec4 gy = abs(gx) - 0.5;
+  vec4 tx = floor(gx + 0.5);
+  gx = gx - tx;
+  vec2 g00 = vec2(gx.x, gy.x);
+  vec2 g10 = vec2(gx.y, gy.y);
+  vec2 g01 = vec2(gx.z, gy.z);
+  vec2 g11 = vec2(gx.w, gy.w);
+  vec4 norm = taylorInvSqrt(vec4(dot(g00,g00), dot(g01,g01), dot(g10,g10), dot(g11,g11)));
+  g00 *= norm.x; g01 *= norm.y; g10 *= norm.z; g11 *= norm.w;
+  float n00 = dot(g00, vec2(fx.x, fy.x));
+  float n10 = dot(g10, vec2(fx.y, fy.y));
+  float n01 = dot(g01, vec2(fx.z, fy.z));
+  float n11 = dot(g11, vec2(fx.w, fy.w));
+  vec2 fade_xy = fade(Pf.xy);
+  vec2 n_x = mix(vec2(n00, n01), vec2(n10, n11), fade_xy.x);
+  return 2.3 * mix(n_x.x, n_x.y, fade_xy.y);
+}
+
+float fbm(vec2 p){
+  float value = 0.0;
+  float amp = 1.0;
+  float freq = uWaveFrequency;
+  for (int i = 0; i < 4; i++) {
+    value += amp * abs(cnoise(p));
+    p *= freq;
+    amp *= uWaveAmplitude;
+  }
+  return value;
+}
+
+float pattern(vec2 p){
+  vec2 p2 = p - uTime * uWaveSpeed;
+  return fbm(p + fbm(p2));
+}
+
+/* 8×8 ordered Bayer, built recursively — WebGL1 has no array indexing. */
+float Bayer2(vec2 a){ a = floor(a); return fract(a.x / 2.0 + a.y * a.y * 0.75); }
+float Bayer4(vec2 a){ return Bayer2(0.5 * a) * 0.25 + Bayer2(a); }
+float Bayer8(vec2 a){ return Bayer4(0.5 * a) * 0.25 + Bayer2(a); }
+
 void main(){
-  float PX=5.0;                                  // chunky pixels, like the reference
-  vec2 cell=floor(gl_FragCoord.xy/PX);
-  vec2 res=uRes/PX;
-  vec2 uv=cell/res;
-  vec2 asp=vec2(res.x/res.y,1.0);
-  vec2 p=uv*asp*2.2;
-  float t=uTime*0.35;
+  /* pixelate, then centre + aspect-correct exactly like the reference */
+  vec2 fc = floor(gl_FragCoord.xy / uPixelSize) * uPixelSize;
+  vec2 uv = fc / uRes;
+  uv -= 0.5;
+  uv.x *= uRes.x / uRes.y;
 
-  // flowing wave field — smooth bands rather than grain
-  float f=fbm(p+vec2(t*0.12,t*0.08));
-  f+=0.35*sin(p.x*2.6+t*0.9);
-  f+=0.28*sin((p.x+p.y)*1.7-t*0.7);
-  f=f*0.5+0.5;
+  float f = pattern(uv);
 
-  // cursor swells the wave locally
-  vec2 m=(uMouse/uRes)*asp;
-  f+=smoothstep(0.45,0.0,distance(uv*asp,m))*0.35;
+  /* cursor dents the wave */
+  vec2 mNDC = (uMouse / uRes - 0.5) * vec2(1.0, -1.0);
+  mNDC.x *= uRes.x / uRes.y;
+  float effect = 1.0 - smoothstep(0.0, uMouseRadius, length(uv - mNDC));
+  f -= 0.5 * effect;
 
-  // ordered (Bayer) dithering into a few density levels
-  float b4=B2(cell*0.5)*0.25+B2(cell);
-  float levels=4.0;
-  float q=floor(clamp(f,0.0,1.0)*levels+b4)/levels;
-  gl_FragColor=vec4(uCol,clamp(q,0.0,1.0)*uAlpha);
+  /* ordered dithering, then quantise to uColorNum levels */
+  float threshold = Bayer8(gl_FragCoord.xy / uPixelSize) - 0.25;
+  float stepSize = 1.0 / (uColorNum - 1.0);
+  float v = f + threshold * stepSize;
+  v = clamp(v - 0.2, 0.0, 1.0);
+  v = floor(v * (uColorNum - 1.0) + 0.5) / (uColorNum - 1.0);
+
+  gl_FragColor = vec4(uCol, v * uAlpha);
 }`;
 
 export default function DitherBackground() {
@@ -50,7 +113,7 @@ export default function DitherBackground() {
     const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
     const dpr = Math.min(2, window.devicePixelRatio || 1);
     const gl = canvas.getContext("webgl", { alpha: true, premultipliedAlpha: false, antialias: false });
-    if (!gl) return; // no WebGL → gradient + grain remain
+    if (!gl) return;
 
     const compile = (type, src) => { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); return s; };
     const prog = gl.createProgram();
@@ -67,25 +130,24 @@ export default function DitherBackground() {
     gl.enableVertexAttribArray(loc);
     gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
 
-    const U = {
-      res: gl.getUniformLocation(prog, "uRes"),
-      time: gl.getUniformLocation(prog, "uTime"),
-      mouse: gl.getUniformLocation(prog, "uMouse"),
-      col: gl.getUniformLocation(prog, "uCol"),
-      alpha: gl.getUniformLocation(prog, "uAlpha"),
-    };
+    const U = (n) => gl.getUniformLocation(prog, n);
+    const uRes = U("uRes"), uTime = U("uTime"), uMouse = U("uMouse"), uCol = U("uCol"), uAlpha = U("uAlpha");
+    gl.uniform1f(U("uColorNum"), 4.0);
+    gl.uniform1f(U("uPixelSize"), 2.0 * dpr); // 2 CSS px, like the reference at dpr 1
+    gl.uniform1f(U("uWaveSpeed"), 0.05);
+    gl.uniform1f(U("uWaveFrequency"), 3.0);
+    gl.uniform1f(U("uWaveAmplitude"), 0.3);
+    gl.uniform1f(U("uMouseRadius"), 0.5);
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     gl.clearColor(0, 0, 0, 0);
 
-    // theme-driven colour/alpha, refreshed on data-theme changes
-    let col = [0.05, 0.58, 0.53], alpha = 0.14;
+    let col = [0.5, 0.5, 0.5], alpha = 0.2;
     const readTheme = () => {
       const cs = getComputedStyle(document.documentElement);
       const rgb = cs.getPropertyValue("--c-accent").trim().split(/\s+/).map((n) => parseFloat(n) / 255);
       if (rgb.length === 3 && rgb.every((n) => !Number.isNaN(n))) col = rgb;
-      // strong enough to read as texture through the frosted panels
-      alpha = document.documentElement.dataset.theme === "dark" ? 0.32 : 0.2;
+      alpha = document.documentElement.dataset.theme === "dark" ? 0.34 : 0.22;
     };
     readTheme();
     const obs = new MutationObserver(readTheme);
@@ -95,7 +157,11 @@ export default function DitherBackground() {
     const onMove = (e) => { mouse.x = e.clientX * dpr; mouse.y = e.clientY * dpr; };
     window.addEventListener("pointermove", onMove);
 
-    const resize = () => { canvas.width = window.innerWidth * dpr; canvas.height = window.innerHeight * dpr; gl.viewport(0, 0, canvas.width, canvas.height); };
+    const resize = () => {
+      canvas.width = window.innerWidth * dpr;
+      canvas.height = window.innerHeight * dpr;
+      gl.viewport(0, 0, canvas.width, canvas.height);
+    };
     resize();
     let rz;
     const onResize = () => { clearTimeout(rz); rz = setTimeout(resize, 120); };
@@ -103,11 +169,11 @@ export default function DitherBackground() {
 
     let raf = 0;
     const frame = (t) => {
-      gl.uniform2f(U.res, canvas.width, canvas.height);
-      gl.uniform1f(U.time, t * 0.001);
-      gl.uniform2f(U.mouse, mouse.x < 0 ? canvas.width / 2 : mouse.x, mouse.y < 0 ? canvas.height * 0.4 : mouse.y);
-      gl.uniform3f(U.col, col[0], col[1], col[2]);
-      gl.uniform1f(U.alpha, alpha);
+      gl.uniform2f(uRes, canvas.width, canvas.height);
+      gl.uniform1f(uTime, reduce ? 0 : t * 0.001);
+      gl.uniform2f(uMouse, mouse.x < 0 ? canvas.width / 2 : mouse.x, mouse.y < 0 ? canvas.height * 0.4 : mouse.y);
+      gl.uniform3f(uCol, col[0], col[1], col[2]);
+      gl.uniform1f(uAlpha, alpha);
       gl.clear(gl.COLOR_BUFFER_BIT);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
       if (!reduce) raf = requestAnimationFrame(frame);

@@ -538,6 +538,8 @@ export default function Charts() {
           <div className="h-96 flex items-center justify-center text-sm text-dim">Loading data…</div>
         ) : candles ? (
           <>
+            {/* the chart builds in left-to-right when data first lands */}
+            <div className="wipe-in">
             <CandleChart
               candles={candles}
               chartType={chartType}
@@ -571,6 +573,7 @@ export default function Charts() {
                 </>
               )}
             </CandleChart>
+            </div>
             {panes.rsi && <IndicatorPane candles={candles} type="rsi" mainChart={mainChart} />}
             {panes.macd && <IndicatorPane candles={candles} type="macd" mainChart={mainChart} />}
           </>
