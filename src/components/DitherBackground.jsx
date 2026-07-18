@@ -24,6 +24,7 @@ uniform float uWaveSpeed;
 uniform float uWaveFrequency;
 uniform float uWaveAmplitude;
 uniform float uMouseRadius;
+uniform float uMouseStrength;
 
 vec4 mod289(vec4 x){ return x - floor(x * (1.0/289.0)) * 289.0; }
 vec4 permute(vec4 x){ return mod289(((x * 34.0) + 1.0) * x); }
@@ -89,11 +90,11 @@ void main(){
 
   float f = pattern(uv);
 
-  /* cursor dents the wave */
+  /* cursor dents the wave — tighter radius, deeper dent than the reference */
   vec2 mNDC = (uMouse / uRes - 0.5) * vec2(1.0, -1.0);
   mNDC.x *= uRes.x / uRes.y;
   float effect = 1.0 - smoothstep(0.0, uMouseRadius, length(uv - mNDC));
-  f -= 0.5 * effect;
+  f -= uMouseStrength * effect;
 
   /* The reference computes col = mix(black, waveColor, f) with f UNCLAMPED and
      a mid-grey waveColor, so bright crests overshoot and saturate to full
@@ -146,15 +147,18 @@ export default function DitherBackground() {
     gl.uniform1f(U("uWaveSpeed"), 0.05);
     gl.uniform1f(U("uWaveFrequency"), 3.0);
     gl.uniform1f(U("uWaveAmplitude"), 0.3);
-    gl.uniform1f(U("uMouseRadius"), 0.3); // the demo's value — a tighter, clearly readable dent
+    // Cursor dial: tighter than the demo's 0.3, and a deeper dent so the
+    // pointer reads clearly without washing out a big area.
+    gl.uniform1f(U("uMouseRadius"), 0.18);
+    gl.uniform1f(U("uMouseStrength"), 0.9);
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     gl.clearColor(0, 0, 0, 0);
 
-    // Base = the theme's ground, wave crest = the ink. The shader already
-    // reproduces the reference's mid-grey waveColor via f * 0.5, so the crest
-    // must be the FULL ink here or bright areas can never reach white.
-    let bg = [0.05, 0.05, 0.06], wave = [1, 1, 1];
+    // Base = the theme's ground; crest = HALFWAY to the ink. Full ink gave the
+    // reference's hard black↔white contrast, which read as too loud behind a
+    // data UI — the softer mid-tone crest is the deliberate choice here.
+    let bg = [0.05, 0.05, 0.06], wave = [0.5, 0.5, 0.5];
     const readTheme = () => {
       const cs = getComputedStyle(document.documentElement);
       const parse = (name, fallback) => {
@@ -162,7 +166,8 @@ export default function DitherBackground() {
         return v.length === 3 && v.every((n) => !Number.isNaN(n)) ? v : fallback;
       };
       bg = parse("--c-bg", bg);
-      wave = parse("--c-text", wave);
+      const ink = parse("--c-text", [0.5, 0.5, 0.5]);
+      wave = bg.map((c, i) => c + (ink[i] - c) * 0.5);
     };
     readTheme();
     const obs = new MutationObserver(readTheme);
