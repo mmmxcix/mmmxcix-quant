@@ -90,7 +90,7 @@ void main(){
 
   float f = pattern(uv);
 
-  /* cursor dents the wave — tighter radius, deeper dent than the reference */
+  /* cursor dents the wave — tighter radius, slightly deeper than the reference */
   vec2 mNDC = (uMouse / uRes - 0.5) * vec2(1.0, -1.0);
   mNDC.x *= uRes.x / uRes.y;
   float effect = 1.0 - smoothstep(0.0, uMouseRadius, length(uv - mNDC));
@@ -147,10 +147,10 @@ export default function DitherBackground() {
     gl.uniform1f(U("uWaveSpeed"), 0.05);
     gl.uniform1f(U("uWaveFrequency"), 3.0);
     gl.uniform1f(U("uWaveAmplitude"), 0.3);
-    // Cursor dial: tighter than the demo's 0.3, and a deeper dent so the
-    // pointer reads clearly without washing out a big area.
+    // Cursor dial: radius 0.18 is the size that landed; 0.8 depth keeps the
+    // dent strong without burning a hole at the centre.
     gl.uniform1f(U("uMouseRadius"), 0.18);
-    gl.uniform1f(U("uMouseStrength"), 0.9);
+    gl.uniform1f(U("uMouseStrength"), 0.8);
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     gl.clearColor(0, 0, 0, 0);
