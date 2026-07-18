@@ -139,7 +139,7 @@ export default function DitherBackground() {
     gl.uniform1f(U("uWaveSpeed"), 0.05);
     gl.uniform1f(U("uWaveFrequency"), 3.0);
     gl.uniform1f(U("uWaveAmplitude"), 0.3);
-    gl.uniform1f(U("uMouseRadius"), 0.5);
+    gl.uniform1f(U("uMouseRadius"), 0.3); // the demo's value — a tighter, clearly readable dent
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     gl.clearColor(0, 0, 0, 0);
