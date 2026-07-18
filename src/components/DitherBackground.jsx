@@ -72,7 +72,8 @@ export default function DitherBackground() {
       const cs = getComputedStyle(document.documentElement);
       const rgb = cs.getPropertyValue("--c-accent").trim().split(/\s+/).map((n) => parseFloat(n) / 255);
       if (rgb.length === 3 && rgb.every((n) => !Number.isNaN(n))) col = rgb;
-      alpha = document.documentElement.dataset.theme === "dark" ? 0.2 : 0.14;
+      // strong enough to read as texture through the frosted panels
+      alpha = document.documentElement.dataset.theme === "dark" ? 0.32 : 0.2;
     };
     readTheme();
     const obs = new MutationObserver(readTheme);
