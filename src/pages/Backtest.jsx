@@ -17,8 +17,8 @@ const DEFAULT_SYMBOL = { crypto: "BTCUSDT", stock: "SPY" };
 function MetricCard({ label, value, tone }) {
   return (
     <div className="rounded-xl border border-line lg-glass px-4 py-3">
-      <p className="text-[11px] text-dim mb-1">{label}</p>
-      <p className={cn("font-mono font-semibold", tone)}>{value}</p>
+      <p className="text-[10px] uppercase tracking-wide text-dim mb-1.5">{label}</p>
+      <p className={cn("font-mono text-lg font-bold tabular-nums leading-none", tone)}>{value}</p>
     </div>
   );
 }

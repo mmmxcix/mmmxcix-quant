@@ -38,7 +38,6 @@ export default function RiskGate() {
 
   return (
     <div>
-      <p className="text-[10px] tracking-[0.3em] text-dim uppercase mb-1">Cortex</p>
       <div className="flex items-center gap-3 mb-6">
         <h1 className="text-2xl font-bold">RiskGate</h1>
         {data !== undefined && data !== null && (
