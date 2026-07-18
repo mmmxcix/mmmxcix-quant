@@ -188,7 +188,7 @@ function NewsletterCard() {
               <label className="flex items-center gap-1.5 text-[11px] text-dim cursor-pointer select-none">
                 <input type="checkbox" checked={freeOnly}
                   onChange={(e) => { setFreeOnly(e.target.checked); setSources(null); }}
-                  className="accent-[#2dd4bf]" />
+                  className="accent-accent" />
                 Free only
               </label>
             </div>

@@ -5,7 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="apple-touch-icon" href="/favicon.svg" />
-    <meta name="theme-color" content="#0b1018" />
+    <meta name="theme-color" content="#f3f4fa" />
+    <script>
+      // Apply the saved theme before paint (default light) — no flash of wrong theme.
+      try { document.documentElement.dataset.theme = localStorage.getItem("theme") || "light"; }
+      catch (e) { document.documentElement.dataset.theme = "light"; }
+    </script>
     <title>MMMXCIX Quant</title>
     <meta name="description" content="Quant trading tools: backtesting, charts, market data and news." />
     <meta property="og:title" content="MMMXCIX Quant" />

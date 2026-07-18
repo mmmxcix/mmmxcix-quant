@@ -47,7 +47,7 @@ export function courseLessonIds(courseId) {
 }
 
 const academyLink = (courseId, lessonId) =>
-  lessonId ? `/academy?c=${courseId}&l=${lessonId}` : `/academy?c=${courseId}`;
+  lessonId ? `/learn/academy?c=${courseId}&l=${lessonId}` : `/learn/academy?c=${courseId}`;
 
 export const COACH_PLAN = [
   {

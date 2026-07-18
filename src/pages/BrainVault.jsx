@@ -155,7 +155,6 @@ export default function BrainVault() {
 
   return (
     <div>
-      <p className="text-[10px] tracking-[0.3em] text-dim uppercase mb-1">Threepio</p>
       <div className="flex items-center gap-3 mb-4">
         <h1 className="text-2xl font-bold">Brain Vault</h1>
         <Network className="w-5 h-5 text-accent" />
@@ -180,7 +179,7 @@ export default function BrainVault() {
       {token && data?.nodes?.length > 0 && (
         <div className="space-y-4">
           {/* stat strip */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 stagger">
             <Stat label="Papers read" value={stats?.papersRead ?? "—"} />
             <Stat label="Survivors" value={stats?.candidates ?? 0} color="text-up" />
             <Stat label="Buried" value={stats?.graveyard ?? 0} color="text-down" />
@@ -223,7 +222,7 @@ export default function BrainVault() {
           <p className="text-[11px] text-dim/70 leading-relaxed">
             Every paper the agent reads — from arXiv and OpenAlex — lands here. Survivors (green) cleared the full
             validation gauntlet; buried nodes (red) failed and are kept as a record. Hover a node for its source,
-            verdict and topics. This is our answer to the “real” 3PO's brain vault, built from our own honest data.
+            verdict and topics — every paper the research agent has read, built from our own honest data.
           </p>
         </div>
       )}
@@ -239,7 +238,7 @@ export default function BrainVault() {
 
 function Stat({ label, value, color }) {
   return (
-    <div className="rounded-xl border border-line lg-glass p-3">
+    <div className="rounded-xl border border-line lg-glass p-3 hover-lift">
       <p className="text-[10px] text-dim uppercase tracking-wide mb-0.5">{label}</p>
       <p className={cn("text-xl font-bold font-mono", color)}>{value}</p>
     </div>

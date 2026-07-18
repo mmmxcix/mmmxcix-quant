@@ -1,0 +1,51 @@
+import { FlaskConical, Scale, Briefcase, Sigma, GraduationCap, BookOpenCheck, Compass, Radar, Telescope } from "lucide-react";
+import TabHub from "@/components/TabHub";
+import Backtest from "@/pages/Backtest";
+import Compare from "@/pages/Compare";
+import Portfolio from "@/pages/Portfolio";
+import Options from "@/pages/Options";
+import Academy from "@/pages/Academy";
+import Guide from "@/pages/Guide";
+import Resources from "@/pages/Resources";
+import Screener from "@/pages/Screener";
+import Anomalies from "@/pages/Anomalies";
+
+// Consolidated hubs — related pages merged into one tabbed route each. Old
+// routes redirect to the matching tab (see App.jsx).
+
+export function BacktestHub() {
+  return (
+    <TabHub base="/backtest" tabs={[
+      { id: "run", label: "Backtest", icon: FlaskConical, el: <Backtest /> },
+      { id: "compare", label: "Compare", icon: Scale, el: <Compare /> },
+    ]} />
+  );
+}
+
+export function PortfolioHub() {
+  return (
+    <TabHub base="/portfolio" tabs={[
+      { id: "holdings", label: "Portfolio", icon: Briefcase, el: <Portfolio /> },
+      { id: "options", label: "Options", icon: Sigma, el: <Options /> },
+    ]} />
+  );
+}
+
+export function ScreenerHub() {
+  return (
+    <TabHub base="/screener" tabs={[
+      { id: "scan", label: "Screener", icon: Radar, el: <Screener /> },
+      { id: "anomalies", label: "Anomalies", icon: Telescope, el: <Anomalies /> },
+    ]} />
+  );
+}
+
+export function LearnHub() {
+  return (
+    <TabHub base="/learn" eyebrow="Learn" tabs={[
+      { id: "academy", label: "Academy", icon: GraduationCap, el: <Academy /> },
+      { id: "guide", label: "Guide", icon: BookOpenCheck, el: <Guide /> },
+      { id: "resources", label: "Resources", icon: Compass, el: <Resources /> },
+    ]} />
+  );
+}

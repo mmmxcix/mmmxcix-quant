@@ -1,7 +1,33 @@
 import { useState, useEffect } from "react";
 import { NavLink, Link, useLocation } from "react-router-dom";
-import { LayoutDashboard, CandlestickChart, FlaskConical, Newspaper, Compass, Wrench, Activity, Scale, Star, Briefcase, Radar, GraduationCap, Sigma, Menu, X, Target, Dices, BookOpenCheck, Boxes, Telescope, Shield, Network } from "lucide-react";
+import { LayoutDashboard, CandlestickChart, FlaskConical, Newspaper, Compass, Wrench, Activity, Scale, Star, Briefcase, Radar, GraduationCap, Sigma, Menu, X, Target, BookOpenCheck, Telescope, Cpu, Sun, Moon } from "lucide-react";
 import { cn } from "@/lib/utils";
+import DitherBackground from "@/components/DitherBackground";
+
+function useTheme() {
+  const get = () => (typeof document !== "undefined" && document.documentElement.dataset.theme === "dark" ? "dark" : "light");
+  const [t, setT] = useState(get);
+  const toggle = () => {
+    const n = t === "dark" ? "light" : "dark";
+    document.documentElement.dataset.theme = n;
+    try { localStorage.setItem("theme", n); } catch { /* private mode */ }
+    setT(n);
+  };
+  return [t, toggle];
+}
+
+function ThemeToggle({ className }) {
+  const [t, toggle] = useTheme();
+  return (
+    <button
+      onClick={toggle}
+      aria-label="Toggle light or dark theme"
+      className={cn("inline-flex items-center justify-center rounded-lg border border-line text-dim hover:text-text transition-colors", className)}
+    >
+      {t === "dark" ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+    </button>
+  );
+}
 
 // Four functional groups: follow the markets → manage what you hold →
 // build and test strategies → learn the craft.
@@ -10,37 +36,24 @@ const NAV_GROUPS = [
     label: "Markets",
     items: [
       { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
-      { to: "/monitor", label: "Monitor", icon: Activity },
       { to: "/charts", label: "Charts", icon: CandlestickChart },
       { to: "/screener", label: "Screener", icon: Radar },
       { to: "/news", label: "News", icon: Newspaper },
     ],
   },
   {
-    label: "Trading",
-    items: [
-      { to: "/watchlist", label: "Watchlist", icon: Star },
-      { to: "/portfolio", label: "Portfolio", icon: Briefcase },
-      { to: "/options", label: "Options", icon: Sigma },
-    ],
-  },
-  {
     label: "Strategy",
     items: [
       { to: "/backtest", label: "Backtest", icon: FlaskConical },
-      { to: "/registry", label: "Registry", icon: Boxes },
-      { to: "/lab", label: "Lab", icon: Dices },
-      { to: "/anomalies", label: "Anomalies", icon: Telescope },
-      { to: "/compare", label: "Compare", icon: Scale },
+      { to: "/cortex", label: "Cortex", icon: Cpu },
+      { to: "/portfolio", label: "Portfolio", icon: Briefcase },
       { to: "/tools", label: "Tools", icon: Wrench },
     ],
   },
   {
     label: "Learn",
     items: [
-      { to: "/academy", label: "Academy", icon: GraduationCap },
-      { to: "/guide", label: "Guide", icon: BookOpenCheck },
-      { to: "/resources", label: "Resources", icon: Compass },
+      { to: "/learn", label: "Academy", icon: GraduationCap },
     ],
   },
 ];
@@ -66,11 +79,8 @@ function useDevNav() {
 }
 
 // Private, dev-token-gated nav entries, injected per group when a token exists.
+// (RiskGate + Brain Vault are now tabs inside the Cortex hub.)
 const DEV_ITEMS = {
-  Strategy: [
-    { to: "/riskgate", label: "RiskGate", icon: Shield },
-    { to: "/brain", label: "Brain Vault", icon: Network },
-  ],
   Learn: [{ to: "/coach", label: "Coach", icon: Target }],
 };
 
@@ -92,8 +102,11 @@ function NavItems({ onNavigate }) {
           onClick={onNavigate}
           className={({ isActive }) =>
             cn(
-              "flex items-center gap-2.5 rounded-lg px-3 py-[7px] text-sm transition-colors",
-              isActive ? "bg-accent/10 text-accent" : "text-dim hover:text-text hover:bg-surface"
+              "relative flex items-center gap-2.5 rounded-lg px-3 py-[7px] text-sm transition-colors",
+              // active gets a left accent bar, like the mockup
+              isActive
+                ? "bg-accent/10 text-accent font-medium before:content-[''] before:absolute before:-left-2 before:top-1.5 before:bottom-1.5 before:w-[3px] before:rounded-full before:bg-accent"
+                : "text-dim hover:text-text hover:bg-surface"
             )
           }
         >
@@ -130,6 +143,8 @@ export default function Layout({ children }) {
   return (
     <div className="min-h-screen">
       <div className="ambient-bg" aria-hidden="true" />
+      <DitherBackground />
+      <div className="grain-layer" aria-hidden="true" />
 
       {/* Desktop sidebar */}
       <aside className="hidden md:flex fixed inset-y-0 left-0 w-56 flex-col border-r border-line lg-frost p-4">
@@ -141,6 +156,7 @@ export default function Layout({ children }) {
           <NavItems />
         </nav>
         <div className="mt-auto px-3 pb-2 space-y-2">
+          <ThemeToggle className="w-8 h-8" />
           <p className="text-[10px] text-dim/60 leading-relaxed">
             Not investment advice. Backtests are hypothetical — past performance guarantees nothing.
           </p>
@@ -153,13 +169,16 @@ export default function Layout({ children }) {
         <p className="text-sm font-bold">
           <span className="text-dim tracking-[0.25em] text-[10px] uppercase mr-2">MMMXCIX</span>Quant
         </p>
-        <button
-          onClick={() => setDrawerOpen(true)}
-          aria-label="Open menu"
-          className="p-2 -mr-2 rounded-lg text-dim hover:text-text active:bg-surface transition-colors"
-        >
-          <Menu className="w-5 h-5" />
-        </button>
+        <div className="flex items-center gap-1">
+          <ThemeToggle className="w-9 h-9" />
+          <button
+            onClick={() => setDrawerOpen(true)}
+            aria-label="Open menu"
+            className="p-2 -mr-2 rounded-lg text-dim hover:text-text active:bg-surface transition-colors"
+          >
+            <Menu className="w-5 h-5" />
+          </button>
+        </div>
       </header>
 
       {/* Mobile slide-out drawer */}
@@ -187,7 +206,10 @@ export default function Layout({ children }) {
         </div>
       )}
 
-      <main className="md:ml-56 p-3 sm:p-4 md:p-8 max-w-[1800px]">{children}</main>
+      <main className="md:ml-56 p-3 sm:p-4 md:p-8 max-w-[1800px]">
+        {/* keyed by route so each page entry replays the reveal */}
+        <div key={location.pathname} className="view-in">{children}</div>
+      </main>
 
       {/* Mobile footer */}
       <footer className="md:hidden border-t border-line px-4 py-4 mt-4">

@@ -16,9 +16,9 @@ const DEFAULT_SYMBOL = { crypto: "BTCUSDT", stock: "SPY" };
 
 function MetricCard({ label, value, tone }) {
   return (
-    <div className="rounded-xl border border-line lg-glass px-4 py-3">
-      <p className="text-[11px] text-dim mb-1">{label}</p>
-      <p className={cn("font-mono font-semibold", tone)}>{value}</p>
+    <div className="rounded-xl border border-line lg-glass px-4 py-3 hover-lift">
+      <p className="text-[10px] uppercase tracking-wide text-dim mb-1.5">{label}</p>
+      <p className={cn("font-mono text-lg font-bold tabular-nums leading-none", tone)}>{value}</p>
     </div>
   );
 }
@@ -427,7 +427,7 @@ export default function Backtest() {
                 </div>
               )}
 
-              <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3">
+              <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3 stagger">
                 <MetricCard label="Return" value={fmtPct(m.totalReturnPct)}
                   tone={m.totalReturnPct >= 0 ? "text-up" : "text-down"} />
                 <MetricCard label="Buy & Hold" value={fmtPct(m.buyHoldReturnPct)}

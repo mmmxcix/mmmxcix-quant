@@ -1,28 +1,22 @@
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import Layout from "@/components/Layout";
 import Dashboard from "@/pages/Dashboard";
 import Charts from "@/pages/Charts";
-import Backtest from "@/pages/Backtest";
 import News from "@/pages/News";
-import Resources from "@/pages/Resources";
 import Tools from "@/pages/Tools";
-import Compare from "@/pages/Compare";
-import Monitor from "@/pages/Monitor";
-import Watchlist from "@/pages/Watchlist";
-import Portfolio from "@/pages/Portfolio";
-import Screener from "@/pages/Screener";
-import Options from "@/pages/Options";
-import Academy from "@/pages/Academy";
 import Coach from "@/pages/Coach";
-import Lab from "@/pages/Lab";
-import Anomalies from "@/pages/Anomalies";
-import Guide from "@/pages/Guide";
-import Registry from "@/pages/Registry";
-import RiskGate from "@/pages/RiskGate";
-import BrainVault from "@/pages/BrainVault";
+import Cortex from "@/pages/Cortex";
+import { BacktestHub, PortfolioHub, ScreenerHub, LearnHub } from "@/pages/hubs";
 import Impressum from "@/pages/Impressum";
 import Datenschutz from "@/pages/Datenschutz";
 import Nutzung from "@/pages/Nutzung";
+
+// Redirect that preserves the query string, so deep links (e.g.
+// /academy?c=…&l=… into the Learn hub) keep their course/lesson params.
+function Redir({ to }) {
+  const { search } = useLocation();
+  return <Navigate to={`${to}${search}`} replace />;
+}
 
 // The legal pages carry their own full-page shell (LegalLayout), so they render
 // outside the app chrome; everything else lives inside Layout.
@@ -40,24 +34,42 @@ export default function App() {
               <Routes>
                 <Route path="/" element={<Dashboard />} />
                 <Route path="/charts" element={<Charts />} />
-                <Route path="/backtest" element={<Backtest />} />
-                <Route path="/lab" element={<Lab />} />
-                <Route path="/anomalies" element={<Anomalies />} />
-                <Route path="/registry" element={<Registry />} />
-                <Route path="/riskgate" element={<RiskGate />} />
-                <Route path="/brain" element={<BrainVault />} />
-                <Route path="/compare" element={<Compare />} />
-                <Route path="/monitor" element={<Monitor />} />
-                <Route path="/screener" element={<Screener />} />
-                <Route path="/options" element={<Options />} />
-                <Route path="/watchlist" element={<Watchlist />} />
-                <Route path="/portfolio" element={<Portfolio />} />
                 <Route path="/news" element={<News />} />
-                <Route path="/academy" element={<Academy />} />
-                <Route path="/guide" element={<Guide />} />
-                <Route path="/coach" element={<Coach />} />
+                <Route path="/watchlist" element={<Redir to="/?view=watchlist" />} />
+                <Route path="/monitor" element={<Redir to="/?view=monitor" />} />
                 <Route path="/tools" element={<Tools />} />
-                <Route path="/resources" element={<Resources />} />
+                <Route path="/coach" element={<Coach />} />
+
+                {/* Cortex hub (Registry · Paper · RiskGate · Brain Vault) */}
+                <Route path="/cortex" element={<Redir to="/cortex/registry" replace />} />
+                <Route path="/cortex/:tab" element={<Cortex />} />
+                <Route path="/registry" element={<Redir to="/cortex/registry" replace />} />
+                <Route path="/lab" element={<Redir to="/cortex/paper" replace />} />
+                <Route path="/riskgate" element={<Redir to="/cortex/riskgate" replace />} />
+                <Route path="/brain" element={<Redir to="/cortex/brain" replace />} />
+
+                {/* Backtest hub (+ Compare) */}
+                <Route path="/backtest" element={<Redir to="/backtest/run" replace />} />
+                <Route path="/backtest/:tab" element={<BacktestHub />} />
+                <Route path="/compare" element={<Redir to="/backtest/compare" replace />} />
+
+                {/* Portfolio hub (+ Options) */}
+                <Route path="/portfolio" element={<Redir to="/portfolio/holdings" replace />} />
+                <Route path="/portfolio/:tab" element={<PortfolioHub />} />
+                <Route path="/options" element={<Redir to="/portfolio/options" replace />} />
+
+                {/* Screener hub (+ Anomalies) */}
+                <Route path="/screener" element={<Redir to="/screener/scan" replace />} />
+                <Route path="/screener/:tab" element={<ScreenerHub />} />
+                <Route path="/anomalies" element={<Redir to="/screener/anomalies" replace />} />
+
+                {/* Learn hub (Academy · Guide · Resources) */}
+                <Route path="/learn" element={<Redir to="/learn/academy" replace />} />
+                <Route path="/learn/:tab" element={<LearnHub />} />
+                <Route path="/academy" element={<Redir to="/learn/academy" replace />} />
+                <Route path="/guide" element={<Redir to="/learn/guide" replace />} />
+                <Route path="/resources" element={<Redir to="/learn/resources" replace />} />
+
                 <Route path="*" element={<Dashboard />} />
               </Routes>
             </Layout>

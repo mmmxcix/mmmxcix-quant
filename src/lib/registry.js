@@ -1,4 +1,4 @@
-// registry.js — the Strategy Registry (Threepio phase 2). A local "lab
+// registry.js — the Strategy Registry (Cortex). A local "lab
 // notebook": strategies you backtest can be saved with their metrics and
 // validation verdicts, then moved through a lifecycle:
 //
