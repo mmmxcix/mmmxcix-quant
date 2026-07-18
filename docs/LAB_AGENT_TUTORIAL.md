@@ -316,3 +316,62 @@ beiden Konten haben unterschiedliche Stände und driften ab dem ersten Fill
 auseinander. Verglichen werden soll das **Signal**, nicht die Positionsgröße.
 
 Status steht auf der RiskGate-Seite unter „IBKR paper mirroring".
+
+---
+
+## Schritt 10 — Automatische Quellensuche (tagsüber)
+
+Cortex sucht sich seine Quellen inzwischen **selbst**. `discover-sources.mjs`
+durchsucht kuratierte GitHub-Indexe (awesome-quant & Co.) und Hacker News,
+findet Feeds, **prüft sie tatsächlich** (parst? aktuell? thematisch passend?
+Volltext?) und schreibt die Überlebenden nach `~/.mmmxcix-sources.json`.
+Der Research-Agent liest die Datei bei jedem Lauf zusätzlich zur eingebauten Liste.
+
+Gemessen beim ersten Einsatz: 952 Links aus 6 READMEs → 204 Kandidaten →
+6 verifizierte neue Feeds, 139 Kandidaten warten auf die nächsten Läufe.
+
+**n8n-Workflow** — Schedule Trigger, Cron `0 12 * * *` (täglich 12:00):
+
+```
+Execute Command:
+  cd C:\Users\gilap\Documents\GitHub\mmmxcix-quant && node scripts/discover-sources.mjs
+```
+
+Der Agent räumt auch auf: Feeds, die fünf Läufe in Folge nichts Brauchbares
+liefern, werden automatisch stillgelegt. Genau diese Hälfte fehlt bei
+handgepflegten Listen — deshalb verrotten sie.
+
+Stellschrauben: `LAB_DISCOVER_PROBE` (Standard 70 geprüfte Seiten pro Lauf).
+
+### Alle Workflows im Überblick
+
+| Workflow | Cron | Befehl |
+|---|---|---|
+| Paper-Trading | alle 15 Min | `node scripts/lab-agent.mjs` |
+| Nacht-Recherche | `0 1,3,5 * * *` | `node scripts/research-agent.mjs` |
+| Tages-Validierung | `0 8,11,14,17,20 * * *` | `node scripts/revalidate-agent.mjs` |
+| Quellensuche | `0 12 * * *` | `node scripts/discover-sources.mjs` |
+
+---
+
+## Schritt 11 — Multi-Markt: Strategien für alles
+
+Der Gauntlet testet nicht mehr „muss auf BTC **und** SPY laufen". Er testet
+**10 Märkte** und markiert, wo eine Strategie tatsächlich funktioniert:
+
+BTC 4h · ETH 1h · SOL 15m · SPY 1d · QQQ 1d · AAPL 15m · AAPL 1h · TSLA 1d ·
+EUR/USD 1d · EUR/USD 1h
+
+Eine Strategie, die auf Bitcoin nichts taugt, aber auf 15-Minuten-AAPL oder
+EUR/USD sauber läuft, kommt jetzt durch — mit Markt-Tag. Befördert wird sie für
+**genau den Markt**, auf dem sie validiert wurde, mit den echten Kosten dieses
+Marktes (Gebühr nach Asset-Klasse + Slippage nach Zeitrahmen).
+
+Gegen Cherry-Picking: die Trial-Zahl für den Deflated Sharpe wird mit der Zahl
+der **Asset-Klassen** multipliziert. Breiter suchen macht jeden Treffer
+schwerer zu behaupten. Details und Messwerte: `docs/CORTEX_CALIBRATION.md`.
+
+> **Wichtig:** Die DSR-Schwellen sind von 95/97 % auf 50/70 % gesenkt — nicht
+> aus Nachlässigkeit, sondern weil die alten Werte nachweislich unerreichbar
+> waren und das System nach wenigen Dutzend Papers nie wieder etwas befördert
+> hätte. Die Messtabelle steht in `docs/CORTEX_CALIBRATION.md`.

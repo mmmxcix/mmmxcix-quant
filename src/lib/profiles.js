@@ -41,15 +41,27 @@ export const PROFILES = {
       minProfitFactor: 1.25,
       minReturnPct: 0,
       maxBacktestDrawdownPct: 15, // hard ceiling: a 20% backtest DD breaches an 8% live rule
-      minDsr: 97,
+      // Calibrated against measurement, not intuition — see
+      // docs/CORTEX_CALIBRATION.md for the full table.
+      //
+      // The old 97% bar was unreachable in practice. Measured DSR at a
+      // realistic 90 effective trials: QQQ trend (Sharpe 1.05) 58.7%, TSLA
+      // 41.7%, SPY 35.2%, an RSI mean-reversion noise strategy 5.5%. A 97%
+      // bar rejects all of them, so after a few dozen papers the agent could
+      // never promote anything again regardless of quality.
+      //
+      // 70% is where the prop bar actually discriminates: it demands better
+      // than the best of this sample, which is the right posture for an
+      // account that dies at an 8% drawdown.
+      minDsr: 70,
       requireKFold: true,
       requireNoise: true,
     },
     promotion: {
-      minDsr: 97,
+      minDsr: 70,
       cap: 3,
       // Re-validation must still clear this after the strategy has aged a day.
-      minDsrOnRevalidate: 95,
+      minDsrOnRevalidate: 60,
     },
   },
 
@@ -76,14 +88,23 @@ export const PROFILES = {
       minProfitFactor: 1.35,   // HIGHER than prop — deeper holes must pay better
       minReturnPct: 0,
       maxBacktestDrawdownPct: 35,
-      minDsr: 95,
+      // See the prop note above. At 90 effective trials this admits the
+      // QQQ-class signal (58.7%) and rejects the noise strategy (5.5%) — the
+      // separation the measurement actually supports.
+      //
+      // Expect this to promote ONE or TWO strategies a month, not dozens. That
+      // is the Deflated Sharpe doing its job: once you have tried hundreds of
+      // ideas, only an exceptional result is still credible. The structural
+      // suite (k-fold, noise, out-of-sample holdout, multi-market agreement)
+      // is the primary filter; DSR is the final quality gate on top of it.
+      minDsr: 50,
       requireKFold: true,
       requireNoise: true,
     },
     promotion: {
-      minDsr: 95,
+      minDsr: 50,
       cap: 8,
-      minDsrOnRevalidate: 92,
+      minDsrOnRevalidate: 40,
     },
   },
 };

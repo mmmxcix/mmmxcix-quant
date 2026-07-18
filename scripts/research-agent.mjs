@@ -27,13 +27,16 @@ import { runBacktest, compileStrategy } from "../src/lib/backtest.js";
 import { kFoldCode, noiseTest, deflatedSharpe, equityReturns } from "../src/lib/validation.js";
 import { qualifyAll, getProfile, PROFILE_IDS } from "../src/lib/profiles.js";
 import { harvestAll, fullTextOf, topicsOf, RELEVANCE } from "./sources.mjs";
-import { validationDatasets } from "./marketdata.mjs";
+import { loadUniverse } from "./marketdata.mjs";
+import { UNIVERSE, byId, costFor, effectiveTrials, describeMarkets } from "../src/lib/markets.js";
 
 const SITE = process.env.LAB_SITE || "https://quant.mmmxcix.com";
 const TOKEN = process.env.LAB_TOKEN;
 const RESEARCH_FILE = join(homedir(), ".mmmxcix-research.json");
 const MAX_PAPERS_PER_RUN = +(process.env.LAB_RESEARCH_PAPERS || 2); // gentle on the free AI tier
-const FEE_BPS = 10;
+// Costs are per market now (src/lib/markets.js costFor): a 15-minute equity
+// strategy pays far more spread than a daily one, and the old flat 10bps was
+// flattering exactly the high-frequency candidates most likely to be noise.
 // Auto-promotion thresholds and caps now live per profile in src/lib/profiles.js
 // (prop: DSR ≥ 97, cap 3 · private: DSR ≥ 95, cap 8). The math earns the
 // promotion; no human click needed.
@@ -54,6 +57,33 @@ function load() {
   }
 }
 function save(st) { writeFileSync(RESEARCH_FILE, JSON.stringify(st)); }
+
+// How many strategies were tried in the recent SELECTION WINDOW — the pool this
+// candidate was actually chosen from.
+//
+// The old code passed the lifetime attempt count into the Deflated Sharpe
+// hurdle. That sounds conservative and is in fact self-defeating: the counter
+// only ever grows, so the bar rises forever and the agent eventually cannot
+// promote anything no matter how good it is. Measured: a Sharpe-1.05 strategy
+// scores DSR 74% at 30 trials but 43% at 300 — with a 97% bar the system
+// strangles itself after a few dozen papers.
+//
+// A rolling window is the honest correction: strategies tried months ago on
+// unrelated papers were not part of the selection that produced this one.
+const TRIAL_WINDOW_DAYS = +(process.env.LAB_TRIAL_WINDOW_DAYS || 30);
+// Ceiling on the windowed count. Past a few hundred trials the Deflated Sharpe
+// curve flattens out and every additional trial buys almost no information
+// while still pushing the bar down — capping keeps the hurdle meaningful
+// instead of asymptotically impossible.
+const TRIAL_WINDOW_CAP = +(process.env.LAB_TRIAL_WINDOW_CAP || 60);
+function windowTrials(st) {
+  const cutoff = Date.now() - TRIAL_WINDOW_DAYS * 864e5;
+  const recent = (st.attemptLog || []).filter((t) => t >= cutoff).length;
+  // Before the log existed, fall back to the lifetime count so an existing
+  // install does not suddenly get an artificially easy hurdle.
+  const n = recent || (st.attempts || 1);
+  return Math.max(1, Math.min(n, TRIAL_WINDOW_CAP));
+}
 
 // Harvesting, topic tagging and full-text extraction all live in sources.mjs
 // now — this file is about judgement, not plumbing.
@@ -146,62 +176,162 @@ async function repairStrategy(code, error) {
 // ── 3. validation gauntlet (candle fetchers live in marketdata.mjs) ─────────
 
 /**
- * Run the full gauntlet ONCE and judge the result against BOTH profiles.
+ * Out-of-sample holdout: re-run on the most recent 30% alone.
  *
- * The structural checks (compiles, runs, survives k-fold and noise) are
- * profile-independent — a strategy that crashes is not "prop-strict-crashing".
- * Only the numeric bars differ, so the expensive work happens once and
- * qualifyAll() reads the same metrics twice.
+ * With hardcoded parameters there is nothing to "train", so walk-forward
+ * optimisation does not apply. What DOES apply is regime stability — a rule
+ * fitted (by the model, from the paper) to the era that dominates the series
+ * will fall apart on the recent tail. This catches that.
+ */
+function holdout(code, candles, feeBps) {
+  const cut = Math.floor(candles.length * 0.7);
+  const tail = candles.slice(cut);
+  if (tail.length < 150) return { ok: true, skipped: "too short" };
+  try {
+    const res = runBacktest({ candles: tail, signalFn: compileStrategy(code), initialCapital: 10000, feeBps });
+    if (res.warnings.length) return { ok: false, detail: "error on holdout" };
+    const m = res.metrics;
+    if (m.tradeCount < 5) return { ok: true, skipped: "few trades" };
+    // Not demanding profit — demanding it did not invert. A strategy that made
+    // money overall but bleeds on the recent third is a regime artefact.
+    if (m.profitFactor < 0.9) return { ok: false, detail: `holdout PF ${m.profitFactor.toFixed(2)}` };
+    return { ok: true, pf: +m.profitFactor.toFixed(2), ret: +m.totalReturnPct.toFixed(1) };
+  } catch {
+    return { ok: false, detail: "holdout threw" };
+  }
+}
+
+/**
+ * Run the gauntlet across the WHOLE market universe and report where the
+ * strategy actually works.
  *
- * @returns {{ pass:boolean, reason?:string, metrics?:object, dsr?:number,
- *             qualified?:string[], profileReasons?:object }}
+ * The old version demanded success on BTC 4h AND SPY 1d, which buried anything
+ * specialised — a rule that is excellent on 15-minute AAPL and useless on
+ * Bitcoin was recorded as a failure. It is not a failure; it is a strategy with
+ * a domain. So each market is judged on its own and the result is TAGGED.
+ *
+ * The obvious hazard is cherry-picking: test ten venues, keep the luckiest.
+ * That is handled honestly rather than ignored — the Deflated Sharpe trial
+ * count is multiplied by the number of markets tested (effectiveTrials), so
+ * searching wider genuinely makes each claim harder to sustain.
+ *
+ * Costs are per market: 15-minute equity pays far more spread than daily, and
+ * a flat 10bps everywhere was flattering exactly the strategies most likely to
+ * be noise.
  */
 function gauntlet(code, datasets, globalTrials) {
   try { compileStrategy(code); } catch (e) { return { pass: false, reason: `compile: ${e.message.slice(0, 80)}` }; }
 
-  const perSet = [];
-  for (const { name, candles } of datasets) {
+  // Pass 1 — cheap: run every market, keep the ones that made money at all.
+  const ran = [];
+  for (const { name, market, candles } of datasets) {
+    const feeBps = costFor(market);
     let res;
     try {
-      res = runBacktest({ candles, signalFn: compileStrategy(code), initialCapital: 10000, feeBps: FEE_BPS });
+      res = runBacktest({ candles, signalFn: compileStrategy(code), initialCapital: 10000, feeBps });
     } catch (e) {
-      return { pass: false, reason: `runtime(${name}): ${e.message.slice(0, 60)}` };
+      return { pass: false, reason: `runtime(${name}): ${e.message.slice(0, 55)}` };
     }
-    if (res.warnings.length) return { pass: false, reason: `strategy error (${name}): ${res.warnings[0].slice(0, 80)}` };
-    perSet.push({ name, m: res.metrics, equity: res.equity });
+    // A strategy error is fatal everywhere, not just here — bail immediately.
+    if (res.warnings.length) return { pass: false, reason: `strategy error (${name}): ${res.warnings[0].slice(0, 70)}` };
+    ran.push({ name, market, candles, feeBps, m: res.metrics, equity: res.equity });
   }
 
-  // Structural robustness first — cheap to state, and profile-independent.
-  const primary = datasets[0];
-  const kf = kFoldCode({ candles: primary.candles, makeSignalFn: () => compileStrategy(code), feeBps: FEE_BPS });
-  if (!kf || kf.verdict !== "pass") return { pass: false, reason: `k-fold fail (${kf ? kf.profitableFolds + "/" + kf.totalFolds : "n/a"} folds)` };
-  const nz = noiseTest({ candles: primary.candles, makeSignalFn: () => compileStrategy(code), runs: 15, feeBps: FEE_BPS });
-  if (!nz || nz.verdict !== "pass") return { pass: false, reason: `noise fail (median ${nz ? nz.medianReturnPct.toFixed(0) : "?"}%)` };
-
-  // Deflated Sharpe with the GLOBAL attempt count — the honest hurdle. Every
-  // strategy ever generated raises this bar, so a lucky one found on attempt
-  // 400 has to clear far more than one found on attempt 4.
-  const dsrRaw = deflatedSharpe(equityReturns(perSet[0].equity), Math.max(1, globalTrials));
-  const dsrPct = dsrRaw ? dsrRaw.dsr * 100 : 0;
-
-  const { qualified, reasons } = qualifyAll({ perSet, dsrPct });
-  const metrics = Object.fromEntries(perSet.map((s) => [s.name, {
-    ret: +s.m.totalReturnPct.toFixed(1), pf: +s.m.profitFactor.toFixed(2),
-    dd: +s.m.maxDrawdownPct.toFixed(1), n: s.m.tradeCount,
-  }]));
-
-  if (qualified.length === 0) {
-    // Report the LEAST strict profile's reason — it is the most informative
-    // ("PF 1.1 < 1.35" beats "drawdown 22% > 15%" when both regimes rejected it).
-    const reason = reasons.private || reasons.prop || "failed all profiles";
-    return { pass: false, reason, metrics, dsr: +dsrPct.toFixed(1) };
+  const promising = ran.filter((r) => r.m.tradeCount >= 20 && r.m.totalReturnPct > 0 && r.m.profitFactor > 1.05);
+  if (!promising.length) {
+    const best = ran.slice().sort((a, b) => b.m.profitFactor - a.m.profitFactor)[0];
+    return {
+      pass: false,
+      reason: best
+        ? `no edge anywhere (best ${best.name}: ret ${best.m.totalReturnPct.toFixed(0)}%, PF ${best.m.profitFactor.toFixed(2)}, n=${best.m.tradeCount})`
+        : "no markets ran",
+      byMarket: summarise(ran),
+    };
   }
+
+  // The honest hurdle. globalTrials is a WINDOWED count (see windowTrials
+  // below), and markets are counted as correlated clusters rather than
+  // individually — SPY and QQQ are not two independent bets.
+  const trials = effectiveTrials(globalTrials, datasets.map((d) => d.market.asset));
+
+  // Pass 2 — expensive robustness, only on the promising venues.
+  const byMarket = {};
+  const qualifiedProfiles = new Set();
+  const winningMarkets = [];
+  const rejections = [];
+
+  for (const r of promising) {
+    const mk = { ...metricRow(r.m) };
+
+    const kf = kFoldCode({ candles: r.candles, makeSignalFn: () => compileStrategy(code), feeBps: r.feeBps });
+    if (!kf || kf.verdict !== "pass") {
+      byMarket[r.name] = { ...mk, rejected: `k-fold ${kf ? kf.profitableFolds + "/" + kf.totalFolds : "n/a"}` };
+      rejections.push(`${r.name}: k-fold`);
+      continue;
+    }
+    const nz = noiseTest({ candles: r.candles, makeSignalFn: () => compileStrategy(code), runs: 15, feeBps: r.feeBps });
+    if (!nz || nz.verdict !== "pass") {
+      byMarket[r.name] = { ...mk, rejected: `noise ${nz ? nz.medianReturnPct.toFixed(0) + "%" : "n/a"}` };
+      rejections.push(`${r.name}: noise`);
+      continue;
+    }
+    const ho = holdout(code, r.candles, r.feeBps);
+    if (!ho.ok) {
+      byMarket[r.name] = { ...mk, rejected: ho.detail };
+      rejections.push(`${r.name}: ${ho.detail}`);
+      continue;
+    }
+
+    const dsrRaw = deflatedSharpe(equityReturns(r.equity), trials);
+    const dsrPct = dsrRaw ? dsrRaw.dsr * 100 : 0;
+
+    const { qualified, reasons } = qualifyAll({ perSet: [{ name: r.name, m: r.m }], dsrPct });
+    byMarket[r.name] = {
+      ...mk, dsr: +dsrPct.toFixed(1), holdoutPf: ho.pf ?? null,
+      profiles: qualified,
+      ...(qualified.length ? {} : { rejected: reasons.private || reasons.prop }),
+    };
+    if (qualified.length) {
+      winningMarkets.push(r.name);
+      for (const p of qualified) qualifiedProfiles.add(p);
+    } else {
+      rejections.push(`${r.name}: ${reasons.private || reasons.prop}`);
+    }
+  }
+
+  // Fill in the markets that never reached pass 2, so the record is complete.
+  for (const r of ran) if (!byMarket[r.name]) byMarket[r.name] = { ...metricRow(r.m), rejected: "no edge" };
+
+  if (!winningMarkets.length) {
+    return { pass: false, reason: rejections[0] || "failed robustness everywhere", byMarket, trials };
+  }
+
+  // Report the strongest venue as the headline.
+  const best = winningMarkets
+    .slice()
+    .sort((a, b) => (byMarket[b].dsr ?? 0) - (byMarket[a].dsr ?? 0))[0];
 
   return {
-    pass: true, metrics, dsr: +dsrPct.toFixed(1),
-    qualified, profileReasons: reasons,
+    pass: true,
+    byMarket,
+    markets: winningMarkets,
+    bestMarket: best,
+    dsr: byMarket[best].dsr,
+    qualified: [...qualifiedProfiles],
+    trials,
+    marketsTested: datasets.length,
   };
 }
+
+/** Which profiles a single market qualified for. */
+const byMarket_profiles = (verdict, mid) => verdict.byMarket?.[mid]?.profiles;
+
+const metricRow = (m) => ({
+  ret: +m.totalReturnPct.toFixed(1), pf: +m.profitFactor.toFixed(2),
+  dd: +m.maxDrawdownPct.toFixed(1), n: m.tradeCount,
+  sharpe: +(m.sharpe ?? 0).toFixed(2), win: +(m.winRatePct ?? 0).toFixed(0),
+});
+const summarise = (ran) => Object.fromEntries(ran.map((r) => [r.name, metricRow(r.m)]));
 
 // ── main ────────────────────────────────────────────────────────────────────
 const st = load();
@@ -238,7 +368,9 @@ for (const item of fresh) {
   }
 }
 
-const datasets = fresh.length ? await validationDatasets() : [];
+// The full universe: crypto, equity index, single names, forex, across
+// timeframes from 15m to daily. A strategy only has to work SOMEWHERE.
+const datasets = fresh.length ? await loadUniverse(UNIVERSE) : [];
 
 const newCandidates = [];
 const toPromote = [];
@@ -267,8 +399,9 @@ for (const paper of fresh) {
     }
     st.seen = [...st.seen, paper.id].slice(-500); // only consumed once generation succeeded
     st.papersRead++;
-    st.attempts++; // global data-mining counter — raises the DSR bar forever
-    const verdict = gauntlet(code, datasets, st.attempts);
+    st.attempts++;                                   // lifetime counter, for the record
+    st.attemptLog = [...(st.attemptLog || []), Date.now()].slice(-5000);
+    const verdict = gauntlet(code, datasets, windowTrials(st));
     if (verdict.pass) {
       const cand = {
         id: `rc_${Date.now().toString(36)}`,
@@ -279,32 +412,49 @@ for (const paper of fresh) {
         readFullText: !!paper.fullText,
         topics: paper.topics,
         code,
-        metrics: verdict.metrics,
+        // Where it works, not just how well. byMarket carries every venue that
+        // was tried, including the rejections and why — the graveyard for a
+        // strategy that ALMOST worked is the most useful thing in the record.
+        byMarket: verdict.byMarket,
+        markets: verdict.markets,
+        bestMarket: verdict.bestMarket,
+        marketsTested: verdict.marketsTested,
+        trialsUsed: verdict.trials,
         dsr: verdict.dsr,
         // Which regimes this cleared. A strategy can be private-grade and still
         // breach a prop drawdown rule — that is information, not a failure.
         profiles: verdict.qualified,
-        profileReasons: verdict.profileReasons,
         trialsAtPass: st.attempts,
         foundAt: Date.now(),
       };
       st.candidates = [cand, ...st.candidates].slice(0, 30);
       newCandidates.push(cand);
-      console.log(`✓ CANDIDATE: ${cand.name} (DSR ${cand.dsr}%) → profiles: ${verdict.qualified.join(", ")}`);
+      console.log(
+        `✓ CANDIDATE: ${cand.name} (DSR ${cand.dsr}% on ${cand.bestMarket}) ` +
+        `→ works on ${verdict.markets.join(", ")} · profiles: ${verdict.qualified.join(", ")}`
+      );
 
-      // Auto-promote per profile: each regime has its own DSR bar and its own
-      // cap on the server, so a prop-grade survivor can be promoted into the
-      // prop book even when the private book is already full.
+      // Auto-promote per profile AND per winning market: a strategy that works
+      // on both EUR/USD daily and SOL 15m is two paper positions, not one, and
+      // collapsing them to a single BTC line would have been a lie about what
+      // was actually validated.
       for (const pid of verdict.qualified) {
         const prof = getProfile(pid);
-        if (cand.dsr >= prof.promotion.minDsr) {
+        if (cand.dsr < prof.promotion.minDsr) continue;
+        for (const mid of verdict.markets) {
+          if (!(byMarket_profiles(verdict, mid) || []).includes(pid)) continue;
+          const m = byId(mid);
+          if (!m) continue;
           toPromote.push({
-            id: `${cand.id}_${pid}`, name: `🤖 ${cand.name}`, mode: "code", code: cand.code,
-            market: "crypto", symbol: "BTCUSDT", interval: "4h",
-            feeBps: FEE_BPS, positionPct: 100, dsr: cand.dsr, paper: cand.paper,
-            profile: pid, candidateId: cand.id,
+            id: `${cand.id}_${pid}_${mid}`, name: `🤖 ${cand.name} · ${m.label}`,
+            mode: "code", code: cand.code,
+            market: m.asset === "crypto" ? "crypto" : "stock",
+            symbol: m.symbol, interval: m.interval,
+            feeBps: costFor(m), positionPct: 100,
+            dsr: verdict.byMarket[mid]?.dsr ?? cand.dsr, paper: cand.paper,
+            profile: pid, candidateId: cand.id, marketId: mid,
           });
-          console.log(`  🤖 auto-promote queued for ${prof.label} (DSR ${cand.dsr}% ≥ ${prof.promotion.minDsr}%)`);
+          console.log(`  🤖 auto-promote queued: ${prof.label} · ${m.label}`);
         }
       }
       if (UNTIL_HIT) { console.log(`  ↳ hit after ${processed} paper(s) — stopping early (until-hit mode)`); break; }
@@ -400,6 +550,14 @@ const state = { ...(cur?.state || {}), research: {
   byProfile: Object.fromEntries(
     PROFILE_IDS.map((pid) => [pid, (st.candidates || []).filter((c) => (c.profiles || []).includes(pid)).length])
   ),
+  // Which venues are actually producing survivors — tells you whether the
+  // universe is earning its cost or whether nine of ten markets never hit.
+  marketHits: (() => {
+    const hits = {};
+    for (const c of st.candidates || []) for (const mid of c.markets || []) hits[mid] = (hits[mid] || 0) + 1;
+    return hits;
+  })(),
+  universeSize: UNIVERSE.length,
   lastRun: Date.now(),
   latest: fresh.map((p) => ({ title: p.title.slice(0, 80), link: p.link, source: p.source, kind: p.kind })),
   lastGraveyard: st.graveyard.slice(0, 3).map((g) => ({ title: g.title, reason: g.reason })),

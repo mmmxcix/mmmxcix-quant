@@ -18,8 +18,8 @@
 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdtempSync, readdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
 
 const exec = promisify(execFile);
@@ -198,17 +198,68 @@ const BLOGS = [
   // an anomaly years before it reaches a finance journal.
   { name: "NBER", url: "https://back.nber.org/rss/new.xml" },
 ];
+/**
+ * Feeds the discovery agent found on its own (~/.mmmxcix-sources.json).
+ * Merged on top of the built-in list, so the system's reading grows without
+ * anyone editing this file. Missing store = first run, not an error.
+ */
+const DISCOVERED_STORE = join(homedir(), ".mmmxcix-sources.json");
+function discoveredFeeds() {
+  try {
+    const s = JSON.parse(readFileSync(DISCOVERED_STORE, "utf8"));
+    return (s.feeds || []).filter((f) => f && f.url && (f.strikes || 0) < 5);
+  } catch { return []; }
+}
+
+/**
+ * Record which discovered feeds produced nothing, so discover-sources.mjs can
+ * retire them. Without this the auto-discovered list rots exactly the way a
+ * hand-maintained one does — it just rots without anyone watching.
+ */
+function recordYield(results) {
+  try {
+    const s = JSON.parse(readFileSync(DISCOVERED_STORE, "utf8"));
+    let touched = false;
+    for (const f of s.feeds || []) {
+      if (!(f.name in results)) continue;
+      const n = results[f.name];
+      if (n > 0) { f.yield = (f.yield || 0) + n; f.strikes = 0; }
+      else f.strikes = (f.strikes || 0) + 1;
+      touched = true;
+    }
+    if (touched) writeFileSync(DISCOVERED_STORE, JSON.stringify(s, null, 2));
+  } catch { /* no store yet */ }
+}
+
 async function blogs(max) {
-  const per = Math.max(2, Math.ceil(max / BLOGS.length));
+  const all = [...BLOGS, ...discoveredFeeds().map((f) => ({ name: f.name, url: f.url, discovered: true }))];
+  const per = Math.max(2, Math.ceil(max / Math.max(1, all.length)));
+  const yields = {};
   const results = await Promise.all(
-    BLOGS.map((b) =>
+    all.map((b) =>
       getText(b.url)
-        .then((xml) => parseFeed(xml, b.name).slice(0, per))
-        .catch((e) => { console.error(`  ${b.name}: ${e.message}`); return []; })
+        .then((xml) => {
+          const items = parseFeed(xml, b.name).slice(0, per);
+          if (b.discovered) yields[b.name] = items.length;
+          return items;
+        })
+        .catch((e) => {
+          console.error(`  ${b.name}: ${e.message}`);
+          if (b.discovered) yields[b.name] = 0;
+          return [];
+        })
     )
   );
+  recordYield(yields);
+  const disc = all.filter((b) => b.discovered).length;
+  if (disc) console.log(`  blogs: ${BLOGS.length} built-in + ${disc} self-discovered`);
   return results.flat();
 }
+
+// Exposed for the discovery agent, which has to parse and judge a feed before
+// it is allowed into the rotation.
+export const parseFeedPublic = parseFeed;
+export const htmlToTextPublic = htmlToText;
 
 // ── 5. Zenodo ───────────────────────────────────────────────────────────────
 // Open-access repository (CERN-run), free and keyless. Carries preprints and

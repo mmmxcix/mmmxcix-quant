@@ -45,14 +45,39 @@ export async function fetchStock(symbol, range = "10y", interval = "1d") {
   return out;
 }
 
+const YAHOO_INTERVAL = { "1m": "1m", "5m": "5m", "15m": "15m", "30m": "30m", "1h": "60m", "1d": "1d", "1w": "1wk", "1M": "1mo" };
+
+/** Load one market from the universe. Returns null when the provider has no data. */
+export async function loadMarket(m) {
+  try {
+    const candles = m.asset === "crypto"
+      ? await fetchCrypto(m.symbol, m.interval, m.bars || 6000)
+      : await fetchStock(m.symbol, m.range || "5y", YAHOO_INTERVAL[m.interval] || "1d");
+    // Below this there is not enough history for a k-fold to mean anything.
+    if (!candles || candles.length < 400) {
+      console.error(`  ${m.id}: only ${candles?.length ?? 0} bars — skipped`);
+      return null;
+    }
+    return { name: m.id, market: m, candles };
+  } catch (e) {
+    console.error(`  ${m.id}: ${e.message.slice(0, 70)}`);
+    return null;
+  }
+}
+
 /**
- * The standard two-market validation set. Deliberately one 24/7 crypto series
- * and one equity index: a rule that only works on one of them is usually
- * fitting a market's quirks rather than a real effect.
+ * Load the whole test universe (or a subset). Sequential on purpose — Yahoo
+ * rate-limits parallel bursts from one IP and starts returning empty results,
+ * which would look like "strategy has no data" rather than "we were throttled".
+ *
+ * @param {Array} markets  entries from src/lib/markets.js UNIVERSE
  */
-export async function validationDatasets() {
-  return [
-    { name: "BTC4h", candles: await fetchCrypto("BTCUSDT", "4h", 6000) },
-    { name: "SPY1d", candles: await fetchStock("SPY") },
-  ];
+export async function loadUniverse(markets) {
+  const out = [];
+  for (const m of markets) {
+    const ds = await loadMarket(m);
+    if (ds) out.push(ds);
+  }
+  console.log(`markets: ${out.length}/${markets.length} loaded (${out.map((d) => `${d.name} ${d.candles.length}`).join(", ")})`);
+  return out;
 }
