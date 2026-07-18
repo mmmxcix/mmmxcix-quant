@@ -147,10 +147,10 @@ export default function DitherBackground() {
     gl.uniform1f(U("uWaveSpeed"), 0.05);
     gl.uniform1f(U("uWaveFrequency"), 3.0);
     gl.uniform1f(U("uWaveAmplitude"), 0.3);
-    // Cursor dial: radius 0.18 is the size that landed; 0.8 depth keeps the
+    // Cursor dial: radius 0.18 is the size that landed; 0.7 depth keeps the
     // dent strong without burning a hole at the centre.
     gl.uniform1f(U("uMouseRadius"), 0.18);
-    gl.uniform1f(U("uMouseStrength"), 0.8);
+    gl.uniform1f(U("uMouseStrength"), 0.7);
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     gl.clearColor(0, 0, 0, 0);
