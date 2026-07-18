@@ -203,7 +203,10 @@ export default function Layout({ children }) {
         </div>
       )}
 
-      <main className="md:ml-56 p-3 sm:p-4 md:p-8 max-w-[1800px]">{children}</main>
+      <main className="md:ml-56 p-3 sm:p-4 md:p-8 max-w-[1800px]">
+        {/* keyed by route so each page entry replays the reveal */}
+        <div key={location.pathname} className="view-in">{children}</div>
+      </main>
 
       {/* Mobile footer */}
       <footer className="md:hidden border-t border-line px-4 py-4 mt-4">

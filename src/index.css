@@ -104,6 +104,45 @@
   to { transform: translateX(0); }
 }
 
+/* ── Motion layer ──────────────────────────────────────────────────
+   Page entry, staggered card reveals and self-drawing chart lines.
+   All of it collapses to nothing under prefers-reduced-motion. */
+@keyframes viewIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes cardIn {
+  from { opacity: 0; transform: translateY(14px) scale(0.99); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes drawIn {
+  from { stroke-dashoffset: 1; }
+  to   { stroke-dashoffset: 0; }
+}
+
+.view-in { animation: viewIn 0.45s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+
+.stagger > * { animation: cardIn 0.5s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+.stagger > *:nth-child(1) { animation-delay: 0.04s; }
+.stagger > *:nth-child(2) { animation-delay: 0.10s; }
+.stagger > *:nth-child(3) { animation-delay: 0.16s; }
+.stagger > *:nth-child(4) { animation-delay: 0.22s; }
+.stagger > *:nth-child(5) { animation-delay: 0.28s; }
+.stagger > *:nth-child(6) { animation-delay: 0.34s; }
+.stagger > *:nth-child(7) { animation-delay: 0.40s; }
+.stagger > *:nth-child(8) { animation-delay: 0.46s; }
+
+/* Self-drawing line: pathLength="1" normalises any geometry to 0…1. */
+.draw-in { stroke-dasharray: 1; animation: drawIn 1.1s ease-out both; }
+.fade-in { animation: viewIn 0.9s ease-out both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .view-in,
+  .stagger > *,
+  .draw-in,
+  .fade-in { animation: none !important; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .grain-layer { opacity: calc(var(--grain) * 0.7); }
 }

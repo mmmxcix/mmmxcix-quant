@@ -6,6 +6,7 @@ import WorldClock from "@/components/WorldClock";
 import WatchlistPage from "@/pages/Watchlist";
 import MonitorPage from "@/pages/Monitor";
 import { cn, fmtPrice, fmtPct } from "@/lib/utils";
+import CountUp from "@/components/CountUp";
 
 const fmtUsd = (v) => (v == null ? "—" : "$" + Math.round(v).toLocaleString("en-US"));
 
@@ -95,8 +96,9 @@ function AreaChart({ history, height = 200 }) {
           <stop offset="100%" style={{ stopColor: "rgb(var(--c-up))", stopOpacity: 0 }} />
         </linearGradient>
       </defs>
-      <polygon points={`0,${H} ${line} ${W},${H}`} fill="url(#eq-fill)" />
-      <polyline points={line} fill="none" className="stroke-up" strokeWidth="2" vectorEffect="non-scaling-stroke" strokeLinejoin="round" strokeLinecap="round" />
+      <polygon points={`0,${H} ${line} ${W},${H}`} fill="url(#eq-fill)" className="fade-in" />
+      <polyline points={line} pathLength="1" fill="none" className="stroke-up draw-in" strokeWidth="2"
+        vectorEffect="non-scaling-stroke" strokeLinejoin="round" strokeLinecap="round" />
     </svg>
   );
 }
@@ -174,11 +176,11 @@ function Overview() {
   return (
     <>
       {hasPortfolio && (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4 stagger">
           <KpiCard
             icon={TrendingUp}
             label="Combined equity"
-            value={fmtUsd(c.equity)}
+            value={<CountUp value={c.equity} format={(v) => "$" + Math.round(v).toLocaleString("en-US")} />}
             sub={
               <span className={cn("inline-flex items-center rounded-full px-2 py-0.5 font-mono font-semibold tabular-nums",
                 c.returnPct >= 0 ? "bg-up/10 text-up" : "bg-down/10 text-down")}>
@@ -186,10 +188,13 @@ function Overview() {
               </span>
             }
           />
-          <KpiCard label="Paper strategies" value={lab.strategies?.filter((s) => !s.error).length ?? "—"}
+          <KpiCard label="Paper strategies"
+            value={<CountUp value={lab.strategies?.filter((s) => !s.error).length ?? 0} format={(v) => String(Math.round(v))} />}
             sub={<span className="text-dim">virtual book</span>} />
           <KpiCard label="Max drawdown" tone="text-down"
-            value={rg?.activeLimits ? `${rg.activeLimits.combinedDrawdownPct}%` : "—"}
+            value={rg?.activeLimits
+              ? <CountUp value={rg.activeLimits.combinedDrawdownPct} format={(v) => `${v.toFixed(1)}%`} />
+              : "—"}
             sub={<span className="text-dim">peak-to-trough</span>} />
           <KpiCard icon={ShieldCheck} label="RiskGate"
             value={<span className={cn("inline-flex items-center gap-1.5 text-sm font-semibold rounded-full px-2.5 py-1", rg?.armed ? "bg-up/10 text-up" : "bg-line/50 text-dim")}>

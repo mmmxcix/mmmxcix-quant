@@ -427,7 +427,7 @@ export default function Backtest() {
                 </div>
               )}
 
-              <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3">
+              <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3 stagger">
                 <MetricCard label="Return" value={fmtPct(m.totalReturnPct)}
                   tone={m.totalReturnPct >= 0 ? "text-up" : "text-down"} />
                 <MetricCard label="Buy & Hold" value={fmtPct(m.buyHoldReturnPct)}
