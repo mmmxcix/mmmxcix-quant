@@ -25,6 +25,7 @@ uniform float uWaveFrequency;
 uniform float uWaveAmplitude;
 uniform float uMouseRadius;
 uniform float uMouseStrength;
+uniform float uWaveScale;
 
 vec4 mod289(vec4 x){ return x - floor(x * (1.0/289.0)) * 289.0; }
 vec4 permute(vec4 x){ return mod289(((x * 34.0) + 1.0) * x); }
@@ -88,7 +89,9 @@ void main(){
   uv -= 0.5;
   uv.x *= uRes.x / uRes.y;
 
-  float f = pattern(uv);
+  /* uWaveScale packs more wave periods into the viewport → more of the deep
+     dark troughs (at scale 1 only ~2 fit on screen). */
+  float f = pattern(uv * uWaveScale);
 
   /* cursor dents the wave — tighter radius, slightly deeper than the reference */
   vec2 mNDC = (uMouse / uRes - 0.5) * vec2(1.0, -1.0);
@@ -147,10 +150,11 @@ export default function DitherBackground() {
     gl.uniform1f(U("uWaveSpeed"), 0.05);
     gl.uniform1f(U("uWaveFrequency"), 3.0);
     gl.uniform1f(U("uWaveAmplitude"), 0.3);
-    // Cursor dial: radius 0.18 is the size that landed; 0.7 depth keeps the
+    // Cursor dial: radius 0.18 is the size that landed; 0.65 depth keeps the
     // dent strong without burning a hole at the centre.
     gl.uniform1f(U("uMouseRadius"), 0.18);
-    gl.uniform1f(U("uMouseStrength"), 0.7);
+    gl.uniform1f(U("uMouseStrength"), 0.65);
+    gl.uniform1f(U("uWaveScale"), 1.8); // more wave periods → more deep troughs
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     gl.clearColor(0, 0, 0, 0);
@@ -167,7 +171,10 @@ export default function DitherBackground() {
       };
       bg = parse("--c-bg", bg);
       const ink = parse("--c-text", [0.5, 0.5, 0.5]);
-      wave = bg.map((c, i) => c + (ink[i] - c) * 0.5);
+      // How far the crest travels toward the ink. Dark stays soft (0.5); light
+      // needs more separation to read at all against a near-white ground.
+      const reach = document.documentElement.dataset.theme === "dark" ? 0.5 : 0.7;
+      wave = bg.map((c, i) => c + (ink[i] - c) * reach);
     };
     readTheme();
     const obs = new MutationObserver(readTheme);
