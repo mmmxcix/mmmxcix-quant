@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { FlaskConical, Newspaper, ArrowUpRight, LayoutDashboard, Star, Activity } from "lucide-react";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { LayoutDashboard, Star, Activity, TrendingUp, ShieldCheck } from "lucide-react";
 import { fetchCandles, WATCHLIST } from "@/lib/data";
 import WorldClock from "@/components/WorldClock";
 import WatchlistPage from "@/pages/Watchlist";
 import MonitorPage from "@/pages/Monitor";
 import { cn, fmtPrice, fmtPct } from "@/lib/utils";
+
+const fmtUsd = (v) => (v == null ? "—" : "$" + Math.round(v).toLocaleString("en-US"));
 
 // Last price + day-over-day change per watchlist entry.
 function useWatchlistQuotes() {
@@ -31,18 +33,37 @@ function useWatchlistQuotes() {
       );
       if (!alive) return;
       const map = {};
-      for (const r of results) {
-        if (r.status === "fulfilled") map[r.value.key] = r.value;
-      }
+      for (const r of results) if (r.status === "fulfilled") map[r.value.key] = r.value;
       setQuotes(map);
       setLoading(false);
     };
     load();
-    const id = setInterval(load, 30000); // keep dashboard quotes fresh
+    const id = setInterval(load, 30000);
     return () => { alive = false; clearInterval(id); };
   }, []);
 
   return { quotes, loading };
+}
+
+// Cortex paper-portfolio + RiskGate summary (private — needs the dev token).
+function useLabState() {
+  const [state, setState] = useState(undefined); // undefined=loading, null=none
+  useEffect(() => {
+    let alive = true;
+    const load = async () => {
+      try {
+        const token = localStorage.getItem("quant_dev_token") || "";
+        if (!token) { if (alive) setState(null); return; }
+        const res = await fetch("/api/lab", { headers: { "x-lab-token": token } });
+        const out = await res.json();
+        if (alive) setState(res.ok ? out.state : null);
+      } catch { if (alive) setState(null); }
+    };
+    load();
+    const id = setInterval(load, 60000);
+    return () => { alive = false; clearInterval(id); };
+  }, []);
+  return state;
 }
 
 // Tiny inline sparkline from the last ~30 daily closes. Theme-aware stroke.
@@ -58,86 +79,148 @@ function Sparkline({ data, up }) {
   );
 }
 
-function Overview() {
+// Responsive equity area chart from a [{t,v}] history. Theme-aware.
+function AreaChart({ history, height = 200 }) {
+  const vals = (history || []).map((p) => p.v).filter((v) => Number.isFinite(v));
+  if (vals.length < 2) return <div className="grid place-items-center text-sm text-dim" style={{ height }}>No equity history yet — run the paper agent.</div>;
+  const W = 600, H = height, min = Math.min(...vals), max = Math.max(...vals), rng = max - min || 1;
+  const X = (i) => (i / (vals.length - 1)) * W;
+  const Y = (v) => H - 4 - ((v - min) / rng) * (H - 14);
+  const line = vals.map((v, i) => `${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join(" ");
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="w-full" style={{ height }} aria-hidden="true">
+      <defs>
+        <linearGradient id="eq-fill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" style={{ stopColor: "rgb(var(--c-up))", stopOpacity: 0.24 }} />
+          <stop offset="100%" style={{ stopColor: "rgb(var(--c-up))", stopOpacity: 0 }} />
+        </linearGradient>
+      </defs>
+      <polygon points={`0,${H} ${line} ${W},${H}`} fill="url(#eq-fill)" />
+      <polyline points={line} fill="none" className="stroke-up" strokeWidth="2" vectorEffect="non-scaling-stroke" strokeLinejoin="round" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function KpiCard({ label, value, sub, icon: Icon, tone }) {
+  return (
+    <div className="rounded-xl border border-line lg-glass p-4">
+      <p className="text-[10px] uppercase tracking-wide text-dim flex items-center gap-1.5 mb-2">
+        {Icon && <Icon className="w-3 h-3 text-accent" />}{label}
+      </p>
+      <div className={cn("font-mono text-2xl font-bold tabular-nums leading-none", tone)}>{value}</div>
+      {sub && <div className="mt-2 text-xs flex items-center gap-2">{sub}</div>}
+    </div>
+  );
+}
+
+function WatchlistCard() {
   const { quotes, loading } = useWatchlistQuotes();
   const navigate = useNavigate();
   return (
+    <div className="rounded-xl border border-line lg-glass overflow-hidden">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-line">
+        <span className="text-sm font-semibold">Watchlist</span>
+        <span className="text-xs text-dim">live</span>
+      </div>
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-left text-dim text-[10px] uppercase tracking-wide border-b border-line">
+            <th className="px-4 py-2.5 font-medium">Symbol</th>
+            <th className="px-4 py-2.5 font-medium text-right">Last</th>
+            <th className="px-4 py-2.5 font-medium text-right">1D</th>
+            <th className="px-4 py-2.5 font-medium text-right hidden sm:table-cell">Trend</th>
+          </tr>
+        </thead>
+        <tbody>
+          {WATCHLIST.map((w) => {
+            const q = quotes[`${w.market}:${w.symbol}`];
+            return (
+              <tr key={`${w.market}:${w.symbol}`}
+                onClick={() => navigate(`/charts?market=${w.market}&symbol=${w.symbol}`)}
+                className="border-b border-line/50 last:border-0 hover:bg-bg/60 cursor-pointer transition-colors">
+                <td className="px-4 py-3">
+                  <span className="font-mono font-semibold">{w.symbol}</span>
+                  <span className="text-dim ml-2 hidden md:inline text-xs">{w.name}</span>
+                </td>
+                <td className="px-4 py-3 text-right font-mono tabular-nums">
+                  {loading && !q ? <span className="text-dim">…</span> : fmtPrice(q?.price)}
+                </td>
+                <td className="px-4 py-3 text-right">
+                  {loading && !q ? <span className="text-dim">…</span> : (
+                    <span className={cn("inline-flex items-center rounded-full px-2 py-0.5 text-xs font-mono font-semibold tabular-nums",
+                      q?.changePct > 0 ? "bg-up/10 text-up" : q?.changePct < 0 ? "bg-down/10 text-down" : "bg-line/50 text-dim")}>
+                      {fmtPct(q?.changePct)}
+                    </span>
+                  )}
+                </td>
+                <td className="px-4 py-3 hidden sm:table-cell">
+                  <div className="flex justify-end"><Sparkline data={q?.spark} up={(q?.changePct ?? 0) >= 0} /></div>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function Overview() {
+  const lab = useLabState();
+  const c = lab?.combined;
+  const rg = lab?.riskgate;
+  const hasPortfolio = !!c;
+
+  return (
     <>
-      <div className="rounded-xl border border-line lg-glass overflow-hidden mb-8">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-left text-dim text-xs border-b border-line">
-              <th className="px-4 py-3 font-medium">Symbol</th>
-              <th className="px-4 py-3 font-medium hidden sm:table-cell">Market</th>
-              <th className="px-4 py-3 font-medium text-right">Price</th>
-              <th className="px-4 py-3 font-medium text-right">1D</th>
-              <th className="px-4 py-3 font-medium text-right hidden lg:table-cell">Trend</th>
-            </tr>
-          </thead>
-          <tbody>
-            {WATCHLIST.map((w) => {
-              const q = quotes[`${w.market}:${w.symbol}`];
-              return (
-                <tr
-                  key={`${w.market}:${w.symbol}`}
-                  onClick={() => navigate(`/charts?market=${w.market}&symbol=${w.symbol}`)}
-                  className="border-b border-line/50 last:border-0 hover:bg-bg/60 cursor-pointer transition-colors"
-                >
-                  <td className="px-4 py-3">
-                    <span className="font-mono font-semibold">{w.symbol}</span>
-                    <span className="text-dim ml-2 hidden md:inline">{w.name}</span>
-                  </td>
-                  <td className="px-4 py-3 text-dim hidden sm:table-cell">
-                    {w.market === "crypto" ? "Crypto" : "Stocks"}
-                  </td>
-                  <td className="px-4 py-3 text-right font-mono tabular-nums">
-                    {loading && !q ? <span className="text-dim">…</span> : fmtPrice(q?.price)}
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    {loading && !q ? (
-                      <span className="text-dim">…</span>
-                    ) : (
-                      <span className={cn(
-                        "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-mono font-semibold tabular-nums",
-                        q?.changePct > 0 ? "bg-up/10 text-up" : q?.changePct < 0 ? "bg-down/10 text-down" : "bg-line/50 text-dim"
-                      )}>
-                        {fmtPct(q?.changePct)}
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 hidden lg:table-cell">
-                    <div className="flex justify-end">
-                      <Sparkline data={q?.spark} up={(q?.changePct ?? 0) >= 0} />
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+      {hasPortfolio && (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+          <KpiCard
+            icon={TrendingUp}
+            label="Combined equity"
+            value={fmtUsd(c.equity)}
+            sub={
+              <span className={cn("inline-flex items-center rounded-full px-2 py-0.5 font-mono font-semibold tabular-nums",
+                c.returnPct >= 0 ? "bg-up/10 text-up" : "bg-down/10 text-down")}>
+                {c.returnPct >= 0 ? "▲" : "▼"} {fmtPct(c.returnPct)}
+              </span>
+            }
+          />
+          <KpiCard label="Paper strategies" value={lab.strategies?.filter((s) => !s.error).length ?? "—"}
+            sub={<span className="text-dim">virtual book</span>} />
+          <KpiCard label="Max drawdown" tone="text-down"
+            value={rg?.activeLimits ? `${rg.activeLimits.combinedDrawdownPct}%` : "—"}
+            sub={<span className="text-dim">peak-to-trough</span>} />
+          <KpiCard icon={ShieldCheck} label="RiskGate"
+            value={<span className={cn("inline-flex items-center gap-1.5 text-sm font-semibold rounded-full px-2.5 py-1", rg?.armed ? "bg-up/10 text-up" : "bg-line/50 text-dim")}>
+              <span className={cn("w-1.5 h-1.5 rounded-full", rg?.armed ? "bg-up" : "bg-dim")} />{rg?.armed ? "Armed" : "Idle"}</span>}
+            sub={<span className="text-dim">{rg?.activeLimits?.openPositions ?? 0} / {rg?.rules?.maxSimultaneousPositions ?? "—"} open</span>} />
+        </div>
+      )}
+
+      <div className={cn("grid gap-4", hasPortfolio ? "lg:grid-cols-[1.5fr_1fr]" : "grid-cols-1")}>
+        {hasPortfolio && (
+          <div className="rounded-xl border border-line lg-glass p-5">
+            <div className="flex items-center justify-between mb-2">
+              <div>
+                <span className="text-sm font-semibold">Combined equity</span>
+                <span className="text-dim text-xs ml-2">{lab.strategies?.filter((s) => !s.error).length ?? 0} strategies</span>
+              </div>
+              {c.returnPct != null && (
+                <span className={cn("inline-flex items-center rounded-full px-2 py-0.5 text-xs font-mono font-semibold",
+                  c.returnPct >= 0 ? "bg-up/10 text-up" : "bg-down/10 text-down")}>
+                  {c.returnPct >= 0 ? "▲" : "▼"} {fmtPct(c.returnPct)}
+                </span>
+              )}
+            </div>
+            <AreaChart history={c.history} />
+          </div>
+        )}
+        <WatchlistCard />
       </div>
 
-      <div className="mb-8">
+      <div className="mt-6">
         <WorldClock />
-      </div>
-
-      <div className="grid sm:grid-cols-2 gap-4">
-        <Link to="/backtest" className="group rounded-xl border border-line lg-glass p-5 hover:border-accent/40 transition-colors">
-          <div className="flex items-center justify-between mb-2">
-            <FlaskConical className="w-5 h-5 text-accent" />
-            <ArrowUpRight className="w-4 h-4 text-dim group-hover:text-accent transition-colors" />
-          </div>
-          <p className="font-semibold mb-1">Backtest a strategy</p>
-          <p className="text-sm text-dim">Prebuilt strategies or your own code — equity curve, Sharpe, drawdown and more.</p>
-        </Link>
-        <Link to="/news" className="group rounded-xl border border-line lg-glass p-5 hover:border-accent/40 transition-colors">
-          <div className="flex items-center justify-between mb-2">
-            <Newspaper className="w-5 h-5 text-accent" />
-            <ArrowUpRight className="w-4 h-4 text-dim group-hover:text-accent transition-colors" />
-          </div>
-          <p className="font-semibold mb-1">Market news</p>
-          <p className="text-sm text-dim">CNBC, Yahoo Finance, CoinDesk and MarketWatch — bundled in one place.</p>
-        </Link>
       </div>
     </>
   );
