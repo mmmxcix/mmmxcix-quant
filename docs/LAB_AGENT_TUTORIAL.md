@@ -136,10 +136,16 @@ node scripts\research-agent.mjs
 Erwartete Ausgabe: `arXiv: 25 papers, N fresh…` und pro Paper entweder `✓ CANDIDATE`, `✗ graveyard: … (Grund)`, `~ skipped` — und bei sehr guten Treffern `🤖 auto-promoted … → paper portfolio`.
 
 ### Voll-Autonomie: Auto-Promotion mit Deckel
-Ein Kandidat, dessen **Deflated Sharpe ≥ 97 %** liegt (strenger als die 95 %-Hürde zum Überleben), wandert **automatisch** ins Paper-Portfolio — ohne dass du in der Registry klicken musst. Damit findet, testet UND handelt das System selbstständig, genau wie im Video.
-- **Deckel:** Maximal **5** solcher Auto-Strategien laufen gleichzeitig (serverseitig erzwungen; die neuesten verdrängen die ältesten). Deine manuell veröffentlichten Strategien bleiben davon unberührt — beide koexistieren.
-- **Erkennbar:** Auto-Strategien tragen ein 🤖 im Namen (im Portfolio HQ auf der Coach-Seite).
-- **Schwelle ändern:** `LAB_AUTO_PROMOTE_DSR=98` (strenger) bzw. niedriger, wenn du mehr durchlassen willst.
+Ein Kandidat, der die DSR-Schwelle seines Profils erreicht, wandert **automatisch**
+ins Paper-Portfolio — ohne dass du in der Registry klicken musst. Damit findet,
+testet UND handelt das System selbstständig.
+- **Deckel:** pro Profil getrennt — **3** Plätze für prop, **8** für privat
+  (serverseitig erzwungen; die neuesten verdrängen die ältesten). Deine manuell
+  veröffentlichten Strategien bleiben davon unberührt.
+- **Erkennbar:** Auto-Strategien tragen ein 🤖 im Namen (Portfolio HQ auf der Coach-Seite).
+- **Schwelle ändern:** in `src/lib/profiles.js` (`promotion.minDsr`). Die alte
+  Umgebungsvariable `LAB_AUTO_PROMOTE_DSR` gibt es nicht mehr — Schwellen und
+  Deckel gehören jetzt zum Profil, siehe Schritt 8 und `docs/CORTEX_CALIBRATION.md`.
 
 ### Selbst-Reparatur des generierten Codes
 Wenn das KI-Modell mal Code liefert, der nicht kompiliert (falscher Funktionsname o. ä.), schickt der Agent den Fehler **einmal** ans Modell zurück und bittet um eine Korrektur, statt sofort zu beerdigen. Das hebt die Trefferquote spürbar und kostet nur bei Fehlschlag einen Extra-Call.
@@ -219,8 +225,8 @@ Jede Strategie wird in **einem** Backtest-Durchlauf gegen **beide** Regime bewer
 | Max Drawdown (Backtest) | 15 % | 35 % |
 | Profit-Faktor | ≥ 1.25 | ≥ **1.35** |
 | Min. Trades | 30 | 20 |
-| DSR bei Entdeckung | ≥ 97 % | ≥ 95 % |
-| DSR bei Re-Validierung | ≥ 95 % | ≥ 92 % |
+| DSR bei Entdeckung | ≥ 70 % | ≥ 50 % |
+| DSR bei Re-Validierung | ≥ 60 % | ≥ 40 % |
 | Live-Drawdown-Limit | 8 % | 30 % |
 | Tagesverlust-Limit | 4 % | 10 % |
 | Handelsfenster (UTC) | 13–21 | 0–24 |
