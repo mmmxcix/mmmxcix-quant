@@ -95,15 +95,22 @@ void main(){
   float effect = 1.0 - smoothstep(0.0, uMouseRadius, length(uv - mNDC));
   f -= 0.5 * effect;
 
-  /* ordered dithering, then quantise to uColorNum levels */
+  /* The reference computes col = mix(black, waveColor, f) with f UNCLAMPED and
+     a mid-grey waveColor, so bright crests overshoot and saturate to full
+     white; only the colour is clamped afterwards. f * 0.5 reproduces that
+     value. Clamping f first (what I did before) flattened every crest to 50%
+     grey and killed the contrast. */
+  float v = clamp(f * 0.5, 0.0, 1.0);
+
+  /* ordered dithering + bias, then quantise to uColorNum levels */
   float threshold = Bayer8(gl_FragCoord.xy / uPixelSize) - 0.25;
   float stepSize = 1.0 / (uColorNum - 1.0);
-  float v = f + threshold * stepSize;
+  v += threshold * stepSize;
   v = clamp(v - 0.2, 0.0, 1.0);
   v = floor(v * (uColorNum - 1.0) + 0.5) / (uColorNum - 1.0);
 
-  /* OPAQUE, like the reference: the wave is mixed into the base colour and
-     becomes the page background — not a translucent overlay. */
+  /* OPAQUE, like the reference: the wave IS the page background. v = 1 lands
+     on the ink colour — white on the dark theme, near-black on the light one. */
   gl_FragColor = vec4(mix(uBg, uWave, v), 1.0);
 }`;
 
@@ -144,9 +151,10 @@ export default function DitherBackground() {
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     gl.clearColor(0, 0, 0, 0);
 
-    // Base = the theme's ground; wave = halfway to the ink, which reproduces
-    // the reference's mid-grey waveColor on both a dark and a light ground.
-    let bg = [0.05, 0.05, 0.06], wave = [0.5, 0.5, 0.5];
+    // Base = the theme's ground, wave crest = the ink. The shader already
+    // reproduces the reference's mid-grey waveColor via f * 0.5, so the crest
+    // must be the FULL ink here or bright areas can never reach white.
+    let bg = [0.05, 0.05, 0.06], wave = [1, 1, 1];
     const readTheme = () => {
       const cs = getComputedStyle(document.documentElement);
       const parse = (name, fallback) => {
@@ -154,8 +162,7 @@ export default function DitherBackground() {
         return v.length === 3 && v.every((n) => !Number.isNaN(n)) ? v : fallback;
       };
       bg = parse("--c-bg", bg);
-      const ink = parse("--c-text", [0.5, 0.5, 0.5]);
-      wave = bg.map((c, i) => c + (ink[i] - c) * 0.5);
+      wave = parse("--c-text", wave);
     };
     readTheme();
     const obs = new MutationObserver(readTheme);
