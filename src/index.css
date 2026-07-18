@@ -148,7 +148,7 @@
 /* Self-drawing line: pathLength="1" normalises any geometry to 0…1. */
 .draw-in { stroke-dasharray: 1; animation: drawIn 1.1s ease-out both; }
 .fade-in { animation: viewIn 0.9s ease-out both; }
-.wipe-in { animation: wipeIn 0.9s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+.wipe-in { animation: wipeIn 1.6s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
 
 /* Live status dot — a slow outward ripple, so "armed"/"online" reads as live. */
 @keyframes pulseDot {
