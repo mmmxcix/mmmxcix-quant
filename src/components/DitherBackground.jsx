@@ -16,8 +16,8 @@ const FS = `precision highp float;
 uniform vec2 uRes;
 uniform float uTime;
 uniform vec2 uMouse;
-uniform vec3 uCol;
-uniform float uAlpha;
+uniform vec3 uBg;
+uniform vec3 uWave;
 uniform float uColorNum;
 uniform float uPixelSize;
 uniform float uWaveSpeed;
@@ -102,7 +102,9 @@ void main(){
   v = clamp(v - 0.2, 0.0, 1.0);
   v = floor(v * (uColorNum - 1.0) + 0.5) / (uColorNum - 1.0);
 
-  gl_FragColor = vec4(uCol, v * uAlpha);
+  /* OPAQUE, like the reference: the wave is mixed into the base colour and
+     becomes the page background — not a translucent overlay. */
+  gl_FragColor = vec4(mix(uBg, uWave, v), 1.0);
 }`;
 
 export default function DitherBackground() {
@@ -131,7 +133,7 @@ export default function DitherBackground() {
     gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
 
     const U = (n) => gl.getUniformLocation(prog, n);
-    const uRes = U("uRes"), uTime = U("uTime"), uMouse = U("uMouse"), uCol = U("uCol"), uAlpha = U("uAlpha");
+    const uRes = U("uRes"), uTime = U("uTime"), uMouse = U("uMouse"), uBg = U("uBg"), uWave = U("uWave");
     gl.uniform1f(U("uColorNum"), 4.0);
     gl.uniform1f(U("uPixelSize"), 2.0 * dpr); // 2 CSS px, like the reference at dpr 1
     gl.uniform1f(U("uWaveSpeed"), 0.05);
@@ -142,12 +144,18 @@ export default function DitherBackground() {
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     gl.clearColor(0, 0, 0, 0);
 
-    let col = [0.5, 0.5, 0.5], alpha = 0.2;
+    // Base = the theme's ground; wave = halfway to the ink, which reproduces
+    // the reference's mid-grey waveColor on both a dark and a light ground.
+    let bg = [0.05, 0.05, 0.06], wave = [0.5, 0.5, 0.5];
     const readTheme = () => {
       const cs = getComputedStyle(document.documentElement);
-      const rgb = cs.getPropertyValue("--c-accent").trim().split(/\s+/).map((n) => parseFloat(n) / 255);
-      if (rgb.length === 3 && rgb.every((n) => !Number.isNaN(n))) col = rgb;
-      alpha = document.documentElement.dataset.theme === "dark" ? 0.34 : 0.22;
+      const parse = (name, fallback) => {
+        const v = cs.getPropertyValue(name).trim().split(/\s+/).map((n) => parseFloat(n) / 255);
+        return v.length === 3 && v.every((n) => !Number.isNaN(n)) ? v : fallback;
+      };
+      bg = parse("--c-bg", bg);
+      const ink = parse("--c-text", [0.5, 0.5, 0.5]);
+      wave = bg.map((c, i) => c + (ink[i] - c) * 0.5);
     };
     readTheme();
     const obs = new MutationObserver(readTheme);
@@ -172,8 +180,8 @@ export default function DitherBackground() {
       gl.uniform2f(uRes, canvas.width, canvas.height);
       gl.uniform1f(uTime, reduce ? 0 : t * 0.001);
       gl.uniform2f(uMouse, mouse.x < 0 ? canvas.width / 2 : mouse.x, mouse.y < 0 ? canvas.height * 0.4 : mouse.y);
-      gl.uniform3f(uCol, col[0], col[1], col[2]);
-      gl.uniform1f(uAlpha, alpha);
+      gl.uniform3f(uBg, bg[0], bg[1], bg[2]);
+      gl.uniform3f(uWave, wave[0], wave[1], wave[2]);
       gl.clear(gl.COLOR_BUFFER_BIT);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
       if (!reduce) raf = requestAnimationFrame(frame);
