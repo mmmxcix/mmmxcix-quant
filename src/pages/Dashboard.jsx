@@ -68,14 +68,15 @@ function useLabState() {
 }
 
 // Tiny inline sparkline from the last ~30 daily closes. Theme-aware stroke.
-function Sparkline({ data, up }) {
+function Sparkline({ data, up, delay = 0 }) {
   if (!data || data.length < 2) return <span className="text-dim/40 text-xs">—</span>;
   const w = 66, h = 22, min = Math.min(...data), max = Math.max(...data), rng = max - min || 1;
   const pts = data.map((v, i) => `${(i / (data.length - 1)) * w},${(h - 2 - ((v - min) / rng) * (h - 4)).toFixed(1)}`).join(" ");
   return (
     <svg width={w} height={h} className="inline-block align-middle" aria-hidden="true">
-      <polyline points={pts} fill="none" strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round"
-        className={up ? "stroke-up" : "stroke-down"} />
+      <polyline points={pts} pathLength="1" fill="none" strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round"
+        style={{ animationDelay: `${delay}ms` }}
+        className={cn("draw-in", up ? "stroke-up" : "stroke-down")} />
     </svg>
   );
 }
@@ -105,7 +106,7 @@ function AreaChart({ history, height = 200 }) {
 
 function KpiCard({ label, value, sub, icon: Icon, tone }) {
   return (
-    <div className="rounded-xl border border-line lg-glass p-4">
+    <div className="rounded-xl border border-line lg-glass p-4 hover-lift">
       <p className="text-[10px] uppercase tracking-wide text-dim flex items-center gap-1.5 mb-2">
         {Icon && <Icon className="w-3 h-3 text-accent" />}{label}
       </p>
@@ -134,7 +135,7 @@ function WatchlistCard() {
           </tr>
         </thead>
         <tbody>
-          {WATCHLIST.map((w) => {
+          {WATCHLIST.map((w, i) => {
             const q = quotes[`${w.market}:${w.symbol}`];
             return (
               <tr key={`${w.market}:${w.symbol}`}
@@ -156,7 +157,7 @@ function WatchlistCard() {
                   )}
                 </td>
                 <td className="px-4 py-3 hidden sm:table-cell">
-                  <div className="flex justify-end"><Sparkline data={q?.spark} up={(q?.changePct ?? 0) >= 0} /></div>
+                  <div className="flex justify-end"><Sparkline data={q?.spark} up={(q?.changePct ?? 0) >= 0} delay={i * 90} /></div>
                 </td>
               </tr>
             );

@@ -17,17 +17,29 @@ float noise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);
 float fbm(vec2 p){float s=0.,a=.5;for(int i=0;i<5;i++){s+=a*noise(p);p*=2.02;a*=.5;}return s;}
 float B2(vec2 a){a=floor(a);return fract(a.x/2.+a.y*a.y*.75);}
 void main(){
-  float PX=6.0;
+  float PX=5.0;                                  // chunky pixels, like the reference
   vec2 cell=floor(gl_FragCoord.xy/PX);
   vec2 res=uRes/PX;
   vec2 uv=cell/res;
-  vec2 m=(uMouse/uRes-0.5);
-  vec2 p=uv*vec2(res.x/res.y,1.)*3.2+m*0.9;
-  float f=fbm(p+vec2(uTime*0.05,uTime*0.03));
-  f=f*0.7+0.3*fbm(p*2.0-uTime*0.05);
+  vec2 asp=vec2(res.x/res.y,1.0);
+  vec2 p=uv*asp*2.2;
+  float t=uTime*0.35;
+
+  // flowing wave field — smooth bands rather than grain
+  float f=fbm(p+vec2(t*0.12,t*0.08));
+  f+=0.35*sin(p.x*2.6+t*0.9);
+  f+=0.28*sin((p.x+p.y)*1.7-t*0.7);
+  f=f*0.5+0.5;
+
+  // cursor swells the wave locally
+  vec2 m=(uMouse/uRes)*asp;
+  f+=smoothstep(0.45,0.0,distance(uv*asp,m))*0.35;
+
+  // ordered (Bayer) dithering into a few density levels
   float b4=B2(cell*0.5)*0.25+B2(cell);
-  float q=step(b4,fract(f*3.0));
-  gl_FragColor=vec4(uCol,q*uAlpha);
+  float levels=4.0;
+  float q=floor(clamp(f,0.0,1.0)*levels+b4)/levels;
+  gl_FragColor=vec4(uCol,clamp(q,0.0,1.0)*uAlpha);
 }`;
 
 export default function DitherBackground() {
