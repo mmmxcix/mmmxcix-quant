@@ -102,8 +102,11 @@ function NavItems({ onNavigate }) {
           onClick={onNavigate}
           className={({ isActive }) =>
             cn(
-              "flex items-center gap-2.5 rounded-lg px-3 py-[7px] text-sm transition-colors",
-              isActive ? "bg-accent/10 text-accent" : "text-dim hover:text-text hover:bg-surface"
+              "relative flex items-center gap-2.5 rounded-lg px-3 py-[7px] text-sm transition-colors",
+              // active gets a left accent bar, like the mockup
+              isActive
+                ? "bg-accent/10 text-accent font-medium before:content-[''] before:absolute before:-left-2 before:top-1.5 before:bottom-1.5 before:w-[3px] before:rounded-full before:bg-accent"
+                : "text-dim hover:text-text hover:bg-surface"
             )
           }
         >

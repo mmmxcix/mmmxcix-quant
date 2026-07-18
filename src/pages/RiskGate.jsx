@@ -68,9 +68,9 @@ export default function RiskGate() {
       )}
 
       {token && data && (
-        <div className="space-y-6">
+        <div className="space-y-6 stagger">
           {/* Gate radar — live pass/block per rule */}
-          <section className="rounded-xl border border-line lg-glass p-5">
+          <section className="rounded-xl border border-line lg-glass p-5 hover-lift">
             <div className="flex items-center gap-2 mb-3">
               <Radar className="w-4 h-4 text-accent" />
               <h2 className="font-semibold">Gate radar — live verdicts</h2>
@@ -93,7 +93,7 @@ export default function RiskGate() {
           </section>
 
           {/* Active limits snapshot */}
-          <section className="rounded-xl border border-line lg-glass p-5">
+          <section className="rounded-xl border border-line lg-glass p-5 hover-lift">
             <h2 className="font-semibold mb-3">Active limits</h2>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 text-sm">
               <Metric label="Open positions" value={`${data.activeLimits?.openPositions ?? 0} / ${data.rules?.maxSimultaneousPositions ?? "—"}`} />
@@ -123,7 +123,7 @@ export default function RiskGate() {
           )}
 
           {/* Full rule set */}
-          <section className="rounded-xl border border-line lg-glass p-5">
+          <section className="rounded-xl border border-line lg-glass p-5 hover-lift">
             <h2 className="font-semibold mb-3">Rule set</h2>
             <div className="space-y-2">
               {Object.keys(RULE_META).map((key) => (

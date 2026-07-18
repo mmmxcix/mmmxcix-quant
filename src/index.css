@@ -150,6 +150,14 @@
 .fade-in { animation: viewIn 0.9s ease-out both; }
 .wipe-in { animation: wipeIn 0.9s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
 
+/* Live status dot — a slow outward ripple, so "armed"/"online" reads as live. */
+@keyframes pulseDot {
+  0%   { box-shadow: 0 0 0 0 rgb(var(--c-up) / 0.5); }
+  70%  { box-shadow: 0 0 0 7px rgb(var(--c-up) / 0); }
+  100% { box-shadow: 0 0 0 0 rgb(var(--c-up) / 0); }
+}
+.pulse-dot { animation: pulseDot 2.4s ease-out infinite; }
+
 /* Card hover: a small lift + a brighter edge. Cheap (transform/opacity only). */
 .hover-lift {
   transition: transform 0.18s cubic-bezier(0.2, 0.7, 0.2, 1),
@@ -167,7 +175,8 @@
   .stagger > *,
   .draw-in,
   .fade-in,
-  .wipe-in { animation: none !important; }
+  .wipe-in,
+  .pulse-dot { animation: none !important; }
   .hover-lift { transition: none; }
   .hover-lift:hover { transform: none; }
 }

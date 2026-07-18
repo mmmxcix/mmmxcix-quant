@@ -199,7 +199,7 @@ function Overview() {
             sub={<span className="text-dim">peak-to-trough</span>} />
           <KpiCard icon={ShieldCheck} label="RiskGate"
             value={<span className={cn("inline-flex items-center gap-1.5 text-sm font-semibold rounded-full px-2.5 py-1", rg?.armed ? "bg-up/10 text-up" : "bg-line/50 text-dim")}>
-              <span className={cn("w-1.5 h-1.5 rounded-full", rg?.armed ? "bg-up" : "bg-dim")} />{rg?.armed ? "Armed" : "Idle"}</span>}
+              <span className={cn("w-1.5 h-1.5 rounded-full", rg?.armed ? "bg-up pulse-dot" : "bg-dim")} />{rg?.armed ? "Armed" : "Idle"}</span>}
             sub={<span className="text-dim">{rg?.activeLimits?.openPositions ?? 0} / {rg?.rules?.maxSimultaneousPositions ?? "—"} open</span>} />
         </div>
       )}

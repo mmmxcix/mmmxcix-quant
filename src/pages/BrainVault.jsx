@@ -179,7 +179,7 @@ export default function BrainVault() {
       {token && data?.nodes?.length > 0 && (
         <div className="space-y-4">
           {/* stat strip */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 stagger">
             <Stat label="Papers read" value={stats?.papersRead ?? "—"} />
             <Stat label="Survivors" value={stats?.candidates ?? 0} color="text-up" />
             <Stat label="Buried" value={stats?.graveyard ?? 0} color="text-down" />
@@ -238,7 +238,7 @@ export default function BrainVault() {
 
 function Stat({ label, value, color }) {
   return (
-    <div className="rounded-xl border border-line lg-glass p-3">
+    <div className="rounded-xl border border-line lg-glass p-3 hover-lift">
       <p className="text-[10px] text-dim uppercase tracking-wide mb-0.5">{label}</p>
       <p className={cn("text-xl font-bold font-mono", color)}>{value}</p>
     </div>
