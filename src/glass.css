@@ -67,8 +67,8 @@ body {
   bottom: -32vmax;
   left: -24vmax;
   background: radial-gradient(circle at center,
-    rgba(196, 154, 96, 0.09) 0%,
-    rgba(196, 154, 96, 0.03) 40%,
+    rgba(130, 120, 255, 0.09) 0%,
+    rgba(130, 120, 255, 0.03) 40%,
     transparent 68%);
   animation: ambient-drift-b 96s ease-in-out infinite alternate;
 }
