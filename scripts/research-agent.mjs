@@ -244,6 +244,22 @@ async function committeeReview(code, cand) {
   return null;
 }
 
+// Liveness: the highest trade count this strategy reaches on the core markets.
+// A generation that never fires (n=0) or enters once and holds forever (n=1) is
+// a degenerate no-op, not a real idea — the "no edge anywhere (n=0)" lines in
+// the log. Probing a few markets is milliseconds, so it is cheap to catch these
+// BEFORE they consume a gauntlet trial and clutter the graveyard.
+function livenessTrades(code, datasets) {
+  let max = 0;
+  for (const { market, candles } of datasets.slice(0, 3)) {
+    try {
+      const res = runBacktest({ candles, signalFn: compileStrategy(code), initialCapital: 10000, feeBps: costFor(market) });
+      if (!res.warnings.length) max = Math.max(max, res.metrics.tradeCount);
+    } catch { /* runtime error → the gauntlet reports it properly */ }
+  }
+  return max;
+}
+
 function gauntlet(code, datasets, globalTrials) {
   try { compileStrategy(code); } catch (e) { return { pass: false, reason: `compile: ${e.message.slice(0, 80)}` }; }
 
@@ -422,6 +438,31 @@ for (const paper of fresh) {
         console.log(`  ✗ repair failed (${String(re.message || "").slice(0, 40)})`);
       }
     }
+    // Liveness repair: if the strategy barely trades, it is a degenerate
+    // generation (a condition that never triggers), not a real idea. Give the
+    // model ONE chance to make it actually fire — same self-repair pattern as
+    // the compile fix, aimed squarely at the n=0/n=1 no-ops. Only keep the
+    // rewrite if it genuinely trades more, so a failed repair can't make it worse.
+    if (datasets.length) {
+      const live = livenessTrades(code, datasets);
+      if (live < 5) {
+        console.log(`  ⚠ near-zero trades (max ${live}) — liveness repair…`);
+        try {
+          const fixed = await repairStrategy(code,
+            `This strategy makes only ${live} trades over thousands of bars — its entry/exit conditions almost never trigger. ` +
+            "Rewrite so it actually enters AND exits regularly on normal price data. Prefer conditions relative to recent " +
+            "price/indicator values (crossovers, bands, percentiles) over rare absolute thresholds, and make sure the exit " +
+            "condition can realistically occur. Keep the same core idea.");
+          compileStrategy(fixed);
+          if (livenessTrades(fixed, datasets) > live) { code = fixed; console.log("  ✓ liveness repaired"); }
+          else console.log("  ✗ liveness repair no better — keeping original (gauntlet will bury it)");
+        } catch (re) {
+          if (re.skip) throw re; // rate-limited → infra skip, paper stays fresh
+          console.log(`  ✗ liveness repair failed (${String(re.message || "").slice(0, 40)})`);
+        }
+      }
+    }
+
     st.seen = [...st.seen, paper.id].slice(-500); // only consumed once generation succeeded
     st.papersRead++;
     st.attempts++;                                   // lifetime counter, for the record

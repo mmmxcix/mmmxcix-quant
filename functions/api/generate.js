@@ -43,9 +43,14 @@ The code MUST define a function \`strategy(ctx)\`:
 - ctx.position: "long" | "short" | "flat" (current position)
 - ctx.session: { hour, minute, minuteOfDay, isNewDay } — bar time in UTC, for intraday/session logic
 - ctx.indicators: { sma, ema, rsi, roc, atr, bollinger, donchian, macd, closes }
-  - sma/ema/rsi/roc(values, period) expect number[] (e.g. ctx.indicators.closes(ctx.candles))
-  - atr/donchian(candles, period); bollinger(values, period, mult); macd(values, fast, slow, signal)
-  - All return arrays the same length as the input, with null during the warm-up phase
+  - closes(candles) → number[] of close prices. Pass it to the number-series indicators.
+  - sma/ema/rsi/roc(values, period) → number[] — each element is a NUMBER (or null in warm-up)
+  - atr(candles, period) → number[] — each element is a NUMBER (or null)
+  - bollinger(values, period, mult) → array of OBJECTS: { upper, mid, lower } (or null). Compare price to bb[i].lower / bb[i].mid / bb[i].upper — NOT to bb[i] itself.
+  - donchian(candles, period) → array of OBJECTS: { upper, lower } (or null). Use dc[i].upper / dc[i].lower — the prior-N-bar channel, excludes the current bar.
+  - macd(values, fast, slow, signal) → array of OBJECTS: { macd, signal, hist } (or null). Use m[i].macd / m[i].signal / m[i].hist.
+  - Every array is the same length as its input; entries are null during the warm-up phase.
+  - CRITICAL: bollinger/donchian/macd elements are objects — comparing the whole element to a number (e.g. \`ctx.close < bb[i]\`) is a bug that silently never triggers. Always read the named field.
 - Return one of:
   - "long" | "short" | "flat" (plain target position), or
   - { signal: "long"|"short"|"flat", stop: number, target: number } — stop/target are live
@@ -53,6 +58,10 @@ The code MUST define a function \`strategy(ctx)\`:
     Return the same signal with new levels to trail a stop while holding.
 
 Rules:
+- The strategy must actually TRADE: both the entry and the exit condition have to
+  realistically trigger on normal price data. A rule that enters once and never
+  exits, or whose condition almost never occurs, is wrong — prefer crossovers,
+  bands, and levels relative to recent data over rare absolute constants.
 - No look-ahead (use only data up to ctx.index).
 - The source is evaluated ONCE, then strategy(ctx) is called per bar in order — top-level
   let/const state persists across bars (useful for opening ranges, one-trade-per-day flags).
