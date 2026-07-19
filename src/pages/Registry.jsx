@@ -7,6 +7,7 @@ import {
 import { cn, fmtPct, fmtNum } from "@/lib/utils";
 import { PROFILES } from "@/lib/profiles";
 import { byId, costFor, describeMarkets } from "@/lib/markets";
+import { strategyToCode } from "@/lib/strategyCode";
 import CopyButton from "@/components/CopyButton";
 
 const PROFILE_LABEL = Object.fromEntries(Object.entries(PROFILES).map(([id, p]) => [id, p.label]));
@@ -190,9 +191,12 @@ function Card({ e }) {
           <p className="text-sm font-medium text-text truncate">{e.name}</p>
           <p className="text-[10px] text-dim font-mono">{e.symbol} · {e.interval} · {e.mode}{e.positionPct != null ? ` · ${e.positionPct}%` : ""}</p>
         </div>
-        <button onClick={() => removeEntry(e.id)} title="Delete" className="text-dim/50 hover:text-down transition-colors shrink-0">
-          <Trash2 className="w-3.5 h-3.5" />
-        </button>
+        <div className="flex items-center gap-1.5 shrink-0">
+          <CopyButton text={strategyToCode(e)} label="" />
+          <button onClick={() => removeEntry(e.id)} title="Delete" className="text-dim/50 hover:text-down transition-colors">
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+        </div>
       </div>
 
       {m && (

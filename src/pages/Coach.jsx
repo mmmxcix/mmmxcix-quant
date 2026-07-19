@@ -7,6 +7,8 @@ import {
 import { fmtPrice } from "@/lib/utils";
 import { COACH_PLAN, getCoachDone, setCoachDone, subscribeCoach, courseLessonIds } from "@/lib/coachPlan";
 import { getCompleted, subscribeProgress } from "@/lib/academyProgress";
+import { strategyToCode } from "@/lib/strategyCode";
+import CopyButton from "@/components/CopyButton";
 import { cn } from "@/lib/utils";
 
 // Private coach page — the personal roadmap to funded futures trading.
@@ -29,14 +31,25 @@ function taskIsDone(task, manualDone, academyDone) {
 function LabStatus() {
   const [data, setData] = useState(undefined); // undefined=loading, null=none
   const [busy, setBusy] = useState(false);
+  // id -> published strategy entry (carries code / builder id), so every program
+  // the agent runs is copyable. The state summaries don't carry the source, so
+  // we pull the published list alongside and match by id.
+  const [published, setPublished] = useState({});
 
   const load = async () => {
     setBusy(true);
     try {
       const token = localStorage.getItem("quant_dev_token") || "";
-      const res = await fetch("/api/lab", { headers: { "x-lab-token": token } });
-      const out = await res.json();
-      setData(res.ok ? out.state : null);
+      const [stateRes, stratRes] = await Promise.all([
+        fetch("/api/lab", { headers: { "x-lab-token": token } }),
+        fetch("/api/lab?what=strategies", { headers: { "x-lab-token": token } }),
+      ]);
+      const stateOut = await stateRes.json();
+      setData(stateRes.ok ? stateOut.state : null);
+      const stratOut = await stratRes.json().catch(() => ({}));
+      const map = {};
+      for (const s of stratOut?.strategies?.items || []) if (s && s.id) map[s.id] = s;
+      setPublished(map);
     } catch {
       setData(null);
     } finally {
@@ -162,11 +175,15 @@ function LabStatus() {
                       <th className="py-1.5 pr-3 font-medium font-sans">Position</th>
                       <th className="py-1.5 pr-3 font-medium font-sans text-right">Equity</th>
                       <th className="py-1.5 pr-3 font-medium font-sans text-right">Return</th>
-                      <th className="py-1.5 font-medium font-sans text-right">Trades</th>
+                      <th className="py-1.5 pr-3 font-medium font-sans text-right">Trades</th>
+                      <th className="py-1.5 font-medium font-sans text-right">Code</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {data.strategies.map((s) => (
+                    {data.strategies.map((s) => {
+                      const entry = published[s.id];
+                      const code = entry ? strategyToCode(entry) : null;
+                      return (
                       <tr key={s.id} className="border-b border-line/40 last:border-0">
                         <td className="py-1.5 pr-3 text-text">{s.name}</td>
                         <td className="py-1.5 pr-3 text-dim">{s.symbol} · {s.interval}</td>
@@ -179,9 +196,13 @@ function LabStatus() {
                         <td className={`py-1.5 pr-3 text-right ${s.returnPct >= 0 ? "text-up" : "text-down"}`}>
                           {s.error ? "–" : `${s.returnPct >= 0 ? "+" : ""}${s.returnPct}%`}
                         </td>
-                        <td className="py-1.5 text-right text-dim">{s.error ? "–" : s.tradeCount}</td>
+                        <td className="py-1.5 pr-3 text-right text-dim">{s.error ? "–" : s.tradeCount}</td>
+                        <td className="py-1.5 text-right">
+                          {code ? <CopyButton text={code} label="Copy" /> : <span className="text-dim/40 text-[10px]">—</span>}
+                        </td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
