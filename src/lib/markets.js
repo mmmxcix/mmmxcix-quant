@@ -54,14 +54,19 @@ export const byId = (id) => UNIVERSE.find((m) => m.id === id) || null;
  * 15-minute strategy pays the spread far more often than a daily one, and that
  * is usually what separates a "winner" from a real one.
  */
-export const COST_BPS = { crypto: 10, stock: 5, forex: 2 };
+// Bumped stock 5→7 (Jul 2026): the old value flattered fee-fragile strategies
+// like ICT, which beat buy&hold at 7bps but LOSE at a realistic 10bps. A daily
+// stock round now costs ~10bps all-in (fee+slippage), matching what a retail
+// account actually pays — so a strategy has to have an edge that survives real
+// costs, not a paper-thin one that evaporates on the spread.
+export const COST_BPS = { crypto: 10, stock: 7, forex: 2 };
 
 /**
  * Slippage in basis points, applied ON TOP of fees. Intraday strategies trade
  * more and get worse fills; ignoring this is how backtests lie.
  */
 export const SLIPPAGE_BPS = {
-  "15m": 6, "1h": 4, "4h": 3, "1d": 2, "1w": 2, "1M": 2, "5m": 8, "1m": 12,
+  "15m": 6, "1h": 4, "4h": 3, "1d": 3, "1w": 3, "1M": 3, "5m": 8, "1m": 12,
 };
 
 /** Total round-trip-relevant cost for a market, in bps per side. */

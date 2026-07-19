@@ -285,19 +285,24 @@ export function runBacktest({ candles, signalFn, initialCapital = 10000, feeBps 
   const medianSpacing = median(spacings);
   const periodsPerYear = medianSpacing > 0 ? SECONDS_PER_YEAR / medianSpacing : 0;
 
-  const returns = [];
-  for (let i = 1; i < equity.length; i++) {
-    const prev = equity[i - 1].value;
-    if (prev > 0) returns.push(equity[i].value / prev - 1);
-  }
-  let sharpe = 0;
-  if (returns.length >= 2 && periodsPerYear > 0) {
-    const mean = returns.reduce((a, b) => a + b, 0) / returns.length;
-    const variance =
-      returns.reduce((a, b) => a + (b - mean) * (b - mean), 0) / (returns.length - 1);
+  // Annualised Sharpe of any equity curve. Buy & hold gets one too, so a
+  // strategy can be judged on whether it actually beats HOLDING risk-adjusted —
+  // a strategy with a real statistical edge can still be worse than just sitting
+  // in the asset during a bull market, and that must be visible.
+  const sharpeOf = (curve) => {
+    const r = [];
+    for (let i = 1; i < curve.length; i++) {
+      const prev = curve[i - 1].value;
+      if (prev > 0) r.push(curve[i].value / prev - 1);
+    }
+    if (r.length < 2 || periodsPerYear <= 0) return 0;
+    const mean = r.reduce((a, b) => a + b, 0) / r.length;
+    const variance = r.reduce((a, b) => a + (b - mean) * (b - mean), 0) / (r.length - 1);
     const std = Math.sqrt(variance);
-    sharpe = std > 0 ? (mean / std) * Math.sqrt(periodsPerYear) : 0;
-  }
+    return std > 0 ? (mean / std) * Math.sqrt(periodsPerYear) : 0;
+  };
+  const sharpe = sharpeOf(equity);
+  const buyHoldSharpe = sharpeOf(buyHold);
 
   // Max drawdown on the equity curve (and on buy & hold, for a fair
   // risk-adjusted comparison — B&H's pain is otherwise invisible).
@@ -329,6 +334,7 @@ export function runBacktest({ candles, signalFn, initialCapital = 10000, feeBps 
       buyHoldReturnPct,
       cagrPct,
       sharpe,
+      buyHoldSharpe,
       maxDrawdownPct,
       buyHoldMaxDrawdownPct,
       winRatePct,

@@ -304,6 +304,19 @@ function gauntlet(code, datasets, globalTrials) {
   for (const r of promising) {
     const mk = { ...metricRow(r.m) };
 
+    // BUY & HOLD BENCHMARK — the honest bar that was missing. A strategy with a
+    // real statistical edge (passes DSR/k-fold/noise) can STILL be worse than
+    // simply holding the asset through a bull market, because it trades less
+    // than 100% exposure and pays fees. Sharpe is the exposure-fair comparison:
+    // if the strategy doesn't beat holding risk-adjusted, it does not belong in
+    // the paper book for that market — no matter how "real" its edge is.
+    const bhS = r.m.buyHoldSharpe ?? 0, sh = r.m.sharpe ?? 0;
+    if (sh <= bhS) {
+      byMarket[r.name] = { ...mk, rejected: `Sharpe ${sh.toFixed(2)} ≤ buy&hold ${bhS.toFixed(2)}` };
+      rejections.push(`${r.name}: loses to buy & hold (Sharpe ${sh.toFixed(2)} ≤ ${bhS.toFixed(2)})`);
+      continue;
+    }
+
     const kf = kFoldCode({ candles: r.candles, makeSignalFn: () => compileStrategy(code), feeBps: r.feeBps });
     if (!kf || kf.verdict !== "pass") {
       byMarket[r.name] = { ...mk, rejected: `k-fold ${kf ? kf.profitableFolds + "/" + kf.totalFolds : "n/a"}` };
@@ -371,6 +384,7 @@ const metricRow = (m) => ({
   ret: +m.totalReturnPct.toFixed(1), pf: +m.profitFactor.toFixed(2),
   dd: +m.maxDrawdownPct.toFixed(1), n: m.tradeCount,
   sharpe: +(m.sharpe ?? 0).toFixed(2), win: +(m.winRatePct ?? 0).toFixed(0),
+  bhRet: +(m.buyHoldReturnPct ?? 0).toFixed(1), bhSharpe: +(m.buyHoldSharpe ?? 0).toFixed(2),
 });
 const summarise = (ran) => Object.fromEntries(ran.map((r) => [r.name, metricRow(r.m)]));
 
