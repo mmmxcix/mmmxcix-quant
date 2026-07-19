@@ -100,6 +100,22 @@ function extractCode(text) {
   return (fenced ? fenced[1] : text).trim();
 }
 
+// Rescue a common model quirk deterministically: sometimes the model emits only
+// the BODY of the strategy — bare statements that use `ctx` and `return` — with
+// no `function strategy(ctx){…}` wrapper, which then fails to compile. Rather
+// than spend an LLM self-repair call on such a mechanical omission, wrap it.
+// Strategies that already define strategy() (including ones with persistent
+// top-level state) are left untouched.
+function ensureStrategyFn(code) {
+  const defined = /\bfunction\s+strategy\s*\(/.test(code) || /\b(?:const|let|var)\s+strategy\s*=/.test(code);
+  if (defined) return code;
+  // Only wrap something that actually looks like a per-bar body.
+  if (/\bctx\b/.test(code) && /\breturn\b/.test(code)) {
+    return `function strategy(ctx) {\n${code}\n}`;
+  }
+  return code; // not recognisable — let compile/repair handle it
+}
+
 // ── provider callers ────────────────────────────────────────────────────────
 // Each returns { text } on success or { status } on failure. A caller never
 // throws; the chain below walks to the next provider on any non-success.
@@ -309,7 +325,7 @@ export async function onRequest({ request, env }) {
   // out of the model's reply defensively — models wrap it in prose or fences no
   // matter how firmly you ask them not to.
   if (isCritique) return json({ critique: parseVerdict(text) });
-  return json({ code: extractCode(text) });
+  return json({ code: ensureStrategyFn(extractCode(text)) });
 }
 
 // Pull the committee verdict JSON out of a model reply. Returns a normalised
