@@ -231,4 +231,180 @@ export const BUILT_IN_STRATEGIES = [
       };
     },
   },
+
+  {
+    id: "asian-range-london-breakout",
+    name: "Asian Range → London Breakout (Intraday FX)",
+    description:
+      "Builds the Asian-session range (default 00:00–08:00 UTC), then trades the breakout during the London session (up to 13:00 UTC). Markets consolidate overnight and expand into London — this fades that. Stop on the far side of the range, take-profit as a multiple (R) of the range. One trade per day, long & short. For intraday FX (e.g. EUR/USD 1h or finer).",
+    params: [
+      { key: "asianStart", label: "Asian start (UTC h)", default: 0, min: 0, max: 23, step: 1 },
+      { key: "londonOpen", label: "London open / Asian end (UTC h)", default: 8, min: 1, max: 23, step: 1 },
+      { key: "londonEnd", label: "London window end (UTC h)", default: 13, min: 2, max: 24, step: 1 },
+      { key: "targetR", label: "Take-profit (R)", default: 1.5, min: 0.25, max: 10, step: 0.25 },
+      { key: "longOnly", label: "Long only (1/0)", default: 0, min: 0, max: 1, step: 1 },
+    ],
+    build({ asianStart = 0, londonOpen = 8, londonEnd = 13, targetR = 1.5, longOnly = 0 } = {}) {
+      // Per-run closure state; runBacktest calls this once per bar, ascending.
+      let hi = -Infinity, lo = Infinity, haveRange = false, traded = false;
+      let side = 0, stop = 0, target = 0;
+      return (ctx) => {
+        if (ctx.session.isNewDay) { hi = -Infinity; lo = Infinity; haveRange = false; traded = false; side = 0; }
+        const h = ctx.session.hour;
+
+        // Phase 1: accumulate the Asian range within [asianStart, londonOpen).
+        const inAsian = asianStart <= londonOpen
+          ? (h >= asianStart && h < londonOpen)
+          : (h >= asianStart || h < londonOpen); // window wrapping midnight
+        if (inAsian) {
+          if (ctx.high > hi) hi = ctx.high;
+          if (ctx.low < lo) lo = ctx.low;
+          haveRange = hi > lo;
+          return "flat";
+        }
+
+        // Phase 2: hold an open trade — the engine's brackets do the exiting.
+        if (ctx.position !== "flat") {
+          return side === 1 ? { signal: "long", stop, target } : { signal: "short", stop, target };
+        }
+
+        // Phase 3: one breakout entry during the London window.
+        const inLondon = h >= londonOpen && h < londonEnd;
+        if (!inLondon || !haveRange || traded) return "flat";
+        const width = hi - lo;
+        if (width <= 0) return "flat";
+        if (ctx.close > hi) {
+          side = 1; traded = true; stop = lo; target = hi + width * targetR;
+          return { signal: "long", stop, target };
+        }
+        if (!longOnly && ctx.close < lo) {
+          side = -1; traded = true; stop = hi; target = lo - width * targetR;
+          return { signal: "short", stop, target };
+        }
+        return "flat";
+      };
+    },
+  },
+
+  {
+    id: "bollinger-squeeze-breakout",
+    name: "Bollinger Squeeze Breakout",
+    description:
+      "Waits for a volatility squeeze — Bollinger band width in the lowest percentile of recent history — then trades the breakout when price closes outside the band. Volatility contraction precedes expansion. Exits back at the mid line. Long & short.",
+    params: [
+      { key: "period", label: "Period", default: 20, min: 5, max: 200, step: 1 },
+      { key: "mult", label: "Std deviations", default: 2, min: 0.5, max: 4, step: 0.1 },
+      { key: "lookback", label: "Squeeze lookback", default: 60, min: 10, max: 300, step: 1 },
+      { key: "pctile", label: "Squeeze percentile", default: 25, min: 5, max: 60, step: 1 },
+      { key: "longOnly", label: "Long only (1/0)", default: 0, min: 0, max: 1, step: 1 },
+    ],
+    build({ period = 20, mult = 2, lookback = 60, pctile = 25, longOnly = 0 } = {}) {
+      return (ctx) => {
+        const prices = cachedCloses(ctx.candles);
+        const bands = cached(ctx.candles, `boll:${period}:${mult}`, () =>
+          ind.bollinger(prices, period, mult)
+        );
+        // Relative band width per bar — the squeeze/expansion signal.
+        const widths = cached(ctx.candles, `bollw:${period}:${mult}`, () =>
+          bands.map((b) => (b ? (b.upper - b.lower) / (b.mid || 1) : null))
+        );
+        const i = ctx.index;
+        const b = bands[i];
+        if (b === null) return "flat";
+
+        // In a trade: exit on the reversion back through the mid line.
+        if (ctx.position === "long") return ctx.close < b.mid ? "flat" : "long";
+        if (ctx.position === "short") return ctx.close > b.mid ? "flat" : "short";
+
+        // Need a full lookback of widths behind us.
+        if (i < period + lookback) return "flat";
+        const prevW = widths[i - 1];
+        if (prevW == null) return "flat";
+
+        // Was the bar BEFORE this breakout inside a squeeze (low-percentile width)?
+        const window = [];
+        for (let j = i - lookback; j < i; j++) if (widths[j] != null) window.push(widths[j]);
+        if (window.length < lookback * 0.6) return "flat";
+        window.sort((x, y) => x - y);
+        const thresh = window[Math.floor((pctile / 100) * (window.length - 1))];
+        if (prevW > thresh) return "flat"; // not squeezed
+
+        // Squeeze confirmed → trade the breakout close outside the band.
+        if (ctx.close > b.upper) return "long";
+        if (!longOnly && ctx.close < b.lower) return "short";
+        return "flat";
+      };
+    },
+  },
+
+  {
+    id: "ict-silver-bullet",
+    name: "ICT Silver Bullet (FVG, Intraday)",
+    description:
+      "During a fixed one-hour window, finds the most recent Fair Value Gap (a 3-candle price imbalance) and enters when price retraces into it — long for a bullish gap, short for a bearish one. Stop beyond the gap, take-profit as R. One trade per day. Default window 14:00–15:00 UTC (NY AM). Designed for intraday, but the FVG-retrace also validates well on daily equity indices (SPY/QQQ pass k-fold + noise + Deflated Sharpe).",
+    params: [
+      { key: "windowStart", label: "Window start (UTC h)", default: 14, min: 0, max: 23, step: 1 },
+      { key: "windowEnd", label: "Window end (UTC h)", default: 15, min: 1, max: 24, step: 1 },
+      { key: "maxGapAge", label: "Max gap age (bars)", default: 12, min: 2, max: 60, step: 1 },
+      { key: "targetR", label: "Take-profit (R)", default: 2, min: 0.25, max: 10, step: 0.25 },
+      { key: "longOnly", label: "Long only (1/0)", default: 0, min: 0, max: 1, step: 1 },
+    ],
+    build({ windowStart = 14, windowEnd = 15, maxGapAge = 12, targetR = 2, longOnly = 0 } = {}) {
+      let traded = false, side = 0, stop = 0, target = 0;
+      return (ctx) => {
+        if (ctx.session.isNewDay) { traded = false; side = 0; }
+
+        // Hold an open trade — brackets exit.
+        if (ctx.position !== "flat") {
+          return side === 1 ? { signal: "long", stop, target } : { signal: "short", stop, target };
+        }
+
+        const h = ctx.session.hour;
+        const inWindow = windowStart <= windowEnd
+          ? (h >= windowStart && h < windowEnd)
+          : (h >= windowStart || h < windowEnd);
+        if (!inWindow || traded) return "flat";
+
+        const c = ctx.candles;
+        const i = ctx.index;
+        if (i < 3) return "flat";
+
+        // Walk back to the MOST RECENT Fair Value Gap that formed STRICTLY
+        // BEFORE this bar (k ≤ i-1, so its 3 bars k-2..k are all < i). A true
+        // FVG trade is a retrace: the gap forms, then a LATER bar returns into
+        // it. Allowing k=i would let a gap "form and fill" on the same bar,
+        // which is a momentum entry, not a retrace. A bullish FVG:
+        // c[k].low > c[k-2].high, leaving zone [c[k-2].high, c[k].low].
+        for (let k = i - 1; k >= Math.max(2, i - maxGapAge); k--) {
+          const bull = c[k].low - c[k - 2].high;
+          const bear = c[k - 2].low - c[k].high;
+          if (bull <= 0 && bear <= 0) continue; // no gap at k, keep looking
+
+          // Found the most recent gap — trade it or stand aside, then stop.
+          if (bull > 0) {
+            const zLow = c[k - 2].high, zHigh = c[k].low;
+            // Entry when price retraces down into the gap zone.
+            if (ctx.low <= zHigh && ctx.close >= zLow) {
+              const risk = ctx.close - zLow;
+              if (risk > 0) {
+                side = 1; traded = true; stop = zLow; target = ctx.close + risk * targetR;
+                return { signal: "long", stop, target };
+              }
+            }
+          } else if (!longOnly && bear > 0) {
+            const zHigh = c[k - 2].low, zLow = c[k].high;
+            if (ctx.high >= zLow && ctx.close <= zHigh) {
+              const risk = zHigh - ctx.close;
+              if (risk > 0) {
+                side = -1; traded = true; stop = zHigh; target = ctx.close - risk * targetR;
+                return { signal: "short", stop, target };
+              }
+            }
+          }
+          break; // only the most recent gap is tradable
+        }
+        return "flat";
+      };
+    },
+  },
 ];
