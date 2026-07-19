@@ -219,6 +219,31 @@ function holdout(code, candles, feeBps) {
  * a flat 10bps everywhere was flattering exactly the strategies most likely to
  * be noise.
  */
+
+// The committee's bear case. Runs ONLY on a strategy that already survived the
+// gauntlet, so it is rare and cheap — a handful of calls a month. The gauntlet
+// is the mathematical adversary; this is the qualitative one, and it is what
+// the AI-committee design (the source doc) calls the debate + invalidation
+// conditions + confidence score. Failure is non-fatal: a survivor without a
+// written verdict is still a survivor.
+async function committeeReview(code, cand) {
+  const facts = Object.entries(cand.byMarket || {})
+    .filter(([, v]) => v && (v.profiles || []).length)
+    .map(([mid, v]) => `${mid}: ret ${v.ret}% PF ${v.pf} dd ${v.dd}% n=${v.n} DSR ${v.dsr}%`)
+    .join("; ");
+  try {
+    const res = await fetch(`${SITE}/api/generate`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: TOKEN, critique: { code, title: cand.name, facts } }),
+    });
+    const out = await res.json().catch(() => ({}));
+    if (res.ok && out.critique) return out.critique;
+  } catch (e) {
+    console.error(`  committee review failed: ${e.message.slice(0, 50)}`);
+  }
+  return null;
+}
+
 function gauntlet(code, datasets, globalTrials) {
   try { compileStrategy(code); } catch (e) { return { pass: false, reason: `compile: ${e.message.slice(0, 80)}` }; }
 
@@ -427,12 +452,23 @@ for (const paper of fresh) {
         trialsAtPass: st.attempts,
         foundAt: Date.now(),
       };
-      st.candidates = [cand, ...st.candidates].slice(0, 30);
-      newCandidates.push(cand);
       console.log(
         `✓ CANDIDATE: ${cand.name} (DSR ${cand.dsr}% on ${cand.bestMarket}) ` +
         `→ works on ${verdict.markets.join(", ")} · profiles: ${verdict.qualified.join(", ")}`
       );
+
+      // Committee bear case — the qualitative half of the debate. Only survivors
+      // reach here, so this is a rare, cheap call. Attaching a written thesis,
+      // confidence, and invalidation conditions is what turns a passing backtest
+      // into a decision a human can actually stand behind.
+      cand.committee = await committeeReview(code, cand);
+      if (cand.committee) {
+        console.log(`  ⚖ committee: confidence ${cand.committee.confidence ?? "?"}% · regime ${cand.committee.regime || "?"}`);
+        if (cand.committee.bear) console.log(`     bear: ${cand.committee.bear.slice(0, 90)}`);
+      }
+
+      st.candidates = [cand, ...st.candidates].slice(0, 30);
+      newCandidates.push(cand);
 
       // Auto-promote per profile AND per winning market: a strategy that works
       // on both EUR/USD daily and SOL 15m is two paper positions, not one, and

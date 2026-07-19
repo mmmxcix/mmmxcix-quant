@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Boxes, Trash2, Skull, ShieldCheck, FlaskConical, Rocket, Grid3x3, Info, Send, Loader2, Check } from "lucide-react";
+import { Boxes, Trash2, Skull, ShieldCheck, FlaskConical, Rocket, Grid3x3, Info, Send, Loader2, Check, Scale } from "lucide-react";
 import {
   getEntries, subscribeRegistry, setStatus, removeEntry, STATUS_META, correlationMatrix, saveEntry,
 } from "@/lib/registry";
@@ -102,6 +102,39 @@ function AgentCandidates() {
                   <span className="text-[10px] text-dim/60">
                     of {c.marketsTested} tested · {describeMarkets(c.markets)}
                   </span>
+                )}
+              </div>
+            )}
+
+            {/* Committee verdict — the qualitative debate on top of the maths.
+                The gauntlet proved it works; this says how much to trust that
+                and when to pull it. */}
+            {c.committee && (
+              <div className="mt-2 rounded-lg border border-line bg-bg/40 p-2.5 text-[11px] space-y-1.5">
+                <div className="flex items-center gap-2">
+                  <Scale className="w-3.5 h-3.5 text-accent" />
+                  <span className="font-semibold text-text">Committee verdict</span>
+                  {c.committee.confidence != null && (
+                    <span className={cn(
+                      "font-mono px-1.5 py-0.5 rounded text-[10px]",
+                      c.committee.confidence >= 60 ? "bg-up/10 text-up"
+                        : c.committee.confidence >= 35 ? "bg-accent/10 text-accent"
+                        : "bg-down/10 text-down"
+                    )}>
+                      confidence {c.committee.confidence}%
+                    </span>
+                  )}
+                  {c.committee.regime && <span className="text-dim/70">regime: {c.committee.regime}</span>}
+                </div>
+                {c.committee.bull && <p className="text-dim"><span className="text-up font-semibold">Bull</span> — {c.committee.bull}</p>}
+                {c.committee.bear && <p className="text-dim"><span className="text-down font-semibold">Bear</span> — {c.committee.bear}</p>}
+                {(c.committee.invalidations || []).length > 0 && (
+                  <div className="text-dim/80">
+                    <span className="text-dim font-semibold">Pull it if:</span>
+                    <ul className="list-disc list-inside mt-0.5">
+                      {c.committee.invalidations.map((inv, i) => <li key={i}>{inv}</li>)}
+                    </ul>
+                  </div>
                 )}
               </div>
             )}

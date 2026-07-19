@@ -203,7 +203,7 @@ export async function onRequest({ request, env }) {
   // Cheap token check (no AI call) — used by the private Coach page gate.
   if (body?.validate === true) return json({ ok: true });
 
-  // Three modes share the provider chain below:
+  // Four modes share the provider chain below:
   //  • repair:   fix code that failed to compile (bounded by code length, not the
   //              user-prompt cap, since generated code can be longer than a prompt).
   //  • research: distil a source DOCUMENT (paper body, article, video transcript)
@@ -211,11 +211,37 @@ export async function onRequest({ request, env }) {
   //              point is that a full text beats an abstract, and a 2000-char cap
   //              would truncate it back to abstract length. Still bounded, and
   //              still behind the same dev token.
+  //  • critique: the committee's bear case. For a strategy that already SURVIVED
+  //              the mathematical gauntlet, argue the other side — what regime
+  //              breaks it, how confident we should be, and the explicit
+  //              conditions under which it should be pulled. Returns prose (a
+  //              structured verdict), not code, so it skips extractCode below.
   //  • generate: turn a natural-language request into a fresh strategy.
   const repair = body?.repair;
   const research = body?.research;
+  const critique = body?.critique;
+  const isCritique = !!(critique && typeof critique.code === "string");
   let userMsg;
-  if (research && typeof research.text === "string") {
+  if (isCritique) {
+    const code = critique.code.slice(0, 6000);
+    const title = String(critique.title || "a strategy").slice(0, 200);
+    const facts = String(critique.facts || "").slice(0, 800);
+    userMsg =
+      "You are the risk member of an investment committee. A candidate strategy has already PASSED " +
+      "a rigorous statistical gauntlet (multi-market backtest, k-fold, noise test, out-of-sample " +
+      "holdout, Deflated Sharpe). Your job is the BEAR CASE — argue against deploying it, so a human " +
+      "can decide with both sides in front of them.\n\n" +
+      `Strategy: "${title}"\n` +
+      (facts ? `Validated facts: ${facts}\n` : "") +
+      "\n```javascript\n" + code + "\n```\n\n" +
+      "Reply with STRICT JSON, no prose outside it, exactly this shape:\n" +
+      '{"bull":"<2-3 sentences: the strongest honest case FOR this strategy>",' +
+      '"bear":"<2-3 sentences: the most likely way it fails in live trading — regime, crowding, cost, or fragility>",' +
+      '"confidence":<integer 0-100: how likely this edge is real and persistent, not overfit>,' +
+      '"regime":"<the market regime it depends on, e.g. trending / mean-reverting / high-vol>",' +
+      '"invalidations":["<concrete condition to pull it, e.g. 3-month rolling Sharpe < 0>","<another>"]}\n' +
+      "Be skeptical. A high confidence must be earned. Return ONLY the JSON object.";
+  } else if (research && typeof research.text === "string") {
     const doc = research.text.slice(0, MAX_RESEARCH_CHARS);
     const title = String(research.title || "untitled").slice(0, 200);
     const kind = String(research.kind || "document").slice(0, 20);
@@ -270,5 +296,39 @@ export async function onRequest({ request, env }) {
     // Never forward upstream error bodies — they can reference account details.
     return json({ error: lastStatus === 429 ? "rate_limited" : "upstream_error" }, lastStatus === 429 ? 429 : 502);
   }
+  // The critique channel returns a structured verdict, not code. Parse the JSON
+  // out of the model's reply defensively — models wrap it in prose or fences no
+  // matter how firmly you ask them not to.
+  if (isCritique) return json({ critique: parseVerdict(text) });
   return json({ code: extractCode(text) });
+}
+
+// Pull the committee verdict JSON out of a model reply. Returns a normalised
+// object (never throws) so a malformed reply degrades to a usable shell rather
+// than failing the whole research run.
+function parseVerdict(text) {
+  let obj = null;
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const raw = fenced ? fenced[1] : text;
+  const start = raw.indexOf("{");
+  const end = raw.lastIndexOf("}");
+  if (start !== -1 && end > start) {
+    try { obj = JSON.parse(raw.slice(start, end + 1)); } catch { obj = null; }
+  }
+  const clampConf = (v) => {
+    const n = Math.round(Number(v));
+    return Number.isFinite(n) ? Math.min(100, Math.max(0, n)) : null;
+  };
+  const str = (v, n) => (typeof v === "string" ? v.slice(0, n) : "");
+  return {
+    bull: str(obj?.bull, 500),
+    bear: str(obj?.bear, 500),
+    confidence: clampConf(obj?.confidence),
+    regime: str(obj?.regime, 60),
+    invalidations: Array.isArray(obj?.invalidations)
+      ? obj.invalidations.filter((x) => typeof x === "string").slice(0, 4).map((x) => x.slice(0, 200))
+      : [],
+    // Keep the raw text when parsing failed entirely, so nothing is silently lost.
+    raw: obj ? undefined : text.slice(0, 600),
+  };
 }
