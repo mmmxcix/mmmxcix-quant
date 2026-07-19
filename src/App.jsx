@@ -4,6 +4,7 @@ import Dashboard from "@/pages/Dashboard";
 import Charts from "@/pages/Charts";
 import News from "@/pages/News";
 import Tools from "@/pages/Tools";
+import Regimes from "@/pages/Regimes";
 import Coach from "@/pages/Coach";
 import Cortex from "@/pages/Cortex";
 import { BacktestHub, PortfolioHub, ScreenerHub, LearnHub } from "@/pages/hubs";
@@ -38,6 +39,7 @@ export default function App() {
                 <Route path="/watchlist" element={<Redir to="/?view=watchlist" />} />
                 <Route path="/monitor" element={<Redir to="/?view=monitor" />} />
                 <Route path="/tools" element={<Tools />} />
+                <Route path="/regimes" element={<Regimes />} />
                 <Route path="/coach" element={<Coach />} />
 
                 {/* Cortex hub (Registry · Paper · RiskGate · Brain Vault) */}

@@ -22,6 +22,7 @@ import { runBacktest, compileStrategy } from "../src/lib/backtest.js";
 import { BUILT_IN_STRATEGIES } from "../src/lib/strategies.js";
 import { evaluateEntry, drawdownPct, dayLossPct as computeDayLoss } from "../src/lib/riskGate.js";
 import { riskRulesFor, PROFILE_IDS, DEFAULT_PROFILE, getProfile } from "../src/lib/profiles.js";
+import { currentRegime } from "../src/lib/hmmRegime.js";
 import * as ibkr from "./ibkrPaper.mjs";
 
 const SITE = process.env.LAB_SITE || "https://quant.mmmxcix.com";
@@ -227,6 +228,12 @@ for (const s of published) {
     const ps = local.strategies[s.id] || { equity: START_EQUITY, position: "flat", units: 0, trades: [] };
     const pid = profileOf(s);
 
+    // Current market regime (HMM). Causal here: the candle window ends at "now",
+    // so the regime label uses only past+present data — no look-ahead, unlike a
+    // backtest. Always reported; only enforced when a strategy opts in.
+    let regime = null;
+    try { regime = currentRegime(candles, { interval: s.interval }); } catch { /* thin data → no regime */ }
+
     // Gate any move INTO a position (fresh entry OR flip). Exits pass freely.
     if (target !== "flat" && target !== ps.position) {
       const g = evaluateEntry({ rules: rulesFor[pid], ctx: {
@@ -240,6 +247,18 @@ for (const s of published) {
         gateBlocked.push({ name: s.name, profile: pid, reason });
         console.log(`⛔ RiskGate[${pid}] blocked ${s.name}: ${reason}`);
         target = "flat"; // fails closed — flatten rather than enter
+      }
+    }
+
+    // Regime gate (opt-in via s.regimeGate = "Bull" or ["Bull","Neutral"]): only
+    // take the entry when the current regime is favourable. A cheap, causal way
+    // to make any strategy regime-aware without touching its logic.
+    if (target !== "flat" && target !== ps.position && s.regimeGate && regime) {
+      const allowed = Array.isArray(s.regimeGate) ? s.regimeGate : [s.regimeGate];
+      if (!allowed.includes(regime)) {
+        gateBlocked.push({ name: s.name, profile: pid, reason: `regime ${regime}` });
+        console.log(`⛔ Regime blocked ${s.name}: ${regime} not in [${allowed.join(", ")}]`);
+        target = "flat";
       }
     }
 
@@ -277,7 +296,7 @@ for (const s of published) {
 
     summaries.push({
       id: s.id, name: s.name, symbol: s.symbol, interval: s.interval,
-      profile: pid,
+      profile: pid, regime,
       position: ps.position, equity: ps.markEquity,
       returnPct: +(((ps.markEquity / START_EQUITY) - 1) * 100).toFixed(2),
       tradeCount: (ps.trades || []).length,
