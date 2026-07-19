@@ -136,10 +136,16 @@ node scripts\research-agent.mjs
 Erwartete Ausgabe: `arXiv: 25 papers, N fresh…` und pro Paper entweder `✓ CANDIDATE`, `✗ graveyard: … (Grund)`, `~ skipped` — und bei sehr guten Treffern `🤖 auto-promoted … → paper portfolio`.
 
 ### Voll-Autonomie: Auto-Promotion mit Deckel
-Ein Kandidat, dessen **Deflated Sharpe ≥ 97 %** liegt (strenger als die 95 %-Hürde zum Überleben), wandert **automatisch** ins Paper-Portfolio — ohne dass du in der Registry klicken musst. Damit findet, testet UND handelt das System selbstständig, genau wie im Video.
-- **Deckel:** Maximal **5** solcher Auto-Strategien laufen gleichzeitig (serverseitig erzwungen; die neuesten verdrängen die ältesten). Deine manuell veröffentlichten Strategien bleiben davon unberührt — beide koexistieren.
-- **Erkennbar:** Auto-Strategien tragen ein 🤖 im Namen (im Portfolio HQ auf der Coach-Seite).
-- **Schwelle ändern:** `LAB_AUTO_PROMOTE_DSR=98` (strenger) bzw. niedriger, wenn du mehr durchlassen willst.
+Ein Kandidat, der die DSR-Schwelle seines Profils erreicht, wandert **automatisch**
+ins Paper-Portfolio — ohne dass du in der Registry klicken musst. Damit findet,
+testet UND handelt das System selbstständig.
+- **Deckel:** pro Profil getrennt — **3** Plätze für prop, **8** für privat
+  (serverseitig erzwungen; die neuesten verdrängen die ältesten). Deine manuell
+  veröffentlichten Strategien bleiben davon unberührt.
+- **Erkennbar:** Auto-Strategien tragen ein 🤖 im Namen (Portfolio HQ auf der Coach-Seite).
+- **Schwelle ändern:** in `src/lib/profiles.js` (`promotion.minDsr`). Die alte
+  Umgebungsvariable `LAB_AUTO_PROMOTE_DSR` gibt es nicht mehr — Schwellen und
+  Deckel gehören jetzt zum Profil, siehe Schritt 8 und `docs/CORTEX_CALIBRATION.md`.
 
 ### Selbst-Reparatur des generierten Codes
 Wenn das KI-Modell mal Code liefert, der nicht kompiliert (falscher Funktionsname o. ä.), schickt der Agent den Fehler **einmal** ans Modell zurück und bittet um eine Korrektur, statt sofort zu beerdigen. Das hebt die Trefferquote spürbar und kostet nur bei Fehlschlag einen Extra-Call.
@@ -194,3 +200,184 @@ Symptom `~ skipped (rate-limited)` erscheint erst, wenn **alle** gesetzten Anbie
 - **Phase 4:** Research-Agent (`research-agent.mjs`) liest Papers → KI-Code → Validierung → Kandidaten/Graveyard, autonom. ✅
 
 *Kein Investment-Advice; das System handelt ausschließlich mit virtuellem Geld.*
+
+---
+
+## Schritt 8 — Cortex: Nacht-Recherche + Tages-Validierung (kein Handverschieben mehr)
+
+Ab hier läuft die Pipeline vollständig ohne dich. Nachts wird gesucht, tagsüber
+wird geprüft und automatisch ins Paper-Portfolio befördert.
+
+### Die drei Agenten
+
+| Agent | Wann | Was |
+|---|---|---|
+| `lab-agent.mjs` | alle 15 Min | führt die publizierten Strategien aus, RiskGate, pusht State |
+| `research-agent.mjs` | 2–5× pro Nacht | erntet Quellen, liest Volltext, baut + testet Strategien |
+| `revalidate-agent.mjs` | alle ~3h tagsüber | testet Kandidaten auf frischen Daten nach, befördert automatisch |
+
+### Die zwei Strenge-Profile
+
+Jede Strategie wird in **einem** Backtest-Durchlauf gegen **beide** Regime bewertet:
+
+| | Prop firm | Privates Konto |
+|---|---|---|
+| Max Drawdown (Backtest) | 15 % | 35 % |
+| Profit-Faktor | ≥ 1.25 | ≥ **1.35** |
+| Min. Trades | 30 | 20 |
+| DSR bei Entdeckung | ≥ 70 % | ≥ 50 % |
+| DSR bei Re-Validierung | ≥ 60 % | ≥ 40 % |
+| Live-Drawdown-Limit | 8 % | 30 % |
+| Tagesverlust-Limit | 4 % | 10 % |
+| Handelsfenster (UTC) | 13–21 | 0–24 |
+| Plätze im Buch | 3 | 8 |
+
+Der Profit-Faktor ist beim privaten Profil **höher**, nicht niedriger. Das lockere
+Drawdown-Limit ist ein Tausch, kein Rabatt: wer ein 30-%-Loch graben darf, muss
+dafür besser bezahlen. Sonst wäre "privat" nur das Profil, in dem schwache
+Strategien durchrutschen.
+
+Anpassen: alles steht in `src/lib/profiles.js` an einer Stelle.
+
+### n8n: zwei zusätzliche Workflows
+
+**Nacht-Recherche** — Schedule Trigger, Cron `0 1,3,5 * * *` (also 01:00, 03:00, 05:00):
+
+```
+Execute Command:
+  node scripts/research-agent.mjs
+```
+
+Für 5 Läufe: `0 0,1,2,3,4 * * *`. Mehr als 5 bringt wenig — jeder Versuch hebt
+den globalen DSR-Zähler, die Hürde steigt also mit jedem Lauf.
+
+**Tages-Validierung** — Schedule Trigger, Cron `0 8,11,14,17,20 * * *`:
+
+```
+Execute Command:
+  cd C:\Users\gilap\Documents\GitHub\mmmxcix-quant && node scripts/revalidate-agent.mjs
+```
+
+Beide brauchen `LAB_TOKEN` in der Umgebung, wie der Lab-Agent auch.
+
+> Wenn du die Nacht-Workflows anlegst, setze `LAB_AUTO_RESEARCH=0` — sonst
+> startet der 15-Minuten-Agent zusätzlich noch alle ~20h eine eigene Recherche.
+
+### Die Quellen (7 statt 2)
+
+arXiv · OpenAlex · Crossref · Zenodo · Practitioner-Blogs (Alpha Architect,
+Quantpedia, Robot Wealth, QuantInsti, NBER) · Hacker News · **YouTube**
+(Transkripte über yt-dlp).
+
+**Volltext statt Abstract:** Wo möglich liest der Agent den ganzen Text — arXiv-HTML,
+`content:encoded` aus RSS, YouTube-Auto-Captions. Ein Abstract sagt, *dass* Momentum
+wirkt; der Text sagt, *wie* gemessen wurde. Gemessene Rate: ~5 von 14 Fundstücken
+werden hochgestuft, der Rest fällt sauber aufs Abstract zurück.
+
+**Nicht dabei: TikTok und Instagram.** Beide sind login-verrammelt und aktiv
+anti-Bot; ein Scraper dafür bricht binnen Wochen und *still*. Reddit stand kurz
+in der Liste und flog wieder raus — es antwortet inzwischen jedem Nicht-OAuth-Client
+mit 403. Eine Quelle, die still nichts liefert, ist schlimmer als eine Quelle weniger.
+
+---
+
+## Schritt 9 — IBKR Paper-Account automatisch bespielen (optional)
+
+Der Agent kann seine Entscheidungen zusätzlich als echte Orders in deinen
+**IBKR-Paper-Account** spiegeln.
+
+### Voraussetzungen
+
+1. **Client Portal Gateway** läuft lokal (Standard `https://localhost:5000`)
+2. Du hast dich dort **einmal im Browser** mit den **Paper**-Zugangsdaten eingeloggt
+3. Die Session hält ~1 Tag — danach ist ein erneuter Login nötig (IBKR-Vorgabe,
+   nicht umgehbar)
+
+### Einschalten
+
+```powershell
+$env:LAB_IBKR_TRADE   = "1"          # ohne das passiert gar nichts
+$env:LAB_IBKR_SHARES  = "10"         # feste Stückzahl je Strategie
+$env:LAB_IBKR_ACCOUNT = "DU1234567"  # optional, sonst erstes Konto
+```
+
+### Die drei Bremsen
+
+1. **Opt-in** — ohne `LAB_IBKR_TRADE=1` wird keine einzige Order gesendet
+2. **Paper-Assertion** — der Agent verweigert den Dienst bei jeder Konto-ID, die
+   nicht `DU…`/`DF…` ist. Ein versehentlich im Live-Konto eingeloggtes Gateway
+   führt zu einem lauten Abbruch, nicht zu echten Trades
+3. **Kill-Switch** — `LAB_IBKR_KILL=1` blockiert sofort alles, ohne Code-Änderung
+
+### Was gespiegelt wird — und was nicht
+
+Nur **Aktien**-Strategien. Das Gateway löst normale US-Ticker zu Kontrakten auf;
+eine `BTCUSDT`-Strategie hat dort nichts zu handeln und wird übersprungen (mit
+Vermerk, nicht stillschweigend). Auto-promotete Strategien laufen aktuell auf
+`BTCUSDT` — für IBKR musst du also mindestens eine Aktien-Strategie in der
+Registry publizieren, sonst ist die Spiegelung zwar scharf, aber ohne Arbeit.
+
+Die Stückzahl ist **fix** und folgt nicht dem simulierten Konto. Absicht: die
+beiden Konten haben unterschiedliche Stände und driften ab dem ersten Fill
+auseinander. Verglichen werden soll das **Signal**, nicht die Positionsgröße.
+
+Status steht auf der RiskGate-Seite unter „IBKR paper mirroring".
+
+---
+
+## Schritt 10 — Automatische Quellensuche (tagsüber)
+
+Cortex sucht sich seine Quellen inzwischen **selbst**. `discover-sources.mjs`
+durchsucht kuratierte GitHub-Indexe (awesome-quant & Co.) und Hacker News,
+findet Feeds, **prüft sie tatsächlich** (parst? aktuell? thematisch passend?
+Volltext?) und schreibt die Überlebenden nach `~/.mmmxcix-sources.json`.
+Der Research-Agent liest die Datei bei jedem Lauf zusätzlich zur eingebauten Liste.
+
+Gemessen beim ersten Einsatz: 952 Links aus 6 READMEs → 204 Kandidaten →
+6 verifizierte neue Feeds, 139 Kandidaten warten auf die nächsten Läufe.
+
+**n8n-Workflow** — Schedule Trigger, Cron `0 12 * * *` (täglich 12:00):
+
+```
+Execute Command:
+  cd C:\Users\gilap\Documents\GitHub\mmmxcix-quant && node scripts/discover-sources.mjs
+```
+
+Der Agent räumt auch auf: Feeds, die fünf Läufe in Folge nichts Brauchbares
+liefern, werden automatisch stillgelegt. Genau diese Hälfte fehlt bei
+handgepflegten Listen — deshalb verrotten sie.
+
+Stellschrauben: `LAB_DISCOVER_PROBE` (Standard 70 geprüfte Seiten pro Lauf).
+
+### Alle Workflows im Überblick
+
+| Workflow | Cron | Befehl |
+|---|---|---|
+| Paper-Trading | alle 15 Min | `node scripts/lab-agent.mjs` |
+| Nacht-Recherche | `0 1,3,5 * * *` | `node scripts/research-agent.mjs` |
+| Tages-Validierung | `0 8,11,14,17,20 * * *` | `node scripts/revalidate-agent.mjs` |
+| Quellensuche | `0 12 * * *` | `node scripts/discover-sources.mjs` |
+
+---
+
+## Schritt 11 — Multi-Markt: Strategien für alles
+
+Der Gauntlet testet nicht mehr „muss auf BTC **und** SPY laufen". Er testet
+**10 Märkte** und markiert, wo eine Strategie tatsächlich funktioniert:
+
+BTC 4h · ETH 1h · SOL 15m · SPY 1d · QQQ 1d · AAPL 15m · AAPL 1h · TSLA 1d ·
+EUR/USD 1d · EUR/USD 1h
+
+Eine Strategie, die auf Bitcoin nichts taugt, aber auf 15-Minuten-AAPL oder
+EUR/USD sauber läuft, kommt jetzt durch — mit Markt-Tag. Befördert wird sie für
+**genau den Markt**, auf dem sie validiert wurde, mit den echten Kosten dieses
+Marktes (Gebühr nach Asset-Klasse + Slippage nach Zeitrahmen).
+
+Gegen Cherry-Picking: die Trial-Zahl für den Deflated Sharpe wird mit der Zahl
+der **Asset-Klassen** multipliziert. Breiter suchen macht jeden Treffer
+schwerer zu behaupten. Details und Messwerte: `docs/CORTEX_CALIBRATION.md`.
+
+> **Wichtig:** Die DSR-Schwellen sind von 95/97 % auf 50/70 % gesenkt — nicht
+> aus Nachlässigkeit, sondern weil die alten Werte nachweislich unerreichbar
+> waren und das System nach wenigen Dutzend Papers nie wieder etwas befördert
+> hätte. Die Messtabelle steht in `docs/CORTEX_CALIBRATION.md`.

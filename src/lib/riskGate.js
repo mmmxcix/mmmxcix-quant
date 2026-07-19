@@ -10,26 +10,26 @@
 // Pure module: imported by the Node paper-trader (scripts/lab-agent.mjs) AND
 // the React RiskGate page. No DOM, no fetch.
 
-export const DEFAULT_RULES = {
-  // Only take new entries during this UTC hour window [start, end). A full
-  // 0–24 window means "always on" (sensible for 24/7 crypto); tighten it to a
-  // session (e.g. 13–21 for US futures) when trading instruments with hours.
-  tradingWindowUtc: { start: 0, end: 24 },
-  // Never hold more than this many positions across the whole portfolio.
-  maxSimultaneousPositions: 5,
-  // Block new entries once the portfolio is this far below its equity peak.
-  maxCombinedDrawdownPct: 20,
-  // Block new entries for the rest of the UTC day after losing this much today.
-  dailyLossLimitPct: 5,
-  // Cap on new entries opened per UTC day across the portfolio.
-  maxTradesPerDay: 20,
-  // Advisory ceiling on how correlated two live strategies may be. Enforced at
-  // promotion time and surfaced as a portfolio health metric (see notes below).
-  maxPairwiseCorrelation: 0.8,
-  // Hard "do not trade" windows: [{ start: ISO, end: ISO, label }]. Use for
-  // known high-impact events (FOMC, CPI, NFP) or scheduled maintenance.
-  blackout: [],
-};
+// The numbers themselves now live in profiles.js, because the same rule set
+// also has to agree with the research gauntlet and the promotion gate — three
+// places that must never drift apart. This module owns the *evaluation*, the
+// profile owns the *thresholds*.
+//
+// Rule meanings:
+//   tradingWindowUtc          entries only inside this UTC hour window [start,end);
+//                             0–24 means always on (right for 24/7 crypto)
+//   maxSimultaneousPositions  portfolio-wide cap on concurrent positions
+//   maxCombinedDrawdownPct    block entries once this far below the equity peak
+//   dailyLossLimitPct         block entries for the rest of the UTC day after this loss
+//   maxTradesPerDay           cap on new entries opened per UTC day
+//   maxPairwiseCorrelation    advisory; enforced at promotion, shown as health
+//   blackout                  hard no-trade windows [{start:ISO,end:ISO,label}]
+export { PROFILES, PROFILE_IDS, DEFAULT_PROFILE, getProfile, riskRulesFor } from "./profiles.js";
+
+import { getProfile, DEFAULT_PROFILE } from "./profiles.js";
+
+/** Rules of the default profile — the fallback when no profile is selected. */
+export const DEFAULT_RULES = getProfile(DEFAULT_PROFILE).risk;
 
 // Human-readable metadata so the UI can render the rule set without hardcoding.
 export const RULE_META = {

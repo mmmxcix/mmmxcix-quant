@@ -5,6 +5,11 @@ import {
   getEntries, subscribeRegistry, setStatus, removeEntry, STATUS_META, correlationMatrix, saveEntry,
 } from "@/lib/registry";
 import { cn, fmtPct, fmtNum } from "@/lib/utils";
+import { PROFILES } from "@/lib/profiles";
+import { byId, costFor, describeMarkets } from "@/lib/markets";
+import CopyButton from "@/components/CopyButton";
+
+const PROFILE_LABEL = Object.fromEntries(Object.entries(PROFILES).map(([id, p]) => [id, p.label]));
 
 // Survivors of the autonomous research loop (pushed by the PC's research
 // agent into lab:candidates). Private: only renders when the dev token exists.
@@ -23,13 +28,22 @@ function AgentCandidates() {
 
   if (!token || items === null || items === undefined || items.length === 0) return null;
 
+  // Import into the market the strategy was actually validated on — importing
+  // everything as BTC 4h (as this used to) would silently misrepresent a rule
+  // that only ever worked on, say, EUR/USD daily.
   const importOne = (c) => {
-    const m = c.metrics?.BTC4h || Object.values(c.metrics || {})[0] || {};
+    const mid = c.bestMarket || (c.markets || [])[0];
+    const mk = mid ? byId(mid) : null;
+    const row = (c.byMarket?.[mid]) || Object.values(c.byMarket || {})[0] || {};
     saveEntry({
-      name: `[research] ${c.name.slice(0, 50)}`,
-      market: "crypto", symbol: "BTCUSDT", interval: "4h", range: "max",
-      mode: "code", code: c.code, positionPct: 100, feeBps: 10,
-      metrics: { totalReturnPct: m.ret ?? 0, profitFactor: m.pf ?? 0, maxDrawdownPct: m.dd ?? 0, tradeCount: m.n ?? 0 },
+      name: `[research] ${c.name.slice(0, 46)}${mk ? ` · ${mk.label}` : ""}`,
+      market: mk ? (mk.asset === "crypto" ? "crypto" : "stock") : "crypto",
+      symbol: mk?.symbol || "BTCUSDT",
+      interval: mk?.interval || "4h",
+      range: "max",
+      mode: "code", code: c.code, positionPct: 100,
+      feeBps: mk ? costFor(mk) : 10,
+      metrics: { totalReturnPct: row.ret ?? 0, profitFactor: row.pf ?? 0, maxDrawdownPct: row.dd ?? 0, tradeCount: row.n ?? 0 },
       equity: [],
       validation: { wf: "pass", dsr: "pass", noise: "pass" }, // it survived the agent's gauntlet
       status: "factory", // still: re-run it yourself before trusting it
@@ -46,28 +60,65 @@ function AgentCandidates() {
       </div>
       <p className="text-[11px] text-dim mb-3">
         Each survived: profitable on BTC 4h AND SPY 1d after costs, k-fold, noise test, and the Deflated Sharpe hurdle
-        at the agent's cumulative trial count. Import, then re-run in the Backtest yourself before promoting.
+        at the agent's cumulative trial count — then re-checked on fresh data by the daytime re-validator. The badge
+        shows which account regime it qualified for. Copy the code, or import it to re-run in the Backtest yourself.
       </p>
       <div className="space-y-2">
         {items.map((c) => (
-          <div key={c.id} className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border border-line bg-bg/40 px-3 py-2">
-            <span className="text-sm text-text flex-1 min-w-[200px]">{c.name}</span>
-            {c.metrics?.BTC4h && (
+          <div key={c.id} className="rounded-lg border border-line bg-bg/40 px-3 py-2">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+              <span className="text-sm text-text flex-1 min-w-[200px]">{c.name}</span>
+              {(c.profiles || []).map((p) => (
+                <span key={p} className={cn(
+                  "text-[9px] uppercase tracking-wide rounded px-1.5 py-0.5 font-semibold",
+                  p === "prop" ? "bg-accent/15 text-accent" : "bg-up/10 text-up"
+                )}>{PROFILE_LABEL[p] || p}</span>
+              ))}
               <span className="text-[11px] font-mono text-dim">
-                BTC4h <span className={c.metrics.BTC4h.ret >= 0 ? "text-up" : "text-down"}>{c.metrics.BTC4h.ret}%</span> · PF {c.metrics.BTC4h.pf}
+                DSR {c.dsr}%
+                {c.revalidatedDsr != null && c.revalidatedDsr !== c.dsr && (
+                  <span className={c.revalidatedDsr >= c.dsr ? "text-up" : "text-dim"}> → {c.revalidatedDsr}%</span>
+                )}
               </span>
+            </div>
+
+            {/* Where it works. A strategy is not good in the abstract — it is
+                good on a venue, and burying that would misrepresent it. */}
+            {(c.markets || []).length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                {c.markets.map((mid) => {
+                  const row = c.byMarket?.[mid] || {};
+                  const mk = byId(mid);
+                  return (
+                    <span key={mid}
+                      title={`${row.ret ?? "?"}% · PF ${row.pf ?? "?"} · dd ${row.dd ?? "?"}% · n=${row.n ?? "?"}`}
+                      className="text-[10px] font-mono rounded border border-up/30 bg-up/5 text-up px-1.5 py-0.5">
+                      {mk?.label || mid}
+                      {row.ret != null && <span className="text-dim/80"> {row.ret}%</span>}
+                    </span>
+                  );
+                })}
+                {c.marketsTested > (c.markets?.length || 0) && (
+                  <span className="text-[10px] text-dim/60">
+                    of {c.marketsTested} tested · {describeMarkets(c.markets)}
+                  </span>
+                )}
+              </div>
             )}
-            {c.metrics?.SPY1d && (
-              <span className="text-[11px] font-mono text-dim">
-                SPY <span className={c.metrics.SPY1d.ret >= 0 ? "text-up" : "text-down"}>{c.metrics.SPY1d.ret}%</span>
+
+            <div className="flex flex-wrap items-center gap-2 mt-1.5">
+              <span className="text-[10px] text-dim/70">
+                {c.source}{c.kind && c.kind !== "paper" ? ` · ${c.kind}` : ""}
+                {c.readFullText ? " · full text" : " · abstract only"}
               </span>
-            )}
-            <span className="text-[11px] font-mono text-dim">DSR {c.dsr}%</span>
-            {c.paper && <a href={c.paper} target="_blank" rel="noopener noreferrer" className="text-[11px] text-accent hover:underline">paper</a>}
-            <button onClick={() => importOne(c)} disabled={imported[c.id]}
-              className={cn("chip !text-[11px]", imported[c.id] ? "chip-idle text-up" : "chip-idle hover:text-accent")}>
-              {imported[c.id] ? "✓ imported" : "Import to Registry"}
-            </button>
+              {c.paper && <a href={c.paper} target="_blank" rel="noopener noreferrer" className="text-[11px] text-accent hover:underline">source</a>}
+              <span className="flex-1" />
+              <CopyButton text={c.code} label="Copy code" />
+              <button onClick={() => importOne(c)} disabled={imported[c.id]}
+                className={cn("chip !text-[11px]", imported[c.id] ? "chip-idle text-up" : "chip-idle hover:text-accent")}>
+                {imported[c.id] ? "✓ imported" : "Import to Registry"}
+              </button>
+            </div>
           </div>
         ))}
       </div>

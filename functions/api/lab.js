@@ -15,10 +15,17 @@
 // state is the owner's private data.
 
 const MAX_STATE_BYTES = 64 * 1024;
-// The "Deckel": at most this many research-auto-promoted strategies are ever
-// paper-traded at once. Enforced server-side so it holds no matter which
-// producer (agent or Registry) last wrote. Newest auto-promotions win.
-const AUTO_PROMOTE_CAP = 5;
+// The "Deckel", now per profile: prop and private are two separate books, so a
+// full prop book must not stop a private promotion. Enforced server-side so it
+// holds no matter which producer (agent or Registry) last wrote. Newest
+// auto-promotions win within each profile.
+//
+// Kept in sync with src/lib/profiles.js — duplicated deliberately: Pages
+// Functions and the browser bundle do not share a module graph, and a wrong
+// cap here is a portfolio-sizing bug, not a cosmetic one.
+const PROFILE_CAPS = { prop: 3, private: 8 };
+const DEFAULT_PROFILE = "private";
+const capFor = (p) => PROFILE_CAPS[p] ?? PROFILE_CAPS[DEFAULT_PROFILE];
 
 async function readStrategyItems(env) {
   try { return JSON.parse((await env.SUBSCRIBERS.get("lab:strategies")) || "{}").items || []; } catch { return []; }
@@ -113,17 +120,32 @@ export async function onRequest({ request, env }) {
     const manual = existing.filter((s) => s && !s.auto);
     const incoming = body.promote
       .filter((s) => s && s.id && typeof s.code === "string")
-      .map((s) => ({ ...s, auto: true }));
+      .map((s) => ({ ...s, auto: true, profile: s.profile || DEFAULT_PROFILE }));
+
+    // Merge newest-first, then apply the cap SEPARATELY per profile so the two
+    // books fill independently.
     const byId = new Map();
     for (const s of [...incoming, ...existing.filter((s) => s && s.auto)]) {
-      if (s.id && !byId.has(s.id)) byId.set(s.id, s);
+      if (s.id && !byId.has(s.id)) byId.set(s.id, { ...s, profile: s.profile || DEFAULT_PROFILE });
     }
-    const autoItems = [...byId.values()].slice(0, AUTO_PROMOTE_CAP);
+    const perProfile = {};
+    const autoItems = [];
+    for (const s of byId.values()) {
+      const p = s.profile;
+      perProfile[p] = (perProfile[p] || 0) + 1;
+      if (perProfile[p] <= capFor(p)) autoItems.push(s);
+    }
+
     const items = [...manual, ...autoItems];
     const payload = JSON.stringify({ items, publishedAt: Date.now() });
     if (payload.length > MAX_STATE_BYTES) return json({ error: "strategies_too_large", max: MAX_STATE_BYTES }, 413);
     await env.SUBSCRIBERS.put("lab:strategies", payload);
-    return json({ ok: true, promoted: incoming.length, autoActive: autoItems.length, cap: AUTO_PROMOTE_CAP, bytes: payload.length });
+    const active = {};
+    for (const s of autoItems) active[s.profile] = (active[s.profile] || 0) + 1;
+    return json({
+      ok: true, promoted: incoming.length, autoActive: autoItems.length,
+      byProfile: active, caps: PROFILE_CAPS, bytes: payload.length,
+    });
   }
 
   // Research candidates ACCUMULATE: merge by id with what's already stored
@@ -135,7 +157,9 @@ export async function onRequest({ request, env }) {
     for (const c of [...body.candidates, ...existing]) {
       if (c && c.id && !byId.has(c.id)) byId.set(c.id, c);
     }
-    const items = [...byId.values()].slice(0, 20);
+    // 30, matching the agent's local store — with 2–5 harvests per night the
+    // old cap of 20 evicted survivors before the daytime re-validator saw them.
+    const items = [...byId.values()].slice(0, 30);
     const payload = JSON.stringify({ items, updatedAt: Date.now() });
     if (payload.length > MAX_STATE_BYTES) return json({ error: "candidates_too_large", max: MAX_STATE_BYTES }, 413);
     await env.SUBSCRIBERS.put("lab:candidates", payload);
