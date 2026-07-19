@@ -351,6 +351,7 @@ export const BUILT_IN_STRATEGIES = [
     ],
     build({ windowStart = 14, windowEnd = 15, maxGapAge = 12, targetR = 2, longOnly = 0 } = {}) {
       let traded = false, side = 0, stop = 0, target = 0;
+      let intraday = null; // detected once from bar spacing
       return (ctx) => {
         if (ctx.session.isNewDay) { traded = false; side = 0; }
 
@@ -359,10 +360,23 @@ export const BUILT_IN_STRATEGIES = [
           return side === 1 ? { signal: "long", stop, target } : { signal: "short", stop, target };
         }
 
+        // The intraday "silver-bullet" hour only makes sense on sub-daily bars.
+        // On daily/weekly data there is one bar per day, so filtering by hour is
+        // meaningless — worse, it accidentally filters by the data provider's
+        // DST-dependent timestamp. Detect the bar spacing once and drop the
+        // window on daily+ data (trade the FVG retrace every day instead).
+        if (intraday === null) {
+          const c = ctx.candles, gaps = [];
+          for (let k = 1; k < Math.min(c.length, 30); k++) gaps.push(c[k].time - c[k - 1].time);
+          gaps.sort((a, b) => a - b);
+          intraday = (gaps[gaps.length >> 1] || 86400) < 23 * 3600;
+        }
+
         const h = ctx.session.hour;
-        const inWindow = windowStart <= windowEnd
-          ? (h >= windowStart && h < windowEnd)
-          : (h >= windowStart || h < windowEnd);
+        const inWindow = !intraday ? true
+          : windowStart <= windowEnd
+            ? (h >= windowStart && h < windowEnd)
+            : (h >= windowStart || h < windowEnd);
         if (!inWindow || traded) return "flat";
 
         const c = ctx.candles;
