@@ -28,10 +28,13 @@ const GATEWAY = process.env.LAB_IBKR_GATEWAY || "https://localhost:5000";
 export const TRADING_ENABLED = process.env.LAB_IBKR_TRADE === "1";
 const KILLED = process.env.LAB_IBKR_KILL === "1";
 
-// IBKR paper accounts are prefixed DU (individual) or DF (advisor/family).
-// Live accounts are U…/F…. This is the assertion that keeps a mis-logged-in
-// gateway from turning the research loop into a live trading system.
-const PAPER_RE = /^(DU|DF)\d+$/i;
+// IBKR paper accounts are prefixed DU (individual) or DF (advisor/family);
+// live accounts are U…/F…, so the DU/DF prefix is the discriminator. The
+// suffix is NOT always pure digits — real paper accounts like "DUQ292538"
+// carry a letter, which an earlier `^(DU|DF)\d+$` wrongly rejected. Match the
+// prefix plus any alphanumerics. This is the assertion that keeps a
+// mis-logged-in gateway from turning the research loop into a live system.
+const PAPER_RE = /^(DU|DF)[A-Z0-9]+$/i;
 
 class IbkrError extends Error {
   constructor(msg, status) { super(msg); this.status = status; }
