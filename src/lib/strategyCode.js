@@ -160,6 +160,26 @@ function strategy(ctx) {
   return "flat";
 }`;
   },
+  "session-range-fade": (p) => {
+    const rangeStart = P(p, "rangeStart", 12), rangeEnd = P(p, "rangeEnd", 13), tradeEnd = P(p, "tradeEnd", 20), stopBufferPct = P(p, "stopBufferPct", 10), longOnly = P(p, "longOnly", 0);
+    return `// Session Range Fade — mark a session range, then FADE its breakout.
+const RANGE_START = ${rangeStart}, RANGE_END = ${rangeEnd}, TRADE_END = ${tradeEnd}, STOP_BUFFER_PCT = ${stopBufferPct}, LONG_ONLY = ${longOnly};
+let hi = -Infinity, lo = Infinity, haveRange = false, traded = false, side = 0, stop = 0, target = 0;
+function strategy(ctx) {
+  if (ctx.session.isNewDay) { hi = -Infinity; lo = Infinity; haveRange = false; traded = false; side = 0; }
+  const h = ctx.session.hour;
+  const inRange = RANGE_START <= RANGE_END ? (h >= RANGE_START && h < RANGE_END) : (h >= RANGE_START || h < RANGE_END);
+  if (inRange) { if (ctx.high > hi) hi = ctx.high; if (ctx.low < lo) lo = ctx.low; haveRange = hi > lo; return "flat"; }
+  if (ctx.position !== "flat") return side === 1 ? { signal: "long", stop, target } : { signal: "short", stop, target };
+  const inTrade = h >= RANGE_END && h < TRADE_END;
+  if (!inTrade || !haveRange || traded) return "flat";
+  const width = hi - lo; if (width <= 0) return "flat";
+  const buf = width * (STOP_BUFFER_PCT / 100);
+  if (ctx.close > hi && !LONG_ONLY) { side = -1; traded = true; stop = hi + buf; target = lo; return { signal: "short", stop, target }; }
+  if (ctx.close < lo) { side = 1; traded = true; stop = lo - buf; target = hi; return { signal: "long", stop, target }; }
+  return "flat";
+}`;
+  },
   "ict-silver-bullet": (p) => {
     const windowStart = P(p, "windowStart", 14), windowEnd = P(p, "windowEnd", 15), maxGapAge = P(p, "maxGapAge", 12), targetR = P(p, "targetR", 2), longOnly = P(p, "longOnly", 0);
     return `// ICT Silver Bullet — enter on a retrace into the most recent Fair Value Gap.

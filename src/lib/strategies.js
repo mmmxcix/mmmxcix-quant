@@ -421,4 +421,60 @@ export const BUILT_IN_STRATEGIES = [
       };
     },
   },
+
+  {
+    id: "session-range-fade",
+    name: "Session Range Fade (Intraday)",
+    description:
+      "Marks a session range (default 12:00–13:00 UTC, ~US pre-market), then FADES the breakout: if price breaks the range high it goes SHORT toward the low, if it breaks the low it goes LONG toward the high. Stop just beyond the break, take-profit at the opposite side. One trade per day. For intraday data. Counter-breakout — the opposite of the Asian-range strategy.",
+    params: [
+      { key: "rangeStart", label: "Range start (UTC h)", default: 12, min: 0, max: 23, step: 1 },
+      { key: "rangeEnd", label: "Range end (UTC h)", default: 13, min: 1, max: 24, step: 1 },
+      { key: "tradeEnd", label: "Trade window end (UTC h)", default: 20, min: 2, max: 24, step: 1 },
+      { key: "stopBufferPct", label: "Stop buffer (% of range)", default: 10, min: 0, max: 50, step: 5 },
+      { key: "longOnly", label: "Long only (1/0)", default: 0, min: 0, max: 1, step: 1 },
+    ],
+    build({ rangeStart = 12, rangeEnd = 13, tradeEnd = 20, stopBufferPct = 10, longOnly = 0 } = {}) {
+      let hi = -Infinity, lo = Infinity, haveRange = false, traded = false;
+      let side = 0, stop = 0, target = 0;
+      return (ctx) => {
+        if (ctx.session.isNewDay) { hi = -Infinity; lo = Infinity; haveRange = false; traded = false; side = 0; }
+        const h = ctx.session.hour;
+
+        // Phase 1: build the session range.
+        const inRange = rangeStart <= rangeEnd
+          ? (h >= rangeStart && h < rangeEnd)
+          : (h >= rangeStart || h < rangeEnd);
+        if (inRange) {
+          if (ctx.high > hi) hi = ctx.high;
+          if (ctx.low < lo) lo = ctx.low;
+          haveRange = hi > lo;
+          return "flat";
+        }
+
+        // Phase 2: hold — brackets exit (stop beyond the break, target at the far side).
+        if (ctx.position !== "flat") {
+          return side === 1 ? { signal: "long", stop, target } : { signal: "short", stop, target };
+        }
+
+        // Phase 3: fade the first breakout in the trade window.
+        const inTrade = h >= rangeEnd && h < tradeEnd;
+        if (!inTrade || !haveRange || traded) return "flat";
+        const width = hi - lo;
+        if (width <= 0) return "flat";
+        const buf = width * (stopBufferPct / 100);
+        if (ctx.close > hi && !longOnly) {
+          // broke the high → fade SHORT back toward the low
+          side = -1; traded = true; stop = hi + buf; target = lo;
+          return { signal: "short", stop, target };
+        }
+        if (ctx.close < lo) {
+          // broke the low → fade LONG back toward the high
+          side = 1; traded = true; stop = lo - buf; target = hi;
+          return { signal: "long", stop, target };
+        }
+        return "flat";
+      };
+    },
+  },
 ];
