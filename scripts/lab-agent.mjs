@@ -23,6 +23,7 @@ import { BUILT_IN_STRATEGIES } from "../src/lib/strategies.js";
 import { evaluateEntry, drawdownPct, dayLossPct as computeDayLoss } from "../src/lib/riskGate.js";
 import { riskRulesFor, PROFILE_IDS, DEFAULT_PROFILE, getProfile } from "../src/lib/profiles.js";
 import { currentRegime } from "../src/lib/hmmRegime.js";
+import { volTargetWeight } from "../src/lib/volTarget.js";
 import * as ibkr from "./ibkrPaper.mjs";
 
 const SITE = process.env.LAB_SITE || "https://quant.mmmxcix.com";
@@ -262,8 +263,23 @@ for (const s of published) {
       }
     }
 
+    // GARCH vol-targeting (opt-in via s.volTarget): scale the position inversely
+    // to forecast volatility — smaller when the market is violent, full when it
+    // is calm. Causal (candles end at "now"). Never leverages above the base
+    // size; it can only de-risk, which is the drawdown-cutting behaviour. Set
+    // s.volTarget = true, or an object of overrides ({alpha,beta,cap,floor}).
+    let volInfo = null;
+    let effPositionPct = s.positionPct ?? 100;
+    if (s.volTarget) {
+      try {
+        const w = volTargetWeight(candles, typeof s.volTarget === "object" ? s.volTarget : {});
+        effPositionPct = Math.min(100, Math.max(1, Math.round(effPositionPct * w)));
+        volInfo = { weight: +w.toFixed(2), sizedPct: effPositionPct };
+      } catch { /* thin data → keep base size */ }
+    }
+
     const posBefore = ps.position;
-    const trade = applyTarget(ps, target, price, s.feeBps, s.positionPct);
+    const trade = applyTarget(ps, target, price, s.feeBps, effPositionPct);
     if (ps.position !== "flat" && ps.position !== posBefore) {
       local.day.entries++;
       local.day.byProfile[pid] = (local.day.byProfile[pid] || 0) + 1;
@@ -296,7 +312,7 @@ for (const s of published) {
 
     summaries.push({
       id: s.id, name: s.name, symbol: s.symbol, interval: s.interval,
-      profile: pid, regime,
+      profile: pid, regime, volTarget: volInfo,
       position: ps.position, equity: ps.markEquity,
       returnPct: +(((ps.markEquity / START_EQUITY) - 1) * 100).toFixed(2),
       tradeCount: (ps.trades || []).length,

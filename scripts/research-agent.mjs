@@ -589,6 +589,7 @@ for (const paper of fresh) {
             market: m.asset === "crypto" ? "crypto" : "stock",
             symbol: m.symbol, interval: m.interval,
             feeBps: costFor(m), positionPct: 100,
+            volTarget: true, // GARCH vol-targeted sizing — cuts drawdown by default
             dsr: verdict.byMarket[mid]?.dsr ?? cand.dsr, paper: cand.paper,
             profile: pid, candidateId: cand.id, marketId: mid,
           });

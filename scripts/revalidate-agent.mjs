@@ -229,6 +229,7 @@ for (const c of due) {
           market: m.asset === "crypto" ? "crypto" : "stock",
           symbol: m.symbol, interval: m.interval,
           feeBps: costFor(m), positionPct: 100,
+          volTarget: true, // GARCH vol-targeted sizing — cuts drawdown by default
           dsr: verdict.byMarket[mid].dsr, paper: c.paper,
           profile: pid, candidateId: c.id, marketId: mid, promotedBy: "revalidate",
         });
