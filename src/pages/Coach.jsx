@@ -26,6 +26,28 @@ function taskIsDone(task, manualDone, academyDone) {
   return manualDone.has(task.id);
 }
 
+// Today's P&L for the paper book, derived client-side from the combined equity
+// history so it tracks the VIEWER's local day and stays live. Baseline = the
+// equity carried into today (the last snapshot strictly before local midnight);
+// if history doesn't reach back that far, the earliest snapshot today is used.
+// combined.history = [{ t: ms, v: equity }], ascending.
+function dayPnl(combined) {
+  const hist = combined?.history;
+  if (!Array.isArray(hist) || hist.length < 2) return null;
+  const now = new Date();
+  const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  let base = null;
+  for (const p of hist) {
+    if (p.t < midnight) base = p.v; // carry forward the last pre-midnight value
+    else break;
+  }
+  const partial = base == null; // no snapshot before today → measuring from first bar today
+  if (partial) base = hist[0].v;
+  const cur = combined.equity ?? hist[hist.length - 1].v;
+  if (!(base > 0)) return null;
+  return { abs: cur - base, pct: ((cur - base) / base) * 100, partial };
+}
+
 // Live status of the local lab agent (the 24/7 process on the user's PC that
 // pushes its state to /api/lab). Private: reads with the dev token.
 function LabStatus() {
@@ -161,8 +183,21 @@ function LabStatus() {
                   <span className="text-dim text-xs uppercase tracking-widest font-sans">Combined equity</span>
                   <span className="text-text font-semibold">{fmtPrice(data.combined.equity)}</span>
                   <span className={data.combined.returnPct >= 0 ? "text-up" : "text-down"}>
-                    {data.combined.returnPct >= 0 ? "+" : ""}{data.combined.returnPct}%
+                    {data.combined.returnPct >= 0 ? "+" : ""}{data.combined.returnPct}% <span className="text-dim">all-time</span>
                   </span>
+                  {(() => {
+                    const d = dayPnl(data.combined);
+                    if (!d) return null;
+                    const up = d.abs >= 0;
+                    return (
+                      <span
+                        className={up ? "text-up" : "text-down"}
+                        title={d.partial ? "Since the first snapshot today (history doesn't reach back to midnight yet)" : "Change since the start of today (your local time)"}
+                      >
+                        {up ? "+" : "−"}{fmtPrice(Math.abs(d.abs))} ({up ? "+" : ""}{d.pct.toFixed(2)}%) <span className="text-dim">today{d.partial ? "*" : ""}</span>
+                      </span>
+                    );
+                  })()}
                   <span className="text-[10px] text-dim font-sans">virtual money · paper trading</span>
                 </div>
               )}
