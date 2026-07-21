@@ -8,6 +8,7 @@ import MonteCarloPanel from "@/components/MonteCarloPanel";
 import ValidationPanel from "@/components/ValidationPanel";
 import { fetchCandles, MARKETS, INTERVALS, rangesFor, INTERVAL_SECONDS } from "@/lib/data";
 import { runBacktest, compileStrategy, DEFAULT_STRATEGY_CODE, ORB_STRATEGY_CODE, BIAS_STRATEGY_CODE, BIAS_TREND_CODE } from "@/lib/backtest";
+import { runPythonSignals, signalsToFn, PYTHON_TEMPLATE } from "@/lib/pyRunner";
 import { BUILT_IN_STRATEGIES } from "@/lib/strategies";
 import { saveEntry } from "@/lib/registry";
 import { cn, fmtNum, fmtPct } from "@/lib/utils";
@@ -32,6 +33,9 @@ export default function Backtest() {
   const [strategyId, setStrategyId] = useState(BUILT_IN_STRATEGIES[0].id);
   const [paramValues, setParamValues] = useState({});
   const [code, setCode] = useState(DEFAULT_STRATEGY_CODE);
+  const [lang, setLang] = useState("js");        // js | python (code mode)
+  const [pyCode, setPyCode] = useState(PYTHON_TEMPLATE);
+  const [pyStatus, setPyStatus] = useState(null); // Pyodide loading/progress text
   const [capital, setCapital] = useState(10000);
   const [feeBps, setFeeBps] = useState(10);
   const [positionPct, setPositionPct] = useState(100);
@@ -65,7 +69,7 @@ export default function Backtest() {
 
   const copyCode = async () => {
     try {
-      await navigator.clipboard.writeText(code);
+      await navigator.clipboard.writeText(lang === "python" ? pyCode : code);
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch { /* clipboard blocked */ }
@@ -80,7 +84,7 @@ export default function Backtest() {
       const res = await fetch("/api/generate", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ prompt: p, token: devToken }),
+        body: JSON.stringify({ prompt: p, token: devToken, language: lang }),
       });
       const data = await res.json().catch(() => ({}));
       if (res.status === 401) {
@@ -91,7 +95,7 @@ export default function Backtest() {
       if (res.status === 503) throw new Error("AI not configured yet (Cloudflare secrets missing).");
       if (res.status === 429) throw new Error("Rate limit reached — please wait a moment.");
       if (!res.ok || !data.code) throw new Error("Generation failed — please try again.");
-      setCode(data.code);
+      if (lang === "python") setPyCode(data.code); else setCode(data.code);
     } catch (e) {
       setAiError(e.message);
     } finally {
@@ -133,8 +137,19 @@ export default function Backtest() {
     setRunning(true);
     setError(null);
     try {
-      const signalFn = mode === "builder" ? strategy.build(effectiveParams) : compileStrategy(code);
+      // Python needs the candles first (it computes a vectorised signal array),
+      // so fetch data before building the signal function in every mode.
       const candles = await fetchCandles({ market, symbol: symbol.trim().toUpperCase(), interval, range });
+      let signalFn;
+      if (mode === "builder") {
+        signalFn = strategy.build(effectiveParams);
+      } else if (lang === "python") {
+        const signals = await runPythonSignals(pyCode, candles, setPyStatus);
+        setPyStatus(null);
+        signalFn = signalsToFn(signals); // Python signals → same JS fill engine
+      } else {
+        signalFn = compileStrategy(code);
+      }
       const res = runBacktest({ candles, signalFn, initialCapital: capital, feeBps, positionPct });
       // Data sanity: if the source silently delivered a coarser granularity
       // than requested (Yahoo does this for long intraday ranges), say so
@@ -168,6 +183,7 @@ export default function Backtest() {
       setResult(null);
     } finally {
       setRunning(false);
+      setPyStatus(null);
     }
   };
 
@@ -316,8 +332,14 @@ export default function Backtest() {
             ) : (
               <>
                 <div className="flex items-center justify-between">
-                  <p className="text-[11px] text-dim">JS editor</p>
+                  <div className="flex items-center gap-1">
+                    <button onClick={() => setLang("js")}
+                      className={cn("chip !text-[10px] !py-0.5", lang === "js" ? "chip-active" : "chip-idle")}>JS</button>
+                    <button onClick={() => setLang("python")}
+                      className={cn("chip !text-[10px] !py-0.5", lang === "python" ? "chip-active" : "chip-idle")}>Python</button>
+                  </div>
                   <div className="flex items-center gap-3">
+                    {lang === "js" && (
                     <select
                       value=""
                       onChange={(e) => {
@@ -335,6 +357,7 @@ export default function Backtest() {
                       <option value="bias">Bias Score (raw — loses, educational)</option>
                       <option value="biastrend">Bias Trend Breakout (researched)</option>
                     </select>
+                    )}
                     <button onClick={copyCode} title="Copy code"
                       className="flex items-center gap-1.5 text-[11px] text-dim hover:text-text transition-colors">
                       {copied ? <Check className="w-3.5 h-3.5 text-up" /> : <Copy className="w-3.5 h-3.5" />}
@@ -343,21 +366,37 @@ export default function Backtest() {
                   </div>
                 </div>
                 <textarea
-                  value={code}
-                  onChange={(e) => setCode(e.target.value)}
+                  value={lang === "python" ? pyCode : code}
+                  onChange={(e) => (lang === "python" ? setPyCode(e.target.value) : setCode(e.target.value))}
                   spellCheck={false}
                   rows={16}
                   className="input-base w-full font-mono text-xs leading-relaxed resize-y"
                 />
-                <p className="text-[11px] text-dim leading-relaxed">
-                  Define <code className="text-accent">function strategy(ctx)</code> and return{" "}
-                  <code className="text-accent">"long"</code>, <code className="text-accent">"short"</code> or{" "}
-                  <code className="text-accent">"flat"</code> — or{" "}
-                  <code className="text-accent">{'{ signal, stop, target }'}</code> for bracket exits.
-                  Available: <code>ctx.candles</code>, <code>ctx.index</code>, <code>ctx.open/high/low/close</code>,{" "}
-                  <code>ctx.position</code>, <code>ctx.session</code> (UTC time, isNewDay),{" "}
-                  <code>ctx.indicators</code> (sma, ema, rsi, roc, atr, bollinger, donchian, macd).
-                </p>
+                {lang === "python" ? (
+                  <p className="text-[11px] text-dim leading-relaxed">
+                    Define <code className="text-accent">def signals(df)</code> returning one value per bar:{" "}
+                    <code className="text-accent">1</code> long, <code className="text-accent">0</code> flat,{" "}
+                    <code className="text-accent">-1</code> short. <code>df</code> has columns{" "}
+                    <code>open/high/low/close/volume</code>; <code>numpy</code> + <code>pandas</code> available.
+                    Runs real CPython (Pyodide, ~6 MB, loads on first run) — the signals feed the same fill
+                    engine as JS, so fees and no-look-ahead are identical. No intrabar brackets in Python yet.
+                  </p>
+                ) : (
+                  <p className="text-[11px] text-dim leading-relaxed">
+                    Define <code className="text-accent">function strategy(ctx)</code> and return{" "}
+                    <code className="text-accent">"long"</code>, <code className="text-accent">"short"</code> or{" "}
+                    <code className="text-accent">"flat"</code> — or{" "}
+                    <code className="text-accent">{'{ signal, stop, target }'}</code> for bracket exits.
+                    Available: <code>ctx.candles</code>, <code>ctx.index</code>, <code>ctx.open/high/low/close</code>,{" "}
+                    <code>ctx.position</code>, <code>ctx.session</code> (UTC time, isNewDay),{" "}
+                    <code>ctx.indicators</code> (sma, ema, rsi, roc, atr, bollinger, donchian, macd).
+                  </p>
+                )}
+                {pyStatus && (
+                  <p className="text-[11px] text-accent flex items-center gap-1.5">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" /> {pyStatus}
+                  </p>
+                )}
 
                 {/* KI-Generator */}
                 <div className="border-t border-line pt-3 space-y-2">

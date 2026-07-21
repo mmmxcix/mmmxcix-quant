@@ -70,6 +70,26 @@ Rules:
 - Concise English comments explaining the logic.
 - No access to window/fetch/DOM — pure computation only.`;
 
+// Python variant — same tool, but the strategy is VECTORISED: it gets the whole
+// OHLCV as a pandas DataFrame and returns one signal per bar, which the JS engine
+// then fills (identical fees / next-open / no-look-ahead accounting).
+const PYTHON_SYSTEM_PROMPT = `You are a quant strategy generator for a browser-based backtester that runs Python via Pyodide.
+Respond with Python code ONLY — no markdown fences, no prose before or after.
+
+The code MUST define \`def signals(df):\` returning one value per row of df:
+- 1 = long, 0 = flat, -1 = short (a list, numpy array, or pandas Series, length == len(df)).
+- df is a pandas DataFrame with columns: open, high, low, close, volume (one row per bar, ascending by time).
+- numpy (np) and pandas (pd) are available. No other imports, no file/network access.
+
+Rules:
+- No look-ahead: row i may only use rows with index <= i. Use rolling()/shift() correctly — never .shift(-1).
+- The signal at each bar is executed at the NEXT bar's open by the engine, so you do not model fills yourself.
+- Prefer a MULTI-FACTOR rule (a trend/volatility filter that decides WHEN to be active, plus an entry trigger)
+  over a single indicator — single-indicator rules are fragile and rarely beat buy & hold after costs.
+- The edge must not depend on catching a move within one bar (it must survive being executed a bar late).
+- Return 0 during warm-up (NaN indicator values) — fill NaNs with 0.
+- Concise English comments. Keep it a single self-contained function plus its helpers.`;
+
 function json(body, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -94,9 +114,10 @@ function safeEqual(a, b) {
   return diff === 0;
 }
 
-// Strip accidental markdown fences if the model adds them anyway.
+// Strip accidental markdown fences if the model adds them anyway. Any language
+// tag after the opening fence (javascript / js / python / py …) is dropped.
 function extractCode(text) {
-  const fenced = text.match(/```(?:javascript|js)?\s*([\s\S]*?)```/);
+  const fenced = text.match(/```[a-z]*\s*\n?([\s\S]*?)```/i);
   return (fenced ? fenced[1] : text).trim();
 }
 
@@ -120,7 +141,7 @@ function ensureStrategyFn(code) {
 // Each returns { text } on success or { status } on failure. A caller never
 // throws; the chain below walks to the next provider on any non-success.
 
-async function callAnthropic(env, userMsg) {
+async function callAnthropic(env, userMsg, system = SYSTEM_PROMPT) {
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -131,7 +152,7 @@ async function callAnthropic(env, userMsg) {
     body: JSON.stringify({
       model: ANTHROPIC_MODEL,
       max_tokens: 2500,
-      system: SYSTEM_PROMPT,
+      system,
       messages: [{ role: "user", content: userMsg }],
     }),
   });
@@ -144,7 +165,7 @@ async function callAnthropic(env, userMsg) {
 // Mistral and Groq both speak the OpenAI /chat/completions dialect, so one
 // caller serves both — only base URL, key and model differ. The API key goes
 // in the Authorization header (never the URL), so it can't leak into logs.
-async function callOpenAICompatible(baseUrl, apiKey, model, userMsg) {
+async function callOpenAICompatible(baseUrl, apiKey, model, userMsg, system = SYSTEM_PROMPT) {
   const res = await fetch(`${baseUrl}/chat/completions`, {
     method: "POST",
     headers: {
@@ -156,7 +177,7 @@ async function callOpenAICompatible(baseUrl, apiKey, model, userMsg) {
       max_tokens: 2500,
       temperature: 0.3,
       messages: [
-        { role: "system", content: SYSTEM_PROMPT },
+        { role: "system", content: system },
         { role: "user", content: userMsg },
       ],
     }),
@@ -167,7 +188,7 @@ async function callOpenAICompatible(baseUrl, apiKey, model, userMsg) {
   return text ? { text } : { status: 502 };
 }
 
-async function callGemini(env, userMsg) {
+async function callGemini(env, userMsg, system = SYSTEM_PROMPT) {
   // Models are tried in order; 429/404 falls through to the next one.
   let lastStatus = 502;
   for (const model of GEMINI_MODELS) {
@@ -177,7 +198,7 @@ async function callGemini(env, userMsg) {
         method: "POST",
         headers: { "content-type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY },
         body: JSON.stringify({
-          systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+          systemInstruction: { parts: [{ text: system }] },
           contents: [{ role: "user", parts: [{ text: userMsg }] }],
           generationConfig: { maxOutputTokens: 2500, temperature: 0.4 },
         }),
@@ -305,14 +326,20 @@ export async function onRequest({ request, env }) {
     userMsg = `Create a backtest strategy: ${prompt}`;
   }
 
+  // Language of the generated strategy: Python (Pyodide, def signals(df)) or the
+  // default JavaScript (strategy(ctx)). Only the generate/research paths honour
+  // it — repair and critique stay in whatever the caller sent.
+  const isPython = String(body?.language || "").toLowerCase() === "python" && !repair && !isCritique;
+  const system = isPython ? PYTHON_SYSTEM_PROMPT : SYSTEM_PROMPT;
+
   // Fixed priority chain — best code model first, each falling through to the
   // next on ANY failure (rate limit, error, empty). Only keys that exist are
   // attempted, so the chain adapts to whichever secrets are set.
   const chain = [];
-  if (env.ANTHROPIC_API_KEY) chain.push(() => callAnthropic(env, userMsg));
-  if (env.MISTRAL_API_KEY) chain.push(() => callOpenAICompatible("https://api.mistral.ai/v1", env.MISTRAL_API_KEY, MISTRAL_MODEL, userMsg));
-  if (env.GROQ_API_KEY) chain.push(() => callOpenAICompatible("https://api.groq.com/openai/v1", env.GROQ_API_KEY, GROQ_MODEL, userMsg));
-  if (env.GEMINI_API_KEY) chain.push(() => callGemini(env, userMsg));
+  if (env.ANTHROPIC_API_KEY) chain.push(() => callAnthropic(env, userMsg, system));
+  if (env.MISTRAL_API_KEY) chain.push(() => callOpenAICompatible("https://api.mistral.ai/v1", env.MISTRAL_API_KEY, MISTRAL_MODEL, userMsg, system));
+  if (env.GROQ_API_KEY) chain.push(() => callOpenAICompatible("https://api.groq.com/openai/v1", env.GROQ_API_KEY, GROQ_MODEL, userMsg, system));
+  if (env.GEMINI_API_KEY) chain.push(() => callGemini(env, userMsg, system));
 
   let text = "";
   let lastStatus = 502;
@@ -336,7 +363,9 @@ export async function onRequest({ request, env }) {
   // out of the model's reply defensively — models wrap it in prose or fences no
   // matter how firmly you ask them not to.
   if (isCritique) return json({ critique: parseVerdict(text) });
-  return json({ code: ensureStrategyFn(extractCode(text)) });
+  // Python is returned as-is (the JS strategy(ctx) auto-wrap doesn't apply).
+  const out = extractCode(text);
+  return json({ code: isPython ? out : ensureStrategyFn(out), language: isPython ? "python" : "js" });
 }
 
 // Pull the committee verdict JSON out of a model reply. Returns a normalised
