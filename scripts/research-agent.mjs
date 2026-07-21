@@ -260,6 +260,20 @@ function livenessTrades(code, datasets) {
   return max;
 }
 
+// Sharpe when the strategy's ENTIRE decision is delayed by one bar — the
+// execution-robustness probe. A genuine edge barely changes; a timing artifact
+// that only works with perfect fills collapses. Returns 0 on any failure.
+function delayedSharpe(code, candles, feeBps) {
+  try {
+    const inner = compileStrategy(code);
+    let prev = "flat";
+    const fn = (ctx) => { const s = inner(ctx); const out = prev; prev = s; return out; };
+    const res = runBacktest({ candles, signalFn: fn, initialCapital: 10000, feeBps });
+    if (res.warnings.length) return 0;
+    return res.metrics.sharpe ?? 0;
+  } catch { return 0; }
+}
+
 function gauntlet(code, datasets, globalTrials) {
   try { compileStrategy(code); } catch (e) { return { pass: false, reason: `compile: ${e.message.slice(0, 80)}` }; }
 
@@ -314,6 +328,19 @@ function gauntlet(code, datasets, globalTrials) {
     if (sh <= bhS) {
       byMarket[r.name] = { ...mk, rejected: `Sharpe ${sh.toFixed(2)} ≤ buy&hold ${bhS.toFixed(2)}` };
       rejections.push(`${r.name}: loses to buy & hold (Sharpe ${sh.toFixed(2)} ≤ ${bhS.toFixed(2)})`);
+      continue;
+    }
+
+    // EXECUTION-TIMING ROBUSTNESS — the edge must not depend on catching a move
+    // within one bar. Re-run with the whole decision delayed by ONE bar; if the
+    // Sharpe collapses, the backtest overstated real performance and the strategy
+    // will go negative on a broker's actual fills. This is the test that was
+    // missing — DSR/k-fold/noise all use the same favourable fill timing, so they
+    // passed timing-fragile strategies. It caught ICT on BTC: +3086% → -43%.
+    const delSharpe = delayedSharpe(code, r.candles, r.feeBps);
+    if (delSharpe < Math.max(0.1, sh * 0.5)) {
+      byMarket[r.name] = { ...mk, rejected: `timing-fragile (Sharpe ${sh.toFixed(2)}→${delSharpe.toFixed(2)} on 1-bar delay)` };
+      rejections.push(`${r.name}: timing-fragile (collapses on 1-bar execution delay)`);
       continue;
     }
 

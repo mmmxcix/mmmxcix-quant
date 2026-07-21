@@ -54,6 +54,17 @@ function saveResearch(st) {
 
 const api = (path, init) => fetch(`${SITE}/api/lab${path}`, init);
 
+// Sharpe with the whole decision delayed one bar — the execution-robustness
+// probe (a real edge barely changes; a timing artifact collapses). 0 on failure.
+function delayedSharpe(code, candles, feeBps) {
+  try {
+    const inner = compileStrategy(code);
+    let prev = "flat";
+    const res = runBacktest({ candles, signalFn: (ctx) => { const s = inner(ctx); const out = prev; prev = s; return out; }, initialCapital: 10000, feeBps });
+    return res.warnings.length ? 0 : (res.metrics.sharpe ?? 0);
+  } catch { return 0; }
+}
+
 /**
  * Re-run the gauntlet on fresh data, ONLY on the markets this candidate was
  * originally validated for.
@@ -97,6 +108,20 @@ function revalidate(candidate, datasetsById, globalTrials) {
       ret: +m.totalReturnPct.toFixed(1), pf: +m.profitFactor.toFixed(2),
       dd: +m.maxDrawdownPct.toFixed(1), n: m.tradeCount,
     };
+
+    // Beats buy & hold risk-adjusted, and survives a 1-bar execution delay — the
+    // two checks that stop optimistic backtests reaching the paper book (a
+    // strategy that loses to holding, or whose edge is a timing artifact, is
+    // what looks great here but goes negative on a broker's fills).
+    if ((m.sharpe ?? 0) <= (m.buyHoldSharpe ?? 0)) {
+      byMarket[mid] = { ...row, rejected: `loses to buy&hold (Sh ${(m.sharpe ?? 0).toFixed(2)} ≤ ${(m.buyHoldSharpe ?? 0).toFixed(2)})` };
+      reasons[mid] = byMarket[mid].rejected; continue;
+    }
+    const delSh = delayedSharpe(code, candles, feeBps);
+    if (delSh < Math.max(0.1, (m.sharpe ?? 0) * 0.5)) {
+      byMarket[mid] = { ...row, rejected: `timing-fragile (Sh ${(m.sharpe ?? 0).toFixed(2)}→${delSh.toFixed(2)} on 1-bar delay)` };
+      reasons[mid] = byMarket[mid].rejected; continue;
+    }
 
     const kf = kFoldCode({ candles, makeSignalFn: () => compileStrategy(code), feeBps });
     if (!kf || kf.verdict !== "pass") {
