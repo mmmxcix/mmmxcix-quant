@@ -24,6 +24,7 @@ import { evaluateEntry, drawdownPct, dayLossPct as computeDayLoss } from "../src
 import { riskRulesFor, PROFILE_IDS, DEFAULT_PROFILE, getProfile } from "../src/lib/profiles.js";
 import { currentRegime } from "../src/lib/hmmRegime.js";
 import { volTargetWeight } from "../src/lib/volTarget.js";
+import { initPy, compilePyStrategy } from "./pyRunnerNode.mjs";
 import * as ibkr from "./ibkrPaper.mjs";
 
 const SITE = process.env.LAB_SITE || "https://quant.mmmxcix.com";
@@ -83,7 +84,12 @@ function buildSignalFn(s) {
     if (!def) throw new Error(`unknown builder strategy ${s.strategyId}`);
     return def.build(s.params || {});
   }
-  return compileStrategy(s.code || "");
+  // Python strategies (Cortex writes these) go through Pyodide — the same
+  // vectorised signals(df) the gauntlet validated, so the paper fill matches the
+  // backtest exactly. Requires initPy() to have run (done at startup below).
+  return s.language === "python"
+    ? compilePyStrategy(s.code || "")
+    : compileStrategy(s.code || "");
 }
 
 // Run the real engine over the window; if a position was still open on the
@@ -148,6 +154,14 @@ const stratRes = await fetch(`${SITE}/api/lab?what=strategies`, { headers: { "x-
 const stratOut = await stratRes.json().catch(() => ({}));
 if (!stratRes.ok) { console.error("strategy fetch failed:", stratRes.status, stratOut); process.exit(1); }
 const published = stratOut.strategies?.items || [];
+
+// Boot Python once if any published strategy is Python — buildSignalFn() below
+// then compiles them synchronously through this one Pyodide instance.
+if (published.some((s) => s.language === "python")) {
+  const t = Date.now();
+  await initPy((m) => console.log(`  ${m}`));
+  console.log(`Python runtime ready in ${((Date.now() - t) / 1000).toFixed(1)}s`);
+}
 
 const local = loadLocal();
 const summaries = [];

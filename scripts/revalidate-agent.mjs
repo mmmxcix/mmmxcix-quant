@@ -26,6 +26,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { runBacktest, compileStrategy } from "../src/lib/backtest.js";
 import { kFoldCode, noiseTest, deflatedSharpe, equityReturns } from "../src/lib/validation.js";
+import { initPy, compilePyStrategy } from "./pyRunnerNode.mjs";
 import { getProfile, judgeMetrics, PROFILE_IDS } from "../src/lib/profiles.js";
 import { loadUniverse } from "./marketdata.mjs";
 import { UNIVERSE, byId, costFor, effectiveTrials } from "../src/lib/markets.js";
@@ -54,11 +55,18 @@ function saveResearch(st) {
 
 const api = (path, init) => fetch(`${SITE}/api/lab${path}`, init);
 
+// Language-aware compile: Python candidates (Cortex writes these) go through
+// Pyodide, JS through the classic compiler. A drop-in for compileStrategy so the
+// re-validation runs the SAME code path — and the same language — as discovery.
+function compileFor(code, lang) {
+  return lang === "python" ? compilePyStrategy(code) : compileStrategy(code);
+}
+
 // Sharpe with the whole decision delayed one bar — the execution-robustness
 // probe (a real edge barely changes; a timing artifact collapses). 0 on failure.
-function delayedSharpe(code, candles, feeBps) {
+function delayedSharpe(code, candles, feeBps, lang) {
   try {
-    const inner = compileStrategy(code);
+    const inner = compileFor(code, lang);
     let prev = "flat";
     const res = runBacktest({ candles, signalFn: (ctx) => { const s = inner(ctx); const out = prev; prev = s; return out; }, initialCapital: 10000, feeBps });
     return res.warnings.length ? 0 : (res.metrics.sharpe ?? 0);
@@ -78,7 +86,8 @@ function delayedSharpe(code, candles, feeBps) {
  */
 function revalidate(candidate, datasetsById, globalTrials) {
   const code = candidate.code;
-  try { compileStrategy(code); } catch (e) { return { pass: false, reason: `compile: ${e.message.slice(0, 70)}` }; }
+  const lang = candidate.language === "python" ? "python" : "js";
+  try { compileFor(code, lang); } catch (e) { return { pass: false, reason: `compile: ${e.message.slice(0, 70)}` }; }
 
   const claimed = (candidate.markets || []).filter((id) => datasetsById[id]);
   if (!claimed.length) return { pass: false, reason: "none of its markets could be loaded" };
@@ -96,7 +105,7 @@ function revalidate(candidate, datasetsById, globalTrials) {
     const feeBps = costFor(market);
     let res;
     try {
-      res = runBacktest({ candles, signalFn: compileStrategy(code), initialCapital: 10000, feeBps });
+      res = runBacktest({ candles, signalFn: compileFor(code, lang), initialCapital: 10000, feeBps });
     } catch (e) {
       byMarket[mid] = { rejected: `runtime: ${e.message.slice(0, 40)}` };
       continue;
@@ -117,19 +126,19 @@ function revalidate(candidate, datasetsById, globalTrials) {
       byMarket[mid] = { ...row, rejected: `loses to buy&hold (Sh ${(m.sharpe ?? 0).toFixed(2)} ≤ ${(m.buyHoldSharpe ?? 0).toFixed(2)})` };
       reasons[mid] = byMarket[mid].rejected; continue;
     }
-    const delSh = delayedSharpe(code, candles, feeBps);
+    const delSh = delayedSharpe(code, candles, feeBps, lang);
     if (delSh < Math.max(0.1, (m.sharpe ?? 0) * 0.5)) {
       byMarket[mid] = { ...row, rejected: `timing-fragile (Sh ${(m.sharpe ?? 0).toFixed(2)}→${delSh.toFixed(2)} on 1-bar delay)` };
       reasons[mid] = byMarket[mid].rejected; continue;
     }
 
-    const kf = kFoldCode({ candles, makeSignalFn: () => compileStrategy(code), feeBps });
+    const kf = kFoldCode({ candles, makeSignalFn: () => compileFor(code, lang), feeBps });
     if (!kf || kf.verdict !== "pass") {
       byMarket[mid] = { ...row, rejected: `k-fold decayed (${kf ? kf.profitableFolds + "/" + kf.totalFolds : "n/a"})` };
       reasons[mid] = byMarket[mid].rejected;
       continue;
     }
-    const nz = noiseTest({ candles, makeSignalFn: () => compileStrategy(code), runs: 15, feeBps });
+    const nz = noiseTest({ candles, makeSignalFn: () => compileFor(code, lang), runs: 15, feeBps });
     if (!nz || nz.verdict !== "pass") {
       byMarket[mid] = { ...row, rejected: `noise decayed (median ${nz ? nz.medianReturnPct.toFixed(0) : "?"}%)` };
       reasons[mid] = byMarket[mid].rejected;
@@ -198,6 +207,14 @@ if (!due.length) {
   process.exit(0);
 }
 
+// Boot Python once if any due candidate is Python — revalidate() then runs their
+// signals(df) synchronously through this one Pyodide instance.
+if (due.some((c) => c.language === "python")) {
+  const t = Date.now();
+  await initPy((m) => console.log(`  ${m}`));
+  console.log(`Python runtime ready in ${((Date.now() - t) / 1000).toFixed(1)}s`);
+}
+
 // Load only the markets the due candidates actually claim — no point pulling
 // EUR/USD if nothing under review was ever validated on it.
 const neededIds = new Set(due.flatMap((c) => c.markets || []));
@@ -225,7 +242,7 @@ for (const c of due) {
       for (const pid of verdict.byMarket[mid]?.profiles || []) {
         toPromote.push({
           id: `${c.id}_${pid}_${mid}`, name: `🤖 ${c.name} · ${m.label}`,
-          mode: "code", code: c.code,
+          mode: "code", code: c.code, language: c.language,
           market: m.asset === "crypto" ? "crypto" : "stock",
           symbol: m.symbol, interval: m.interval,
           feeBps: costFor(m), positionPct: 100,

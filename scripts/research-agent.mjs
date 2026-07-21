@@ -29,6 +29,29 @@ import { qualifyAll, getProfile, PROFILE_IDS } from "../src/lib/profiles.js";
 import { harvestAll, fullTextOf, topicsOf, RELEVANCE } from "./sources.mjs";
 import { loadUniverse } from "./marketdata.mjs";
 import { UNIVERSE, byId, costFor, effectiveTrials, describeMarkets } from "../src/lib/markets.js";
+import { initPy, compilePyStrategy, pyCompileCheck } from "./pyRunnerNode.mjs";
+
+// Language Cortex writes AND validates in. Python (default) means the model emits
+// a vectorised `signals(df)`, and the ENTIRE gauntlet below runs that Python
+// through Pyodide — so the code that gets promoted, paper-traded and shown as
+// copyable is the exact artifact the math validated. Set LAB_RESEARCH_LANG=js to
+// fall back to the classic strategy(ctx) path.
+const RESEARCH_LANG = String(process.env.LAB_RESEARCH_LANG || "python").toLowerCase() === "js" ? "js" : "python";
+
+// Compile a strategy to a signalFn regardless of language: Python goes through
+// Pyodide (vectorised signals(df), memoised per candle array — a drop-in for the
+// JS compiler), JS through the classic per-bar compiler. Every backtest, k-fold,
+// noise and delay probe below funnels through here, so the gauntlet itself never
+// has to know which language it's judging.
+function compileFor(code, lang) {
+  return lang === "python" ? compilePyStrategy(code) : compileStrategy(code);
+}
+// Throwing compile+run check — the language-aware twin of `try { compileStrategy }`.
+function compileCheckFor(code, lang) {
+  if (lang === "python") return pyCompileCheck(code);
+  compileStrategy(code);
+  return true;
+}
 
 const SITE = process.env.LAB_SITE || "https://quant.mmmxcix.com";
 const TOKEN = process.env.LAB_TOKEN;
@@ -139,6 +162,7 @@ async function generateStrategy(item) {
     : item.abstract;
   const payload = {
     token: TOKEN,
+    language: RESEARCH_LANG,
     research: { title: item.title.slice(0, 200), kind: item.kind || "document", text },
   };
   for (let attempt = 1; attempt <= 3; attempt++) {
@@ -148,7 +172,7 @@ async function generateStrategy(item) {
       body: JSON.stringify(payload),
     });
     const out = await res.json().catch(() => ({}));
-    if (res.ok && out.code) return out.code;
+    if (res.ok && out.code) return { code: out.code, language: out.language || RESEARCH_LANG };
     if (res.status === 429 || out.error === "rate_limited") {
       if (attempt < 3) { console.log(`  rate-limited, retry ${attempt}/2 in ${attempt * 45}s…`); await sleep(attempt * 45000); continue; }
       const e = new Error("rate_limited"); e.skip = true; throw e;
@@ -160,11 +184,11 @@ async function generateStrategy(item) {
 // Self-repair: when generated code won't even compile, send it back once with
 // the error and ask the model to fix the signature/format. One extra call, only
 // on failure — cheap insurance against a model that ignored the naming contract.
-async function repairStrategy(code, error) {
+async function repairStrategy(code, error, language = RESEARCH_LANG) {
   const res = await fetch(`${SITE}/api/generate`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ token: TOKEN, repair: { code: String(code).slice(0, 8000), error: String(error).slice(0, 300) } }),
+    body: JSON.stringify({ token: TOKEN, language, repair: { code: String(code).slice(0, 8000), error: String(error).slice(0, 300) } }),
   });
   const out = await res.json().catch(() => ({}));
   if (res.ok && out.code) return out.code;
@@ -183,12 +207,12 @@ async function repairStrategy(code, error) {
  * fitted (by the model, from the paper) to the era that dominates the series
  * will fall apart on the recent tail. This catches that.
  */
-function holdout(code, candles, feeBps) {
+function holdout(code, candles, feeBps, lang) {
   const cut = Math.floor(candles.length * 0.7);
   const tail = candles.slice(cut);
   if (tail.length < 150) return { ok: true, skipped: "too short" };
   try {
-    const res = runBacktest({ candles: tail, signalFn: compileStrategy(code), initialCapital: 10000, feeBps });
+    const res = runBacktest({ candles: tail, signalFn: compileFor(code, lang), initialCapital: 10000, feeBps });
     if (res.warnings.length) return { ok: false, detail: "error on holdout" };
     const m = res.metrics;
     if (m.tradeCount < 5) return { ok: true, skipped: "few trades" };
@@ -249,11 +273,11 @@ async function committeeReview(code, cand) {
 // a degenerate no-op, not a real idea — the "no edge anywhere (n=0)" lines in
 // the log. Probing a few markets is milliseconds, so it is cheap to catch these
 // BEFORE they consume a gauntlet trial and clutter the graveyard.
-function livenessTrades(code, datasets) {
+function livenessTrades(code, datasets, lang) {
   let max = 0;
   for (const { market, candles } of datasets.slice(0, 3)) {
     try {
-      const res = runBacktest({ candles, signalFn: compileStrategy(code), initialCapital: 10000, feeBps: costFor(market) });
+      const res = runBacktest({ candles, signalFn: compileFor(code, lang), initialCapital: 10000, feeBps: costFor(market) });
       if (!res.warnings.length) max = Math.max(max, res.metrics.tradeCount);
     } catch { /* runtime error → the gauntlet reports it properly */ }
   }
@@ -263,9 +287,9 @@ function livenessTrades(code, datasets) {
 // Sharpe when the strategy's ENTIRE decision is delayed by one bar — the
 // execution-robustness probe. A genuine edge barely changes; a timing artifact
 // that only works with perfect fills collapses. Returns 0 on any failure.
-function delayedSharpe(code, candles, feeBps) {
+function delayedSharpe(code, candles, feeBps, lang) {
   try {
-    const inner = compileStrategy(code);
+    const inner = compileFor(code, lang);
     let prev = "flat";
     const fn = (ctx) => { const s = inner(ctx); const out = prev; prev = s; return out; };
     const res = runBacktest({ candles, signalFn: fn, initialCapital: 10000, feeBps });
@@ -280,7 +304,8 @@ function delayedSharpe(code, candles, feeBps) {
 // to a literal s and silently never matches.
 function parseThesis(code) {
   const out = { edge: "", works: "", breaks: "" };
-  const re = /\/\/\s*(EDGE|WORKS|BREAKS)\s*:\s*(.+)/gi;
+  // Accept both comment styles so it works for JS (// EDGE:) and Python (# EDGE:).
+  const re = /(?:\/\/|#)\s*(EDGE|WORKS|BREAKS)\s*:\s*(.+)/gi;
   let m;
   while ((m = re.exec(code))) {
     const key = m[1].toLowerCase();
@@ -289,8 +314,8 @@ function parseThesis(code) {
   return out;
 }
 
-function gauntlet(code, datasets, globalTrials) {
-  try { compileStrategy(code); } catch (e) { return { pass: false, reason: `compile: ${e.message.slice(0, 80)}` }; }
+function gauntlet(code, datasets, globalTrials, lang) {
+  try { compileCheckFor(code, lang); } catch (e) { return { pass: false, reason: `compile: ${e.message.slice(0, 80)}` }; }
 
   // Pass 1 — cheap: run every market, keep the ones that made money at all.
   const ran = [];
@@ -298,7 +323,7 @@ function gauntlet(code, datasets, globalTrials) {
     const feeBps = costFor(market);
     let res;
     try {
-      res = runBacktest({ candles, signalFn: compileStrategy(code), initialCapital: 10000, feeBps });
+      res = runBacktest({ candles, signalFn: compileFor(code, lang), initialCapital: 10000, feeBps });
     } catch (e) {
       return { pass: false, reason: `runtime(${name}): ${e.message.slice(0, 55)}` };
     }
@@ -352,26 +377,26 @@ function gauntlet(code, datasets, globalTrials) {
     // will go negative on a broker's actual fills. This is the test that was
     // missing — DSR/k-fold/noise all use the same favourable fill timing, so they
     // passed timing-fragile strategies. It caught ICT on BTC: +3086% → -43%.
-    const delSharpe = delayedSharpe(code, r.candles, r.feeBps);
+    const delSharpe = delayedSharpe(code, r.candles, r.feeBps, lang);
     if (delSharpe < Math.max(0.1, sh * 0.5)) {
       byMarket[r.name] = { ...mk, rejected: `timing-fragile (Sharpe ${sh.toFixed(2)}→${delSharpe.toFixed(2)} on 1-bar delay)` };
       rejections.push(`${r.name}: timing-fragile (collapses on 1-bar execution delay)`);
       continue;
     }
 
-    const kf = kFoldCode({ candles: r.candles, makeSignalFn: () => compileStrategy(code), feeBps: r.feeBps });
+    const kf = kFoldCode({ candles: r.candles, makeSignalFn: () => compileFor(code, lang), feeBps: r.feeBps });
     if (!kf || kf.verdict !== "pass") {
       byMarket[r.name] = { ...mk, rejected: `k-fold ${kf ? kf.profitableFolds + "/" + kf.totalFolds : "n/a"}` };
       rejections.push(`${r.name}: k-fold`);
       continue;
     }
-    const nz = noiseTest({ candles: r.candles, makeSignalFn: () => compileStrategy(code), runs: 15, feeBps: r.feeBps });
+    const nz = noiseTest({ candles: r.candles, makeSignalFn: () => compileFor(code, lang), runs: 15, feeBps: r.feeBps });
     if (!nz || nz.verdict !== "pass") {
       byMarket[r.name] = { ...mk, rejected: `noise ${nz ? nz.medianReturnPct.toFixed(0) + "%" : "n/a"}` };
       rejections.push(`${r.name}: noise`);
       continue;
     }
-    const ho = holdout(code, r.candles, r.feeBps);
+    const ho = holdout(code, r.candles, r.feeBps, lang);
     if (!ho.ok) {
       byMarket[r.name] = { ...mk, rejected: ho.detail };
       rejections.push(`${r.name}: ${ho.detail}`);
@@ -469,6 +494,15 @@ for (const item of fresh) {
 // timeframes from 15m to daily. A strategy only has to work SOMEWHERE.
 const datasets = fresh.length ? await loadUniverse(UNIVERSE) : [];
 
+// Boot the Python runtime once, up front, if Cortex is writing Python and there
+// is work to do — the whole gauntlet then runs signals(df) synchronously through
+// this one Pyodide instance (numpy + pandas). ~3s, amortised over every backtest.
+if (RESEARCH_LANG === "python" && fresh.length) {
+  const t = Date.now();
+  await initPy((m) => console.log(`  ${m}`));
+  console.log(`Python runtime ready in ${((Date.now() - t) / 1000).toFixed(1)}s — Cortex will write & validate in Python`);
+}
+
 const newCandidates = [];
 const toPromote = [];
 let firstPaper = true;
@@ -478,15 +512,16 @@ for (const paper of fresh) {
   firstPaper = false;
   processed++;
   try {
-    let code = await generateStrategy(paper);
-    // Self-repair probe: if it won't compile, ask the model to fix it once.
+    let { code, language } = await generateStrategy(paper);
+    // Self-repair probe: if it won't compile/run, ask the model to fix it once.
+    // For Python this runs the code through Pyodide on a synthetic series.
     try {
-      compileStrategy(code);
+      compileCheckFor(code, language);
     } catch (ce) {
       console.log(`  ⚠ won't compile (${ce.message.slice(0, 45)}) — repair attempt…`);
       try {
-        const fixed = await repairStrategy(code, ce.message);
-        compileStrategy(fixed); // throws if still broken → keep original, gauntlet buries it
+        const fixed = await repairStrategy(code, ce.message, language);
+        compileCheckFor(fixed, language); // throws if still broken → keep original, gauntlet buries it
         code = fixed;
         console.log("  ✓ repaired");
       } catch (re) {
@@ -500,7 +535,7 @@ for (const paper of fresh) {
     // the compile fix, aimed squarely at the n=0/n=1 no-ops. Only keep the
     // rewrite if it genuinely trades more, so a failed repair can't make it worse.
     if (datasets.length) {
-      const live = livenessTrades(code, datasets);
+      const live = livenessTrades(code, datasets, language);
       if (live < 5) {
         console.log(`  ⚠ near-zero trades (max ${live}) — liveness repair…`);
         try {
@@ -508,9 +543,9 @@ for (const paper of fresh) {
             `This strategy makes only ${live} trades over thousands of bars — its entry/exit conditions almost never trigger. ` +
             "Rewrite so it actually enters AND exits regularly on normal price data. Prefer conditions relative to recent " +
             "price/indicator values (crossovers, bands, percentiles) over rare absolute thresholds, and make sure the exit " +
-            "condition can realistically occur. Keep the same core idea.");
-          compileStrategy(fixed);
-          if (livenessTrades(fixed, datasets) > live) { code = fixed; console.log("  ✓ liveness repaired"); }
+            "condition can realistically occur. Keep the same core idea.", language);
+          compileCheckFor(fixed, language);
+          if (livenessTrades(fixed, datasets, language) > live) { code = fixed; console.log("  ✓ liveness repaired"); }
           else console.log("  ✗ liveness repair no better — keeping original (gauntlet will bury it)");
         } catch (re) {
           if (re.skip) throw re; // rate-limited → infra skip, paper stays fresh
@@ -523,7 +558,7 @@ for (const paper of fresh) {
     st.papersRead++;
     st.attempts++;                                   // lifetime counter, for the record
     st.attemptLog = [...(st.attemptLog || []), Date.now()].slice(-5000);
-    const verdict = gauntlet(code, datasets, windowTrials(st));
+    const verdict = gauntlet(code, datasets, windowTrials(st), language);
     if (verdict.pass) {
       const cand = {
         id: `rc_${Date.now().toString(36)}`,
@@ -534,6 +569,10 @@ for (const paper of fresh) {
         readFullText: !!paper.fullText,
         topics: paper.topics,
         code,
+        // The language the strategy is written in AND was validated in (python |
+        // js). Carried onto the candidate + every promotion so the paper agent
+        // compiles it the same way and the UI shows/copies the right source.
+        language,
         // The framework's "why does this have an edge" — parsed from the
         // EDGE/WORKS/BREAKS header the generation prompt now emits, so every
         // survivor is self-documenting (edge thesis, the regime it needs, and
@@ -585,7 +624,7 @@ for (const paper of fresh) {
           if (!m) continue;
           toPromote.push({
             id: `${cand.id}_${pid}_${mid}`, name: `🤖 ${cand.name} · ${m.label}`,
-            mode: "code", code: cand.code,
+            mode: "code", code: cand.code, language: cand.language,
             market: m.asset === "crypto" ? "crypto" : "stock",
             symbol: m.symbol, interval: m.interval,
             feeBps: costFor(m), positionPct: 100,

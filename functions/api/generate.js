@@ -267,6 +267,11 @@ export async function onRequest({ request, env }) {
   const research = body?.research;
   const critique = body?.critique;
   const isCritique = !!(critique && typeof critique.code === "string");
+  // Language of the generated strategy: Python (Pyodide, def signals(df)) or the
+  // default JavaScript (strategy(ctx)). Honoured by generate, research AND repair
+  // — a Python strategy that won't compile must be repaired AS Python, never
+  // rewritten as JS. Critique returns a prose verdict, so language doesn't apply.
+  const isPython = String(body?.language || "").toLowerCase() === "python" && !isCritique;
   let userMsg;
   if (isCritique) {
     const code = critique.code.slice(0, 6000);
@@ -291,34 +296,60 @@ export async function onRequest({ request, env }) {
     const doc = research.text.slice(0, MAX_RESEARCH_CHARS);
     const title = String(research.title || "untitled").slice(0, 200);
     const kind = String(research.kind || "document").slice(0, 20);
-    userMsg =
-      `Source ${kind}: "${title}"\n\n` +
-      `--- BEGIN SOURCE ---\n${doc}\n--- END SOURCE ---\n\n` +
-      "Act as a hedge-fund quant. Turn the systematic idea in this source into ONE robust, testable " +
-      "`strategy(ctx)`. Build it MULTI-FACTOR, not a single indicator — a single-indicator rule is fragile " +
-      "and rarely survives real costs. Combine, where the source supports it:\n" +
-      "  1. a REGIME / TREND filter that decides WHEN to be active (e.g. EMA slope, price vs a long SMA, " +
-      "volatility band) — trade only in the conditions the edge needs, sit flat otherwise;\n" +
-      "  2. an ENTRY trigger (the source's actual signal: a level, crossover, threshold);\n" +
-      "  3. RISK MANAGEMENT: a stop-loss and take-profit via the bracket return " +
-      "`{ signal, stop, target }`, sized from recent volatility (e.g. an ATR multiple), OR a clear exit rule.\n\n" +
-      "Hard requirements (these are what separate a real edge from a backtest artifact):\n" +
-      "  - It must be able to BEAT BUY & HOLD risk-adjusted — not just be profitable.\n" +
-      "  - The edge must NOT depend on catching a move within a single bar; it must survive being executed " +
-      "one bar late. Avoid entries that only work at an exact price touch.\n" +
-      "  - Up to 5 parameters, hardcoded as const. Long and/or short. No look-ahead (only data up to ctx.index).\n\n" +
-      "Start the code with 3 short comment lines: `// EDGE:` (why this has an edge, one sentence), " +
-      "`// WORKS:` (the market regime/conditions it needs), `// BREAKS:` (what kills it). Then the code. " +
-      "Prefer a rule the source actually states over one you invent. Name nothing after the source.";
+    const head = `Source ${kind}: "${title}"\n\n--- BEGIN SOURCE ---\n${doc}\n--- END SOURCE ---\n\n`;
+    userMsg = isPython
+      // Python: the strategy is VECTORISED — signals(df) returns one position per
+      // bar (1/0/-1), no bracket orders (the engine handles fills), so the exit is
+      // expressed as the signal returning to 0 or flipping, not a stop/target object.
+      ? head +
+        "Act as a hedge-fund quant. Turn the systematic idea in this source into ONE robust, testable " +
+        "Python `def signals(df):` returning a pandas Series / numpy array of 1 (long) / 0 (flat) / -1 (short), " +
+        "one value per row of df (columns: open, high, low, close, volume). Build it MULTI-FACTOR, not a single " +
+        "indicator — a single-indicator rule is fragile and rarely survives real costs. Combine, where the source supports it:\n" +
+        "  1. a REGIME / TREND filter that decides WHEN to be active (e.g. EMA slope, close vs a long rolling mean, " +
+        "a volatility band) — be flat (0) outside the conditions the edge needs;\n" +
+        "  2. an ENTRY trigger (the source's actual signal: a level, crossover, threshold) that sets +1/-1;\n" +
+        "  3. an EXIT/RISK rule expressed in the signal itself (return to 0, or flip sign) — e.g. leave the trade " +
+        "when the trend filter turns or a rolling stop level is breached. You cannot place stop/target orders; model risk by going flat.\n\n" +
+        "Hard requirements (these separate a real edge from a backtest artifact):\n" +
+        "  - It must be able to BEAT BUY & HOLD risk-adjusted — not just be profitable.\n" +
+        "  - No look-ahead: row i may only use rows <= i. Use rolling()/shift() correctly; NEVER .shift(-1). Fill warm-up NaNs with 0.\n" +
+        "  - The edge must survive being executed one bar late (no dependence on an exact single-bar touch).\n" +
+        "  - Up to 5 parameters, hardcoded as constants. Long and/or short. numpy (np) + pandas (pd) only, no other imports.\n\n" +
+        "Start the code with 3 short comment lines: `# EDGE:` (why this has an edge, one sentence), " +
+        "`# WORKS:` (the market regime/conditions it needs), `# BREAKS:` (what kills it). Then the single self-contained " +
+        "`def signals(df):` (plus any helpers). Prefer a rule the source actually states over one you invent. Name nothing after the source."
+      : head +
+        "Act as a hedge-fund quant. Turn the systematic idea in this source into ONE robust, testable " +
+        "`strategy(ctx)`. Build it MULTI-FACTOR, not a single indicator — a single-indicator rule is fragile " +
+        "and rarely survives real costs. Combine, where the source supports it:\n" +
+        "  1. a REGIME / TREND filter that decides WHEN to be active (e.g. EMA slope, price vs a long SMA, " +
+        "volatility band) — trade only in the conditions the edge needs, sit flat otherwise;\n" +
+        "  2. an ENTRY trigger (the source's actual signal: a level, crossover, threshold);\n" +
+        "  3. RISK MANAGEMENT: a stop-loss and take-profit via the bracket return " +
+        "`{ signal, stop, target }`, sized from recent volatility (e.g. an ATR multiple), OR a clear exit rule.\n\n" +
+        "Hard requirements (these are what separate a real edge from a backtest artifact):\n" +
+        "  - It must be able to BEAT BUY & HOLD risk-adjusted — not just be profitable.\n" +
+        "  - The edge must NOT depend on catching a move within a single bar; it must survive being executed " +
+        "one bar late. Avoid entries that only work at an exact price touch.\n" +
+        "  - Up to 5 parameters, hardcoded as const. Long and/or short. No look-ahead (only data up to ctx.index).\n\n" +
+        "Start the code with 3 short comment lines: `// EDGE:` (why this has an edge, one sentence), " +
+        "`// WORKS:` (the market regime/conditions it needs), `// BREAKS:` (what kills it). Then the code. " +
+        "Prefer a rule the source actually states over one you invent. Name nothing after the source.";
   } else if (repair && typeof repair.code === "string") {
     const brokenCode = repair.code.slice(0, 8000);
     const err = String(repair.error || "unknown error").slice(0, 300);
-    userMsg =
-      `The following strategy code failed to compile with this error:\n"${err}"\n\n` +
-      "Return a corrected version that satisfies ALL the rules above — in particular it MUST define " +
-      "`function strategy(ctx)` (or `const strategy = (ctx) => { … }`). Change as little as possible and " +
-      "keep the original trading logic; return ONLY the corrected JavaScript, no prose.\n\n" +
-      "```javascript\n" + brokenCode + "\n```";
+    userMsg = isPython
+      ? `The following Python strategy failed with this error:\n"${err}"\n\n` +
+        "Return a corrected version that satisfies ALL the rules above — in particular it MUST define " +
+        "`def signals(df):` returning one value per row (1 long / 0 flat / -1 short), length == len(df), NaNs filled with 0. " +
+        "Change as little as possible and keep the original trading logic; return ONLY the corrected Python, no prose.\n\n" +
+        "```python\n" + brokenCode + "\n```"
+      : `The following strategy code failed to compile with this error:\n"${err}"\n\n` +
+        "Return a corrected version that satisfies ALL the rules above — in particular it MUST define " +
+        "`function strategy(ctx)` (or `const strategy = (ctx) => { … }`). Change as little as possible and " +
+        "keep the original trading logic; return ONLY the corrected JavaScript, no prose.\n\n" +
+        "```javascript\n" + brokenCode + "\n```";
   } else {
     const prompt = String(body?.prompt || "").trim();
     if (!prompt) return json({ error: "empty_prompt" }, 400);
@@ -326,10 +357,6 @@ export async function onRequest({ request, env }) {
     userMsg = `Create a backtest strategy: ${prompt}`;
   }
 
-  // Language of the generated strategy: Python (Pyodide, def signals(df)) or the
-  // default JavaScript (strategy(ctx)). Only the generate/research paths honour
-  // it — repair and critique stay in whatever the caller sent.
-  const isPython = String(body?.language || "").toLowerCase() === "python" && !repair && !isCritique;
   const system = isPython ? PYTHON_SYSTEM_PROMPT : SYSTEM_PROMPT;
 
   // Fixed priority chain — best code model first, each falling through to the
