@@ -57,7 +57,7 @@ export default function Lab() {
         strategies: not by the one backtest they got, but by the distribution it comes from.
       </p>
 
-      <div className="grid lg:grid-cols-[300px_1fr] gap-6">
+      <div className="grid lg:grid-cols-[300px_1fr] gap-6 [&>*]:min-w-0">
         {/* ── Edge definition ─────────────────────────────────────────── */}
         <div className="space-y-4">
           <div className="rounded-xl border border-line lg-glass p-4 space-y-3">

@@ -246,7 +246,7 @@ function BabTab() {
         />
       </div>
 
-      <div className="grid lg:grid-cols-[1fr_320px] gap-4">
+      <div className="grid lg:grid-cols-[1fr_320px] gap-4 [&>*]:min-w-0">
         <div className="rounded-xl border border-line lg-glass p-4">
           <p className="text-xs text-dim uppercase tracking-widest mb-1">
             The flat security market line
@@ -526,7 +526,7 @@ function DrawdownTab() {
         reality="This is a model, not a forecast — GBM plus a crude fat-tail mixture. Its value is calibration: if the p95 max drawdown of your assumed edge already breaches your pain threshold (or a prop firm's limit), position size is wrong before you ever trade. Pair with the Lab's per-trade Monte Carlo."
       />
 
-      <div className="grid lg:grid-cols-[260px_1fr] gap-4">
+      <div className="grid lg:grid-cols-[260px_1fr] gap-4 [&>*]:min-w-0">
         <div className="rounded-xl border border-line lg-glass p-4 space-y-3 h-fit">
           <p className="text-xs text-dim uppercase tracking-widest">Assumptions</p>
           <Field label="Annual drift" value={mu} onChange={setMu} min={-50} max={50} suffix="%" />
@@ -690,7 +690,7 @@ function GreeksTab() {
         reality="Pure Black-Scholes with flat vol — real chains carry skew and term structure (see the Options page for live IV). Still, every mechanic you can lose money to as an option buyer is visible here: the gamma ridge you pay for, and the theta trench that pays for it."
       />
 
-      <div className="grid lg:grid-cols-[260px_1fr] gap-4">
+      <div className="grid lg:grid-cols-[260px_1fr] gap-4 [&>*]:min-w-0">
         <div className="rounded-xl border border-line lg-glass p-4 space-y-3 h-fit">
           <p className="text-xs text-dim uppercase tracking-widest">Position</p>
           <div className="flex gap-1.5">

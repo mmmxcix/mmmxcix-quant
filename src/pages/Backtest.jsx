@@ -223,7 +223,7 @@ export default function Backtest() {
       <p className="text-[10px] tracking-[0.3em] text-dim uppercase mb-1">Strategy Lab</p>
       <h1 className="text-2xl font-bold mb-6">Backtest</h1>
 
-      <div className="grid lg:grid-cols-[340px_1fr] gap-6">
+      <div className="grid lg:grid-cols-[340px_1fr] gap-6 [&>*]:min-w-0">
         {/* ── Settings column ─────────────────────────────────────────── */}
         <div className="space-y-4">
           <div className="rounded-xl border border-line lg-glass p-4 space-y-3">

@@ -112,7 +112,7 @@ export default function Options() {
         {spot != null && <span className="text-sm font-mono text-dim ml-auto">Spot <span className="text-text">{fmtPrice(spot)}</span></span>}
       </div>
 
-      <div className="grid lg:grid-cols-[1fr_340px] gap-4 items-start">
+      <div className="grid lg:grid-cols-[1fr_340px] gap-4 items-start [&>*]:min-w-0">
         {/* Chain table */}
         <div className="rounded-xl border border-line lg-glass overflow-hidden">
           <div className="overflow-x-auto max-h-[520px] overflow-y-auto">

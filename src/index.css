@@ -12,10 +12,10 @@
   --c-surface: 255 255 255;
   --c-line: 228 228 231;    /* #e4e4e7 silver */
   --c-text: 12 12 15;       /* #0c0c0f */
-  --c-dim: 113 113 122;     /* #71717a */
+  --c-dim: 88 88 96;        /* #585860 — darker so secondary text + faint tints stay readable on white */
   --c-accent: 24 24 26;     /* #18181a graphite — the accent IS the ink */
-  --c-up: 21 143 96;        /* #158f60 */
-  --c-down: 202 58 66;      /* #ca3a42 */
+  --c-up: 11 110 71;        /* #0b6e47 — deeper green; the old #158f60 washed out on white and in /10 tints */
+  --c-down: 190 40 48;      /* #be2830 — deeper red for the same reason */
 
   --glass-bg: rgba(255, 255, 255, 0.74);
   --glass-bg2: rgba(255, 255, 255, 0.58);
@@ -35,10 +35,10 @@
   --c-surface: 24 24 26;    /* #18181a */
   --c-line: 41 41 43;       /* #29292b */
   --c-text: 244 244 245;    /* #f4f4f5 */
-  --c-dim: 138 138 143;     /* #8a8a8f */
+  --c-dim: 158 158 164;     /* #9e9ea4 — lighter so secondary text + tints stay readable on charcoal */
   --c-accent: 250 250 250;  /* near-white — the accent IS the light */
-  --c-up: 63 178 127;       /* #3fb27f */
-  --c-down: 229 72 77;      /* #e5484d */
+  --c-up: 74 194 140;       /* #4ac28c — a touch brighter for tint legibility */
+  --c-down: 232 82 88;      /* #e85258 */
 
   --glass-bg: rgba(24, 24, 26, 0.60);
   --glass-bg2: rgba(41, 41, 43, 0.45);
