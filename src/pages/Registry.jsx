@@ -107,6 +107,16 @@ function AgentCandidates() {
               </div>
             )}
 
+            {/* Thesis — the framework's "why does this have an edge", parsed
+                from the strategy's own EDGE/WORKS/BREAKS header. */}
+            {c.thesis && (c.thesis.edge || c.thesis.works || c.thesis.breaks) && (
+              <div className="mt-2 space-y-0.5 text-[11px]">
+                {c.thesis.edge && <p className="text-dim"><span className="text-up font-semibold">Edge</span> — {c.thesis.edge}</p>}
+                {c.thesis.works && <p className="text-dim"><span className="text-accent font-semibold">Works</span> — {c.thesis.works}</p>}
+                {c.thesis.breaks && <p className="text-dim"><span className="text-down font-semibold">Breaks</span> — {c.thesis.breaks}</p>}
+              </div>
+            )}
+
             {/* Committee verdict — the qualitative debate on top of the maths.
                 The gauntlet proved it works; this says how much to trust that
                 and when to pull it. */}

@@ -273,11 +273,22 @@ export async function onRequest({ request, env }) {
     userMsg =
       `Source ${kind}: "${title}"\n\n` +
       `--- BEGIN SOURCE ---\n${doc}\n--- END SOURCE ---\n\n` +
-      "Extract the single most testable systematic trading rule this source implies, and implement it " +
-      "as `strategy(ctx)`. Prefer a rule the source actually states (lookback, threshold, rebalance) " +
-      "over one you invent. Keep it SIMPLE (max 3 parameters, hardcoded as const). Long and/or short. " +
-      "Prefer robust logic over precision. Name nothing after the source; just implement the rule. " +
-      "If the source describes no testable rule, implement the closest defensible interpretation.";
+      "Act as a hedge-fund quant. Turn the systematic idea in this source into ONE robust, testable " +
+      "`strategy(ctx)`. Build it MULTI-FACTOR, not a single indicator — a single-indicator rule is fragile " +
+      "and rarely survives real costs. Combine, where the source supports it:\n" +
+      "  1. a REGIME / TREND filter that decides WHEN to be active (e.g. EMA slope, price vs a long SMA, " +
+      "volatility band) — trade only in the conditions the edge needs, sit flat otherwise;\n" +
+      "  2. an ENTRY trigger (the source's actual signal: a level, crossover, threshold);\n" +
+      "  3. RISK MANAGEMENT: a stop-loss and take-profit via the bracket return " +
+      "`{ signal, stop, target }`, sized from recent volatility (e.g. an ATR multiple), OR a clear exit rule.\n\n" +
+      "Hard requirements (these are what separate a real edge from a backtest artifact):\n" +
+      "  - It must be able to BEAT BUY & HOLD risk-adjusted — not just be profitable.\n" +
+      "  - The edge must NOT depend on catching a move within a single bar; it must survive being executed " +
+      "one bar late. Avoid entries that only work at an exact price touch.\n" +
+      "  - Up to 5 parameters, hardcoded as const. Long and/or short. No look-ahead (only data up to ctx.index).\n\n" +
+      "Start the code with 3 short comment lines: `// EDGE:` (why this has an edge, one sentence), " +
+      "`// WORKS:` (the market regime/conditions it needs), `// BREAKS:` (what kills it). Then the code. " +
+      "Prefer a rule the source actually states over one you invent. Name nothing after the source.";
   } else if (repair && typeof repair.code === "string") {
     const brokenCode = repair.code.slice(0, 8000);
     const err = String(repair.error || "unknown error").slice(0, 300);

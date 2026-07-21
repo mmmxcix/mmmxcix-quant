@@ -274,6 +274,21 @@ function delayedSharpe(code, candles, feeBps) {
   } catch { return 0; }
 }
 
+// Pull the EDGE / WORKS / BREAKS header the generation prompt asks for, so a
+// candidate carries its own thesis. Missing lines just come back empty. A regex
+// LITERAL (not new RegExp with a template string) — the latter's \\s collapses
+// to a literal s and silently never matches.
+function parseThesis(code) {
+  const out = { edge: "", works: "", breaks: "" };
+  const re = /\/\/\s*(EDGE|WORKS|BREAKS)\s*:\s*(.+)/gi;
+  let m;
+  while ((m = re.exec(code))) {
+    const key = m[1].toLowerCase();
+    if (key in out) out[key] = m[2].trim().slice(0, 240);
+  }
+  return out;
+}
+
 function gauntlet(code, datasets, globalTrials) {
   try { compileStrategy(code); } catch (e) { return { pass: false, reason: `compile: ${e.message.slice(0, 80)}` }; }
 
@@ -519,6 +534,11 @@ for (const paper of fresh) {
         readFullText: !!paper.fullText,
         topics: paper.topics,
         code,
+        // The framework's "why does this have an edge" — parsed from the
+        // EDGE/WORKS/BREAKS header the generation prompt now emits, so every
+        // survivor is self-documenting (edge thesis, the regime it needs, and
+        // what kills it) instead of being an opaque block of code.
+        thesis: parseThesis(code),
         // Where it works, not just how well. byMarket carries every venue that
         // was tried, including the rejections and why — the graveyard for a
         // strategy that ALMOST worked is the most useful thing in the record.
