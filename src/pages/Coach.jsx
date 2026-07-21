@@ -186,7 +186,28 @@ function LabStatus() {
                       return (
                       <tr key={s.id} className="border-b border-line/40 last:border-0">
                         <td className="py-1.5 pr-3 text-text">{s.name}</td>
-                        <td className="py-1.5 pr-3 text-dim">{s.symbol} · {s.interval}</td>
+                        <td className="py-1.5 pr-3 text-dim">
+                          <div>{s.symbol} · {s.interval}</div>
+                          {(s.regime || s.volTarget) && (
+                            <div className="mt-0.5 flex items-center gap-1.5 text-[10px]">
+                              {s.regime && (
+                                <span
+                                  className={
+                                    s.regime === "Bull" ? "text-up" : s.regime === "Bear" ? "text-down" : "text-dim"
+                                  }
+                                  title="HMM market regime (which way)"
+                                >
+                                  {s.regime}
+                                </span>
+                              )}
+                              {s.volTarget && (
+                                <span className="text-dim/70" title="GARCH vol-target sizing (how much)">
+                                  vol ×{s.volTarget.weight} · {s.volTarget.sizedPct}%
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </td>
                         <td className="py-1.5 pr-3">
                           {s.error
                             ? <span className="text-down" title={s.error}>error</span>

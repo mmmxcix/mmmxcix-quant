@@ -77,14 +77,16 @@
   .input-base {
     @apply bg-surface border border-line rounded-lg px-3 py-2 text-sm text-text outline-none focus:border-accent/50 transition-colors placeholder:text-dim/60;
   }
+  /* Buttons/chips transition transform too, so the tactile press below animates
+     smoothly rather than snapping. */
   .btn-accent {
-    @apply bg-accent/15 border border-accent/40 text-accent rounded-lg px-4 py-2 text-sm font-semibold hover:bg-accent/25 transition-colors disabled:opacity-40 disabled:cursor-not-allowed;
+    @apply bg-accent/15 border border-accent/40 text-accent rounded-lg px-4 py-2 text-sm font-semibold hover:bg-accent/25 transition-[color,background-color,border-color,transform] duration-150 disabled:opacity-40 disabled:cursor-not-allowed;
   }
   .btn-ghost {
-    @apply bg-surface border border-line text-dim rounded-lg px-3 py-2 text-sm hover:text-text hover:border-line/80 transition-colors;
+    @apply bg-surface border border-line text-dim rounded-lg px-3 py-2 text-sm hover:text-text hover:border-line/80 transition-[color,background-color,border-color,transform] duration-150;
   }
   .chip {
-    @apply px-3 py-1 rounded-full text-xs border transition-colors cursor-pointer select-none;
+    @apply px-3 py-1 rounded-full text-xs border transition-[color,background-color,border-color,transform] duration-150 cursor-pointer select-none;
   }
   .chip-active {
     @apply border-accent/50 text-accent bg-accent/10;
@@ -92,6 +94,31 @@
   .chip-idle {
     @apply border-line text-dim hover:text-text;
   }
+}
+
+/* ── Interaction polish ──────────────────────────────────────────────────
+   A tactile press on clickable controls and a keyboard-only focus ring —
+   the small things that make a UI feel considered rather than static.
+   Both collapse under prefers-reduced-motion (press) and never show on
+   mouse click (focus ring is :focus-visible only). */
+.btn-accent:active:not(:disabled),
+.btn-ghost:active:not(:disabled),
+.chip:active {
+  transform: scale(0.97);
+}
+button:focus-visible,
+a:focus-visible,
+[role="button"]:focus-visible,
+select:focus-visible,
+summary:focus-visible {
+  outline: 2px solid rgb(var(--c-accent) / 0.55);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .btn-accent:active:not(:disabled),
+  .btn-ghost:active:not(:disabled),
+  .chip:active { transform: none; }
 }
 
 /* Fine grain texture layer (mounted in Layout). Sits above the ambient
