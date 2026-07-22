@@ -272,6 +272,7 @@ export async function onRequest({ request, env }) {
   //  • generate: turn a natural-language request into a fresh strategy.
   const repair = body?.repair;
   const research = body?.research;
+  const improve = body?.improve;
   const critique = body?.critique;
   const isCritique = !!(critique && typeof critique.code === "string");
   // Language of the generated strategy: Python (Pyodide, def signals(df)) or the
@@ -343,6 +344,33 @@ export async function onRequest({ request, env }) {
         "Start the code with 3 short comment lines: `// EDGE:` (why this has an edge, one sentence), " +
         "`// WORKS:` (the market regime/conditions it needs), `// BREAKS:` (what kills it). Then the code. " +
         "Prefer a rule the source actually states over one you invent. Name nothing after the source.";
+  } else if (improve && typeof improve.code === "string") {
+    // The always-on BUILD/IMPROVE loop: a strategy that traded but failed ONE
+    // quality gate comes back with its specific failure; the model keeps the
+    // core idea and fixes that weakness. Every attempt re-runs the full
+    // gauntlet agent-side and counts as a trial.
+    const baseCode = improve.code.slice(0, 8000);
+    const facts = String(improve.facts || "").slice(0, 600);
+    const title = String(improve.title || "a strategy").slice(0, 200);
+    const hardReqs =
+      "Hard requirements (unchanged):\n" +
+      "  - It must be able to BEAT BUY & HOLD risk-adjusted — not just be profitable.\n" +
+      "  - The edge must survive being executed one bar late (no dependence on an exact single-bar fill).\n" +
+      "  - It must actually TRADE: entries AND exits trigger regularly on normal price data.\n" +
+      "  - Up to 5 parameters, hardcoded. Long and/or short. No look-ahead.\n\n";
+    userMsg = isPython
+      ? `A previously generated Python strategy ("${title}") FAILED validation:\n${facts}\n\n` +
+        "```python\n" + baseCode + "\n```\n\n" +
+        "Improve it: KEEP the core idea/edge, fix the specific weakness above. " + hardReqs +
+        "Keep the `def signals(df):` contract (one value per row: 1 long / 0 flat / -1 short; " +
+        "numpy+pandas only; rolling()/shift() correctly, never .shift(-1); warm-up NaNs → 0). " +
+        "Update the `# EDGE:` / `# WORKS:` / `# BREAKS:` header to match the improved rule. " +
+        "Return ONLY the corrected Python, no prose."
+      : `A previously generated strategy ("${title}") FAILED validation:\n${facts}\n\n` +
+        "```javascript\n" + baseCode + "\n```\n\n" +
+        "Improve it: KEEP the core idea/edge, fix the specific weakness above. " + hardReqs +
+        "Keep the `strategy(ctx)` contract. Update the `// EDGE:` / `// WORKS:` / `// BREAKS:` " +
+        "header to match the improved rule. Return ONLY the corrected JavaScript, no prose.";
   } else if (repair && typeof repair.code === "string") {
     const brokenCode = repair.code.slice(0, 8000);
     const err = String(repair.error || "unknown error").slice(0, 300);

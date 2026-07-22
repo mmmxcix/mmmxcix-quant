@@ -197,6 +197,38 @@ async function repairStrategy(code, error, language = RESEARCH_LANG) {
   throw e;
 }
 
+// Turn a gauntlet failure reason into targeted improvement guidance — the model
+// gets told exactly WHICH weakness to fix, not just "do better".
+function improveFacts(reason) {
+  let hint = "";
+  if (/timing-fragile/i.test(reason)) hint = "The edge collapsed when execution was delayed by one bar — remove any dependence on same-bar timing; act on signals CONFIRMED on the previous bar and hold positions longer.";
+  else if (/k-?fold/i.test(reason)) hint = "Returns came from one lucky window — make the rule consistent across sub-periods (stronger regime filter, fewer/looser parameters).";
+  else if (/noise/i.test(reason)) hint = "Tiny price perturbations destroyed it — widen thresholds/bands so entries never depend on exact price levels.";
+  else if (/buy\s*&\s*hold/i.test(reason)) hint = "It underperformed simply holding the asset risk-adjusted — trade less often, be active only in the favourable regime, and/or add the short side.";
+  else if (/holdout/i.test(reason)) hint = "It inverted on the most recent 30% of the data — reduce regime dependence; the rule must hold in the CURRENT market, not just the past.";
+  else if (/dd\s/i.test(reason)) hint = "The drawdown is too deep — cut exposure with a volatility or regime filter instead of riding every move.";
+  else if (/PF\s|DSR/i.test(reason)) hint = "The edge is too thin after costs — make entries more selective: higher-conviction setups, fewer trades.";
+  return `Failed validation: ${reason}. ${hint}`;
+}
+
+// One improvement iteration via the site's AI endpoint (improve channel).
+async function improveStrategy(g) {
+  const language = g.language || RESEARCH_LANG;
+  const res = await fetch(`${SITE}/api/generate`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      token: TOKEN, language,
+      improve: { code: String(g.code).slice(0, 8000), title: g.title, facts: improveFacts(g.reason || "") },
+    }),
+  });
+  const out = await res.json().catch(() => ({}));
+  if (res.ok && out.code) return { code: out.code, language: out.language || language };
+  const e = new Error(out.error || `improve HTTP ${res.status}`);
+  if (res.status === 429 || out.error === "rate_limited") e.skip = true;
+  throw e;
+}
+
 // ── 3. validation gauntlet (candle fetchers live in marketdata.mjs) ─────────
 
 /**
@@ -457,6 +489,15 @@ const summarise = (ran) => Object.fromEntries(ran.map((r) => [r.name, metricRow(
 
 // ── main ────────────────────────────────────────────────────────────────────
 const st = load();
+
+// The site's Always-On switch (Cortex tab bar). ON turns the barren tail of a
+// run into the BUILD/IMPROVE phase below — Cortex keeps building strategy after
+// strategy instead of idling when no fresh paper arrived. Offline → night mode.
+let ALWAYS_ON = false;
+try {
+  const mr = await fetch(`${SITE}/api/lab?what=mode`, { headers: { "x-lab-token": TOKEN } });
+  ALWAYS_ON = !!(await mr.json().catch(() => ({})))?.mode?.alwaysOn;
+} catch { /* offline */ }
 // In until-hit mode pull a deeper pool per source so there's enough supply.
 const { items: harvested, counts: sourceCounts } = await harvestAll({ perSource: UNTIL_HIT ? 20 : 10 });
 const limit = UNTIL_HIT ? HARD_CAP : MAX_PAPERS_PER_RUN;
@@ -490,14 +531,29 @@ for (const item of fresh) {
   }
 }
 
+// ── improve pool: near-misses worth iterating on (always-on only) ───────────
+// A graveyard entry qualifies when its code RAN and traded but failed a quality
+// gate (timing, k-fold, noise, holdout, buy&hold, profile bars) — those are one
+// fix away from a candidate. Compile/generation garbage and "no edge anywhere"
+// stay buried. Each idea gets at most MAX_IMPROVE_TRIES iterations.
+const MAX_IMPROVE_TRIES = +(process.env.LAB_IMPROVE_TRIES || 3);
+const IMPROVE_PER_RUN = +(process.env.LAB_IMPROVE_PER_RUN || 2);
+const NOT_IMPROVABLE = /^(compile:|gen:|runtime|strategy error|no markets|no edge anywhere)/i;
+const IMPROVABLE = /timing-fragile|k-?fold|noise|holdout|buy\s*&\s*hold|DSR|dd\s|PF\s/i;
+const improvePool = ALWAYS_ON
+  ? (st.graveyard || []).filter((g) =>
+      g.code && (g.improveTries || 0) < MAX_IMPROVE_TRIES &&
+      !NOT_IMPROVABLE.test(g.reason || "") && IMPROVABLE.test(g.reason || ""))
+  : [];
+
 // The full universe: crypto, equity index, single names, forex, across
 // timeframes from 15m to daily. A strategy only has to work SOMEWHERE.
-const datasets = fresh.length ? await loadUniverse(UNIVERSE) : [];
+const datasets = (fresh.length || improvePool.length) ? await loadUniverse(UNIVERSE) : [];
 
 // Boot the Python runtime once, up front, if Cortex is writing Python and there
 // is work to do — the whole gauntlet then runs signals(df) synchronously through
 // this one Pyodide instance (numpy + pandas). ~3s, amortised over every backtest.
-if (RESEARCH_LANG === "python" && fresh.length) {
+if (RESEARCH_LANG === "python" && (fresh.length || improvePool.length)) {
   const t = Date.now();
   await initPy((m) => console.log(`  ${m}`));
   console.log(`Python runtime ready in ${((Date.now() - t) / 1000).toFixed(1)}s — Cortex will write & validate in Python`);
@@ -505,6 +561,34 @@ if (RESEARCH_LANG === "python" && fresh.length) {
 
 const newCandidates = [];
 const toPromote = [];
+
+// Auto-promote per profile AND per winning market: a strategy that works on
+// both EUR/USD daily and SOL 15m is two paper positions, not one — collapsing
+// them to a single line would lie about what was validated. Shared by the
+// fresh-paper loop and the always-on improve loop.
+function queuePromotions(cand, verdict) {
+  for (const pid of verdict.qualified) {
+    const prof = getProfile(pid);
+    if (cand.dsr < prof.promotion.minDsr) continue;
+    for (const mid of verdict.markets) {
+      if (!(byMarket_profiles(verdict, mid) || []).includes(pid)) continue;
+      const m = byId(mid);
+      if (!m) continue;
+      toPromote.push({
+        id: `${cand.id}_${pid}_${mid}`, name: `🤖 ${cand.name} · ${m.label}`,
+        mode: "code", code: cand.code, language: cand.language,
+        market: m.asset === "crypto" ? "crypto" : "stock",
+        symbol: m.symbol, interval: m.interval,
+        feeBps: costFor(m), positionPct: 100,
+        volTarget: true, // GARCH vol-targeted sizing — cuts drawdown by default
+        dsr: verdict.byMarket[mid]?.dsr ?? cand.dsr, paper: cand.paper,
+        profile: pid, candidateId: cand.id, marketId: mid,
+      });
+      console.log(`  🤖 auto-promote queued: ${prof.label} · ${m.label}`);
+    }
+  }
+}
+
 let firstPaper = true;
 let processed = 0; // papers actually evaluated this run (may stop early on a hit)
 for (const paper of fresh) {
@@ -611,33 +695,12 @@ for (const paper of fresh) {
       st.candidates = [cand, ...st.candidates].slice(0, 30);
       newCandidates.push(cand);
 
-      // Auto-promote per profile AND per winning market: a strategy that works
-      // on both EUR/USD daily and SOL 15m is two paper positions, not one, and
-      // collapsing them to a single BTC line would have been a lie about what
-      // was actually validated.
-      for (const pid of verdict.qualified) {
-        const prof = getProfile(pid);
-        if (cand.dsr < prof.promotion.minDsr) continue;
-        for (const mid of verdict.markets) {
-          if (!(byMarket_profiles(verdict, mid) || []).includes(pid)) continue;
-          const m = byId(mid);
-          if (!m) continue;
-          toPromote.push({
-            id: `${cand.id}_${pid}_${mid}`, name: `🤖 ${cand.name} · ${m.label}`,
-            mode: "code", code: cand.code, language: cand.language,
-            market: m.asset === "crypto" ? "crypto" : "stock",
-            symbol: m.symbol, interval: m.interval,
-            feeBps: costFor(m), positionPct: 100,
-            volTarget: true, // GARCH vol-targeted sizing — cuts drawdown by default
-            dsr: verdict.byMarket[mid]?.dsr ?? cand.dsr, paper: cand.paper,
-            profile: pid, candidateId: cand.id, marketId: mid,
-          });
-          console.log(`  🤖 auto-promote queued: ${prof.label} · ${m.label}`);
-        }
-      }
+      queuePromotions(cand, verdict);
       if (UNTIL_HIT) { console.log(`  ↳ hit after ${processed} paper(s) — stopping early (until-hit mode)`); break; }
     } else {
-      st.graveyard = [{ title: paper.title.slice(0, 70), reason: verdict.reason, source: paper.source, topics: paper.topics, at: Date.now() }, ...st.graveyard].slice(0, 200);
+      // Buried WITH its code + language + link, so the always-on improve loop
+      // can pick the near-misses back up and iterate on them.
+      st.graveyard = [{ title: paper.title.slice(0, 70), reason: verdict.reason, source: paper.source, link: paper.link, topics: paper.topics, code, language, improveTries: 0, at: Date.now() }, ...st.graveyard].slice(0, 200);
       console.log(`✗ graveyard: ${paper.title.slice(0, 50)} — ${verdict.reason}`);
     }
   } catch (e) {
@@ -649,6 +712,67 @@ for (const paper of fresh) {
       console.log(`✗ generation failed: ${e.message}`);
     }
   }
+}
+
+// ── always-on BUILD/IMPROVE phase ───────────────────────────────────────────
+// With the site's Always-On switch ON, whatever budget the fresh papers didn't
+// use goes into iterating near-misses: take a buried strategy that traded but
+// failed ONE quality gate, feed it back with the specific failure, and send the
+// improved version through the FULL gauntlet. Build → test → improve, strategy
+// after strategy — Cortex never idles just because no new paper arrived.
+// Honest accounting: every attempt is a trial (raises the DSR bar) like any
+// other generation. improvePool entries reference st.graveyard directly, so
+// updating them here persists via save(st).
+let improvedThisRun = 0;
+if (improvePool.length && datasets.length && !(UNTIL_HIT && newCandidates.length)) {
+  console.log(`always-on: improve phase — ${improvePool.length} near-miss(es) in the pool, budget ${IMPROVE_PER_RUN}`);
+  for (const g of improvePool) {
+    if (improvedThisRun >= IMPROVE_PER_RUN) break;
+    await sleep(20000); // same per-minute courtesy as generation
+    try {
+      const { code, language } = await improveStrategy(g);
+      try { compileCheckFor(code, language); } catch (ce) {
+        g.improveTries = (g.improveTries || 0) + 1;
+        console.log(`✗ improve won't compile (${String(ce.message || "").slice(0, 40)}) — try ${g.improveTries}/${MAX_IMPROVE_TRIES}`);
+        continue;
+      }
+      st.attempts++;
+      st.attemptLog = [...(st.attemptLog || []), Date.now()].slice(-5000);
+      const verdict = gauntlet(code, datasets, windowTrials(st), language);
+      improvedThisRun++;
+      if (verdict.pass) {
+        const cand = {
+          id: `ri_${Date.now().toString(36)}`,
+          name: `improved · ${g.title}`.slice(0, 70),
+          paper: g.link, source: g.source, kind: "improve",
+          improvedFrom: g.title, topics: g.topics,
+          code, language,
+          thesis: parseThesis(code),
+          byMarket: verdict.byMarket, markets: verdict.markets,
+          bestMarket: verdict.bestMarket, marketsTested: verdict.marketsTested,
+          trialsUsed: verdict.trials, dsr: verdict.dsr,
+          profiles: verdict.qualified, trialsAtPass: st.attempts, foundAt: Date.now(),
+        };
+        console.log(`✓ IMPROVED → CANDIDATE: ${cand.name} (DSR ${cand.dsr}% on ${cand.bestMarket}) · profiles: ${verdict.qualified.join(", ")}`);
+        cand.committee = await committeeReview(code, cand);
+        st.candidates = [cand, ...st.candidates].slice(0, 30);
+        newCandidates.push(cand);
+        queuePromotions(cand, verdict);
+        g.improveTries = MAX_IMPROVE_TRIES; // retire the base idea — it graduated
+        g.reason = `improved → candidate ${cand.id}`;
+      } else {
+        g.improveTries = (g.improveTries || 0) + 1;
+        g.code = code; g.language = language; // iterate from the latest attempt next time
+        g.reason = verdict.reason; g.at = Date.now();
+        console.log(`✗ improve try ${g.improveTries}/${MAX_IMPROVE_TRIES}: ${String(g.title).slice(0, 44)} — ${verdict.reason}`);
+      }
+    } catch (e) {
+      if (e.skip) { console.log("~ improve phase paused (rate-limited)"); break; }
+      g.improveTries = (g.improveTries || 0) + 1;
+      console.log(`✗ improve failed: ${String(e.message || "").slice(0, 50)}`);
+    }
+  }
+  st.improved = (st.improved || 0) + improvedThisRun;
 }
 save(st);
 
@@ -718,6 +842,8 @@ const state = { ...(cur?.state || {}), research: {
   graveyard: st.graveyard.length,
   candidates: st.candidates.length,
   autoPromoted: st.autoPromoted || 0,
+  improved: st.improved || 0,
+  alwaysOn: ALWAYS_ON,
   sources: brainSources(st),
   // What each source actually yielded this run — makes a quietly dead feed
   // visible on the Coach page instead of only in the 3am log.
