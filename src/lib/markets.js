@@ -43,10 +43,39 @@ export const UNIVERSE = [
   // ── forex (Yahoo FX pairs) ────────────────────────────────────────────────
   { id: "EURUSD1d", label: "EUR/USD daily", asset: "forex", symbol: "EURUSD=X", interval: "1d", range: "10y" },
   { id: "EURUSD1h", label: "EUR/USD 1h", asset: "forex", symbol: "EURUSD=X", interval: "1h", range: "2y" },
+
+  // ── breadth staples (Jul 2026): a long-horizon crypto, a second single name,
+  //    a commodity proxy and a second FX pair, so "works somewhere" means more
+  //    than tech-equity + EUR ────────────────────────────────────────────────
+  { id: "BTC1d", label: "BTC/USDT daily", asset: "crypto", symbol: "BTCUSDT", interval: "1d", bars: 3000 },
+  { id: "NVDA1d", label: "NVDA daily", asset: "stock", symbol: "NVDA", interval: "1d", range: "10y" },
+  { id: "GLD1d", label: "Gold (GLD) daily", asset: "stock", symbol: "GLD", interval: "1d", range: "10y" },
+  { id: "USDJPY1d", label: "USD/JPY daily", asset: "forex", symbol: "USDJPY=X", interval: "1d", range: "10y" },
 ];
 
+// Markets that are NOT in the base universe but get pulled into a paper's
+// gauntlet when the paper POSITIVELY mentions them (research-agent checks the
+// surrounding text for negative cues). `re` is the mention detector.
+/** @type {(Market & { re: RegExp })[]} */
+export const MENTIONABLE = [
+  { id: "MSFT1d", label: "MSFT daily", asset: "stock", symbol: "MSFT", interval: "1d", range: "10y", re: /\bmicrosoft\b|\bMSFT\b/i },
+  { id: "AMZN1d", label: "AMZN daily", asset: "stock", symbol: "AMZN", interval: "1d", range: "10y", re: /\bamazon\b|\bAMZN\b/i },
+  { id: "META1d", label: "META daily", asset: "stock", symbol: "META", interval: "1d", range: "10y", re: /\bmeta platforms\b|\bMETA\b|\bfacebook\b/i },
+  { id: "GOOGL1d", label: "GOOGL daily", asset: "stock", symbol: "GOOGL", interval: "1d", range: "10y", re: /\balphabet\b|\bgoogle\b|\bGOOGL?\b/i },
+  { id: "AMD1d", label: "AMD daily", asset: "stock", symbol: "AMD", interval: "1d", range: "10y", re: /\bAMD\b|\badvanced micro\b/i },
+  { id: "DOGE1d", label: "DOGE/USDT daily", asset: "crypto", symbol: "DOGEUSDT", interval: "1d", bars: 3000, re: /\bdogecoin\b|\bDOGE\b/i },
+  { id: "XRP1d", label: "XRP/USDT daily", asset: "crypto", symbol: "XRPUSDT", interval: "1d", bars: 3000, re: /\bXRP\b|\bripple\b/i },
+  { id: "ADA1d", label: "ADA/USDT daily", asset: "crypto", symbol: "ADAUSDT", interval: "1d", bars: 3000, re: /\bcardano\b|\bADA\b/i },
+  { id: "GBPUSD1d", label: "GBP/USD daily", asset: "forex", symbol: "GBPUSD=X", interval: "1d", range: "10y", re: /\bGBP.?USD\b|\bcable\b|\bpound sterling\b/i },
+  { id: "SLV1d", label: "Silver (SLV) daily", asset: "stock", symbol: "SLV", interval: "1d", range: "10y", re: /\bsilver\b|\bSLV\b/i },
+  { id: "USO1d", label: "Oil (USO) daily", asset: "stock", symbol: "USO", interval: "1d", range: "10y", re: /\bcrude( oil)?\b|\bWTI\b|\bbrent\b|\boil (price|market|futures)\b/i },
+];
+
+// Everything byId must resolve — base universe AND mention extras, so a
+// mention-market winner can be auto-promoted like any other.
+export const ALL_MARKETS = [...UNIVERSE, ...MENTIONABLE];
 export const CORE = UNIVERSE.filter((m) => m.core);
-export const byId = (id) => UNIVERSE.find((m) => m.id === id) || null;
+export const byId = (id) => ALL_MARKETS.find((m) => m.id === id) || null;
 
 /**
  * Realistic per-side cost in basis points, by asset class. The old code used a

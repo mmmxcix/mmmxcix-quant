@@ -28,7 +28,7 @@ import { kFoldCode, noiseTest, deflatedSharpe, equityReturns } from "../src/lib/
 import { qualifyAll, getProfile, PROFILE_IDS } from "../src/lib/profiles.js";
 import { harvestAll, fullTextOf, topicsOf, RELEVANCE, JUNK } from "./sources.mjs";
 import { loadUniverse } from "./marketdata.mjs";
-import { UNIVERSE, byId, costFor, effectiveTrials, describeMarkets } from "../src/lib/markets.js";
+import { UNIVERSE, MENTIONABLE, byId, costFor, effectiveTrials, describeMarkets } from "../src/lib/markets.js";
 import { initPy, compilePyStrategy, pyCompileCheck } from "./pyRunnerNode.mjs";
 
 // Language Cortex writes AND validates in. Python (default) means the model emits
@@ -610,6 +610,37 @@ function queuePromotions(cand, verdict) {
   }
 }
 
+// ── mentioned markets: if a paper POSITIVELY names a specific venue, test it ─
+// A negative cue near the mention ("fails on", "doesn't work", "underperforms")
+// keeps it out — the paper is telling us where NOT to look. Capped at 3 extras
+// per paper; loaded once per run and cached across papers.
+const NEG_MENTION = /\b(not|no|never|fails?|failed|doesn'?t|does not|underperform\w*|avoid|poor(ly)?|weak|negative|breaks? down|stops? work\w*|loses?|losing)\b/i;
+function mentionedMarkets(text) {
+  const hits = [];
+  for (const m of MENTIONABLE) {
+    const match = m.re.exec(text);
+    if (!match) continue;
+    const ctx = text.slice(Math.max(0, match.index - 80), match.index + match[0].length + 80);
+    if (!NEG_MENTION.test(ctx)) hits.push(m);
+  }
+  return hits.slice(0, 3);
+}
+const extraCache = new Map(); // market id → dataset (or null after a failed load)
+async function loadMentioned(paper) {
+  const text = `${paper.title} ${paper.fullText || paper.abstract || ""}`.slice(0, 20000);
+  const out = [];
+  for (const spec of mentionedMarkets(text)) {
+    if (!extraCache.has(spec.id)) {
+      const [ds] = await loadUniverse([spec]).catch(() => [null]);
+      extraCache.set(spec.id, ds || null);
+    }
+    const ds = extraCache.get(spec.id);
+    if (ds) out.push(ds);
+  }
+  if (out.length) console.log(`  ↳ paper mentions ${out.map((d) => d.name).join(", ")} — added to this gauntlet`);
+  return out;
+}
+
 let firstPaper = true;
 let processed = 0; // papers actually evaluated this run (may stop early on a hit)
 for (const paper of fresh) {
@@ -663,7 +694,8 @@ for (const paper of fresh) {
     st.papersRead++;
     st.attempts++;                                   // lifetime counter, for the record
     st.attemptLog = [...(st.attemptLog || []), Date.now()].slice(-5000);
-    const verdict = gauntlet(code, datasets, windowTrials(st), language);
+    const extras = await loadMentioned(paper);
+    const verdict = gauntlet(code, [...datasets, ...extras], windowTrials(st), language);
     if (verdict.pass) {
       const cand = {
         id: `rc_${Date.now().toString(36)}`,
