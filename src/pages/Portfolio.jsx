@@ -118,17 +118,28 @@ export default function Portfolio() {
   // ── Derived rows + totals ──────────────────────────────────────────────────
   const { rows, totals } = useMemo(() => {
     const computed = positions.map((p) => {
-      const price = priceOf(p);
+      const q = quotes[`${p.market}:${p.symbol}`];
+      const price = q && Number.isFinite(q.price) ? q.price : null;
+      const changePct = q && Number.isFinite(q.changePct) ? q.changePct : null;
       const cost = p.shares * p.avgPrice;
       const value = price != null ? p.shares * price : null;
       const pnl = value != null ? value - cost : null;
       const pnlPct = value != null && cost > 0 ? (pnl / cost) * 100 : null;
-      return { ...p, price, cost, value, pnl, pnlPct };
+      // Today's move: back out yesterday's close from the live day-change %, so
+      // the day P/L tracks the market in real time (updates every poll).
+      const prevClose = price != null && changePct != null ? price / (1 + changePct / 100) : null;
+      const dayPnl = prevClose != null ? p.shares * (price - prevClose) : null;
+      return { ...p, price, changePct, cost, value, pnl, pnlPct, prevClose, dayPnl };
     });
     const totalValue = computed.reduce((s, r) => s + (r.value ?? 0), 0);
     const totalCost = computed.reduce((s, r) => s + (r.cost || 0), 0);
     const totalPnl = totalValue - totalCost;
     const totalPnlPct = totalCost > 0 ? (totalPnl / totalCost) * 100 : null;
+    // Today's P/L across the book, and yesterday's value as its % base.
+    const dayPnl = computed.reduce((s, r) => s + (r.dayPnl ?? 0), 0);
+    const dayBase = computed.reduce((s, r) => s + (r.prevClose != null ? r.shares * r.prevClose : 0), 0);
+    const dayPnlPct = dayBase > 0 ? (dayPnl / dayBase) * 100 : null;
+    const dayHasData = computed.some((r) => r.dayPnl != null);
     // Allocation is % of current total value (only positions with a known price).
     const withAlloc = computed.map((r) => ({
       ...r,
@@ -136,9 +147,9 @@ export default function Portfolio() {
     }));
     return {
       rows: withAlloc,
-      totals: { totalValue, totalCost, totalPnl, totalPnlPct, count: computed.length },
+      totals: { totalValue, totalCost, totalPnl, totalPnlPct, dayPnl, dayPnlPct, dayHasData, count: computed.length },
     };
-  }, [positions, priceOf]);
+  }, [positions, quotes]);
 
   // ── Add ────────────────────────────────────────────────────────────────────
   const canSubmit = symbol.trim() !== "" && Number(String(shares).replace(",", ".")) > 0;
@@ -188,9 +199,16 @@ export default function Portfolio() {
       </p>
 
       {/* Summary */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-6">
         <SummaryCard label="Total value" value={fmtNum(totals.totalValue, 2)} big />
         <SummaryCard label="Invested" value={fmtNum(totals.totalCost, 2)} big />
+        <SummaryCard
+          label="Today's P/L"
+          value={totals.dayHasData ? (totals.dayPnl >= 0 ? "+" : "") + fmtNum(totals.dayPnl, 2) : "–"}
+          sub={totals.dayPnlPct != null ? fmtPct(totals.dayPnlPct) : null}
+          tone={totals.dayHasData ? upDown(totals.dayPnl) : "text-dim"}
+          big
+        />
         <SummaryCard
           label="Total P/L"
           value={(totals.totalPnl >= 0 ? "+" : "") + fmtNum(totals.totalPnl, 2)}
@@ -417,8 +435,8 @@ export default function Portfolio() {
       )}
 
       <p className="text-xs text-dim mt-4">
-        Prices refresh automatically every 60 seconds. Simulated portfolio —
-        not real money, not investment advice.
+        Prices &amp; today's P/L refresh automatically every 30 seconds. Simulated
+        portfolio — not real money, not investment advice.
       </p>
     </div>
   );

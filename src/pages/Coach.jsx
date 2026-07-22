@@ -59,8 +59,10 @@ function LabStatus() {
   // we pull the published list alongside and match by id.
   const [published, setPublished] = useState({});
 
-  const load = async () => {
-    setBusy(true);
+  // silent=true for the background poll: refreshes the numbers (incl. today's
+  // P/L) without flipping the Refresh button into its spinning state.
+  const load = async (silent = false) => {
+    if (!silent) setBusy(true);
     try {
       const token = localStorage.getItem("quant_dev_token") || "";
       const [stateRes, stratRes] = await Promise.all([
@@ -76,10 +78,15 @@ function LabStatus() {
     } catch {
       setData(null);
     } finally {
-      setBusy(false);
+      if (!silent) setBusy(false);
     }
   };
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    // Live: poll every 60s so the Portfolio HQ (and its today's P/L) stays current.
+    const id = setInterval(() => { if (!document.hidden) load(true); }, 60000);
+    return () => clearInterval(id);
+  }, []);
 
   const age = data?.receivedAt ? Math.round((Date.now() - data.receivedAt) / 60000) : null;
   const online = age !== null && age < 45; // fresh within ~3 schedule ticks
