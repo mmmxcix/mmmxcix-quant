@@ -98,6 +98,7 @@ export default function App() {
                 <Route path="/correlation" element={<Redir to="/screener/correlation" replace />} />
 
                 <Route path="/macro" element={<Redir to="/macro/yields" replace />} />
+                <Route path="/ships" element={<Redir to="/macro/ships" replace />} />
                 <Route path="/macro/:tab" element={<MacroHub />} />
 
                 {/* Learn hub (Academy · Guide · Resources) */}

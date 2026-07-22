@@ -17,6 +17,7 @@ const COMMANDS = [
   { label: "Macro · Bond Yields", to: "/macro/yields", group: "Markets" },
   { label: "Macro · Econ Events", to: "/macro/calendar", group: "Markets" },
   { label: "Macro · L3 Archive", to: "/macro/l3", group: "Markets" },
+  { label: "Ship Tracking", to: "/macro/ships", group: "Markets" },
   { label: "Backtest", to: "/backtest", group: "Strategy" },
   { label: "ML Studio", to: "/backtest/ml", group: "Strategy" },
   { label: "Regimes", to: "/regimes", group: "Strategy" },
