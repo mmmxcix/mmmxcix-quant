@@ -230,6 +230,7 @@ function LabStatus() {
                     {data.strategies.map((s) => {
                       const entry = published[s.id];
                       const code = entry ? strategyToCode(entry) : null;
+                      const pyCode = entry ? strategyToCode(entry, "python") : null;
                       return (
                       <tr key={s.id} className="border-b border-line/40 last:border-0">
                         <td className="py-1.5 pr-3 text-text">{s.name}</td>
@@ -266,7 +267,12 @@ function LabStatus() {
                         </td>
                         <td className="py-1.5 pr-3 text-right text-dim">{s.error ? "–" : s.tradeCount}</td>
                         <td className="py-1.5 text-right">
-                          {code ? <CopyButton text={code} label="Copy" /> : <span className="text-dim/40 text-[10px]">—</span>}
+                          {code ? (
+                            <span className="inline-flex items-center gap-1">
+                              <CopyButton text={code} label={entry?.language === "python" ? "PY" : "Copy"} />
+                              {pyCode && pyCode !== code && <CopyButton text={pyCode} label="PY" />}
+                            </span>
+                          ) : <span className="text-dim/40 text-[10px]">—</span>}
                         </td>
                       </tr>
                       );

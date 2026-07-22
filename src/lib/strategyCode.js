@@ -214,6 +214,205 @@ function strategy(ctx) {
 
 export const hasBuiltinSource = (id) => id in BUILTIN_SOURCE;
 
+// ── Python (signals(df)) twins of the vectorizable built-ins ────────────────
+// Fidelity-verified against the real builders through the Pyodide harness
+// (identical trades on the same candles). The four session/bracket built-ins
+// (opening-range, asian-range, ict-silver-bullet, session-range-fade) are
+// deliberately ABSENT: the vectorised signals(df) contract has no intrabar
+// stop/target orders, and a "translation" that silently drops the brackets
+// would be a different strategy — we don't ship misleading code.
+
+// Shared Python helpers, injected only when a template needs them. They
+// replicate indicators.js EXACTLY: EMA seeded with the SMA of the first
+// `period` values, RSI with Wilder smoothing off a seeded average.
+const PY_EMA = `
+def _ema(s, period):
+    v = s.to_numpy(dtype=float)
+    out = np.full(len(v), np.nan)
+    if period <= 0 or len(v) < period:
+        return pd.Series(out, index=s.index)
+    alpha = 2.0 / (period + 1)
+    out[period - 1] = v[:period].mean()
+    for i in range(period, len(v)):
+        out[i] = v[i] * alpha + out[i - 1] * (1 - alpha)
+    return pd.Series(out, index=s.index)
+`;
+const PY_RSI = `
+def _rsi(s, period):
+    v = s.to_numpy(dtype=float)
+    n = len(v)
+    out = np.full(n, np.nan)
+    if period <= 0 or n <= period:
+        return pd.Series(out, index=s.index)
+    d = np.diff(v)
+    seed = d[:period]
+    ag = seed[seed >= 0].sum() / period
+    al = -seed[seed < 0].sum() / period
+    out[period] = 100.0 if al == 0 else 100.0 - 100.0 / (1.0 + ag / al)
+    for i in range(period + 1, n):
+        diff = v[i] - v[i - 1]
+        g = diff if diff > 0 else 0.0
+        l = -diff if diff < 0 else 0.0
+        ag = (ag * (period - 1) + g) / period
+        al = (al * (period - 1) + l) / period
+        out[i] = 100.0 if al == 0 else 100.0 - 100.0 / (1.0 + ag / al)
+    return pd.Series(out, index=s.index)
+`;
+
+const PY_HEAD = "import numpy as np\nimport pandas as pd\n";
+
+const BUILTIN_SOURCE_PY = {
+  "sma-crossover": (p) => {
+    const fast = P(p, "fast", 20), slow = P(p, "slow", 50);
+    return `# SMA Crossover — long while the fast SMA is above the slow SMA.
+${PY_HEAD}
+FAST, SLOW = ${fast}, ${slow}
+
+def signals(df):
+    close = df["close"]
+    fast = close.rolling(FAST).mean()
+    slow = close.rolling(SLOW).mean()
+    return pd.Series(np.where(fast > slow, 1, 0), index=df.index)
+`;
+  },
+  "ema-crossover": (p) => {
+    const fast = P(p, "fast", 12), slow = P(p, "slow", 26);
+    return `# EMA Crossover — long while the fast EMA is above the slow EMA.
+# EMA seeded with the SMA of the first \`period\` values (classic convention).
+${PY_HEAD}${PY_EMA}
+FAST, SLOW = ${fast}, ${slow}
+
+def signals(df):
+    close = df["close"]
+    fast = _ema(close, FAST)
+    slow = _ema(close, SLOW)
+    return pd.Series(np.where(fast > slow, 1, 0), index=df.index)
+`;
+  },
+  "rsi-mean-reversion": (p) => {
+    const period = P(p, "period", 14), oversold = P(p, "oversold", 30), exitLevel = P(p, "exitLevel", 55);
+    return `# RSI Mean Reversion — buy oversold, exit once RSI recovers.
+# Wilder-smoothed RSI. Enter/hold/exit is expressed via forward-fill:
+# +1 marks entries, 0 marks exits, NaN carries the previous state.
+${PY_HEAD}${PY_RSI}
+PERIOD, OVERSOLD, EXIT = ${period}, ${oversold}, ${exitLevel}
+
+def signals(df):
+    r = _rsi(df["close"], PERIOD)
+    raw = np.where(r < OVERSOLD, 1.0, np.where(r >= EXIT, 0.0, np.nan))
+    return pd.Series(raw, index=df.index).ffill().fillna(0)
+`;
+  },
+  "momentum-roc": (p) => {
+    const period = P(p, "period", 20), threshold = P(p, "threshold", 0);
+    return `# Momentum (ROC) — invested while rate-of-change is above the threshold.
+${PY_HEAD}
+PERIOD, THRESHOLD = ${period}, ${threshold}
+
+def signals(df):
+    close = df["close"]
+    roc = (close / close.shift(PERIOD) - 1.0) * 100.0
+    return pd.Series(np.where(roc > THRESHOLD, 1, 0), index=df.index)
+`;
+  },
+  "bollinger-mean-reversion": (p) => {
+    const period = P(p, "period", 20), mult = P(p, "mult", 2);
+    return `# Bollinger Mean Reversion — buy below the lower band, exit at the mid.
+# Population std (ddof=0) matches the site's band math exactly.
+${PY_HEAD}
+PERIOD, MULT = ${period}, ${mult}
+
+def signals(df):
+    close = df["close"]
+    mid = close.rolling(PERIOD).mean()
+    sd = close.rolling(PERIOD).std(ddof=0)
+    lower = mid - MULT * sd
+    raw = np.where(close < lower, 1.0, np.where(close >= mid, 0.0, np.nan))
+    return pd.Series(raw, index=df.index).ffill().fillna(0)
+`;
+  },
+  "donchian-breakout": (p) => {
+    const period = P(p, "period", 20), exitPeriod = P(p, "exitPeriod", 10);
+    return `# Donchian Breakout — buy the N-bar high, exit on the M-bar low.
+# Channels use the PRIOR N bars (shift(1)) — the current bar never sees itself.
+${PY_HEAD}
+PERIOD, EXIT_PERIOD = ${period}, ${exitPeriod}
+
+def signals(df):
+    close = df["close"]
+    entry_hi = df["high"].rolling(PERIOD).max().shift(1)
+    exit_lo = df["low"].rolling(EXIT_PERIOD).min().shift(1)
+    raw = np.where(close > entry_hi, 1.0, np.where(close < exit_lo, 0.0, np.nan))
+    return pd.Series(raw, index=df.index).ffill().fillna(0)
+`;
+  },
+  "bollinger-squeeze-breakout": (p) => {
+    const period = P(p, "period", 20), mult = P(p, "mult", 2), lookback = P(p, "lookback", 60), pctile = P(p, "pctile", 25), longOnly = P(p, "longOnly", 0);
+    return `# Bollinger Squeeze Breakout — trade the break out of a low-volatility squeeze.
+# The position logic is direction-dependent (long exits below mid, short above),
+# so the state machine runs as an explicit loop — identical to the site's rules.
+${PY_HEAD}
+PERIOD, MULT, LOOKBACK, PCTILE, LONG_ONLY = ${period}, ${mult}, ${lookback}, ${pctile}, ${longOnly}
+
+def signals(df):
+    close = df["close"].to_numpy(dtype=float)
+    mid = df["close"].rolling(PERIOD).mean()
+    sd = df["close"].rolling(PERIOD).std(ddof=0)
+    upper = (mid + MULT * sd).to_numpy(dtype=float)
+    lower = (mid - MULT * sd).to_numpy(dtype=float)
+    m = mid.to_numpy(dtype=float)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        w = (upper - lower) / np.where(m == 0, 1.0, m)
+
+    n = len(close)
+    out = np.zeros(n)
+    pos = 0
+    for i in range(n):
+        if np.isnan(m[i]):
+            out[i] = pos = 0
+            continue
+        if pos == 1:
+            pos = 0 if close[i] < m[i] else 1
+            out[i] = pos
+            continue
+        if pos == -1:
+            pos = 0 if close[i] > m[i] else -1
+            out[i] = pos
+            continue
+        if i < PERIOD + LOOKBACK or i == 0 or np.isnan(w[i - 1]):
+            out[i] = 0
+            continue
+        window = w[i - LOOKBACK:i]
+        window = np.sort(window[~np.isnan(window)])
+        if len(window) < LOOKBACK * 0.6:
+            out[i] = 0
+            continue
+        thresh = window[int(np.floor((PCTILE / 100.0) * (len(window) - 1)))]
+        if w[i - 1] > thresh:
+            out[i] = 0
+            continue
+        if close[i] > upper[i]:
+            pos = 1
+        elif not LONG_ONLY and close[i] < lower[i]:
+            pos = -1
+        out[i] = pos
+    return pd.Series(out, index=df.index)
+`;
+  },
+};
+
+export const hasBuiltinPySource = (id) => id in BUILTIN_SOURCE_PY;
+
+/**
+ * True when a PYTHON source can be produced for this entry: a Cortex code
+ * entry that already IS Python, or a builder with a verified Python twin.
+ */
+export function hasPythonSource(entry) {
+  if (!entry) return false;
+  if (entry.mode === "code" || typeof entry.code === "string") return entry.language === "python";
+  return entry.mode === "builder" && hasBuiltinPySource(entry.strategyId);
+}
+
 /**
  * Standalone, copyable `strategy(ctx)` source for a strategy entry that lands in
  * the agent. Never returns misleading code: an unknown builder id yields a clear
@@ -222,15 +421,23 @@ export const hasBuiltinSource = (id) => id in BUILTIN_SOURCE;
  * @param {object} entry  a lab strategy entry ({ mode, code, strategyId, params, name })
  * @returns {string}
  */
-export function strategyToCode(entry) {
+export function strategyToCode(entry, lang = "js") {
   if (!entry) return "";
   if (entry.mode === "code" || typeof entry.code === "string") {
+    // Code entries copy as whatever language they were validated in; asking
+    // for the OTHER language yields nothing rather than a fake translation.
+    if (lang === "python") return entry.language === "python" ? (entry.code || "") : "";
+    if (entry.language === "python" && lang === "js") return ""; // no JS twin for Python code
     return entry.code || "// (no code on this entry)";
   }
   if (entry.mode === "builder" && entry.strategyId) {
+    if (lang === "python") {
+      const py = BUILTIN_SOURCE_PY[entry.strategyId];
+      return py ? py(entry.params || {}) : ""; // session/bracket builders have no honest Python twin
+    }
     const gen = BUILTIN_SOURCE[entry.strategyId];
     if (gen) return gen(entry.params || {});
     return `// Built-in strategy "${entry.strategyId}" with params ${JSON.stringify(entry.params || {})}\n// Full source: src/lib/strategies.js`;
   }
-  return "// (no copyable source for this strategy)";
+  return lang === "python" ? "" : "// (no copyable source for this strategy)";
 }

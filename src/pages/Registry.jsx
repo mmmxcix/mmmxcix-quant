@@ -157,7 +157,7 @@ function AgentCandidates() {
               </span>
               {c.paper && <a href={c.paper} target="_blank" rel="noopener noreferrer" className="text-[11px] text-accent hover:underline">source</a>}
               <span className="flex-1" />
-              <CopyButton text={c.code} label="Copy code" />
+              <CopyButton text={c.code} label={c.language === "python" ? "Copy PY" : "Copy code"} />
               <button onClick={() => importOne(c)} disabled={imported[c.id]}
                 className={cn("chip !text-[11px]", imported[c.id] ? "chip-idle text-up" : "chip-idle hover:text-accent")}>
                 {imported[c.id] ? "✓ imported" : "Import to Registry"}
@@ -203,6 +203,9 @@ function Card({ e }) {
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
           <CopyButton text={strategyToCode(e)} label="" />
+                {strategyToCode(e, "python") && strategyToCode(e, "python") !== strategyToCode(e) && (
+                  <CopyButton text={strategyToCode(e, "python")} label="PY" />
+                )}
           <button onClick={() => removeEntry(e.id)} title="Delete" className="text-dim/50 hover:text-down transition-colors">
             <Trash2 className="w-3.5 h-3.5" />
           </button>
