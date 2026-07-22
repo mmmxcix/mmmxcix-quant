@@ -5,6 +5,7 @@ import Skeleton from "@/components/Skeleton";
 import { MARKETS, fetchCandles } from "@/lib/data";
 import { ML_MODELS, runMlForecast } from "@/lib/mlStudio";
 import { cn, fmtPct } from "@/lib/utils";
+import MLRanking from "@/pages/MLRanking";
 
 // ML Studio — in-browser price forecasting (Pyodide + scikit-learn), the
 // site's answer to LSE's ML Studio. Everything is out-of-sample and shown
@@ -85,6 +86,7 @@ function Scatter({ points, height = 220 }) {
 }
 
 export default function MLStudio() {
+  const [studioMode, setStudioMode] = useState("forecast"); // forecast | ranking
   const [market, setMarket] = useState("crypto");
   const [symbol, setSymbol] = useState(DEFAULT_SYMBOL.crypto);
   const [range, setRange] = useState("5y");
@@ -124,6 +126,18 @@ export default function MLStudio() {
 
   return (
     <div>
+      {/* Two very different ML jobs: single-asset next-bar forecasting (mostly
+          a coin flip — shown honestly) and cross-sectional ranking (where
+          equity ML actually has a track record). */}
+      <div className="flex gap-1 mb-5">
+        {[["forecast", "Forecast (single asset)"], ["ranking", "Ranking (cross-sectional)"]].map(([id, label]) => (
+          <button key={id} onClick={() => setStudioMode(id)}
+            className={cn("chip", studioMode === id ? "chip-active" : "chip-idle")}>
+            {label}
+          </button>
+        ))}
+      </div>
+      {studioMode === "ranking" ? <MLRanking /> : (
       <div className="grid lg:grid-cols-[340px_1fr] gap-6 [&>*]:min-w-0">
         {/* controls */}
         <div className="space-y-4">
@@ -257,6 +271,7 @@ export default function MLStudio() {
           )}
         </div>
       </div>
+      )}
     </div>
   );
 }

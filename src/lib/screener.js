@@ -17,7 +17,7 @@ const cache = new Map(); // key → { t, data }
 // [symbol, name, sector, employees] — sector + headcount are STATIC metadata
 // (approximate, headcounts drift slowly) so the screener can filter/sort by
 // company type without another rate-limited API. null employees = ETF.
-const STOCK_UNIVERSE = [
+export const STOCK_UNIVERSE = [
   ["AAPL", "Apple", "Tech", 164000], ["MSFT", "Microsoft", "Software", 228000],
   ["NVDA", "NVIDIA", "Semiconductors", 36000], ["GOOGL", "Alphabet", "Tech", 183000],
   ["AMZN", "Amazon", "Tech", 1550000], ["META", "Meta", "Tech", 74000],
