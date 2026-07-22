@@ -54,25 +54,19 @@ export default function RiskGate() {
             {armed ? "armed · fails closed" : "idle"}
           </span>
         )}
-        <button onClick={load} disabled={busy || !token}
+        <button onClick={load} disabled={busy}
           className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-line px-2.5 py-1 text-xs text-dim hover:text-text disabled:opacity-50">
           <RefreshCw className={cn("w-3.5 h-3.5", busy && "animate-spin")} /> Refresh
         </button>
       </div>
 
-      {!token && (
-        <div className="rounded-xl border border-line lg-glass p-5 text-sm text-dim">
-          RiskGate is private. Set the dev token on the <Link to="/coach" className="text-accent underline">Coach</Link> page to view it.
-        </div>
-      )}
-
-      {token && data === null && (
+      {data === null && (
         <div className="rounded-xl border border-line lg-glass p-5 text-sm text-dim">
           No RiskGate data yet — the paper agent hasn't reported. Once <code className="text-text">lab-agent.mjs</code> runs, every entry is gated and the verdicts land here.
         </div>
       )}
 
-      {token && data && (
+      {data && (
         <div className="space-y-6 stagger">
           {/* Two books, two rule sets. Prop dies at a shallow drawdown; private
               tolerates a deep one but demands a better payoff for it. */}

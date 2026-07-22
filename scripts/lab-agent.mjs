@@ -35,6 +35,11 @@ const WARMUP_BARS = 500; // enough for EMA200 + stateful strategies
 // How often this 15-min paper run also kicks off ONE research cycle, so the
 // research agent needs no separate n8n workflow. Set LAB_AUTO_RESEARCH=0 to opt out.
 const RESEARCH_EVERY_MS = +(process.env.LAB_RESEARCH_EVERY_H || 20) * 3600 * 1000;
+// Cadence when the site's Always-On switch is ON: research fires every ~30 min
+// instead of ~20 h. Safe by construction — the research agent's seen-filter
+// makes barren runs cheap, and its paper caps + the windowed DSR accounting
+// bound the LLM spend per day.
+const ALWAYS_ON_EVERY_MS = +(process.env.LAB_ALWAYS_ON_EVERY_MIN || 30) * 60 * 1000;
 // Fixed share count per mirrored stock strategy. Fixed rather than derived from
 // the simulator's virtual equity on purpose: the two accounts have different
 // balances and will diverge on the first fill, and what is being validated is
@@ -154,6 +159,14 @@ const stratRes = await fetch(`${SITE}/api/lab?what=strategies`, { headers: { "x-
 const stratOut = await stratRes.json().catch(() => ({}));
 if (!stratRes.ok) { console.error("strategy fetch failed:", stratRes.status, stratOut); process.exit(1); }
 const published = stratOut.strategies?.items || [];
+
+// The site's Always-On switch (Cortex tab bar). Read every cycle so a flip in
+// the UI takes effect within ~15 min. Offline/unset → night cadence.
+let cortexMode = null;
+try {
+  const mr = await fetch(`${SITE}/api/lab?what=mode`, { headers: { "x-lab-token": TOKEN } });
+  cortexMode = (await mr.json().catch(() => ({})))?.mode || null;
+} catch { /* offline → night cadence */ }
 
 // Boot Python once if any published strategy is Python — buildSignalFn() below
 // then compiles them synchronously through this one Pyodide instance.
@@ -430,13 +443,16 @@ if (!push.ok || !out.ok) { console.error("push failed:", push.status, out); proc
 console.log(`paper run complete: ${summaries.length} strategies, combined ${combined ? combined.toFixed(0) : "-"} → pushed ${out.bytes} bytes`);
 
 // ── auto-schedule research (no separate n8n workflow) ───────────────────────
-// Every ~20h this paper run also fires ONE research cycle, spawned DETACHED so
-// it never slows the 15-min paper push. Its logs go to ~/.mmmxcix-research.log;
-// results land on the Coach page. Disable with LAB_AUTO_RESEARCH=0.
+// Night mode: every ~20h this paper run also fires ONE research cycle. With the
+// site's Always-On switch ON, the cadence drops to ~30 min — Cortex researches,
+// builds and improves around the clock. Spawned DETACHED so it never slows the
+// 15-min paper push. Logs: ~/.mmmxcix-research.log. Disable: LAB_AUTO_RESEARCH=0.
 if (process.env.LAB_AUTO_RESEARCH !== "0") {
   try {
+    const alwaysOn = !!cortexMode?.alwaysOn;
+    const everyMs = alwaysOn ? ALWAYS_ON_EVERY_MS : RESEARCH_EVERY_MS;
     const last = local.lastResearchAt || 0;
-    if (Date.now() - last >= RESEARCH_EVERY_MS) {
+    if (Date.now() - last >= everyMs) {
       local.lastResearchAt = Date.now();
       saveLocal(local); // mark BEFORE spawn so a crashing research can't hammer every 15 min
       const researchPath = fileURLToPath(new URL("./research-agent.mjs", import.meta.url));
@@ -447,7 +463,7 @@ if (process.env.LAB_AUTO_RESEARCH !== "0") {
         env: process.env, // carries LAB_TOKEN
       });
       child.unref();
-      console.log(`research due (>${RESEARCH_EVERY_MS / 3.6e6}h) → spawned detached (log: ~/.mmmxcix-research.log)`);
+      console.log(`research due (${alwaysOn ? "always-on, >" + everyMs / 60000 + "min" : ">" + everyMs / 3.6e6 + "h"}) → spawned detached (log: ~/.mmmxcix-research.log)`);
     }
   } catch (e) {
     console.error("research auto-schedule skipped:", e.message);

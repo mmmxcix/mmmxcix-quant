@@ -79,6 +79,7 @@ export async function onRequest({ request, env }) {
     const field = whatParam === "strategies" ? "strategies"
       : whatParam === "candidates" ? "candidates"
       : whatParam === "brain" ? "brain"
+      : whatParam === "mode" ? "mode"
       : "state";
     const raw = await env.SUBSCRIBERS.get(`lab:${field}`);
     if (!raw) return json({ ok: true, [field]: null });
@@ -102,6 +103,15 @@ export async function onRequest({ request, env }) {
   const bodyTokenOk = !!env.DEV_ACCESS_TOKEN && safeEqual(String(body?.token || ""), env.DEV_ACCESS_TOKEN);
   if (!bodyTokenOk && !(await isAdminRequest(env, request))) {
     return json({ error: "unauthorized" }, 401);
+  }
+
+  // Cortex Always-On switch (site UI → KV → PC agents). ON = the research loop
+  // runs around the clock; OFF = night cadence. The agent reads ?what=mode on
+  // every 15-min cycle, so a flip takes effect within one cycle.
+  if (body?.mode && typeof body.mode === "object") {
+    const mode = { alwaysOn: !!body.mode.alwaysOn, updatedAt: Date.now() };
+    await env.SUBSCRIBERS.put("lab:mode", JSON.stringify(mode));
+    return json({ ok: true, mode });
   }
 
   // Registry's "Publish to agent": the user's manual paper list. Preserve any
