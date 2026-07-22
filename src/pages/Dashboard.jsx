@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { LayoutDashboard, Star, Activity, TrendingUp, ShieldCheck } from "lucide-react";
+import { LayoutDashboard, Star, Activity, TrendingUp, ShieldCheck, AlertTriangle } from "lucide-react";
 import { fetchCandles, WATCHLIST } from "@/lib/data";
 import WorldClock from "@/components/WorldClock";
 import WatchlistPage from "@/pages/Watchlist";
@@ -16,35 +16,43 @@ function useWatchlistQuotes() {
   const [quotes, setQuotes] = useState({});
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    let alive = true;
-    const load = async () => {
-      if (document.hidden) return;
-      const results = await Promise.allSettled(
-        WATCHLIST.map(async (w) => {
-          const candles = await fetchCandles({ market: w.market, symbol: w.symbol, interval: "1d", range: "3mo" });
-          const last = candles[candles.length - 1];
-          const prev = candles[candles.length - 2];
-          return {
-            key: `${w.market}:${w.symbol}`,
-            price: last.close,
-            changePct: ((last.close - prev.close) / prev.close) * 100,
-            spark: candles.slice(-30).map((c) => c.close),
-          };
-        })
-      );
-      if (!alive) return;
-      const map = {};
+  // load() fetches every symbol and MERGES successes into the existing quotes
+  // (a symbol that fails this cycle keeps its last good value instead of blanking
+  // out). It never flips `loading` on, so the 30s poll doesn't flash skeletons;
+  // only the initial state and an explicit reload() show the loading state.
+  const load = useCallback(async () => {
+    const results = await Promise.allSettled(
+      WATCHLIST.map(async (w) => {
+        const candles = await fetchCandles({ market: w.market, symbol: w.symbol, interval: "1d", range: "3mo" });
+        const last = candles[candles.length - 1];
+        const prev = candles[candles.length - 2];
+        return {
+          key: `${w.market}:${w.symbol}`,
+          price: last.close,
+          changePct: ((last.close - prev.close) / prev.close) * 100,
+          spark: candles.slice(-30).map((c) => c.close),
+        };
+      })
+    );
+    setQuotes((prev) => {
+      const map = { ...prev };
       for (const r of results) if (r.status === "fulfilled") map[r.value.key] = r.value;
-      setQuotes(map);
-      setLoading(false);
-    };
-    load();
-    const id = setInterval(load, 30000);
-    return () => { alive = false; clearInterval(id); };
+      return map;
+    });
+    setLoading(false);
   }, []);
 
-  return { quotes, loading };
+  const reload = useCallback(() => { setLoading(true); load(); }, [load]);
+
+  useEffect(() => {
+    let alive = true;
+    const tick = () => { if (!document.hidden && alive) load(); };
+    load();
+    const id = setInterval(tick, 30000);
+    return () => { alive = false; clearInterval(id); };
+  }, [load]);
+
+  return { quotes, loading, reload };
 }
 
 // Cortex paper-portfolio + RiskGate summary (private — needs the dev token).
@@ -137,13 +145,20 @@ function KpiCard({ label, value, sub, icon: Icon, tone }) {
 }
 
 function WatchlistCard() {
-  const { quotes, loading } = useWatchlistQuotes();
+  const { quotes, loading, reload } = useWatchlistQuotes();
   const navigate = useNavigate();
+  const failed = loading ? 0 : WATCHLIST.filter((w) => !quotes[`${w.market}:${w.symbol}`]).length;
   return (
     <div className="rounded-xl border border-line lg-glass overflow-hidden">
       <div className="flex items-center justify-between px-4 py-3 border-b border-line">
         <span className="text-sm font-semibold">Watchlist</span>
-        <span className="text-xs text-dim">live</span>
+        {failed > 0 ? (
+          <button onClick={reload} className="flex items-center gap-1 text-[11px] text-down hover:underline" title="Some quotes failed to load">
+            <AlertTriangle className="w-3 h-3" /> {failed} failed · retry
+          </button>
+        ) : (
+          <span className="text-xs text-dim">live</span>
+        )}
       </div>
       <table className="w-full text-sm">
         <thead>
@@ -170,20 +185,24 @@ function WatchlistCard() {
                 </td>
                 <td className="px-4 py-3 text-right font-mono tabular-nums">
                   {loading && !q ? <Skeleton className="h-4 w-16 ml-auto" />
-                    : <FlashCell value={q?.price} className="inline-block rounded px-1 -mx-1">{fmtPrice(q?.price)}</FlashCell>}
+                    : q ? <FlashCell value={q.price} className="inline-block rounded px-1 -mx-1">{fmtPrice(q.price)}</FlashCell>
+                    : <span className="text-dim/40" title="Failed to load">—</span>}
                 </td>
                 <td className="px-4 py-3 text-right">
-                  {loading && !q ? <Skeleton className="h-5 w-14 ml-auto rounded-full" /> : (
-                    <span className={cn("inline-flex items-center rounded-full px-2 py-0.5 text-xs font-mono font-semibold tabular-nums",
-                      q?.changePct > 0 ? "bg-up/10 text-up" : q?.changePct < 0 ? "bg-down/10 text-down" : "bg-line/50 text-dim")}>
-                      {fmtPct(q?.changePct)}
-                    </span>
-                  )}
+                  {loading && !q ? <Skeleton className="h-5 w-14 ml-auto rounded-full" />
+                    : q ? (
+                      <span className={cn("inline-flex items-center rounded-full px-2 py-0.5 text-xs font-mono font-semibold tabular-nums",
+                        q.changePct > 0 ? "bg-up/10 text-up" : q.changePct < 0 ? "bg-down/10 text-down" : "bg-line/50 text-dim")}>
+                        {fmtPct(q.changePct)}
+                      </span>
+                    )
+                    : <span className="text-dim/40" title="Failed to load">—</span>}
                 </td>
                 <td className="px-4 py-3 hidden sm:table-cell">
                   <div className="flex justify-end">
                     {loading && !q ? <Skeleton className="h-4 w-16" />
-                      : <Sparkline data={q?.spark} up={(q?.changePct ?? 0) >= 0} delay={i * 90} />}
+                      : q ? <Sparkline data={q.spark} up={(q.changePct ?? 0) >= 0} delay={i * 90} />
+                      : <span className="text-dim/40 text-xs">—</span>}
                   </div>
                 </td>
               </tr>
