@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { LayoutDashboard, Star, Activity, TrendingUp, ShieldCheck, AlertTriangle } from "lucide-react";
 import { fetchCandles, WATCHLIST } from "@/lib/data";
