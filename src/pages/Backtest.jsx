@@ -461,7 +461,7 @@ export default function Backtest() {
           ) : (
             <>
               {result.warnings?.length > 0 && (
-                <div className="rounded-xl border border-yellow-500/40 bg-yellow-500/10 p-3 text-xs text-yellow-400">
+                <div className="rounded-xl border border-warn/40 bg-warn/10 p-3 text-xs text-warn">
                   Strategy warning: {result.warnings[0]}
                 </div>
               )}

@@ -61,7 +61,7 @@ function StatusBadge({ phase, breakLabel }) {
   }
   if (phase === "break") {
     return (
-      <span className="rounded-full bg-yellow-500/15 border border-yellow-500/40 px-2 py-0.5 text-[10px] font-semibold text-yellow-400 uppercase tracking-wide">
+      <span className="rounded-full bg-warn/15 border border-warn/40 px-2 py-0.5 text-[10px] font-semibold text-warn uppercase tracking-wide">
         {breakLabel || "Break"}
       </span>
     );
@@ -148,7 +148,7 @@ export default function WorldClock() {
                   ) : phase === "open" ? (
                     <span className="text-dim">closes in <span className="text-text font-mono">{fmtCountdown(status.minsToClose)}</span></span>
                   ) : phase === "break" ? (
-                    <span className="text-dim">reopens in <span className="text-yellow-400 font-mono">{fmtCountdown(status.minsToOpen)}</span></span>
+                    <span className="text-dim">reopens in <span className="text-warn font-mono">{fmtCountdown(status.minsToOpen)}</span></span>
                   ) : (
                     <span className="text-dim">
                       opens {status.nextOpenDay ? `${status.nextOpenDay} ` : ""}in{" "}

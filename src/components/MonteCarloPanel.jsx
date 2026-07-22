@@ -162,8 +162,8 @@ export default function MonteCarloPanel({
 
       {/* Loss-limit verdict */}
       <div className={cn("flex items-start gap-2 rounded-lg border p-3",
-        breach > 10 ? "border-down/40 bg-down/10" : breach > 2 ? "border-yellow-500/40 bg-yellow-500/10" : "border-up/40 bg-up/10")}>
-        <ShieldAlert className={cn("w-4 h-4 shrink-0 mt-0.5", breach > 10 ? "text-down" : breach > 2 ? "text-yellow-400" : "text-up")} />
+        breach > 10 ? "border-down/40 bg-down/10" : breach > 2 ? "border-warn/40 bg-warn/10" : "border-up/40 bg-up/10")}>
+        <ShieldAlert className={cn("w-4 h-4 shrink-0 mt-0.5", breach > 10 ? "text-down" : breach > 2 ? "text-warn" : "text-up")} />
         <p className="text-xs leading-relaxed text-text/90">
           <span className="font-mono font-semibold">{fmtNum(breach, 1)}%</span> of simulated paths hit a{" "}
           <span className="font-mono">−{fmtNum(limitPct, 1)}%</span> drawdown at some point.

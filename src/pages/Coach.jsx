@@ -528,7 +528,7 @@ export default function Coach() {
 
               {phase.gate && (
                 <div className="border-t border-line bg-bg/40 px-4 py-3">
-                  <p className="flex items-center gap-1.5 text-[11px] text-yellow-400/90 uppercase tracking-wide mb-1.5">
+                  <p className="flex items-center gap-1.5 text-[11px] text-warn/90 uppercase tracking-wide mb-1.5">
                     <AlertTriangle className="w-3.5 h-3.5" /> Gate — advance only when ALL of this holds
                   </p>
                   <ul className="list-disc pl-5 space-y-1 text-xs text-dim">

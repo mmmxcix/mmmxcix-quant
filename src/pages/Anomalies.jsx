@@ -133,8 +133,8 @@ function Explainer({ research, reality }) {
         <p className="text-[10px] text-dim uppercase tracking-widest mb-1.5">The research</p>
         <p className="text-[13px] text-dim leading-relaxed">{research}</p>
       </div>
-      <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
-        <p className="text-[10px] text-amber-500/90 uppercase tracking-widest mb-1.5">Reality check</p>
+      <div className="rounded-xl border border-warn/30 bg-warn/5 p-4">
+        <p className="text-[10px] text-warn/90 uppercase tracking-widest mb-1.5">Reality check</p>
         <p className="text-[13px] text-dim leading-relaxed">{reality}</p>
       </div>
     </div>

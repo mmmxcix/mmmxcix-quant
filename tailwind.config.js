@@ -15,6 +15,7 @@ export default {
         accent: "rgb(var(--c-accent) / <alpha-value>)",
         up: "rgb(var(--c-up) / <alpha-value>)",
         down: "rgb(var(--c-down) / <alpha-value>)",
+        warn: "rgb(var(--c-warn) / <alpha-value>)",
       },
       fontFamily: {
         sans: ["Inter", "ui-sans-serif", "system-ui", "-apple-system", "Segoe UI", "sans-serif"],

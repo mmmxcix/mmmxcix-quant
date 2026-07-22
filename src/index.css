@@ -16,6 +16,7 @@
   --c-accent: 24 24 26;     /* #18181a graphite — the accent IS the ink */
   --c-up: 11 110 71;        /* #0b6e47 — deeper green; the old #158f60 washed out on white and in /10 tints */
   --c-down: 190 40 48;      /* #be2830 — deeper red for the same reason */
+  --c-warn: 138 94 7;       /* #8a5e07 — dark ochre; raw yellow-400 was ~1.5:1 (invisible) on white. ~5.6:1 here */
 
   --glass-bg: rgba(255, 255, 255, 0.74);
   --glass-bg2: rgba(255, 255, 255, 0.58);
@@ -39,6 +40,7 @@
   --c-accent: 250 250 250;  /* near-white — the accent IS the light */
   --c-up: 74 194 140;       /* #4ac28c — a touch brighter for tint legibility */
   --c-down: 232 82 88;      /* #e85258 */
+  --c-warn: 224 175 82;     /* #e0af52 — warm amber, legible on charcoal (~8:1) */
 
   --glass-bg: rgba(24, 24, 26, 0.60);
   --glass-bg2: rgba(41, 41, 43, 0.45);
@@ -92,7 +94,10 @@
     @apply border-accent/50 text-accent bg-accent/10;
   }
   .chip-idle {
-    @apply border-line text-dim hover:text-text;
+    /* A faint ink fill so idle toolbar chips read as buttons — the hairline
+       border alone is near-invisible on the light near-white ground. Works in
+       both themes (ink is dark on light, near-white on dark). */
+    @apply border-line text-dim bg-text/[0.05] hover:text-text hover:bg-text/[0.09];
   }
 }
 

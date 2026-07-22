@@ -157,7 +157,7 @@ export default function ValidationPanel({ mode, strategy, code, compile, candles
                 <Verdict v={dsr.dsr >= 0.95 ? "pass" : "fail"} />
               </div>
               <div className="flex justify-between"><span className="text-dim">P(edge is real)</span>
-                <span className={dsr.dsr >= 0.95 ? "text-up" : dsr.dsr >= 0.9 ? "text-yellow-400" : "text-down"}>
+                <span className={dsr.dsr >= 0.95 ? "text-up" : dsr.dsr >= 0.9 ? "text-warn" : "text-down"}>
                   {(dsr.dsr * 100).toFixed(1)}%
                 </span></div>
               <div className="flex justify-between"><span className="text-dim">Skew / excess kurt</span>

@@ -131,7 +131,7 @@ export default function BiasPanel({ market, symbol, interval }) {
               <p className="text-[11px] text-dim mt-2 leading-relaxed">The rules disagree — by this playbook that means: no trade.</p>
             )}
             {sel.caution && (
-              <p className="flex items-start gap-1.5 text-[11px] text-yellow-400 mt-2 text-left leading-relaxed">
+              <p className="flex items-start gap-1.5 text-[11px] text-warn mt-2 text-left leading-relaxed">
                 <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" /> {sel.caution}
               </p>
             )}
@@ -233,16 +233,16 @@ export default function BiasPanel({ market, symbol, interval }) {
         {confluence && (
           <span className={cn("text-[11px] leading-relaxed",
             confluence.tone === "up" ? "text-up" : confluence.tone === "down" ? "text-down"
-              : confluence.tone === "mixed" ? "text-yellow-400" : "text-dim")}>
+              : confluence.tone === "mixed" ? "text-warn" : "text-dim")}>
             {confluence.text}
           </span>
         )}
       </div>
 
       {/* Disclaimer — always visible, part of the feature */}
-      <div className="flex items-start gap-2 rounded-lg border border-yellow-500/40 bg-yellow-500/10 p-3 mt-3">
-        <ShieldAlert className="w-4 h-4 text-yellow-400 shrink-0 mt-0.5" />
-        <p className="text-[11px] text-yellow-200/90 leading-relaxed">
+      <div className="flex items-start gap-2 rounded-lg border border-warn/40 bg-warn/10 p-3 mt-3">
+        <ShieldAlert className="w-4 h-4 text-warn shrink-0 mt-0.5" />
+        <p className="text-[11px] text-text/80 leading-relaxed">
           <span className="font-semibold">This is not investment advice and not a recommendation to buy or sell.</span>{" "}
           It is a fixed, mechanical checklist applied to past price data for educational purposes. The rules know nothing about
           news, fundamentals, or your situation; timeframes can legitimately disagree; and past patterns do not predict future
