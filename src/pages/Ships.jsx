@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Ship, KeyRound, Radio, Anchor, ExternalLink } from "lucide-react";
+import { Radio, Anchor } from "lucide-react";
 import { cn, fmtNum } from "@/lib/utils";
-import {
-  getAisKey, setAisKey, connectAis, decodeLand, mercX, mercY, CORRIDORS,
-} from "@/lib/ais";
+import { connectAis, decodeLand, mercX, mercY, CORRIDORS } from "@/lib/ais";
 
 // Ship Tracking — live AIS vessel positions on a self-contained canvas map
 // (vendored Natural Earth coastlines, no external tiles → CSP stays tight,
-// dark theme stays dark). Data: the user's own free aisstream.io key, browser
-// → aisstream directly.
+// dark theme stays dark). Data flows through our websocket relay
+// (/api/ais-stream): aisstream.io blocks browser connections, so the Pages
+// Function bridges the stream and injects the key server-side. No key entry
+// anywhere — works on every device with the dev session.
 
 const STALE_MS = 10 * 60_000; // drop vessels not heard from in 10 min
 const MAX_VESSELS = 6000;
@@ -18,43 +18,8 @@ const cssRgb = (name) => {
   return v ? `rgb(${v.replaceAll(" ", ",")})` : "#888";
 };
 
-function KeyCard({ onSet }) {
-  const [val, setVal] = useState("");
-  return (
-    <div className="rounded-xl border border-line lg-glass p-8 max-w-xl mx-auto text-center">
-      <Ship className="w-8 h-8 text-accent mx-auto mb-3" />
-      <p className="font-semibold mb-1">Live ship tracking needs a free AIS key</p>
-      <p className="text-sm text-dim leading-relaxed mb-4">
-        Get a free API key at{" "}
-        <a href="https://aisstream.io" target="_blank" rel="noreferrer" className="text-accent hover:underline inline-flex items-center gap-0.5">
-          aisstream.io <ExternalLink className="w-3 h-3" />
-        </a>{" "}
-        (sign in with GitHub, ~2 minutes). The key stays in THIS browser only — your
-        browser talks to aisstream directly, nothing goes through our server.
-      </p>
-      <div className="flex items-center gap-2 max-w-sm mx-auto">
-        <div className="relative flex-1">
-          <KeyRound className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-dim" />
-          <input
-            type="password"
-            value={val}
-            onChange={(e) => setVal(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && val.trim() && onSet(val.trim())}
-            placeholder="aisstream API key"
-            className="input-base w-full !pl-8 font-mono text-sm"
-          />
-        </div>
-        <button onClick={() => val.trim() && onSet(val.trim())} disabled={!val.trim()}
-          className="btn-accent disabled:opacity-40">
-          Connect
-        </button>
-      </div>
-    </div>
-  );
-}
-
 export default function Ships() {
-  const [key, setKey] = useState(getAisKey);
+  const key = true; // relay handles auth + key — nothing to enter client-side
   const [corridor, setCorridor] = useState("world");
   const [status, setStatus] = useState("connecting");
   const [stats, setStats] = useState({ vessels: 0, moving: 0, anchored: 0, rate: 0 });
@@ -96,7 +61,7 @@ export default function Ships() {
     const bbox = CORRIDORS.find((c) => c.id === corridor)?.bbox || CORRIDORS[0].bbox;
     fitBbox(bbox);
     const conn = connectAis({
-      key, bbox,
+      bbox,
       onStatus: setStatus,
       onPosition: (p) => {
         const store = vesselsRef.current;
@@ -162,30 +127,28 @@ export default function Ships() {
       const X = (u) => (u - cx) * scale + w / 2;
       const Y = (v) => (v - cy) * scale + h / 2;
 
-      // Land
+      // Land. Rings that wrap the antimeridian (Russia, Antarctica, Fiji)
+      // would otherwise draw as long horizontal streaks across the map —
+      // break the path whenever a segment jumps more than half the world.
+      const tracePoly = (poly) => {
+        ctx.beginPath();
+        for (const ring of poly) {
+          for (let i = 0; i < ring.length; i++) {
+            const [u, v] = ring[i];
+            if (i === 0 || Math.abs(u - ring[i - 1][0]) > 0.5) ctx.moveTo(X(u), Y(v));
+            else ctx.lineTo(X(u), Y(v));
+          }
+        }
+      };
       const landFill = cssRgb("--c-text");
       ctx.globalAlpha = 0.08;
       ctx.fillStyle = landFill;
       const land = landRef.current || [];
-      for (const poly of land) {
-        ctx.beginPath();
-        for (const ring of poly) {
-          ring.forEach(([u, v], i) => (i ? ctx.lineTo(X(u), Y(v)) : ctx.moveTo(X(u), Y(v))));
-          ctx.closePath();
-        }
-        ctx.fill("evenodd");
-      }
+      for (const poly of land) { tracePoly(poly); ctx.fill("evenodd"); }
       ctx.globalAlpha = 0.25;
       ctx.strokeStyle = landFill;
       ctx.lineWidth = 0.6;
-      for (const poly of land) {
-        ctx.beginPath();
-        for (const ring of poly) {
-          ring.forEach(([u, v], i) => (i ? ctx.lineTo(X(u), Y(v)) : ctx.moveTo(X(u), Y(v))));
-          ctx.closePath();
-        }
-        ctx.stroke();
-      }
+      for (const poly of land) { tracePoly(poly); ctx.stroke(); }
       ctx.globalAlpha = 1;
 
       // Vessels: moving = up-green with a heading tick, near-stationary = dim.
@@ -282,8 +245,6 @@ export default function Ships() {
     return total ? Math.round((stats.anchored / total) * 100) : null;
   }, [stats]);
 
-  if (!key) return <KeyCard onSet={(k) => { setAisKey(k); setKey(k); }} />;
-
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
@@ -293,9 +254,10 @@ export default function Ships() {
             {c.label}
           </button>
         ))}
-        <span className={cn("ml-auto inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
-          status === "live" ? "border-up/40 bg-up/10 text-up" : "border-line bg-bg text-dim")}>
-          <Radio className="w-3 h-3" /> {status}
+        <span title={status}
+          className={cn("ml-auto inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-semibold tracking-wide max-w-[340px] truncate",
+          status === "live" ? "border-up/40 bg-up/10 text-up uppercase" : "border-line bg-bg text-dim")}>
+          <Radio className="w-3 h-3 shrink-0" /> {status}
         </span>
       </div>
 
@@ -324,10 +286,12 @@ export default function Ships() {
         <span className="text-dim">{stats.rate.toFixed(0)} msg/s</span>
       </div>
       <p className="text-xs text-dim leading-relaxed">
-        Live AIS position reports (your aisstream.io key, browser → aisstream directly). Vessels fade
-        out after 10 minutes without a report. "Congestion proxy" = share of ships at ≤0.5 kn in the
-        current corridor — a rough anchorage/queue indicator, not an official port metric. Coverage
-        depends on volunteer AIS receivers: open ocean is sparse, coasts and choke points are dense.
+        Live AIS position reports via the site's stream relay (aisstream.io; key server-side, dev
+        session required). Vessels fade out after 10 minutes without a report. "Congestion proxy" =
+        share of ships at ≤0.5 kn in the current corridor — a rough anchorage/queue indicator, not an
+        official port metric. Coverage depends on volunteer AIS receivers: open ocean is sparse,
+        coasts and choke points are dense. aisstream is a free community service — brief outages
+        happen; the page reconnects on its own.
       </p>
     </div>
   );

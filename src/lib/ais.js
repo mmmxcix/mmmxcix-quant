@@ -1,20 +1,11 @@
-// ais.js — live vessel positions from aisstream.io (free personal API key),
+// ais.js — live vessel positions via OUR websocket relay (/api/ais-stream),
 // plus the TopoJSON decoder for the vendored world map (public/world-110m.json,
 // Natural Earth / world-atlas, public domain).
 //
-// The browser connects DIRECTLY to wss://stream.aisstream.io — the key is the
-// user's own free key, stored only in this browser's localStorage (same model
-// as the IBKR gateway: personal data consumption, nothing ever touches our
-// server or repo).
-
-const KEY = "quant_ais_key";
-
-export function getAisKey() {
-  try { return localStorage.getItem(KEY) || ""; } catch { return ""; }
-}
-export function setAisKey(k) {
-  try { localStorage.setItem(KEY, (k || "").trim()); } catch { /* quota */ }
-}
+// aisstream.io rejects browser connections outright (key-protection policy),
+// so the browser talks to our own origin and the Pages Function bridges to
+// aisstream, injecting the AISSTREAM_KEY secret server-side. No key ever
+// reaches the browser; access is gated on the admin (dev) session.
 
 /** Decode a TopoJSON topology's `land` object into polygons of [lon,lat] rings. */
 export function decodeLand(topo) {
@@ -53,39 +44,48 @@ export const mercY = (lat) => {
 };
 
 /**
- * Open the aisstream feed. Returns { close, subscribe } — subscribe(bbox)
- * re-scopes the stream to [[latMin,lonMin],[latMax,lonMax]] on the same socket.
- * onStatus receives "connecting" | "live" | "closed" | "error".
+ * Open the AIS feed through our relay. Returns { close, subscribe } —
+ * subscribe(bbox) re-scopes the stream to [[latMin,lonMin],[latMax,lonMax]]
+ * on the same socket (no key involved client-side; the relay injects it).
+ * onStatus receives "connecting" | "live" | "retrying…" | an error string.
  */
-export function connectAis({ key, bbox, onPosition, onStatus }) {
-  let ws = null, closed = false, lastBbox = bbox;
+export function connectAis({ bbox, onPosition, onStatus }) {
+  let ws = null, closed = false, lastBbox = bbox, attempts = 0, gotData = false;
 
   const open = () => {
     onStatus?.("connecting");
-    ws = new WebSocket("wss://stream.aisstream.io/v0/stream");
+    const proto = location.protocol === "https:" ? "wss" : "ws";
+    ws = new WebSocket(`${proto}://${location.host}/api/ais-stream`);
     ws.onopen = () => {
-      ws.send(JSON.stringify({ APIKey: key, BoundingBoxes: [lastBbox], FilterMessageTypes: ["PositionReport"] }));
-      onStatus?.("live");
+      ws.send(JSON.stringify({ BoundingBoxes: [lastBbox], FilterMessageTypes: ["PositionReport"] }));
     };
     ws.onmessage = (ev) => {
       try {
         const m = JSON.parse(ev.data);
+        // Relay/aisstream error frames become readable status instead of a
+        // silent CLOSED badge.
+        if (m.error) { onStatus?.(String(m.error)); return; }
         if (m.MessageType !== "PositionReport") return;
-        const md = m.MetaData || {};
+        const md = m.MetaData || m.Metadata || {};
         const pr = m.Message?.PositionReport || {};
         const lat = md.latitude ?? pr.Latitude, lon = md.longitude ?? pr.Longitude;
         if (lat == null || lon == null) return;
+        if (!gotData) { gotData = true; onStatus?.("live"); }
+        attempts = 0; // healthy stream resets the backoff
         onPosition({
           mmsi: md.MMSI, name: String(md.ShipName || "").trim() || `MMSI ${md.MMSI}`,
           lat, lon, sog: pr.Sog ?? 0, cog: pr.Cog ?? pr.TrueHeading ?? 0, t: Date.now(),
         });
       } catch { /* malformed frame — skip */ }
     };
-    ws.onerror = () => onStatus?.("error");
     ws.onclose = () => {
-      onStatus?.("closed");
-      // Auto-reconnect with a small backoff unless we closed on purpose.
-      if (!closed) setTimeout(() => { if (!closed) open(); }, 3000);
+      if (closed) return;
+      gotData = false;
+      // Exponential backoff 3s → 60s: aisstream is a free community service
+      // and overloads happen — hammering it every 3s makes that worse.
+      const delay = Math.min(60_000, 3000 * 2 ** attempts++);
+      onStatus?.(`retrying in ${Math.round(delay / 1000)}s…`);
+      setTimeout(() => { if (!closed) open(); }, delay);
     };
   };
   open();
@@ -95,7 +95,7 @@ export function connectAis({ key, bbox, onPosition, onStatus }) {
     subscribe: (b) => {
       lastBbox = b;
       if (ws?.readyState === 1) {
-        ws.send(JSON.stringify({ APIKey: key, BoundingBoxes: [b], FilterMessageTypes: ["PositionReport"] }));
+        ws.send(JSON.stringify({ BoundingBoxes: [b], FilterMessageTypes: ["PositionReport"] }));
       }
     },
   };
