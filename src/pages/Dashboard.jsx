@@ -7,6 +7,7 @@ import WatchlistPage from "@/pages/Watchlist";
 import MonitorPage from "@/pages/Monitor";
 import { cn, fmtPrice, fmtPct } from "@/lib/utils";
 import CountUp from "@/components/CountUp";
+import Skeleton from "@/components/Skeleton";
 
 const fmtUsd = (v) => (v == null ? "—" : "$" + Math.round(v).toLocaleString("en-US"));
 
@@ -165,11 +166,11 @@ function WatchlistCard() {
                   <span className="text-dim ml-2 hidden md:inline text-xs">{w.name}</span>
                 </td>
                 <td className="px-4 py-3 text-right font-mono tabular-nums">
-                  {loading && !q ? <span className="text-dim">…</span>
+                  {loading && !q ? <Skeleton className="h-4 w-16 ml-auto" />
                     : <FlashCell value={q?.price} className="inline-block rounded px-1 -mx-1">{fmtPrice(q?.price)}</FlashCell>}
                 </td>
                 <td className="px-4 py-3 text-right">
-                  {loading && !q ? <span className="text-dim">…</span> : (
+                  {loading && !q ? <Skeleton className="h-5 w-14 ml-auto rounded-full" /> : (
                     <span className={cn("inline-flex items-center rounded-full px-2 py-0.5 text-xs font-mono font-semibold tabular-nums",
                       q?.changePct > 0 ? "bg-up/10 text-up" : q?.changePct < 0 ? "bg-down/10 text-down" : "bg-line/50 text-dim")}>
                       {fmtPct(q?.changePct)}
@@ -177,7 +178,10 @@ function WatchlistCard() {
                   )}
                 </td>
                 <td className="px-4 py-3 hidden sm:table-cell">
-                  <div className="flex justify-end"><Sparkline data={q?.spark} up={(q?.changePct ?? 0) >= 0} delay={i * 90} /></div>
+                  <div className="flex justify-end">
+                    {loading && !q ? <Skeleton className="h-4 w-16" />
+                      : <Sparkline data={q?.spark} up={(q?.changePct ?? 0) >= 0} delay={i * 90} />}
+                  </div>
                 </td>
               </tr>
             );

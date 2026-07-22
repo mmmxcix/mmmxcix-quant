@@ -9,6 +9,7 @@ import { COACH_PLAN, getCoachDone, setCoachDone, subscribeCoach, courseLessonIds
 import { getCompleted, subscribeProgress } from "@/lib/academyProgress";
 import { strategyToCode } from "@/lib/strategyCode";
 import CopyButton from "@/components/CopyButton";
+import Skeleton from "@/components/Skeleton";
 import { cn } from "@/lib/utils";
 
 // Private coach page — the personal roadmap to funded futures trading.
@@ -100,7 +101,12 @@ function LabStatus() {
         </button>
       </div>
       {data === undefined ? (
-        <p className="text-xs text-dim">Checking…</p>
+        <div className="space-y-3">
+          <div className="flex flex-wrap gap-x-4 gap-y-2">
+            <Skeleton className="h-3 w-28" /><Skeleton className="h-3 w-20" /><Skeleton className="h-3 w-24" />
+          </div>
+          <Skeleton className="h-20 w-full rounded-lg" />
+        </div>
       ) : data === null ? (
         <p className="text-xs text-dim leading-relaxed">
           No state received yet. Set up the local agent (n8n + Node) using the tutorial in the repo

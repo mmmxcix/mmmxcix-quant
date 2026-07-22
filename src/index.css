@@ -199,6 +199,22 @@ summary:focus-visible {
 .flash-up   { animation: flashUp 0.6s ease-out; }
 .flash-down { animation: flashDown 0.6s ease-out; }
 
+/* Loading skeleton — a moving sheen over a faint ink block, so a content area
+   reads as "loading" rather than showing a spinner or a bare "…". Ink-tinted so
+   it works in both themes. Under reduced-motion the sheen stops (see below). */
+@keyframes shimmer {
+  from { background-position: 200% 0; }
+  to   { background-position: -200% 0; }
+}
+.skeleton {
+  background-color: rgb(var(--c-text) / 0.06);
+  background-image: linear-gradient(90deg,
+    transparent 20%, rgb(var(--c-text) / 0.08) 50%, transparent 80%);
+  background-size: 200% 100%;
+  border-radius: 6px;
+  animation: shimmer 1.4s ease-in-out infinite;
+}
+
 /* Live status dot — a slow outward ripple, so "armed"/"online" reads as live. */
 @keyframes pulseDot {
   0%   { box-shadow: 0 0 0 0 rgb(var(--c-up) / 0.5); }
@@ -227,6 +243,7 @@ summary:focus-visible {
   .wipe-in,
   .flash-up,
   .flash-down,
+  .skeleton,
   .pulse-dot { animation: none !important; }
   .hover-lift { transition: none; }
   .hover-lift:hover { transform: none; }
