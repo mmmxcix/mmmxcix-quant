@@ -112,36 +112,58 @@ const DEV_ITEMS = {
 
 function NavItems({ onNavigate }) {
   const isDev = useDevNav();
+  const { pathname } = useLocation();
+  const containerRef = useRef(null);
+  const [rail, setRail] = useState(null); // { top, height } of the active item
   const groups = isDev
     ? NAV_GROUPS.map((g) => (DEV_ITEMS[g.label] ? { ...g, items: [...g.items, ...DEV_ITEMS[g.label]] } : g))
     : NAV_GROUPS;
-  return groups.map((group, gi) => (
-    <div key={group.label}>
-      <p className={cn("px-3 text-[9px] font-semibold uppercase tracking-[0.2em] text-dim/60", gi === 0 ? "mb-1" : "mt-4 mb-1")}>
-        {group.label}
-      </p>
-      {group.items.map(({ to, label, icon: Icon, end }) => (
-        <NavLink
-          key={to}
-          to={to}
-          end={end}
-          onClick={onNavigate}
-          className={({ isActive }) =>
-            cn(
-              "relative flex items-center gap-2.5 rounded-lg px-3 py-[7px] text-sm transition-colors",
-              // active gets a left accent bar, like the mockup
-              isActive
-                ? "bg-accent/10 text-accent font-medium before:content-[''] before:absolute before:-left-2 before:top-1.5 before:bottom-1.5 before:w-[3px] before:rounded-full before:bg-accent"
-                : "text-dim hover:text-text hover:bg-surface"
-            )
-          }
-        >
-          <Icon className="w-4 h-4 shrink-0" />
-          {label}
-        </NavLink>
+
+  // The active accent bar is ONE element that slides to the active item on
+  // navigation (shared-layout feel) instead of popping per item.
+  useEffect(() => {
+    const c = containerRef.current;
+    if (!c) return;
+    const el = c.querySelector('[aria-current="page"]');
+    if (el) setRail({ top: el.offsetTop + 6, height: el.offsetHeight - 12 });
+    else setRail(null);
+  }, [pathname, isDev]);
+
+  return (
+    <div ref={containerRef} className="relative">
+      {rail && (
+        <span
+          aria-hidden="true"
+          className="nav-rail absolute -left-2 w-[3px] rounded-full bg-accent"
+          style={{ top: rail.top, height: rail.height }}
+        />
+      )}
+      {groups.map((group, gi) => (
+        <div key={group.label}>
+          <p className={cn("px-3 text-[9px] font-semibold uppercase tracking-[0.2em] text-dim/60", gi === 0 ? "mb-1" : "mt-4 mb-1")}>
+            {group.label}
+          </p>
+          {group.items.map(({ to, label, icon: Icon, end }) => (
+            <NavLink
+              key={to}
+              to={to}
+              end={end}
+              onClick={onNavigate}
+              className={({ isActive }) =>
+                cn(
+                  "relative flex items-center gap-2.5 rounded-lg px-3 py-[7px] text-sm transition-colors",
+                  isActive ? "bg-accent/10 text-accent font-medium" : "text-dim hover:text-text hover:bg-surface"
+                )
+              }
+            >
+              <Icon className="w-4 h-4 shrink-0" />
+              {label}
+            </NavLink>
+          ))}
+        </div>
       ))}
     </div>
-  ));
+  );
 }
 
 // Signed-in state + entry/exit, at the bottom of the sidebar / drawer. The dev

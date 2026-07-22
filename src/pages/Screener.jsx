@@ -142,8 +142,8 @@ export default function Screener() {
                 <tr><td colSpan={6} className="px-4 py-8 text-center text-down">{error}</td></tr>
               ) : loading ? (
                 Array.from({ length: 10 }).map((_, i) => (
-                  <tr key={i} className="border-b border-line/40 animate-pulse">
-                    <td className="px-3 py-3"><div className="h-3 w-24 bg-line rounded" /></td>
+                  <tr key={i} className="border-b border-line/40">
+                    <td className="px-3 py-3"><div className="h-3 w-24 skeleton rounded" /></td>
                     <td colSpan={5} className="px-3 py-3"><div className="h-3 w-full bg-line/50 rounded" /></td>
                   </tr>
                 ))

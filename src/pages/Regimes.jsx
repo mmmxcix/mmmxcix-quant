@@ -3,6 +3,7 @@ import { Waypoints, RefreshCw, TrendingUp, TrendingDown, Minus } from "lucide-re
 import { fetchCandles, MARKETS, INTERVALS } from "@/lib/data";
 import { detectRegimes } from "@/lib/hmmRegime";
 import { cn } from "@/lib/utils";
+import Skeleton from "@/components/Skeleton";
 
 // Regimes — Hidden Markov Model regime detection, visualised. The market's true
 // state (bull / bear / choppy) is hidden; the HMM infers it from returns and
@@ -88,7 +89,13 @@ export default function Regimes() {
         </label>
       </div>
 
-      {loading && <div className="rounded-xl border border-line lg-glass p-8 text-center text-dim">Fitting HMM…</div>}
+      {loading && (
+        <div className="rounded-xl border border-line lg-glass p-5 space-y-3">
+          <p className="text-xs text-dim">Fitting HMM…</p>
+          <Skeleton className="h-40 w-full rounded-lg" />
+          <div className="flex gap-3"><Skeleton className="h-3 w-24" /><Skeleton className="h-3 w-32" /><Skeleton className="h-3 w-20" /></div>
+        </div>
+      )}
       {error && <div className="rounded-xl border border-down/30 bg-down/5 p-5 text-sm text-down">Couldn’t build regimes: {error}</div>}
 
       {!loading && !error && regimes && (

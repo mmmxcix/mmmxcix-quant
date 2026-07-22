@@ -309,7 +309,9 @@ export default function Dashboard() {
           </button>
         ))}
       </nav>
-      {view === "watchlist" ? <WatchlistPage /> : view === "monitor" ? <MonitorPage /> : <Overview />}
+      <div key={view} className="tab-in">
+        {view === "watchlist" ? <WatchlistPage /> : view === "monitor" ? <MonitorPage /> : <Overview />}
+      </div>
     </div>
   );
 }

@@ -10,17 +10,20 @@ import { fetchCandles, MARKETS, INTERVALS, rangesFor, INTERVAL_SECONDS } from "@
 import { runBacktest, compileStrategy, DEFAULT_STRATEGY_CODE, ORB_STRATEGY_CODE, BIAS_STRATEGY_CODE, BIAS_TREND_CODE } from "@/lib/backtest";
 import { runPythonSignals, signalsToFn, PYTHON_TEMPLATE } from "@/lib/pyRunner";
 import { useSession } from "@/lib/authClient";
+import CountUp from "@/components/CountUp";
 import { BUILT_IN_STRATEGIES } from "@/lib/strategies";
 import { saveEntry } from "@/lib/registry";
 import { cn, fmtNum, fmtPct } from "@/lib/utils";
 
 const DEFAULT_SYMBOL = { crypto: "BTCUSDT", stock: "SPY" };
 
-function MetricCard({ label, value, tone }) {
+function MetricCard({ label, value, num, format, tone }) {
   return (
     <div className="rounded-xl border border-line lg-glass px-4 py-3 hover-lift">
       <p className="text-[10px] uppercase tracking-wide text-dim mb-1.5">{label}</p>
-      <p className={cn("font-mono text-lg font-bold tabular-nums leading-none", tone)}>{value}</p>
+      <p className={cn("font-mono text-lg font-bold tabular-nums leading-none", tone)}>
+        {num != null && Number.isFinite(num) ? <CountUp value={num} format={format} /> : value}
+      </p>
     </div>
   );
 }
@@ -438,17 +441,17 @@ export default function Backtest() {
               )}
 
               <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3 stagger">
-                <MetricCard label="Return" value={fmtPct(m.totalReturnPct)}
+                <MetricCard label="Return" num={m.totalReturnPct} format={fmtPct}
                   tone={m.totalReturnPct >= 0 ? "text-up" : "text-down"} />
-                <MetricCard label="Buy & Hold" value={fmtPct(m.buyHoldReturnPct)}
+                <MetricCard label="Buy & Hold" num={m.buyHoldReturnPct} format={fmtPct}
                   tone={m.buyHoldReturnPct >= 0 ? "text-up" : "text-down"} />
-                <MetricCard label="CAGR" value={fmtPct(m.cagrPct)}
+                <MetricCard label="CAGR" num={m.cagrPct} format={fmtPct}
                   tone={m.cagrPct >= 0 ? "text-up" : "text-down"} />
-                <MetricCard label="Sharpe" value={fmtNum(m.sharpe)} tone="text-text" />
-                <MetricCard label="Max drawdown" value={fmtPct(-Math.abs(m.maxDrawdownPct))} tone="text-down" />
-                <MetricCard label="B&H max drawdown" value={fmtPct(-Math.abs(m.buyHoldMaxDrawdownPct ?? 0))} tone="text-down" />
-                <MetricCard label="Win rate" value={fmtPct(m.winRatePct).replace("+", "")} tone="text-text" />
-                <MetricCard label="Profit factor" value={fmtNum(m.profitFactor)} tone="text-text" />
+                <MetricCard label="Sharpe" num={m.sharpe} format={fmtNum} tone="text-text" />
+                <MetricCard label="Max drawdown" num={-Math.abs(m.maxDrawdownPct)} format={fmtPct} tone="text-down" />
+                <MetricCard label="B&H max drawdown" num={-Math.abs(m.buyHoldMaxDrawdownPct ?? 0)} format={fmtPct} tone="text-down" />
+                <MetricCard label="Win rate" num={m.winRatePct} format={(v) => fmtPct(v).replace("+", "")} tone="text-text" />
+                <MetricCard label="Profit factor" num={Number.isFinite(m.profitFactor) ? m.profitFactor : null} format={fmtNum} tone="text-text" value={fmtNum(m.profitFactor)} />
                 <MetricCard label="Trades · Exposure" value={`${m.tradeCount} · ${fmtNum(m.exposurePct, 0)}%`} tone="text-text" />
               </div>
 

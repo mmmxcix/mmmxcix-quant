@@ -280,9 +280,9 @@ export default function Portfolio() {
       {/* Holdings */}
       {firstLoad && positions.length > 0 ? (
         <div className="rounded-xl border border-line lg-glass overflow-hidden">
-          <div className="animate-pulse divide-y divide-line/40">
+          <div className="divide-y divide-line/40">
             {Array.from({ length: Math.min(positions.length, 5) }).map((_, i) => (
-              <div key={i} className="h-12 bg-line/10" />
+              <div key={i} className="h-12 skeleton !rounded-none" />
             ))}
           </div>
         </div>

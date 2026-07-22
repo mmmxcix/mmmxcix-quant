@@ -32,7 +32,9 @@ export default function TabHub({ base, eyebrow, tabs, extra }) {
         ))}
         {extra && <div className="ml-auto shrink-0 pl-3 pb-1.5">{extra}</div>}
       </nav>
-      {active.el}
+      {/* keyed by tab so switching plays a short crossfade (no slide — tabs are
+          lateral moves, not page entries) */}
+      <div key={active.id} className="tab-in">{active.el}</div>
     </div>
   );
 }

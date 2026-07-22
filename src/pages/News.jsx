@@ -268,14 +268,14 @@ function FilterChip({ active, onClick, children }) {
 
 function SkeletonRow() {
   return (
-    <div className="rounded-xl border border-line lg-glass p-4 animate-pulse">
+    <div className="rounded-xl border border-line lg-glass p-4">
       <div className="flex items-center gap-3 mb-3">
-        <div className="h-5 w-20 rounded-full bg-line" />
-        <div className="h-3 w-16 rounded bg-line" />
+        <div className="h-5 w-20 rounded-full skeleton" />
+        <div className="h-3 w-16 rounded skeleton" />
       </div>
-      <div className="h-4 w-3/4 rounded bg-line mb-2" />
-      <div className="h-3 w-full rounded bg-line mb-1" />
-      <div className="h-3 w-2/3 rounded bg-line" />
+      <div className="h-4 w-3/4 rounded skeleton mb-2" />
+      <div className="h-3 w-full rounded skeleton mb-1" />
+      <div className="h-3 w-2/3 rounded skeleton" />
     </div>
   );
 }

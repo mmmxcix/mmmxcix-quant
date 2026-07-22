@@ -187,6 +187,16 @@ summary:focus-visible {
 
 .view-in { animation: viewIn 0.22s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
 
+/* Tab switches are lateral moves, not page entries: a short crossfade only. */
+.tab-in { animation: fadeOnly 0.18s ease-out both; }
+
+/* The sidebar's active accent bar — one element that SLIDES to the active item
+   (shared-layout feel) instead of popping in per item. */
+.nav-rail {
+  transition: top 0.22s cubic-bezier(0.2, 0.7, 0.2, 1),
+              height 0.22s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
 /* Tight stagger: ~30ms steps, whole reveal done in ~0.28s — a dashboard row
    shouldn't take a full second to finish assembling. */
 .stagger > * { animation: cardIn 0.26s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
@@ -255,10 +265,12 @@ summary:focus-visible {
   .draw-in,
   .fade-in,
   .wipe-in,
+  .tab-in,
   .flash-up,
   .flash-down,
   .skeleton,
   .pulse-dot { animation: none !important; }
+  .nav-rail { transition: none; }
   .hover-lift { transition: none; }
   .hover-lift:hover { transform: none; }
 }
