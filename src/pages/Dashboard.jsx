@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { LayoutDashboard, Star, Activity, TrendingUp, ShieldCheck, AlertTriangle } from "lucide-react";
 import { fetchCandles, WATCHLIST } from "@/lib/data";
+import { getPortfolio, getWatchlist, subscribe as subscribeStore } from "@/lib/portfolio";
 import WorldClock from "@/components/WorldClock";
 import WatchlistPage from "@/pages/Watchlist";
 import MonitorPage from "@/pages/Monitor";
@@ -12,17 +13,18 @@ import Skeleton from "@/components/Skeleton";
 const fmtUsd = (v) => (v == null ? "—" : "$" + Math.round(v).toLocaleString("en-US"));
 
 // Last price + day-over-day change per watchlist entry.
-function useWatchlistQuotes() {
+function useWatchlistQuotes(list) {
   const [quotes, setQuotes] = useState({});
   const [loading, setLoading] = useState(true);
+  const key = list.map((w) => `${w.market}:${w.symbol}`).join(",");
 
   // load() fetches every symbol and MERGES successes into the existing quotes
   // (a symbol that fails this cycle keeps its last good value instead of blanking
   // out). It never flips `loading` on, so the 30s poll doesn't flash skeletons;
-  // only the initial state and an explicit reload() show the loading state.
+  // only the initial state, a list change and an explicit reload() show it.
   const load = useCallback(async () => {
     const results = await Promise.allSettled(
-      WATCHLIST.map(async (w) => {
+      list.map(async (w) => {
         const candles = await fetchCandles({ market: w.market, symbol: w.symbol, interval: "1d", range: "3mo" });
         const last = candles[candles.length - 1];
         const prev = candles[candles.length - 2];
@@ -40,12 +42,14 @@ function useWatchlistQuotes() {
       return map;
     });
     setLoading(false);
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
 
   const reload = useCallback(() => { setLoading(true); load(); }, [load]);
 
   useEffect(() => {
     let alive = true;
+    setLoading(true); // list changed (or first mount) — show skeletons once
     const tick = () => { if (!document.hidden && alive) load(); };
     load();
     const id = setInterval(tick, 30000);
@@ -53,6 +57,14 @@ function useWatchlistQuotes() {
   }, [load]);
 
   return { quotes, loading, reload };
+}
+
+// The signed-in person's OWN watchlist (managed on the Watchlist tab), falling
+// back to the curated defaults while it's empty so the card never renders bare.
+function useUserWatchlist() {
+  const [list, setList] = useState(getWatchlist);
+  useEffect(() => subscribeStore(() => setList(getWatchlist())), []);
+  return list.length ? { list, custom: true } : { list: WATCHLIST, custom: false };
 }
 
 // Cortex paper-portfolio + RiskGate summary (private — needs the dev token).
@@ -145,13 +157,17 @@ function KpiCard({ label, value, sub, icon: Icon, tone }) {
 }
 
 function WatchlistCard() {
-  const { quotes, loading, reload } = useWatchlistQuotes();
+  const { list, custom } = useUserWatchlist();
+  const { quotes, loading, reload } = useWatchlistQuotes(list);
   const navigate = useNavigate();
-  const failed = loading ? 0 : WATCHLIST.filter((w) => !quotes[`${w.market}:${w.symbol}`]).length;
+  const failed = loading ? 0 : list.filter((w) => !quotes[`${w.market}:${w.symbol}`]).length;
   return (
     <div className="rounded-xl border border-line lg-glass overflow-hidden">
       <div className="flex items-center justify-between px-4 py-3 border-b border-line">
-        <span className="text-sm font-semibold">Watchlist</span>
+        <span className="text-sm font-semibold">
+          Watchlist
+          {!custom && <span className="ml-2 text-[10px] font-normal text-dim">defaults — add your own in the Watchlist tab</span>}
+        </span>
         {failed > 0 ? (
           <button onClick={reload} className="flex items-center gap-1 text-[11px] text-down hover:underline" title="Some quotes failed to load">
             <AlertTriangle className="w-3 h-3" /> {failed} failed · retry
@@ -170,7 +186,7 @@ function WatchlistCard() {
           </tr>
         </thead>
         <tbody>
-          {WATCHLIST.map((w, i) => {
+          {list.map((w, i) => {
             const q = quotes[`${w.market}:${w.symbol}`];
             return (
               <tr key={`${w.market}:${w.symbol}`}
@@ -214,6 +230,129 @@ function WatchlistCard() {
   );
 }
 
+// Align multiple daily candle series on their common timeline and combine them
+// (portfolio = Σ shares × close; watchlist = equal-weight index, start 100).
+function combineSeries(entries) {
+  if (!entries.length) return [];
+  const start = Math.max(...entries.map((e) => e.candles[0].time));
+  const times = [...new Set(entries.flatMap((e) => e.candles.map((c) => c.time)))]
+    .filter((t) => t >= start)
+    .sort((a, b) => a - b);
+  const idx = entries.map(() => 0);
+  const out = [];
+  for (const t of times) {
+    let v = 0, ok = true;
+    entries.forEach((e, i) => {
+      const cs = e.candles;
+      while (idx[i] + 1 < cs.length && cs[idx[i] + 1].time <= t) idx[i]++;
+      if (cs[idx[i]].time > t) { ok = false; return; }
+      v += e.value(cs[idx[i]].close); // forward-fill: last known close
+    });
+    if (ok) out.push({ t: t * 1000, v });
+  }
+  return out;
+}
+
+const EQUITY_SRC_KEY = "quant_equity_src";
+
+// The big equity chart, switchable between the three books you actually have:
+// the Cortex PAPER book (when the agent reports), your simulated PORTFOLIO,
+// and a WATCHLIST index. The choice sticks (localStorage).
+function EquityCard({ lab }) {
+  const c = lab?.combined;
+  const { list } = useUserWatchlist();
+  const [positions, setPositions] = useState(getPortfolio);
+  useEffect(() => subscribeStore(() => setPositions(getPortfolio())), []);
+
+  const sources = useMemo(() => [
+    ...(c ? [{ id: "paper", label: "Paper" }] : []),
+    { id: "portfolio", label: "Portfolio" },
+    { id: "watchlist", label: "Watchlist" },
+  ], [c]);
+
+  const [src, setSrc] = useState(() => {
+    try { return localStorage.getItem(EQUITY_SRC_KEY) || ""; } catch { return ""; }
+  });
+  const active = sources.some((s) => s.id === src) ? src : (c ? "paper" : positions.length ? "portfolio" : "watchlist");
+  const choose = (id) => {
+    setSrc(id);
+    try { localStorage.setItem(EQUITY_SRC_KEY, id); } catch { /* private mode */ }
+  };
+
+  // Portfolio/watchlist curves are built client-side from 3mo daily candles.
+  const listKey = list.map((w) => `${w.market}:${w.symbol}`).join(",");
+  const [curve, setCurve] = useState({ data: null, loading: false, empty: "" });
+  useEffect(() => {
+    if (active === "paper") { setCurve({ data: null, loading: false, empty: "" }); return; }
+    const entries = active === "portfolio"
+      ? positions.map((p) => ({ market: p.market, symbol: p.symbol, mk: (candles) => ({ candles, value: (close) => p.shares * close }) }))
+      : list.map((w) => ({ market: w.market, symbol: w.symbol, mk: (candles) => ({ candles, value: (close) => (close / candles[0].close) * (100 / list.length) }) }));
+    if (!entries.length) {
+      setCurve({ data: [], loading: false, empty: active === "portfolio" ? "No positions yet — add some on the Portfolio page." : "Watchlist is empty." });
+      return;
+    }
+    let alive = true;
+    setCurve({ data: null, loading: true, empty: "" });
+    Promise.allSettled(entries.map(async (e) => {
+      const cs = await fetchCandles({ market: e.market, symbol: e.symbol, interval: "1d", range: "3mo" });
+      if (!cs || cs.length < 2) throw new Error("no data");
+      return e.mk(cs);
+    })).then((rs) => {
+      if (!alive) return;
+      const ok = rs.filter((r) => r.status === "fulfilled").map((r) => r.value);
+      setCurve({ data: combineSeries(ok), loading: false, empty: ok.length ? "" : "Couldn't load price data." });
+    });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, positions, listKey]);
+
+  const history = active === "paper" ? (c?.history || []) : (curve.data || []);
+  const chgPct = active === "paper"
+    ? c?.returnPct
+    : history.length >= 2 && history[0].v > 0 ? ((history[history.length - 1].v / history[0].v) - 1) * 100 : null;
+
+  const TITLES = {
+    paper: ["Paper equity", `${lab?.strategies?.filter((s) => !s.error).length ?? 0} strategies · virtual book`],
+    portfolio: ["Portfolio value", "your simulated holdings · 3 months"],
+    watchlist: ["Watchlist index", "equal-weight · 3 months · start = 100"],
+  };
+  const [title, sub] = TITLES[active];
+
+  return (
+    <div className="rounded-xl border border-line lg-glass p-5">
+      <div className="flex flex-wrap items-center gap-2 mb-2">
+        <div className="min-w-0">
+          <span className="text-sm font-semibold">{title}</span>
+          <span className="text-dim text-xs ml-2">{sub}</span>
+        </div>
+        <div className="ml-auto flex items-center gap-2">
+          {chgPct != null && Number.isFinite(chgPct) && (
+            <span className={cn("inline-flex items-center rounded-full px-2 py-0.5 text-xs font-mono font-semibold",
+              chgPct >= 0 ? "bg-up/10 text-up" : "bg-down/10 text-down")}>
+              {chgPct >= 0 ? "▲" : "▼"} {fmtPct(chgPct)}
+            </span>
+          )}
+          <div className="flex gap-1">
+            {sources.map((s) => (
+              <button key={s.id} onClick={() => choose(s.id)}
+                className={cn("chip !text-[10px] !py-0.5", active === s.id ? "chip-active" : "chip-idle")}>
+                {s.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+      {active !== "paper" && curve.loading ? (
+        <Skeleton className="h-[200px] w-full rounded-lg" />
+      ) : active !== "paper" && curve.empty ? (
+        <div className="grid place-items-center text-sm text-dim" style={{ height: 200 }}>{curve.empty}</div>
+      ) : (
+        <AreaChart key={active} history={history} />
+      )}
+    </div>
+  );
+}
+
 function Overview() {
   const lab = useLabState();
   const c = lab?.combined;
@@ -250,24 +389,8 @@ function Overview() {
         </div>
       )}
 
-      <div className={cn("grid gap-4", hasPortfolio ? "lg:grid-cols-[1.5fr_1fr]" : "grid-cols-1")}>
-        {hasPortfolio && (
-          <div className="rounded-xl border border-line lg-glass p-5">
-            <div className="flex items-center justify-between mb-2">
-              <div>
-                <span className="text-sm font-semibold">Combined equity</span>
-                <span className="text-dim text-xs ml-2">{lab.strategies?.filter((s) => !s.error).length ?? 0} strategies</span>
-              </div>
-              {c.returnPct != null && (
-                <span className={cn("inline-flex items-center rounded-full px-2 py-0.5 text-xs font-mono font-semibold",
-                  c.returnPct >= 0 ? "bg-up/10 text-up" : "bg-down/10 text-down")}>
-                  {c.returnPct >= 0 ? "▲" : "▼"} {fmtPct(c.returnPct)}
-                </span>
-              )}
-            </div>
-            <AreaChart history={c.history} />
-          </div>
-        )}
+      <div className="grid gap-4 lg:grid-cols-[1.5fr_1fr] [&>*]:min-w-0">
+        <EquityCard lab={lab} />
         <WatchlistCard />
       </div>
 
