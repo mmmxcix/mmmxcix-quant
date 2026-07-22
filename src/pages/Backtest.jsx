@@ -35,6 +35,11 @@ export default function Backtest() {
   const [interval, setIntervalId] = useState("1d");
   const [range, setRange] = useState("5y");
   const [dataSrc, setDataSrc] = useState("yahoo"); // stock data: yahoo | london (LSE archive)
+  // Custom test period — backtest exactly the window you pick (e.g. only the
+  // 2022 bear market), instead of "the last N years".
+  const [customPeriod, setCustomPeriod] = useState(false);
+  const [fromDate, setFromDate] = useState("2020-01-01");
+  const [toDate, setToDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [mode, setMode] = useState("builder"); // builder | code
   const [strategyId, setStrategyId] = useState(BUILT_IN_STRATEGIES[0].id);
   const [paramValues, setParamValues] = useState({});
@@ -103,13 +108,13 @@ export default function Backtest() {
   // Only ranges that actually exist for the chosen interval (e.g. Yahoo has
   // no multi-year hourly data — it would silently degrade to monthly bars and
   // quietly wreck the test). Snap the range when the interval changes.
-  const validRanges = useMemo(() => rangesFor(interval), [interval]);
+  const validRanges = useMemo(() => rangesFor(interval, market), [interval, market]);
   useEffect(() => {
     if (!validRanges.some((r) => r.id === range)) {
       setRange(validRanges[validRanges.length - 1].id);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [interval]);
+  }, [interval, market]);
 
   const effectiveParams = useMemo(() => {
     const out = {};
@@ -131,12 +136,22 @@ export default function Backtest() {
     try {
       // Python needs the candles first (it computes a vectorised signal array),
       // so fetch data before building the signal function in every mode.
+      // Custom period → explicit unix window through whichever source is active.
+      let from, to;
+      if (customPeriod) {
+        from = Math.floor(Date.parse(fromDate + "T00:00:00Z") / 1000);
+        to = Math.floor(Date.parse(toDate + "T23:59:59Z") / 1000);
+        if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) {
+          throw new Error("Custom period: pick a valid from/to date range.");
+        }
+      }
       const candles = market === "stock" && dataSrc === "london"
         ? await fetchLseCandles({
             symbol: symbol.trim().toUpperCase(), interval,
             rangeDays: validRanges.find((r) => r.id === range)?.days ?? 365,
+            from, to,
           })
-        : await fetchCandles({ market, symbol: symbol.trim().toUpperCase(), interval, range });
+        : await fetchCandles({ market, symbol: symbol.trim().toUpperCase(), interval, range, from, to });
       let signalFn;
       if (mode === "builder") {
         signalFn = strategy.build(effectiveParams);
@@ -266,12 +281,36 @@ export default function Backtest() {
             </div>
             <div className="flex flex-wrap gap-1">
               {validRanges.map((r) => (
-                <button key={r.id} onClick={() => setRange(r.id)}
-                  className={cn("chip font-mono", range === r.id ? "chip-active" : "chip-idle")}>
+                <button key={r.id} onClick={() => { setRange(r.id); setCustomPeriod(false); }}
+                  className={cn("chip font-mono", !customPeriod && range === r.id ? "chip-active" : "chip-idle")}>
                   {r.label}
                 </button>
               ))}
+              <button onClick={() => setCustomPeriod(true)}
+                title="Backtest an exact period, e.g. only the 2022 bear market"
+                className={cn("chip font-mono", customPeriod ? "chip-active" : "chip-idle")}>
+                Custom
+              </button>
             </div>
+            {customPeriod && (
+              <div className="flex flex-wrap items-end gap-2">
+                <label className="text-xs text-dim">
+                  From
+                  <input type="date" value={fromDate} max={toDate}
+                    onChange={(e) => setFromDate(e.target.value)}
+                    className="input-base w-36 mt-1 font-mono block" />
+                </label>
+                <label className="text-xs text-dim">
+                  To
+                  <input type="date" value={toDate} min={fromDate} max={new Date().toISOString().slice(0, 10)}
+                    onChange={(e) => setToDate(e.target.value)}
+                    className="input-base w-36 mt-1 font-mono block" />
+                </label>
+              </div>
+            )}
+            {customPeriod && market === "stock" && dataSrc === "yahoo" && INTERVALS.find((i) => i.id === interval && !["1d", "1w", "1M"].includes(i.id)) && (
+              <p className="text-[11px] text-dim">Yahoo serves intraday data only for recent weeks — for older periods use daily bars or the London source.</p>
+            )}
             {market === "stock" && (
               <div className="flex items-center gap-1">
                 <span className="text-[10px] text-dim uppercase tracking-wide mr-1">Source</span>

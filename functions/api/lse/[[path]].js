@@ -16,9 +16,11 @@ const ALLOWED = [
   "v1/indicators",
   "v1/bond-yields",
   "v1/economic-calendar",
+  "v1/l3-equities",
   "indicators",
   "bond-yields",
   "economic-calendar",
+  "l3-equities",
 ];
 
 export async function onRequest({ request, params, env }) {

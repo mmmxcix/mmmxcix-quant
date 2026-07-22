@@ -135,14 +135,15 @@ export default function Charts() {
   }, [market, symbol, interval, range]);
 
   // Keep interval/range valid together: switching to an intraday interval
-  // must snap the range into the allowed set for that interval.
-  const validRanges = useMemo(() => rangesFor(interval), [interval]);
+  // must snap the range into the allowed set for that interval. Market matters
+  // too (Yahoo caps stock 1m at 8 days; Binance doesn't).
+  const validRanges = useMemo(() => rangesFor(interval, market), [interval, market]);
   useEffect(() => {
     if (!validRanges.some((r) => r.id === range)) {
       setRange(validRanges[validRanges.length > 2 ? Math.floor(validRanges.length / 2) : 0].id);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [interval]);
+  }, [interval, market]);
 
   // If the current interval isn't available for this market, fall back to 1d.
   const availableIntervals = useMemo(

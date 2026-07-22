@@ -28,7 +28,7 @@ export async function lseAvailable() {
  * ({ time: unixSec, open, high, low, close, volume }, ascending).
  * @param {{ symbol: string, interval: string, rangeDays: number }} opts
  */
-export async function fetchLseCandles({ symbol, interval = "1d", rangeDays = 365 }) {
+export async function fetchLseCandles({ symbol, interval = "1d", rangeDays = 365, from, to }) {
   const tf = TF[interval];
   if (!tf) throw new Error(`London archive doesn't serve the ${interval} interval.`);
   // LSE wants FX as "EUR/USD" — translate the Yahoo-style "EURUSD=X" the rest
@@ -37,8 +37,10 @@ export async function fetchLseCandles({ symbol, interval = "1d", rangeDays = 365
   const up = symbol.toUpperCase();
   const fx = /^([A-Z]{3})([A-Z]{3})=X$/.exec(up);
   const lseSymbol = fx ? `${fx[1]}/${fx[2]}` : up;
-  const end = new Date();
-  const start = new Date(end.getTime() - rangeDays * 86400_000);
+  // Explicit period ({from,to} unix sec) wins over the relative range.
+  const hasWindow = Number.isFinite(from) && Number.isFinite(to) && to > from;
+  const end = hasWindow ? new Date(to * 1000) : new Date();
+  const start = hasWindow ? new Date(from * 1000) : new Date(end.getTime() - rangeDays * 86400_000);
   const url = `${PROXY}/v1/candles?symbol=${encodeURIComponent(lseSymbol)}&timeframe=${tf}&start=${iso(start)}&end=${iso(end)}`;
   const res = await fetch(url);
   if (res.status === 503) throw new Error("London data not configured — set the LSE_API_KEY secret.");

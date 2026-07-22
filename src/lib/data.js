@@ -49,12 +49,17 @@ export const RANGES = [
 
 // Ranges that make sense for a given interval (avoids e.g. 1-minute over Max,
 // which no free source serves and would freeze the browser). Returns the
-// RANGES subset valid for `intervalId`.
-export function rangesFor(intervalId) {
+// RANGES subset valid for `intervalId`. Pass `market` where known: Yahoo caps
+// 1-minute stock data at 8 DAYS per request, so offering "1M" there just
+// produces an Unprocessable Entity error — Binance has no such cap.
+export function rangesFor(intervalId, market) {
   // 1-second candles: Binance returns ~16 min per 1000-kline call; keep the
   // window short (older history still lazy-loads on left-pan).
   if (intervalId === "1s") return RANGES.filter((r) => ["1h", "5d"].includes(r.id));
-  if (intervalId === "1m") return RANGES.filter((r) => ["5d", "1mo"].includes(r.id));
+  if (intervalId === "1m") {
+    const ids = market === "stock" ? ["5d"] : ["5d", "1mo"];
+    return RANGES.filter((r) => ids.includes(r.id));
+  }
   if (["5m", "15m", "30m"].includes(intervalId)) return RANGES.filter((r) => ["5d", "1mo", "3mo"].includes(r.id));
   if (INTRADAY.has(intervalId)) return RANGES.filter((r) => ["1mo", "3mo", "6mo", "1y"].includes(r.id));
   if (intervalId === "1M") return RANGES.filter((r) => ["5y", "max"].includes(r.id));
@@ -90,15 +95,17 @@ const BINANCE_INTERVAL_SEC = INTERVAL_SECONDS;
 // while still giving e.g. 2.7 years of 4h or 16 years of daily data.
 const MAX_CRYPTO_BARS = 6000;
 
-async function fetchBinance(symbol, interval, rangeDays) {
+async function fetchBinance(symbol, interval, rangeDays, window) {
   // Binance caps at 1000 klines per call; paginate backwards with endTime
-  // until the range (or the MAX_CRYPTO_BARS cap) is covered.
+  // until the range (or the MAX_CRYPTO_BARS cap) is covered. `window`
+  // ({from,to} unix sec) overrides the relative range for period backtests.
   const sec = BINANCE_INTERVAL_SEC[interval] || 86400;
-  const need = Math.min(MAX_CRYPTO_BARS, Math.ceil((rangeDays * 86400) / sec));
-  const cutoff = Date.now() / 1000 - rangeDays * 86400;
+  const spanSec = window ? window.to - window.from : rangeDays * 86400;
+  const need = Math.min(MAX_CRYPTO_BARS, Math.ceil(spanSec / sec));
+  const cutoff = window ? window.from : Date.now() / 1000 - rangeDays * 86400;
 
   let out = [];
-  let end = Date.now();
+  let end = window ? window.to * 1000 : Date.now();
   while (out.length < need) {
     const url = `${BINANCE}/klines?symbol=${encodeURIComponent(symbol.toUpperCase())}&interval=${interval}&endTime=${end}&limit=1000`;
     const res = await fetch(url);
@@ -126,8 +133,12 @@ async function fetchBinance(symbol, interval, rangeDays) {
   return out.filter((c) => c.time >= cutoff).slice(-MAX_CRYPTO_BARS);
 }
 
-async function fetchYahoo(symbol, yahooInterval, yahooRange) {
-  const url = `${YAHOO}/${encodeURIComponent(symbol.toUpperCase())}?range=${yahooRange}&interval=${yahooInterval}&events=div%2Csplit`;
+async function fetchYahoo(symbol, yahooInterval, yahooRange, window) {
+  // window {from,to} (unix sec) → Yahoo's period1/period2; else relative range.
+  const span = window
+    ? `period1=${window.from}&period2=${window.to}`
+    : `range=${yahooRange}`;
+  const url = `${YAHOO}/${encodeURIComponent(symbol.toUpperCase())}?${span}&interval=${yahooInterval}&events=div%2Csplit`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Data request failed (${res.status}) — is the symbol correct? (e.g. AAPL, SPY, ^GSPC)`);
   const json = await res.json();
@@ -144,16 +155,21 @@ async function fetchYahoo(symbol, yahooInterval, yahooRange) {
   return candles;
 }
 
-export async function fetchCandles({ market, symbol, interval = "1d", range = "1y" }) {
+/**
+ * Fetch candles. Either a relative `range` (default) or an explicit period
+ * `{ from, to }` (unix SECONDS) — the period wins when both are given.
+ */
+export async function fetchCandles({ market, symbol, interval = "1d", range = "1y", from, to }) {
   const iDef = intervalDef(interval);
   const rDef = RANGES.find((r) => r.id === range) || RANGES[1];
   if (!iDef.markets.includes(market)) {
     throw new Error(`Interval ${iDef.label} is not available for this market.`);
   }
+  const window = Number.isFinite(from) && Number.isFinite(to) && to > from ? { from, to } : null;
   const candles =
     market === "crypto"
-      ? await fetchBinance(symbol, iDef.binance, rDef.days)
-      : await fetchYahoo(symbol, iDef.yahoo, rDef.yahoo);
+      ? await fetchBinance(symbol, iDef.binance, rDef.days, window)
+      : await fetchYahoo(symbol, iDef.yahoo, rDef.yahoo, window);
   if (candles.length < 2) throw new Error(`Too few data points for "${symbol}".`);
   return candles;
 }
