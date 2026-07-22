@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { LayoutDashboard, Star, Activity, TrendingUp, ShieldCheck } from "lucide-react";
 import { fetchCandles, WATCHLIST } from "@/lib/data";
@@ -65,6 +65,25 @@ function useLabState() {
     return () => { alive = false; clearInterval(id); };
   }, []);
   return state;
+}
+
+// Flashes a brief up/down tint when its `value` changes between polls — the way
+// a trading terminal marks a tick. Re-triggers the one-shot CSS animation by
+// toggling the class with a forced reflow (React won't replay it otherwise).
+function FlashCell({ value, className, children }) {
+  const ref = useRef(null);
+  const prev = useRef(value);
+  useEffect(() => {
+    if (prev.current == null || value == null || value === prev.current) { prev.current = value; return; }
+    const up = value > prev.current;
+    prev.current = value;
+    const el = ref.current;
+    if (!el) return;
+    el.classList.remove("flash-up", "flash-down");
+    void el.offsetWidth; // reflow so the animation restarts from 0
+    el.classList.add(up ? "flash-up" : "flash-down");
+  }, [value]);
+  return <span ref={ref} className={className}>{children}</span>;
 }
 
 // Tiny inline sparkline from the last ~30 daily closes. Theme-aware stroke.
@@ -146,7 +165,8 @@ function WatchlistCard() {
                   <span className="text-dim ml-2 hidden md:inline text-xs">{w.name}</span>
                 </td>
                 <td className="px-4 py-3 text-right font-mono tabular-nums">
-                  {loading && !q ? <span className="text-dim">…</span> : fmtPrice(q?.price)}
+                  {loading && !q ? <span className="text-dim">…</span>
+                    : <FlashCell value={q?.price} className="inline-block rounded px-1 -mx-1">{fmtPrice(q?.price)}</FlashCell>}
                 </td>
                 <td className="px-4 py-3 text-right">
                   {loading && !q ? <span className="text-dim">…</span> : (

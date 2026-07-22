@@ -147,11 +147,17 @@ summary:focus-visible {
    Page entry, staggered card reveals and self-drawing chart lines.
    All of it collapses to nothing under prefers-reduced-motion. */
 @keyframes viewIn {
-  from { opacity: 0; transform: translateY(16px); }
+  /* Product-length page entry: short and low-travel. A tool loads INTO a task —
+     it shouldn't play a 0.45s slide on every navigation. */
+  from { opacity: 0; transform: translateY(8px); }
   to   { opacity: 1; transform: none; }
 }
+@keyframes fadeOnly {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
 @keyframes cardIn {
-  from { opacity: 0; transform: translateY(14px) scale(0.99); }
+  from { opacity: 0; transform: translateY(8px) scale(0.995); }
   to   { opacity: 1; transform: none; }
 }
 @keyframes drawIn {
@@ -165,22 +171,33 @@ summary:focus-visible {
   to   { clip-path: inset(0 0 0 0); }
 }
 
-.view-in { animation: viewIn 0.45s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+.view-in { animation: viewIn 0.22s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
 
-.stagger > * { animation: cardIn 0.5s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
-.stagger > *:nth-child(1) { animation-delay: 0.04s; }
-.stagger > *:nth-child(2) { animation-delay: 0.10s; }
-.stagger > *:nth-child(3) { animation-delay: 0.16s; }
-.stagger > *:nth-child(4) { animation-delay: 0.22s; }
-.stagger > *:nth-child(5) { animation-delay: 0.28s; }
-.stagger > *:nth-child(6) { animation-delay: 0.34s; }
-.stagger > *:nth-child(7) { animation-delay: 0.40s; }
-.stagger > *:nth-child(8) { animation-delay: 0.46s; }
+/* Tight stagger: ~30ms steps, whole reveal done in ~0.28s — a dashboard row
+   shouldn't take a full second to finish assembling. */
+.stagger > * { animation: cardIn 0.26s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+.stagger > *:nth-child(1) { animation-delay: 0.02s; }
+.stagger > *:nth-child(2) { animation-delay: 0.05s; }
+.stagger > *:nth-child(3) { animation-delay: 0.08s; }
+.stagger > *:nth-child(4) { animation-delay: 0.11s; }
+.stagger > *:nth-child(5) { animation-delay: 0.14s; }
+.stagger > *:nth-child(6) { animation-delay: 0.17s; }
+.stagger > *:nth-child(7) { animation-delay: 0.20s; }
+.stagger > *:nth-child(8) { animation-delay: 0.23s; }
 
-/* Self-drawing line: pathLength="1" normalises any geometry to 0…1. */
-.draw-in { stroke-dasharray: 1; animation: drawIn 1.1s ease-out both; }
-.fade-in { animation: viewIn 0.9s ease-out both; }
-.wipe-in { animation: wipeIn 1.6s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+/* Self-drawing line: pathLength="1" normalises any geometry to 0…1. A chart
+   reveal reads as intentional at ~0.7s; past ~1s you're watching it load. */
+.draw-in { stroke-dasharray: 1; animation: drawIn 0.7s ease-out both; }
+.fade-in { animation: fadeOnly 0.5s ease-out both; }
+.wipe-in { animation: wipeIn 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+
+/* Live value-change flash: a brief up/down tint on a cell whose number just
+   changed, the way a trading terminal marks a tick. Colour only, so it layers
+   over any cell without shifting layout. */
+@keyframes flashUp   { from { background-color: rgb(var(--c-up) / 0.22); }   to { background-color: transparent; } }
+@keyframes flashDown { from { background-color: rgb(var(--c-down) / 0.22); } to { background-color: transparent; } }
+.flash-up   { animation: flashUp 0.6s ease-out; }
+.flash-down { animation: flashDown 0.6s ease-out; }
 
 /* Live status dot — a slow outward ripple, so "armed"/"online" reads as live. */
 @keyframes pulseDot {
@@ -208,6 +225,8 @@ summary:focus-visible {
   .draw-in,
   .fade-in,
   .wipe-in,
+  .flash-up,
+  .flash-down,
   .pulse-dot { animation: none !important; }
   .hover-lift { transition: none; }
   .hover-lift:hover { transform: none; }
