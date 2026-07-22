@@ -1,4 +1,4 @@
-import { FlaskConical, Scale, Briefcase, Sigma, GraduationCap, BookOpenCheck, Compass, Radar, Telescope } from "lucide-react";
+import { FlaskConical, Scale, Briefcase, Sigma, GraduationCap, BookOpenCheck, Compass, Radar, Telescope, Grid3x3 } from "lucide-react";
 import TabHub from "@/components/TabHub";
 import Backtest from "@/pages/Backtest";
 import Compare from "@/pages/Compare";
@@ -9,6 +9,7 @@ import Guide from "@/pages/Guide";
 import Resources from "@/pages/Resources";
 import Screener from "@/pages/Screener";
 import Anomalies from "@/pages/Anomalies";
+import Correlation from "@/pages/Correlation";
 
 // Consolidated hubs — related pages merged into one tabbed route each. Old
 // routes redirect to the matching tab (see App.jsx).
@@ -36,6 +37,7 @@ export function ScreenerHub() {
     <TabHub base="/screener" tabs={[
       { id: "scan", label: "Screener", icon: Radar, el: <Screener /> },
       { id: "anomalies", label: "Anomalies", icon: Telescope, el: <Anomalies /> },
+      { id: "correlation", label: "Correlation", icon: Grid3x3, el: <Correlation /> },
     ]} />
   );
 }

@@ -94,6 +94,7 @@ export default function App() {
                 <Route path="/screener" element={<Redir to="/screener/scan" replace />} />
                 <Route path="/screener/:tab" element={<ScreenerHub />} />
                 <Route path="/anomalies" element={<Redir to="/screener/anomalies" replace />} />
+                <Route path="/correlation" element={<Redir to="/screener/correlation" replace />} />
 
                 {/* Learn hub (Academy · Guide · Resources) */}
                 <Route path="/learn" element={<Redir to="/learn/academy" replace />} />

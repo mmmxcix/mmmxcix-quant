@@ -12,6 +12,7 @@ const COMMANDS = [
   { label: "Dashboard", to: "/", group: "Markets" },
   { label: "Charts", to: "/charts", group: "Markets" },
   { label: "Screener", to: "/screener", group: "Markets" },
+  { label: "Correlation Matrix", to: "/screener/correlation", group: "Markets" },
   { label: "News", to: "/news", group: "Markets" },
   { label: "Backtest", to: "/backtest", group: "Strategy" },
   { label: "Regimes", to: "/regimes", group: "Strategy" },
