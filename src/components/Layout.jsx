@@ -128,7 +128,9 @@ function SessionBox() {
   }
   return (
     <div className="rounded-lg border border-line bg-surface/60 px-3 py-2">
-      <p className="truncate text-xs text-text">{session.user.name || session.user.email}</p>
+      <Link to="/account" className="block truncate text-xs text-text transition-colors hover:text-accent" title="Account settings (2FA …)">
+        {session.user.name || session.user.email}
+      </Link>
       <div className="mt-0.5 flex items-center justify-between gap-2">
         <span className="text-[10px] uppercase tracking-wide text-dim">
           {session.user.role === "admin" ? "dev account" : "account"}

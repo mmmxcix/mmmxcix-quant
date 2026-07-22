@@ -14,6 +14,7 @@ import Datenschutz from "@/pages/Datenschutz";
 import Nutzung from "@/pages/Nutzung";
 import Login from "@/pages/Login";
 import Register from "@/pages/Register";
+import Account from "@/pages/Account";
 
 // Redirect that preserves the query string, so deep links (e.g.
 // /academy?c=…&l=… into the Learn hub) keep their course/lesson params.
@@ -46,6 +47,7 @@ export default function App() {
                 <Route path="/tools" element={<Tools />} />
                 <Route path="/regimes" element={<Regimes />} />
                 <Route path="/coach" element={<Coach />} />
+                <Route path="/account" element={<Account />} />
 
                 {/* Cortex hub (Registry · Paper · RiskGate · Brain Vault) — dev only */}
                 <Route path="/cortex" element={<Redir to="/cortex/registry" replace />} />
