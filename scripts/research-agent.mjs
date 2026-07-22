@@ -26,7 +26,7 @@ import { join } from "node:path";
 import { runBacktest, compileStrategy } from "../src/lib/backtest.js";
 import { kFoldCode, noiseTest, deflatedSharpe, equityReturns } from "../src/lib/validation.js";
 import { qualifyAll, getProfile, PROFILE_IDS } from "../src/lib/profiles.js";
-import { harvestAll, fullTextOf, topicsOf, RELEVANCE } from "./sources.mjs";
+import { harvestAll, fullTextOf, topicsOf, RELEVANCE, JUNK } from "./sources.mjs";
 import { loadUniverse } from "./marketdata.mjs";
 import { UNIVERSE, byId, costFor, effectiveTrials, describeMarkets } from "../src/lib/markets.js";
 import { initPy, compilePyStrategy, pyCompileCheck } from "./pyRunnerNode.mjs";
@@ -369,8 +369,10 @@ function gauntlet(code, datasets, globalTrials, lang) {
     const best = ran.slice().sort((a, b) => b.m.profitFactor - a.m.profitFactor)[0];
     return {
       pass: false,
+      // Name how wide the search actually was — "TSLA1d" in a failure line just
+      // means TSLA was the closest of ALL tested venues, not the only one.
       reason: best
-        ? `no edge anywhere (best ${best.name}: ret ${best.m.totalReturnPct.toFixed(0)}%, PF ${best.m.profitFactor.toFixed(2)}, n=${best.m.tradeCount})`
+        ? `no edge on any of ${ran.length} markets (closest ${best.name}: ret ${best.m.totalReturnPct.toFixed(0)}%, PF ${best.m.profitFactor.toFixed(2)}, n=${best.m.tradeCount})`
         : "no markets ran",
       byMarket: summarise(ran),
     };
@@ -456,7 +458,11 @@ function gauntlet(code, datasets, globalTrials, lang) {
   for (const r of ran) if (!byMarket[r.name]) byMarket[r.name] = { ...metricRow(r.m), rejected: "no edge" };
 
   if (!winningMarkets.length) {
-    return { pass: false, reason: rejections[0] || "failed robustness everywhere", byMarket, trials };
+    return {
+      pass: false,
+      reason: `${promising.length}/${ran.length} markets promising, none survived — ${rejections[0] || "failed robustness"}`,
+      byMarket, trials,
+    };
   }
 
   // Report the strongest venue as the headline.
@@ -490,6 +496,17 @@ const summarise = (ran) => Object.fromEntries(ran.map((r) => [r.name, metricRow(
 // ── main ────────────────────────────────────────────────────────────────────
 const st = load();
 
+// Run guard: two schedulers can exist (the lab agent's auto-spawn AND a
+// separate n8n research workflow). If another research run started in the last
+// 15 minutes, bow out — overlapping runs would double-spend LLM quota and
+// double-count gauntlet trials. A crashed run blocks at most one cycle.
+if (st.runStartedAt && Date.now() - st.runStartedAt < 15 * 60 * 1000) {
+  console.log(`another research run started ${Math.round((Date.now() - st.runStartedAt) / 60000)}min ago — skipping (overlap guard)`);
+  process.exit(0);
+}
+st.runStartedAt = Date.now();
+save(st);
+
 // The site's Always-On switch (Cortex tab bar). ON turns the barren tail of a
 // run into the BUILD/IMPROVE phase below — Cortex keeps building strategy after
 // strategy instead of idling when no fresh paper arrived. Offline → night mode.
@@ -500,7 +517,10 @@ try {
 } catch { /* offline */ }
 // In until-hit mode pull a deeper pool per source so there's enough supply.
 const { items: harvested, counts: sourceCounts } = await harvestAll({ perSource: UNTIL_HIT ? 20 : 10 });
-const limit = UNTIL_HIT ? HARD_CAP : MAX_PAPERS_PER_RUN;
+// Always-on = MANY SMALL runs (every ~30 min), so cap each one at the normal
+// per-run budget even in until-hit mode — 48 daily runs at the until-hit cap
+// would drain the free LLM tiers in an afternoon.
+const limit = ALWAYS_ON ? MAX_PAPERS_PER_RUN : (UNTIL_HIT ? HARD_CAP : MAX_PAPERS_PER_RUN);
 
 // Two gates before anything costs an LLM call:
 //   topical  — the item is about trading at all (topics + RELEVANCE)
@@ -512,6 +532,7 @@ const MIN_TEXT = 220;
 const fresh = harvested
   .filter((p) => !st.seen.includes(p.id))
   .filter((p) => (p.topics?.length > 0) && RELEVANCE.test(`${p.title} ${p.abstract}`))
+  .filter((p) => !JUNK.test(p.title || "")) // news/PR/signal-spam titles never carry a testable idea
   .filter((p) => (p.abstract || "").length >= MIN_TEXT || p.kind === "video")
   .slice(0, limit);
 console.log(

@@ -446,13 +446,19 @@ console.log(`paper run complete: ${summaries.length} strategies, combined ${comb
 // Night mode: every ~20h this paper run also fires ONE research cycle. With the
 // site's Always-On switch ON, the cadence drops to ~30 min — Cortex researches,
 // builds and improves around the clock. Spawned DETACHED so it never slows the
-// 15-min paper push. Logs: ~/.mmmxcix-research.log. Disable: LAB_AUTO_RESEARCH=0.
-if (process.env.LAB_AUTO_RESEARCH !== "0") {
+// 15-min paper push. Logs: ~/.mmmxcix-research.log.
+// LAB_AUTO_RESEARCH=0 disables the NIGHT auto-spawn (when a separate n8n
+// research schedule exists) — but the Always-On switch OVERRIDES it: flipping
+// the switch in the UI is explicit intent, and without the override the switch
+// would silently do nothing on installs that set the kill-switch. Overlap with
+// a separate scheduler is prevented by the research agent's own run guard.
+{
   try {
     const alwaysOn = !!cortexMode?.alwaysOn;
+    const autoEnabled = alwaysOn || process.env.LAB_AUTO_RESEARCH !== "0";
     const everyMs = alwaysOn ? ALWAYS_ON_EVERY_MS : RESEARCH_EVERY_MS;
     const last = local.lastResearchAt || 0;
-    if (Date.now() - last >= everyMs) {
+    if (autoEnabled && Date.now() - last >= everyMs) {
       local.lastResearchAt = Date.now();
       saveLocal(local); // mark BEFORE spawn so a crashing research can't hammer every 15 min
       const researchPath = fileURLToPath(new URL("./research-agent.mjs", import.meta.url));

@@ -46,10 +46,18 @@ export const TOPICS = [
 ];
 export const topicsOf = (text) => TOPICS.filter((t) => t.re.test(text)).map((t) => t.name);
 
-// Must clear this to be worth an LLM call — kills the off-topic finance
-// (M&A, ESG, corporate governance) that loose source queries drag in.
+// Must clear this to be worth an LLM call. The old gate matched generic market
+// words (price, stock, returns…) and let news/PR through — "X passes $1T",
+// "Ex-CTO joins Y", "Market Alert" all reached the model. Now a METHOD term is
+// required: the text has to look like it describes a tradable rule or a
+// quantitative technique, not merely mention markets.
 export const RELEVANCE =
-  /\b(trading|strateg|backtest|portfolio|momentum|reversal|mean.?reversion|volatilit|arbitrage|factor|alpha|signal|returns?|price|asset|stock|equit|futures|forecast|anomal|indicator|entry|exit)\b/i;
+  /\b(strateg\w*|backtest\w*|momentum|mean.?rever\w*|reversal|breakout|trend.?follow\w*|arbitrage|factor|alpha|signal\w*|indicator\w*|volatilit\w*|hedg\w*|quantitativ\w*|systematic|algorithmic|order.?(flow|book)|market.?mak\w*|portfolio\s+(optimi\w*|construct\w*|alloc\w*)|machine.?learning|reinforcement|neural|sharpe|drawdown|stat\w*.?arb\w*|pairs.?trad\w*|seasonal\w*|risk.?premi\w*|technical.?analysis|sector.?rotation|regime)\b/i;
+
+// Hard blocklist on TITLES: news/PR/signal-spam that can contain method words
+// but never contains a testable idea. Checked in addition to RELEVANCE.
+export const JUNK =
+  /^(buy|sell|long|short)\b|market alert|why stocks (are|were) moving|price (prediction|target)s?\b|passes \$|all.?time high|cumulative .{0,24}volume|hires|appoints|joins .{0,30} as|steps down|interview|opinion:|recap\b|market wrap|week ahead|top \d+|best \d+ |airdrop|presale|price analysis|price today|% indicator agreement/i;
 
 // ── small helpers ───────────────────────────────────────────────────────────
 const clean = (s) => String(s || "").replace(/\s+/g, " ").trim();
