@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { NavLink, Link, useLocation } from "react-router-dom";
-import { LayoutDashboard, CandlestickChart, FlaskConical, Newspaper, Compass, Wrench, Activity, Scale, Star, Briefcase, Radar, GraduationCap, Sigma, Menu, X, Target, BookOpenCheck, Telescope, Cpu, Sun, Moon, Monitor, Waypoints, Search, LogIn } from "lucide-react";
+import { LayoutDashboard, CandlestickChart, FlaskConical, Newspaper, Compass, Wrench, Activity, Scale, Star, Briefcase, Radar, GraduationCap, Sigma, Menu, X, Target, BookOpenCheck, Telescope, Cpu, Sun, Moon, Monitor, Waypoints, Search, LogIn , Landmark} from "lucide-react";
 import { cn } from "@/lib/utils";
 import DitherBackground from "@/components/DitherBackground";
 import CommandPalette from "@/components/CommandPalette";
@@ -78,6 +78,7 @@ const NAV_GROUPS = [
       { to: "/charts", label: "Charts", icon: CandlestickChart },
       { to: "/screener", label: "Screener", icon: Radar },
       { to: "/news", label: "News", icon: Newspaper },
+      { to: "/macro", label: "Macro", icon: Landmark },
     ],
   },
   {

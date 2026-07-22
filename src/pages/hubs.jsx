@@ -1,4 +1,4 @@
-import { FlaskConical, Scale, Briefcase, Sigma, GraduationCap, BookOpenCheck, Compass, Radar, Telescope, Grid3x3, BrainCircuit } from "lucide-react";
+import { FlaskConical, Scale, Briefcase, Sigma, GraduationCap, BookOpenCheck, Compass, Radar, Telescope, Grid3x3, BrainCircuit, Landmark, CalendarDays, Database } from "lucide-react";
 import TabHub from "@/components/TabHub";
 import Backtest from "@/pages/Backtest";
 import Compare from "@/pages/Compare";
@@ -11,6 +11,7 @@ import Screener from "@/pages/Screener";
 import Anomalies from "@/pages/Anomalies";
 import Correlation from "@/pages/Correlation";
 import MLStudio from "@/pages/MLStudio";
+import { Yields, EconCalendar, L3Archive } from "@/pages/Macro";
 
 // Consolidated hubs — related pages merged into one tabbed route each. Old
 // routes redirect to the matching tab (see App.jsx).
@@ -50,6 +51,16 @@ export function LearnHub() {
       { id: "academy", label: "Academy", icon: GraduationCap, el: <Academy /> },
       { id: "guide", label: "Guide", icon: BookOpenCheck, el: <Guide /> },
       { id: "resources", label: "Resources", icon: Compass, el: <Resources /> },
+    ]} />
+  );
+}
+
+export function MacroHub() {
+  return (
+    <TabHub base="/macro" eyebrow="Macro" tabs={[
+      { id: "yields", label: "Bond Yields", icon: Landmark, el: <Yields /> },
+      { id: "calendar", label: "Econ Events", icon: CalendarDays, el: <EconCalendar /> },
+      { id: "l3", label: "L3 Archive", icon: Database, el: <L3Archive /> },
     ]} />
   );
 }

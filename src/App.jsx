@@ -19,6 +19,7 @@ const BacktestHub = lazy(() => import("@/pages/hubs").then((m) => ({ default: m.
 const PortfolioHub = lazy(() => import("@/pages/hubs").then((m) => ({ default: m.PortfolioHub })));
 const ScreenerHub = lazy(() => import("@/pages/hubs").then((m) => ({ default: m.ScreenerHub })));
 const LearnHub = lazy(() => import("@/pages/hubs").then((m) => ({ default: m.LearnHub })));
+const MacroHub = lazy(() => import("@/pages/hubs").then((m) => ({ default: m.MacroHub })));
 const Impressum = lazy(() => import("@/pages/Impressum"));
 const Datenschutz = lazy(() => import("@/pages/Datenschutz"));
 const Nutzung = lazy(() => import("@/pages/Nutzung"));
@@ -95,6 +96,9 @@ export default function App() {
                 <Route path="/screener/:tab" element={<ScreenerHub />} />
                 <Route path="/anomalies" element={<Redir to="/screener/anomalies" replace />} />
                 <Route path="/correlation" element={<Redir to="/screener/correlation" replace />} />
+
+                <Route path="/macro" element={<Redir to="/macro/yields" replace />} />
+                <Route path="/macro/:tab" element={<MacroHub />} />
 
                 {/* Learn hub (Academy · Guide · Resources) */}
                 <Route path="/learn" element={<Redir to="/learn/academy" replace />} />
