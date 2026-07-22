@@ -21,6 +21,7 @@ export default function BrainVault() {
   const wrapRef = useRef(null);
   const canvasRef = useRef(null);
   const simRef = useRef(null); // { nodes, edges, raf }
+  const viewRef = useRef(null); // { reset } — re-frame the camera on demand
 
   const load = async () => {
     setBusy(true);
@@ -32,15 +33,16 @@ export default function BrainVault() {
   };
   useEffect(() => { if (token) load(); else setData(null); /* eslint-disable-next-line */ }, []);
 
-  // ── force simulation ──────────────────────────────────────────────────────
+  // ── force simulation + free pan/zoom camera (Obsidian-style) ───────────────
   useEffect(() => {
     const graph = data;
     const canvas = canvasRef.current;
     const wrap = wrapRef.current;
     if (!graph?.nodes?.length || !canvas || !wrap) return;
 
-    let W = wrap.clientWidth, H = 520;
     const dpr = Math.min(2, window.devicePixelRatio || 1);
+    let W = wrap.clientWidth;
+    let H = Math.min(760, Math.max(460, Math.round(window.innerHeight * 0.66)));
     const setup = () => {
       W = wrap.clientWidth;
       canvas.width = W * dpr; canvas.height = H * dpr;
@@ -49,104 +51,150 @@ export default function BrainVault() {
     setup();
     const ctx = canvas.getContext("2d");
 
-    // init node positions in a loose disc around the centre
+    // Nodes live in WORLD space around the origin and are NOT clamped to the
+    // viewport — the camera pans/zooms over them, so the graph can spread out
+    // instead of being squeezed into the panel (the whole point of this view).
     const nodes = graph.nodes.map((n, i) => {
       const a = (i / graph.nodes.length) * Math.PI * 2;
-      const r = 40 + Math.random() * Math.min(W, H) * 0.35;
-      return { ...n, x: W / 2 + Math.cos(a) * r, y: H / 2 + Math.sin(a) * r, vx: 0, vy: 0,
+      const r = 40 + Math.random() * 260;
+      return { ...n, x: Math.cos(a) * r, y: Math.sin(a) * r, vx: 0, vy: 0,
         rad: n.outcome === "candidate" ? 6.5 : 3.5 };
     });
     const edges = (graph.edges || []).filter((e) => nodes[e.a] && nodes[e.b]);
     simRef.current = { nodes, edges };
 
+    // Camera: screen = world * scale + (tx, ty). Starts framed on the origin.
+    const cam = { scale: 1, tx: W / 2, ty: H / 2 };
+    let userMoved = false; // once the user grabs the view, stop auto-framing
+
+    const fit = () => {
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const n of nodes) { minX = Math.min(minX, n.x); minY = Math.min(minY, n.y); maxX = Math.max(maxX, n.x); maxY = Math.max(maxY, n.y); }
+      const pad = 70, gw = (maxX - minX) || 1, gh = (maxY - minY) || 1;
+      cam.scale = Math.max(0.15, Math.min((W - pad * 2) / gw, (H - pad * 2) / gh, 1.4));
+      cam.tx = W / 2 - ((minX + maxX) / 2) * cam.scale;
+      cam.ty = H / 2 - ((minY + maxY) / 2) * cam.scale;
+    };
+
+    const draw = () => {
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, W, H);
+      ctx.save();
+      ctx.translate(cam.tx, cam.ty);
+      ctx.scale(cam.scale, cam.scale);
+      ctx.strokeStyle = COLORS.edge; ctx.lineWidth = 1 / cam.scale;
+      for (const e of edges) {
+        const a = nodes[e.a], b = nodes[e.b];
+        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+      }
+      for (const n of nodes) {
+        const c = COLORS[n.outcome] || "#94a3b8";
+        ctx.beginPath(); ctx.arc(n.x, n.y, n.rad, 0, Math.PI * 2);
+        ctx.fillStyle = c; ctx.globalAlpha = n.outcome === "graveyard" ? 0.55 : 1; ctx.fill();
+        if (n.outcome === "candidate") { ctx.globalAlpha = 0.25; ctx.beginPath(); ctx.arc(n.x, n.y, n.rad + 4, 0, Math.PI * 2); ctx.fillStyle = c; ctx.fill(); }
+        ctx.globalAlpha = 1;
+      }
+      ctx.restore();
+    };
+
     let alpha = 1;
     const REST = 64, REPULSION = 1400;
     const step = () => {
-      // repulsion (O(n²) — fine for ≤120 nodes)
       for (let i = 0; i < nodes.length; i++) {
         const a = nodes[i];
         for (let j = i + 1; j < nodes.length; j++) {
           const b = nodes[j];
           let dx = a.x - b.x, dy = a.y - b.y;
           let d2 = dx * dx + dy * dy || 0.01;
-          const f = (REPULSION / d2) * alpha;
-          const d = Math.sqrt(d2);
+          const f = (REPULSION / d2) * alpha, d = Math.sqrt(d2);
           const fx = (dx / d) * f, fy = (dy / d) * f;
           a.vx += fx; a.vy += fy; b.vx -= fx; b.vy -= fy;
         }
       }
-      // springs along edges
       for (const e of edges) {
         const a = nodes[e.a], b = nodes[e.b];
-        const dx = b.x - a.x, dy = b.y - a.y;
-        const d = Math.sqrt(dx * dx + dy * dy) || 0.01;
-        const f = (d - REST) * 0.02 * alpha;
-        const fx = (dx / d) * f, fy = (dy / d) * f;
+        const dx = b.x - a.x, dy = b.y - a.y, d = Math.sqrt(dx * dx + dy * dy) || 0.01;
+        const f = (d - REST) * 0.02 * alpha, fx = (dx / d) * f, fy = (dy / d) * f;
         a.vx += fx; a.vy += fy; b.vx -= fx; b.vy -= fy;
       }
-      // gravity to centre + integrate
       for (const n of nodes) {
-        n.vx += (W / 2 - n.x) * 0.0016 * alpha;
-        n.vy += (H / 2 - n.y) * 0.0016 * alpha;
+        n.vx += (0 - n.x) * 0.0016 * alpha;   // gravity toward the world origin
+        n.vy += (0 - n.y) * 0.0016 * alpha;
         n.vx *= 0.86; n.vy *= 0.86;
-        n.x += n.vx; n.y += n.vy;
-        n.x = Math.max(8, Math.min(W - 8, n.x));
-        n.y = Math.max(8, Math.min(H - 8, n.y));
+        n.x += n.vx; n.y += n.vy;               // no viewport clamping
       }
       alpha *= 0.99;
+      if (!userMoved) fit();                    // keep the whole graph framed while it settles
       draw();
       if (alpha > 0.02) simRef.current.raf = requestAnimationFrame(step);
     };
 
-    const draw = () => {
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      ctx.clearRect(0, 0, W, H);
-      // edges
-      ctx.strokeStyle = COLORS.edge; ctx.lineWidth = 1;
-      for (const e of edges) {
-        const a = nodes[e.a], b = nodes[e.b];
-        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
-      }
-      // nodes
-      for (const n of nodes) {
-        const c = COLORS[n.outcome] || "#94a3b8";
-        ctx.beginPath();
-        ctx.arc(n.x, n.y, n.rad, 0, Math.PI * 2);
-        ctx.fillStyle = c;
-        ctx.globalAlpha = n.outcome === "graveyard" ? 0.55 : 1;
-        ctx.fill();
-        if (n.outcome === "candidate") { // glow for survivors
-          ctx.globalAlpha = 0.25; ctx.beginPath();
-          ctx.arc(n.x, n.y, n.rad + 4, 0, Math.PI * 2); ctx.fillStyle = c; ctx.fill();
-        }
-        ctx.globalAlpha = 1;
-      }
-    };
-
     cancelAnimationFrame(simRef.current.raf);
     simRef.current.raf = requestAnimationFrame(step);
+    viewRef.current = { reset: () => { userMoved = false; fit(); draw(); } };
 
-    const onResize = () => { setup(); alpha = Math.max(alpha, 0.3); cancelAnimationFrame(simRef.current.raf); simRef.current.raf = requestAnimationFrame(step); };
+    const onResize = () => { setup(); if (!userMoved) fit(); alpha = Math.max(alpha, 0.25); cancelAnimationFrame(simRef.current.raf); simRef.current.raf = requestAnimationFrame(step); };
     const ro = new ResizeObserver(onResize);
     ro.observe(wrap);
 
-    const onMove = (ev) => {
+    // ── interaction: drag to pan, wheel to zoom toward the cursor ─────────────
+    let dragging = false, lastX = 0, lastY = 0;
+    const hitTest = (mx, my) => {
+      const wx = (mx - cam.tx) / cam.scale, wy = (my - cam.ty) / cam.scale;
+      let best = null, bd = (12 / cam.scale) ** 2;
+      for (const n of nodes) { const dx = n.x - wx, dy = n.y - wy, d2 = dx * dx + dy * dy; if (d2 < bd) { bd = d2; best = n; } }
+      return best;
+    };
+    const onDown = (e) => { dragging = true; userMoved = true; lastX = e.clientX; lastY = e.clientY; canvas.style.cursor = "grabbing"; };
+    const onUp = () => { dragging = false; canvas.style.cursor = "grab"; };
+    const onMove = (e) => {
       const rect = canvas.getBoundingClientRect();
-      const mx = ev.clientX - rect.left, my = ev.clientY - rect.top;
-      let best = null, bd = 12 * 12;
-      for (const n of nodes) {
-        const dx = n.x - mx, dy = n.y - my, d2 = dx * dx + dy * dy;
-        if (d2 < bd) { bd = d2; best = n; }
+      const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+      if (dragging) {
+        cam.tx += e.clientX - lastX; cam.ty += e.clientY - lastY;
+        lastX = e.clientX; lastY = e.clientY;
+        setHover(null); draw(); return;
       }
+      const best = hitTest(mx, my);
       setHover(best ? { n: best, x: mx, y: my } : null);
     };
+    const onLeave = () => { if (!dragging) setHover(null); };
+    const onWheel = (e) => {
+      e.preventDefault();
+      userMoved = true;
+      const rect = canvas.getBoundingClientRect();
+      const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+      const wx = (mx - cam.tx) / cam.scale, wy = (my - cam.ty) / cam.scale;
+      cam.scale = Math.max(0.1, Math.min(4, cam.scale * Math.exp(-e.deltaY * 0.0015)));
+      cam.tx = mx - wx * cam.scale; cam.ty = my - wy * cam.scale;
+      draw();
+    };
+    let tLast = null;
+    const onTouchStart = (e) => { if (e.touches.length === 1) { userMoved = true; tLast = { x: e.touches[0].clientX, y: e.touches[0].clientY }; } };
+    const onTouchMove = (e) => { if (e.touches.length === 1 && tLast) { e.preventDefault(); const t = e.touches[0]; cam.tx += t.clientX - tLast.x; cam.ty += t.clientY - tLast.y; tLast = { x: t.clientX, y: t.clientY }; draw(); } };
+    const onTouchEnd = () => { tLast = null; };
+
+    canvas.style.cursor = "grab";
+    canvas.addEventListener("mousedown", onDown);
+    window.addEventListener("mouseup", onUp);
     canvas.addEventListener("mousemove", onMove);
-    canvas.addEventListener("mouseleave", () => setHover(null));
+    canvas.addEventListener("mouseleave", onLeave);
+    canvas.addEventListener("wheel", onWheel, { passive: false });
+    canvas.addEventListener("touchstart", onTouchStart, { passive: true });
+    canvas.addEventListener("touchmove", onTouchMove, { passive: false });
+    canvas.addEventListener("touchend", onTouchEnd);
 
     return () => {
       cancelAnimationFrame(simRef.current?.raf);
       ro.disconnect();
+      canvas.removeEventListener("mousedown", onDown);
+      window.removeEventListener("mouseup", onUp);
       canvas.removeEventListener("mousemove", onMove);
+      canvas.removeEventListener("mouseleave", onLeave);
+      canvas.removeEventListener("wheel", onWheel);
+      canvas.removeEventListener("touchstart", onTouchStart);
+      canvas.removeEventListener("touchmove", onTouchMove);
+      canvas.removeEventListener("touchend", onTouchEnd);
     };
   }, [data]);
 
@@ -188,13 +236,21 @@ export default function BrainVault() {
 
           {/* graph */}
           <div ref={wrapRef} className="relative rounded-xl border border-line lg-glass overflow-hidden">
-            <canvas ref={canvasRef} className="block w-full" style={{ height: 520 }} />
+            <canvas ref={canvasRef} className="block w-full touch-none" style={{ height: 520 }} />
             {/* legend */}
             <div className="absolute top-3 left-3 flex flex-col gap-1 text-[11px] text-dim">
               <span className="flex items-center gap-1.5"><i className="w-2 h-2 rounded-full inline-block" style={{ background: COLORS.candidate }} /> survivor (candidate)</span>
               <span className="flex items-center gap-1.5"><i className="w-2 h-2 rounded-full inline-block opacity-60" style={{ background: COLORS.graveyard }} /> buried</span>
               <span className="text-dim/60">edge = shared research topic</span>
+              <span className="text-dim/60">scroll = zoom · drag = pan</span>
             </div>
+            {/* view controls */}
+            <button
+              onClick={() => viewRef.current?.reset()}
+              className="absolute top-3 right-3 z-10 rounded-lg border border-line bg-bg/80 px-2.5 py-1 text-[11px] text-dim transition-colors hover:text-text"
+            >
+              Reset view
+            </button>
             {/* source counts */}
             <div className="absolute bottom-3 right-3 flex gap-3 text-[11px] text-dim">
               {Object.entries(sources).map(([s, n]) => (
