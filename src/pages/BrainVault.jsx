@@ -118,6 +118,7 @@ export default function BrainVault() {
         a.vx += fx; a.vy += fy; b.vx -= fx; b.vy -= fy;
       }
       for (const n of nodes) {
+        if (n.pinned) { n.vx = 0; n.vy = 0; continue; } // held by the cursor
         n.vx += (0 - n.x) * 0.0016 * alpha;   // gravity toward the world origin
         n.vy += (0 - n.y) * 0.0016 * alpha;
         n.vx *= 0.86; n.vy *= 0.86;
@@ -137,25 +138,58 @@ export default function BrainVault() {
     const ro = new ResizeObserver(onResize);
     ro.observe(wrap);
 
-    // ── interaction: drag to pan, wheel to zoom toward the cursor ─────────────
-    let dragging = false, lastX = 0, lastY = 0;
+    // ── interaction: drag NODES (elastic, Obsidian-style) or pan; wheel zooms ─
+    let dragging = false, lastX = 0, lastY = 0, dragNode = null;
     const hitTest = (mx, my) => {
       const wx = (mx - cam.tx) / cam.scale, wy = (my - cam.ty) / cam.scale;
       let best = null, bd = (12 / cam.scale) ** 2;
       for (const n of nodes) { const dx = n.x - wx, dy = n.y - wy, d2 = dx * dx + dy * dy; if (d2 < bd) { bd = d2; best = n; } }
       return best;
     };
-    const onDown = (e) => { dragging = true; userMoved = true; lastX = e.clientX; lastY = e.clientY; canvas.style.cursor = "grabbing"; };
-    const onUp = () => { dragging = false; canvas.style.cursor = "grab"; };
+    // Re-heat the simulation and make sure the RAF loop is alive — this is what
+    // makes neighbours get PULLED along by the springs while you drag, and the
+    // whole cluster wobble back into place when you let go.
+    const kick = (a) => {
+      alpha = Math.max(alpha, a);
+      cancelAnimationFrame(simRef.current.raf);
+      simRef.current.raf = requestAnimationFrame(step);
+    };
+    const onDown = (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const hit = hitTest(e.clientX - rect.left, e.clientY - rect.top);
+      userMoved = true;
+      if (hit) {
+        dragNode = hit; hit.pinned = true;
+        setHover(null);
+        canvas.style.cursor = "grabbing";
+        kick(0.5);
+      } else {
+        dragging = true; lastX = e.clientX; lastY = e.clientY;
+        canvas.style.cursor = "grabbing";
+      }
+    };
+    const onUp = () => {
+      if (dragNode) { dragNode.pinned = false; dragNode = null; kick(0.3); } // release → elastic settle
+      dragging = false;
+      canvas.style.cursor = "grab";
+    };
     const onMove = (e) => {
       const rect = canvas.getBoundingClientRect();
       const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+      if (dragNode) {
+        dragNode.x = (mx - cam.tx) / cam.scale;
+        dragNode.y = (my - cam.ty) / cam.scale;
+        dragNode.vx = 0; dragNode.vy = 0;
+        kick(0.35); // keep the springs live while dragging
+        return;     // the running sim draws every frame
+      }
       if (dragging) {
         cam.tx += e.clientX - lastX; cam.ty += e.clientY - lastY;
         lastX = e.clientX; lastY = e.clientY;
         setHover(null); draw(); return;
       }
       const best = hitTest(mx, my);
+      canvas.style.cursor = best ? "pointer" : "grab";
       setHover(best ? { n: best, x: mx, y: my } : null);
     };
     const onLeave = () => { if (!dragging) setHover(null); };
@@ -170,9 +204,33 @@ export default function BrainVault() {
       draw();
     };
     let tLast = null;
-    const onTouchStart = (e) => { if (e.touches.length === 1) { userMoved = true; tLast = { x: e.touches[0].clientX, y: e.touches[0].clientY }; } };
-    const onTouchMove = (e) => { if (e.touches.length === 1 && tLast) { e.preventDefault(); const t = e.touches[0]; cam.tx += t.clientX - tLast.x; cam.ty += t.clientY - tLast.y; tLast = { x: t.clientX, y: t.clientY }; draw(); } };
-    const onTouchEnd = () => { tLast = null; };
+    const onTouchStart = (e) => {
+      if (e.touches.length !== 1) return;
+      const t = e.touches[0];
+      const rect = canvas.getBoundingClientRect();
+      const hit = hitTest(t.clientX - rect.left, t.clientY - rect.top);
+      userMoved = true;
+      if (hit) { dragNode = hit; hit.pinned = true; setHover(null); kick(0.5); }
+      else tLast = { x: t.clientX, y: t.clientY };
+    };
+    const onTouchMove = (e) => {
+      if (e.touches.length !== 1) return;
+      const t = e.touches[0];
+      if (dragNode) {
+        e.preventDefault();
+        const rect = canvas.getBoundingClientRect();
+        dragNode.x = (t.clientX - rect.left - cam.tx) / cam.scale;
+        dragNode.y = (t.clientY - rect.top - cam.ty) / cam.scale;
+        dragNode.vx = 0; dragNode.vy = 0;
+        kick(0.35);
+        return;
+      }
+      if (tLast) { e.preventDefault(); cam.tx += t.clientX - tLast.x; cam.ty += t.clientY - tLast.y; tLast = { x: t.clientX, y: t.clientY }; draw(); }
+    };
+    const onTouchEnd = () => {
+      if (dragNode) { dragNode.pinned = false; dragNode = null; kick(0.3); }
+      tLast = null;
+    };
 
     canvas.style.cursor = "grab";
     canvas.addEventListener("mousedown", onDown);
@@ -236,7 +294,7 @@ export default function BrainVault() {
               <span className="flex items-center gap-1.5"><i className="w-2 h-2 rounded-full inline-block" style={{ background: COLORS.candidate }} /> survivor (candidate)</span>
               <span className="flex items-center gap-1.5"><i className="w-2 h-2 rounded-full inline-block opacity-60" style={{ background: COLORS.graveyard }} /> buried</span>
               <span className="text-dim/60">edge = shared research topic</span>
-              <span className="text-dim/60">scroll = zoom · drag = pan</span>
+              <span className="text-dim/60">scroll = zoom · drag bg = pan · drag node = move it</span>
             </div>
             {/* view controls */}
             <button
