@@ -11,7 +11,10 @@
 //
 // Shapes:
 //   Watchlist entry : { market, symbol, name }
-//   Portfolio pos.  : { id, market, symbol, name, shares, avgPrice, addedAt }
+//   Portfolio pos.  : { id, market, symbol, name, shares, avgPrice, addedAt,
+//                       buyDate?, sellPrice?, sellDate? }
+//   buyDate/sellDate are ms timestamps. A position with a sellPrice is CLOSED:
+//   its P/L is realized and the equity graph freezes it at the sale proceeds.
 
 const WATCHLIST_KEY = "quant_watchlist";
 const PORTFOLIO_KEY = "quant_portfolio";
@@ -139,8 +142,16 @@ export function getPortfolio() {
   return readArray(PORTFOLIO_KEY);
 }
 
-// { market, symbol, name, shares, avgPrice } → adds a position with a fresh id.
-export function addPosition({ market, symbol, name, shares, avgPrice }) {
+// Parse an optional ms timestamp (number or date-input string) → ms | null.
+function toDateMs(v) {
+  if (v == null || v === "") return null;
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  const t = Date.parse(v);
+  return Number.isFinite(t) ? t : null;
+}
+
+// { market, symbol, name, shares, avgPrice, buyDate? } → adds a position.
+export function addPosition({ market, symbol, name, shares, avgPrice, buyDate }) {
   if (!market || !symbol) return getPortfolio();
   const pos = {
     id: genId(),
@@ -150,24 +161,38 @@ export function addPosition({ market, symbol, name, shares, avgPrice }) {
     shares: toNum(shares),
     avgPrice: toNum(avgPrice),
     addedAt: Date.now(),
+    buyDate: toDateMs(buyDate) ?? Date.now(),
+    sellPrice: null,
+    sellDate: null,
   };
   const next = [...getPortfolio(), pos];
   writeArray(PORTFOLIO_KEY, next);
   return next;
 }
 
-// patch may include { shares, avgPrice, name, ... }. Numeric fields are coerced.
+// patch may include { shares, avgPrice, buyDate, sellPrice, sellDate, name, ... }.
+// Numeric fields are coerced; sellPrice "" / null reopens the position.
 export function updatePosition(id, patch) {
   const next = getPortfolio().map((p) => {
     if (p.id !== id) return p;
     const merged = { ...p, ...patch };
     if ("shares" in patch) merged.shares = toNum(patch.shares);
     if ("avgPrice" in patch) merged.avgPrice = toNum(patch.avgPrice);
+    if ("buyDate" in patch) merged.buyDate = toDateMs(patch.buyDate) ?? p.buyDate ?? p.addedAt;
+    if ("sellPrice" in patch) {
+      const sp = toNum(patch.sellPrice);
+      merged.sellPrice = sp > 0 ? sp : null;
+      if (merged.sellPrice == null) merged.sellDate = null;
+    }
+    if ("sellDate" in patch) merged.sellDate = merged.sellPrice != null ? toDateMs(patch.sellDate) ?? Date.now() : null;
     return merged;
   });
   writeArray(PORTFOLIO_KEY, next);
   return next;
 }
+
+/** True when the position is closed (has a realized sale). */
+export const isClosed = (p) => p?.sellPrice != null && p.sellPrice > 0;
 
 export function removePosition(id) {
   const next = getPortfolio().filter((p) => p.id !== id);

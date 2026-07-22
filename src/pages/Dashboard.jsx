@@ -122,25 +122,64 @@ function Sparkline({ data, up, delay = 0 }) {
 }
 
 // Responsive equity area chart from a [{t,v}] history. Theme-aware.
-function AreaChart({ history, height = 200 }) {
-  const vals = (history || []).map((p) => p.v).filter((v) => Number.isFinite(v));
-  if (vals.length < 2) return <div className="grid place-items-center text-sm text-dim" style={{ height }}>No equity history yet — run the paper agent.</div>;
+// Hover/touch: a crosshair follows the curve and shows value + date + change
+// vs the start of the visible window.
+function AreaChart({ history, height = 200, fmt }) {
+  const wrapRef = useRef(null);
+  const [hov, setHov] = useState(null); // index into pts
+  const pts = (history || []).filter((p) => Number.isFinite(p.v));
+  if (pts.length < 2) return <div className="grid place-items-center text-sm text-dim" style={{ height }}>No equity history yet — run the paper agent.</div>;
+  const vals = pts.map((p) => p.v);
   const W = 600, H = height, min = Math.min(...vals), max = Math.max(...vals), rng = max - min || 1;
   const X = (i) => (i / (vals.length - 1)) * W;
   const Y = (v) => H - 4 - ((v - min) / rng) * (H - 14);
   const line = vals.map((v, i) => `${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join(" ");
+
+  const onMove = (e) => {
+    const rect = wrapRef.current?.getBoundingClientRect();
+    if (!rect || rect.width === 0) return;
+    const frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+    setHov(Math.round(frac * (pts.length - 1)));
+  };
+  const h = hov != null ? pts[hov] : null;
+  const hx = hov != null ? (hov / (pts.length - 1)) * 100 : 0;
+  const hy = h ? (Y(h.v) / H) * 100 : 0;
+  const hChg = h && vals[0] > 0 ? ((h.v / vals[0]) - 1) * 100 : null;
+  const format = fmt || ((v) => v.toFixed(2));
+
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="w-full" style={{ height }} aria-hidden="true">
-      <defs>
-        <linearGradient id="eq-fill" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" style={{ stopColor: "rgb(var(--c-up))", stopOpacity: 0.24 }} />
-          <stop offset="100%" style={{ stopColor: "rgb(var(--c-up))", stopOpacity: 0 }} />
-        </linearGradient>
-      </defs>
-      <polygon points={`0,${H} ${line} ${W},${H}`} fill="url(#eq-fill)" className="fade-in" />
-      <polyline points={line} pathLength="1" fill="none" className="stroke-up draw-in" strokeWidth="2"
-        vectorEffect="non-scaling-stroke" strokeLinejoin="round" strokeLinecap="round" />
-    </svg>
+    <div ref={wrapRef} className="relative touch-pan-y" onPointerMove={onMove} onPointerLeave={() => setHov(null)}>
+      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="w-full block" style={{ height }} aria-hidden="true">
+        <defs>
+          <linearGradient id="eq-fill" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" style={{ stopColor: "rgb(var(--c-up))", stopOpacity: 0.24 }} />
+            <stop offset="100%" style={{ stopColor: "rgb(var(--c-up))", stopOpacity: 0 }} />
+          </linearGradient>
+        </defs>
+        <polygon points={`0,${H} ${line} ${W},${H}`} fill="url(#eq-fill)" className="fade-in" />
+        <polyline points={line} pathLength="1" fill="none" className="stroke-up draw-in" strokeWidth="2"
+          vectorEffect="non-scaling-stroke" strokeLinejoin="round" strokeLinecap="round" />
+      </svg>
+      {h && (
+        <>
+          <div className="absolute top-0 bottom-0 w-px bg-text/20 pointer-events-none" style={{ left: `${hx}%` }} />
+          <div className="absolute w-2.5 h-2.5 rounded-full bg-up border-2 border-bg pointer-events-none -translate-x-1/2 -translate-y-1/2"
+            style={{ left: `${hx}%`, top: `${hy}%` }} />
+          <div className="absolute top-1 pointer-events-none rounded-lg border border-line bg-bg/95 backdrop-blur px-2.5 py-1.5 text-[11px] font-mono whitespace-nowrap shadow-sm"
+            style={{ left: `${hx}%`, transform: hx > 55 ? "translateX(calc(-100% - 10px))" : "translateX(10px)" }}>
+            <span className="text-text font-semibold">{format(h.v)}</span>
+            {hChg != null && (
+              <span className={cn("ml-2 font-semibold", hChg >= 0 ? "text-up" : "text-down")}>
+                {hChg >= 0 ? "+" : ""}{hChg.toFixed(2)}%
+              </span>
+            )}
+            <span className="text-dim ml-2">
+              {new Date(h.t).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
+            </span>
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -232,6 +271,8 @@ function WatchlistCard() {
 
 // Align multiple daily candle series on their common timeline and combine them
 // (portfolio = Σ shares × close; watchlist = equal-weight index, start 100).
+// value(close, t) also receives the bar time so portfolio positions can respect
+// their buy/sell window (0 before the buy, frozen proceeds after the sale).
 function combineSeries(entries) {
   if (!entries.length) return [];
   const start = Math.max(...entries.map((e) => e.candles[0].time));
@@ -246,7 +287,7 @@ function combineSeries(entries) {
       const cs = e.candles;
       while (idx[i] + 1 < cs.length && cs[idx[i] + 1].time <= t) idx[i]++;
       if (cs[idx[i]].time > t) { ok = false; return; }
-      v += e.value(cs[idx[i]].close); // forward-fill: last known close
+      v += e.value(cs[idx[i]].close, t); // forward-fill: last known close
     });
     if (ok) out.push({ t: t * 1000, v });
   }
@@ -254,6 +295,17 @@ function combineSeries(entries) {
 }
 
 const EQUITY_SRC_KEY = "quant_equity_src";
+const EQUITY_RANGE_KEY = "quant_equity_range";
+
+// Selectable window for the equity chart. `fetch` is the candle range pulled
+// for portfolio/watchlist; paper history is filtered client-side by `days`.
+const EQ_RANGES = [
+  { id: "1w", label: "1W", days: 7, fetch: "5d" },
+  { id: "1mo", label: "1M", days: 30, fetch: "1mo" },
+  { id: "3mo", label: "3M", days: 90, fetch: "3mo" },
+  { id: "1y", label: "1Y", days: 365, fetch: "1y" },
+  { id: "max", label: "Max", days: Infinity, fetch: "5y" },
+];
 
 // The big equity chart, switchable between the three books you actually have:
 // the Cortex PAPER book (when the agent reports), your simulated PORTFOLIO,
@@ -279,13 +331,33 @@ function EquityCard({ lab }) {
     try { localStorage.setItem(EQUITY_SRC_KEY, id); } catch { /* private mode */ }
   };
 
-  // Portfolio/watchlist curves are built client-side from 3mo daily candles.
+  // Window length (1W…Max) — sticks like the source choice.
+  const [rangeId, setRangeId] = useState(() => {
+    try { return localStorage.getItem(EQUITY_RANGE_KEY) || "3mo"; } catch { return "3mo"; }
+  });
+  const range = EQ_RANGES.find((r) => r.id === rangeId) || EQ_RANGES[2];
+  const chooseRange = (id) => {
+    setRangeId(id);
+    try { localStorage.setItem(EQUITY_RANGE_KEY, id); } catch { /* private mode */ }
+  };
+
+  // Portfolio/watchlist curves are built client-side from daily candles over
+  // the selected window. Portfolio positions honor buy/sell dates: nothing
+  // before the buy, live value while held, frozen sale proceeds after selling.
   const listKey = list.map((w) => `${w.market}:${w.symbol}`).join(",");
   const [curve, setCurve] = useState({ data: null, loading: false, empty: "" });
   useEffect(() => {
     if (active === "paper") { setCurve({ data: null, loading: false, empty: "" }); return; }
     const entries = active === "portfolio"
-      ? positions.map((p) => ({ market: p.market, symbol: p.symbol, mk: (candles) => ({ candles, value: (close) => p.shares * close }) }))
+      ? positions.map((p) => {
+          const buySec = Math.floor((p.buyDate ?? p.addedAt ?? 0) / 1000);
+          const sellSec = p.sellPrice > 0 && p.sellDate ? Math.floor(p.sellDate / 1000) : null;
+          return { market: p.market, symbol: p.symbol, mk: (candles) => ({ candles, value: (close, t) => {
+            if (t < buySec) return 0;
+            if (sellSec != null && t >= sellSec) return p.shares * p.sellPrice;
+            return p.shares * close;
+          } }) };
+        })
       : list.map((w) => ({ market: w.market, symbol: w.symbol, mk: (candles) => ({ candles, value: (close) => (close / candles[0].close) * (100 / list.length) }) }));
     if (!entries.length) {
       setCurve({ data: [], loading: false, empty: active === "portfolio" ? "No positions yet — add some on the Portfolio page." : "Watchlist is empty." });
@@ -294,7 +366,7 @@ function EquityCard({ lab }) {
     let alive = true;
     setCurve({ data: null, loading: true, empty: "" });
     Promise.allSettled(entries.map(async (e) => {
-      const cs = await fetchCandles({ market: e.market, symbol: e.symbol, interval: "1d", range: "3mo" });
+      const cs = await fetchCandles({ market: e.market, symbol: e.symbol, interval: "1d", range: range.fetch });
       if (!cs || cs.length < 2) throw new Error("no data");
       return e.mk(cs);
     })).then((rs) => {
@@ -304,19 +376,31 @@ function EquityCard({ lab }) {
     });
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, positions, listKey]);
+  }, [active, positions, listKey, rangeId]);
 
-  const history = active === "paper" ? (c?.history || []) : (curve.data || []);
-  const chgPct = active === "paper"
-    ? c?.returnPct
-    : history.length >= 2 && history[0].v > 0 ? ((history[history.length - 1].v / history[0].v) - 1) * 100 : null;
+  // Paper history is filtered client-side to the selected window.
+  const paperHistory = useMemo(() => {
+    const hist = c?.history || [];
+    if (!Number.isFinite(range.days)) return hist;
+    const cutoff = Date.now() - range.days * 86400_000;
+    return hist.filter((p) => p.t >= cutoff);
+  }, [c, range.days]);
+
+  const history = active === "paper" ? paperHistory : (curve.data || []);
+  // Change over the VISIBLE window, so the badge always matches the chart.
+  const chgPct = history.length >= 2 && history[0].v > 0
+    ? ((history[history.length - 1].v / history[0].v) - 1) * 100
+    : (active === "paper" ? c?.returnPct : null);
 
   const TITLES = {
     paper: ["Paper equity", `${lab?.strategies?.filter((s) => !s.error).length ?? 0} strategies · virtual book`],
-    portfolio: ["Portfolio value", "your simulated holdings · 3 months"],
-    watchlist: ["Watchlist index", "equal-weight · 3 months · start = 100"],
+    portfolio: ["Portfolio value", `your simulated holdings · ${range.label}`],
+    watchlist: ["Watchlist index", `equal-weight · ${range.label} · start = 100`],
   };
   const [title, sub] = TITLES[active];
+  const fmtHover = active === "watchlist"
+    ? (v) => v.toFixed(2)
+    : (v) => (Math.abs(v) >= 1000 ? "$" + Math.round(v).toLocaleString("en-US") : "$" + v.toFixed(2));
 
   return (
     <div className="rounded-xl border border-line lg-glass p-5">
@@ -340,6 +424,15 @@ function EquityCard({ lab }) {
               </button>
             ))}
           </div>
+          <span className="w-px h-4 bg-line" />
+          <div className="flex gap-1">
+            {EQ_RANGES.map((r) => (
+              <button key={r.id} onClick={() => chooseRange(r.id)}
+                className={cn("chip !text-[10px] !py-0.5 font-mono", rangeId === r.id ? "chip-active" : "chip-idle")}>
+                {r.label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
       {active !== "paper" && curve.loading ? (
@@ -347,7 +440,7 @@ function EquityCard({ lab }) {
       ) : active !== "paper" && curve.empty ? (
         <div className="grid place-items-center text-sm text-dim" style={{ height: 200 }}>{curve.empty}</div>
       ) : (
-        <AreaChart key={active} history={history} />
+        <AreaChart key={`${active}:${rangeId}`} history={history} fmt={fmtHover} />
       )}
     </div>
   );

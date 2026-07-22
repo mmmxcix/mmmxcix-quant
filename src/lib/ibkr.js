@@ -140,6 +140,50 @@ async function tickle() {
   try { await api("/tickle", { method: "POST" }); } catch { /* next poll retries */ }
 }
 
+// ── Positions (READ-ONLY portfolio import) ───────────────────────────────────
+// This module must NEVER touch order endpoints (/iserver/account/.../orders,
+// /iserver/reply, …) — the gateway may be logged into a LIVE account. Reading
+// positions is safe; placing or modifying orders through this site is off-limits.
+
+/**
+ * Fetch current stock positions from the local gateway, read-only.
+ * Returns [{ symbol, name, shares, avgPrice }] — stocks only (assetClass STK),
+ * zero positions skipped. Throws on connectivity/auth problems so the caller
+ * can show a useful message.
+ */
+export async function fetchIbkrPositions() {
+  const acctRes = await api("/portfolio/accounts");
+  if (!acctRes.ok) throw new Error(`accounts HTTP ${acctRes.status} — logged in?`);
+  const accts = await acctRes.json();
+  const acctId = Array.isArray(accts) ? accts[0]?.accountId || accts[0]?.id : null;
+  if (!acctId) throw new Error("No IBKR account visible on the gateway.");
+
+  const out = [];
+  // Positions are paged (30/page); a personal book rarely exceeds a few pages.
+  for (let page = 0; page < 10; page++) {
+    const res = await api(`/portfolio/${encodeURIComponent(acctId)}/positions/${page}`);
+    if (!res.ok) throw new Error(`positions HTTP ${res.status}`);
+    const rows = await res.json();
+    if (!Array.isArray(rows) || rows.length === 0) break;
+    for (const r of rows) {
+      if (r?.assetClass !== "STK") continue; // stocks only — options/futures don't map
+      const shares = Number(r.position);
+      // For STK, avgCost ≈ avgPrice (per share). Prefer avgPrice when present.
+      const avg = Number(r.avgPrice) || Number(r.avgCost);
+      const symbol = (r.ticker || r.contractDesc || "").toUpperCase().trim();
+      if (!symbol || !Number.isFinite(shares) || shares === 0) continue;
+      out.push({
+        symbol,
+        name: r.name || r.contractDesc || symbol,
+        shares,
+        avgPrice: Number.isFinite(avg) && avg > 0 ? avg : 0,
+      });
+    }
+    if (rows.length < 30) break;
+  }
+  return out;
+}
+
 /**
  * One batched real-time quote fetch for a list of stock symbols.
  * Returns Map<SYMBOL, { price, changePct }> — symbols that didn't resolve or
