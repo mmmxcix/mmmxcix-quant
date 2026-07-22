@@ -157,7 +157,10 @@ function AreaChart({ history, height = 200, fmt }) {
           </linearGradient>
         </defs>
         <polygon points={`0,${H} ${line} ${W},${H}`} fill="url(#eq-fill)" className="fade-in" />
-        <polyline points={line} pathLength="1" fill="none" className="stroke-up draw-in" strokeWidth="2"
+        {/* No draw-in here: dash-based drawing + non-scaling-stroke on a
+            stretched (preserveAspectRatio="none") svg makes Chromium measure
+            the dash in screen space — the line visibly stops partway. */}
+        <polyline points={line} fill="none" className="stroke-up fade-in" strokeWidth="2"
           vectorEffect="non-scaling-stroke" strokeLinejoin="round" strokeLinecap="round" />
       </svg>
       {h && (
