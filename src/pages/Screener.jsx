@@ -36,6 +36,7 @@ export default function Screener() {
 
   const [rsiFilter, setRsiFilter] = useState("any");
   const [trendFilter, setTrendFilter] = useState("any");
+  const [sectorFilter, setSectorFilter] = useState("any");
   const [minChange, setMinChange] = useState("");
   const [sort, setSort] = useState({ key: "volume", dir: "desc" });
 
@@ -53,7 +54,13 @@ export default function Screener() {
     }
   };
 
-  useEffect(() => { load(market); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [market]);
+  useEffect(() => { load(market); setSectorFilter("any"); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [market]);
+
+  // Company-type filter options come from the scanned rows themselves.
+  const sectors = useMemo(
+    () => [...new Set(rows.map((r) => r.sector).filter(Boolean))].sort(),
+    [rows]
+  );
 
   const filtered = useMemo(() => {
     const f = {
@@ -63,7 +70,8 @@ export default function Screener() {
       trend: trendFilter,
       minVolume: null,
     };
-    const out = applyFilters(rows, f);
+    let out = applyFilters(rows, f);
+    if (sectorFilter !== "any") out = out.filter((r) => r.sector === sectorFilter);
     const { key, dir } = sort;
     const mul = dir === "asc" ? 1 : -1;
     return [...out].sort((a, b) => {
@@ -73,10 +81,12 @@ export default function Screener() {
       if (typeof av === "string") return av.localeCompare(bv) * mul;
       return (av - bv) * mul;
     });
-  }, [rows, minChange, rsiFilter, trendFilter, sort]);
+  }, [rows, minChange, rsiFilter, trendFilter, sectorFilter, sort]);
 
   const toggleSort = (key) =>
     setSort((s) => (s.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: "desc" }));
+
+  const cols = market === "stock" ? 8 : 6;
 
   const Th = ({ label, k, right }) => (
     <th className={cn("px-3 py-2 font-medium cursor-pointer select-none whitespace-nowrap", right && "text-right")}
@@ -108,6 +118,12 @@ export default function Screener() {
         <select value={trendFilter} onChange={(e) => setTrendFilter(e.target.value)} className="input-base text-sm">
           {TREND_OPTS.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
         </select>
+        {market === "stock" && (
+          <select value={sectorFilter} onChange={(e) => setSectorFilter(e.target.value)} className="input-base text-sm">
+            <option value="any">Sector: all</option>
+            {sectors.map((sec) => <option key={sec} value={sec}>{sec}</option>)}
+          </select>
+        )}
         <label className="flex items-center gap-1.5 text-xs text-dim">
           Change ≥
           <input type="number" value={minChange} onChange={(e) => setMinChange(e.target.value)}
@@ -132,6 +148,8 @@ export default function Screener() {
                 <Th label="Symbol" k="symbol" />
                 <Th label="Price" k="price" right />
                 <Th label="24h %" k="changePct" right />
+                {market === "stock" && <Th label="Sector" k="sector" />}
+                {market === "stock" && <Th label="Employees" k="employees" right />}
                 <Th label="Volume" k="volume" right />
                 <Th label="RSI" k="rsi" right />
                 <th className="px-3 py-2 font-medium text-right whitespace-nowrap">Trend</th>
@@ -139,16 +157,16 @@ export default function Screener() {
             </thead>
             <tbody>
               {error ? (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-down">{error}</td></tr>
+                <tr><td colSpan={cols} className="px-4 py-8 text-center text-down">{error}</td></tr>
               ) : loading ? (
                 Array.from({ length: 10 }).map((_, i) => (
                   <tr key={i} className="border-b border-line/40">
                     <td className="px-3 py-3"><div className="h-3 w-24 skeleton rounded" /></td>
-                    <td colSpan={5} className="px-3 py-3"><div className="h-3 w-full bg-line/50 rounded" /></td>
+                    <td colSpan={cols - 1} className="px-3 py-3"><div className="h-3 w-full bg-line/50 rounded" /></td>
                   </tr>
                 ))
               ) : filtered.length === 0 ? (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-dim">No matches for these filters.</td></tr>
+                <tr><td colSpan={cols} className="px-4 py-8 text-center text-dim">No matches for these filters.</td></tr>
               ) : (
                 filtered.map((r) => (
                   <tr key={`${r.market}:${r.symbol}`}
@@ -162,6 +180,12 @@ export default function Screener() {
                     <td className={cn("px-3 py-2.5 text-right font-mono", r.changePct > 0 ? "text-up" : r.changePct < 0 ? "text-down" : "text-dim")}>
                       {fmtPct(r.changePct)}
                     </td>
+                    {market === "stock" && (
+                      <td className="px-3 py-2.5 text-dim whitespace-nowrap">{r.sector || "–"}</td>
+                    )}
+                    {market === "stock" && (
+                      <td className="px-3 py-2.5 text-right font-mono text-dim">{r.employees != null ? fmtVol(r.employees) : "–"}</td>
+                    )}
                     <td className="px-3 py-2.5 text-right font-mono text-dim">{fmtVol(r.volume)}</td>
                     <td className={cn("px-3 py-2.5 text-right font-mono", r.rsi == null ? "text-dim" : r.rsi < 30 ? "text-up" : r.rsi > 70 ? "text-down" : "text-text")}>
                       {r.rsi == null ? "–" : fmtNum(r.rsi, 0)}
@@ -186,7 +210,7 @@ export default function Screener() {
 
       <p className="mt-3 text-[11px] text-dim">
         Trend badges: green = price above the SMA (50/200), red = below. RSI: green = oversold (&lt;30),
-        red = overbought (&gt;70). Click a row to open the chart. Not investment advice.
+        red = overbought (&gt;70). Sector &amp; employee counts are curated, approximate metadata. Click a row to open the chart. Not investment advice.
       </p>
     </div>
   );

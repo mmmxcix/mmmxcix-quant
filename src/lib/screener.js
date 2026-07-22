@@ -13,20 +13,41 @@ const YAHOO = "/api/yahoo/v8/finance/chart";
 const CACHE_TTL = 5 * 60 * 1000;
 const cache = new Map(); // key → { t, data }
 
-// Curated liquid stock/ETF universe for the stock screener (name shown in UI).
+// Curated liquid stock/ETF universe for the stock screener.
+// [symbol, name, sector, employees] — sector + headcount are STATIC metadata
+// (approximate, headcounts drift slowly) so the screener can filter/sort by
+// company type without another rate-limited API. null employees = ETF.
 const STOCK_UNIVERSE = [
-  ["AAPL", "Apple"], ["MSFT", "Microsoft"], ["NVDA", "NVIDIA"], ["GOOGL", "Alphabet"],
-  ["AMZN", "Amazon"], ["META", "Meta"], ["TSLA", "Tesla"], ["AVGO", "Broadcom"],
-  ["JPM", "JPMorgan"], ["V", "Visa"], ["MA", "Mastercard"], ["LLY", "Eli Lilly"],
-  ["UNH", "UnitedHealth"], ["XOM", "Exxon Mobil"], ["JNJ", "Johnson & Johnson"],
-  ["WMT", "Walmart"], ["PG", "Procter & Gamble"], ["HD", "Home Depot"], ["KO", "Coca-Cola"],
-  ["PEP", "PepsiCo"], ["COST", "Costco"], ["MCD", "McDonald's"], ["NFLX", "Netflix"],
-  ["AMD", "AMD"], ["INTC", "Intel"], ["CSCO", "Cisco"], ["ORCL", "Oracle"], ["CRM", "Salesforce"],
-  ["ADBE", "Adobe"], ["PYPL", "PayPal"], ["DIS", "Disney"], ["BA", "Boeing"], ["NKE", "Nike"],
-  ["PLTR", "Palantir"], ["UBER", "Uber"], ["BAC", "Bank of America"], ["PFE", "Pfizer"],
-  ["T", "AT&T"], ["VZ", "Verizon"], ["CVX", "Chevron"],
-  ["SPY", "S&P 500 ETF"], ["QQQ", "Nasdaq 100 ETF"], ["DIA", "Dow Jones ETF"],
-  ["IWM", "Russell 2000 ETF"], ["GLD", "Gold ETF"], ["ARKK", "ARK Innovation"],
+  ["AAPL", "Apple", "Tech", 164000], ["MSFT", "Microsoft", "Software", 228000],
+  ["NVDA", "NVIDIA", "Semiconductors", 36000], ["GOOGL", "Alphabet", "Tech", 183000],
+  ["AMZN", "Amazon", "Tech", 1550000], ["META", "Meta", "Tech", 74000],
+  ["TSLA", "Tesla", "Automotive", 125000], ["AVGO", "Broadcom", "Semiconductors", 37000],
+  ["JPM", "JPMorgan", "Banks", 317000], ["V", "Visa", "Payments", 31000],
+  ["MA", "Mastercard", "Payments", 35000], ["LLY", "Eli Lilly", "Pharma", 47000],
+  ["UNH", "UnitedHealth", "Healthcare", 440000], ["XOM", "Exxon Mobil", "Energy", 61000],
+  ["JNJ", "Johnson & Johnson", "Pharma", 138000],
+  ["WMT", "Walmart", "Retail", 2100000], ["PG", "Procter & Gamble", "Consumer", 108000],
+  ["HD", "Home Depot", "Retail", 470000], ["KO", "Coca-Cola", "Consumer", 79000],
+  ["PEP", "PepsiCo", "Consumer", 318000], ["COST", "Costco", "Retail", 333000],
+  ["MCD", "McDonald's", "Consumer", 150000], ["NFLX", "Netflix", "Media", 14000],
+  ["AMD", "AMD", "Semiconductors", 28000], ["INTC", "Intel", "Semiconductors", 109000],
+  ["CSCO", "Cisco", "Tech", 90000], ["ORCL", "Oracle", "Software", 164000],
+  ["CRM", "Salesforce", "Software", 76000],
+  ["ADBE", "Adobe", "Software", 30000], ["PYPL", "PayPal", "Payments", 24000],
+  ["DIS", "Disney", "Media", 225000], ["BA", "Boeing", "Aerospace", 171000],
+  ["NKE", "Nike", "Consumer", 80000],
+  ["PLTR", "Palantir", "Software", 4000], ["UBER", "Uber", "Tech", 31000],
+  ["BAC", "Bank of America", "Banks", 213000], ["PFE", "Pfizer", "Pharma", 88000],
+  ["T", "AT&T", "Telecom", 150000], ["VZ", "Verizon", "Telecom", 105000],
+  ["CVX", "Chevron", "Energy", 46000],
+  // Biotech — so the company-type filter has a real biotech bucket.
+  ["AMGN", "Amgen", "Biotech", 27000], ["GILD", "Gilead", "Biotech", 18000],
+  ["MRNA", "Moderna", "Biotech", 5600], ["REGN", "Regeneron", "Biotech", 13400],
+  ["VRTX", "Vertex", "Biotech", 5400],
+  ["SPY", "S&P 500 ETF", "ETF", null], ["QQQ", "Nasdaq 100 ETF", "ETF", null],
+  ["DIA", "Dow Jones ETF", "ETF", null],
+  ["IWM", "Russell 2000 ETF", "ETF", null], ["GLD", "Gold ETF", "ETF", null],
+  ["ARKK", "ARK Innovation", "ETF", null],
 ];
 
 async function mapLimit(items, limit, fn) {
@@ -94,7 +115,7 @@ export async function scanStocks() {
   const hit = cache.get(key);
   if (hit && Date.now() - hit.t < CACHE_TTL) return hit.data;
 
-  const rows = await mapLimit(STOCK_UNIVERSE, 6, async ([symbol, name]) => {
+  const rows = await mapLimit(STOCK_UNIVERSE, 6, async ([symbol, name, sector, employees]) => {
     try {
       const res = await fetch(`${YAHOO}/${symbol}?range=1y&interval=1d`);
       if (!res.ok) return null;
@@ -111,6 +132,8 @@ export async function scanStocks() {
         market: "stock",
         symbol,
         name,
+        sector: sector || null,
+        employees: employees ?? null,
         price,
         changePct: ((price - prev) / prev) * 100,
         volume: vols[vols.length - 1] ?? 0,
