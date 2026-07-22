@@ -7,6 +7,7 @@ import SymbolSearch from "@/components/SymbolSearch";
 import MonteCarloPanel from "@/components/MonteCarloPanel";
 import ValidationPanel from "@/components/ValidationPanel";
 import { fetchCandles, MARKETS, INTERVALS, rangesFor, INTERVAL_SECONDS } from "@/lib/data";
+import { fetchLseCandles } from "@/lib/lse";
 import { runBacktest, compileStrategy, DEFAULT_STRATEGY_CODE, ORB_STRATEGY_CODE, BIAS_STRATEGY_CODE, BIAS_TREND_CODE } from "@/lib/backtest";
 import { runPythonSignals, signalsToFn, PYTHON_TEMPLATE } from "@/lib/pyRunner";
 import { useSession } from "@/lib/authClient";
@@ -33,6 +34,7 @@ export default function Backtest() {
   const [symbol, setSymbol] = useState(DEFAULT_SYMBOL.crypto);
   const [interval, setIntervalId] = useState("1d");
   const [range, setRange] = useState("5y");
+  const [dataSrc, setDataSrc] = useState("yahoo"); // stock data: yahoo | london (LSE archive)
   const [mode, setMode] = useState("builder"); // builder | code
   const [strategyId, setStrategyId] = useState(BUILT_IN_STRATEGIES[0].id);
   const [paramValues, setParamValues] = useState({});
@@ -129,7 +131,12 @@ export default function Backtest() {
     try {
       // Python needs the candles first (it computes a vectorised signal array),
       // so fetch data before building the signal function in every mode.
-      const candles = await fetchCandles({ market, symbol: symbol.trim().toUpperCase(), interval, range });
+      const candles = market === "stock" && dataSrc === "london"
+        ? await fetchLseCandles({
+            symbol: symbol.trim().toUpperCase(), interval,
+            rangeDays: validRanges.find((r) => r.id === range)?.days ?? 365,
+          })
+        : await fetchCandles({ market, symbol: symbol.trim().toUpperCase(), interval, range });
       let signalFn;
       if (mode === "builder") {
         signalFn = strategy.build(effectiveParams);
@@ -265,6 +272,18 @@ export default function Backtest() {
                 </button>
               ))}
             </div>
+            {market === "stock" && (
+              <div className="flex items-center gap-1">
+                <span className="text-[10px] text-dim uppercase tracking-wide mr-1">Source</span>
+                {[["yahoo", "Yahoo"], ["london", "London"]].map(([id, label]) => (
+                  <button key={id} onClick={() => setDataSrc(id)}
+                    title={id === "london" ? "London Strategic Edge archive (133B ticks) — needs the LSE_API_KEY secret" : "Yahoo Finance via site proxy"}
+                    className={cn("chip !text-[10px] !py-0.5", dataSrc === id ? "chip-active" : "chip-idle")}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
             <div className="grid grid-cols-3 gap-2">
               <label className="text-xs text-dim">
                 Starting capital
