@@ -6,6 +6,8 @@ import { MARKETS, fetchCandles } from "@/lib/data";
 import { ML_MODELS, runMlForecast } from "@/lib/mlStudio";
 import { cn, fmtPct } from "@/lib/utils";
 import MLRanking from "@/pages/MLRanking";
+import MLTrackRecord from "@/pages/MLTrackRecord";
+import { logRun, logForecastPrediction } from "@/lib/mlMemory";
 
 // ML Studio — in-browser price forecasting (Pyodide + scikit-learn), the
 // site's answer to LSE's ML Studio. Everything is out-of-sample and shown
@@ -107,7 +109,19 @@ export default function MLStudio() {
       const candles = await fetchCandles({ market, symbol: symbol.trim().toUpperCase(), interval: "1d", range });
       const res = await runMlForecast(candles, modelId, setStatus);
       setOut(res);
-      setRanFor(`${symbol.trim().toUpperCase()} · ${model.label}`);
+      const sym = symbol.trim().toUpperCase();
+      setRanFor(`${sym} · ${model.label}`);
+      // Memory: remember the run, and put tomorrow's forecast on the ledger —
+      // reality grades it once the next bar exists.
+      const last = candles[candles.length - 1];
+      logRun({
+        mode: "forecast", label: `Forecast ${sym} · ${model.label} · ${range}`,
+        metric: res.hit, metricLabel: "hit", detail: `${res.nTest} test days · z=${res.z.toFixed(1)}`,
+      });
+      logForecastPrediction({
+        symbol: sym, market, model: model.label, predRet: res.tomorrow,
+        lastBarTime: last.time, lastClose: last.close,
+      });
     } catch (e) {
       setError(e.message);
     } finally {
@@ -130,14 +144,14 @@ export default function MLStudio() {
           a coin flip — shown honestly) and cross-sectional ranking (where
           equity ML actually has a track record). */}
       <div className="flex gap-1 mb-5">
-        {[["forecast", "Forecast (single asset)"], ["ranking", "Ranking (cross-sectional)"]].map(([id, label]) => (
+        {[["forecast", "Forecast (single asset)"], ["ranking", "Ranking (cross-sectional)"], ["record", "Track record"]].map(([id, label]) => (
           <button key={id} onClick={() => setStudioMode(id)}
             className={cn("chip", studioMode === id ? "chip-active" : "chip-idle")}>
             {label}
           </button>
         ))}
       </div>
-      {studioMode === "ranking" ? <MLRanking /> : (
+      {studioMode === "record" ? <MLTrackRecord /> : studioMode === "ranking" ? <MLRanking /> : (
       <div className="grid lg:grid-cols-[340px_1fr] gap-6 [&>*]:min-w-0">
         {/* controls */}
         <div className="space-y-4">

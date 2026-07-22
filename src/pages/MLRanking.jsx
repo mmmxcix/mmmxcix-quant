@@ -5,6 +5,7 @@ import { fetchCandles } from "@/lib/data";
 import { STOCK_UNIVERSE } from "@/lib/screener";
 import { buildRankingRows, runMlRanking, RANK_FEATURES } from "@/lib/mlStudio";
 import { cn, fmtPct, fmtNum } from "@/lib/utils";
+import { logRun, logRankingPrediction } from "@/lib/mlMemory";
 
 // Cross-sectional ranking — the form of equity ML that actually has a track
 // record: rank ~50 liquid names by expected RELATIVE next-month performance
@@ -98,6 +99,15 @@ export default function MLRanking() {
       const rows = buildRankingRows(bySym);
       const res = await runMlRanking(rows, setStatus);
       setOut({ ...res, loaded, failed });
+      // Memory: run log + this month's picks on the ledger (graded vs SPY
+      // after their 30-day window).
+      logRun({
+        mode: "ranking", label: `Ranking ${loaded} names · RF monthly`,
+        metric: res.icMean, metricLabel: "IC", detail: `t=${res.icT.toFixed(1)} · ${res.monthsTested} mo · spread ${(res.spread * 100).toFixed(2)}%/mo`,
+      });
+      if (res.picks?.length) {
+        logRankingPrediction({ picks: res.picks.map((x) => x.sym), month: res.liveMonth });
+      }
     } catch (e) {
       setError(e.message);
     } finally {
