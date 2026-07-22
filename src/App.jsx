@@ -99,6 +99,7 @@ export default function App() {
 
                 <Route path="/macro" element={<Redir to="/macro/yields" replace />} />
                 <Route path="/ships" element={<Redir to="/macro/ships" replace />} />
+                <Route path="/planes" element={<Redir to="/macro/planes" replace />} />
                 <Route path="/macro/:tab" element={<MacroHub />} />
 
                 {/* Learn hub (Academy · Guide · Resources) */}

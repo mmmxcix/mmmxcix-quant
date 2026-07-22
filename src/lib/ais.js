@@ -44,20 +44,44 @@ export const mercY = (lat) => {
 };
 
 /**
+ * AIS ship-type code → coarse category (ITU-R M.1371 type table).
+ * 70-79 cargo · 80-89 tanker · 60-69 passenger · 30 fishing · rest other.
+ */
+export function shipCategory(t) {
+  if (t == null || t === 0) return "unknown";
+  if (t >= 70 && t <= 79) return "cargo";
+  if (t >= 80 && t <= 89) return "tanker";
+  if (t >= 60 && t <= 69) return "passenger";
+  if (t === 30) return "fishing";
+  return "other";
+}
+
+/** Crew-entered ETA {Month,Day,Hour,Minute} → short label, or null. */
+export function formatEta(eta) {
+  if (!eta || !eta.Month || !eta.Day) return null;
+  const M = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const hm = eta.Hour != null && eta.Hour < 24 ? ` ${String(eta.Hour).padStart(2, "0")}:${String(eta.Minute ?? 0).padStart(2, "0")}` : "";
+  return `${eta.Day} ${M[eta.Month] || "?"}${hm} UTC`;
+}
+
+/**
  * Open the AIS feed through our relay. Returns { close, subscribe } —
  * subscribe(bbox) re-scopes the stream to [[latMin,lonMin],[latMax,lonMax]]
  * on the same socket (no key involved client-side; the relay injects it).
  * onStatus receives "connecting" | "live" | "retrying…" | an error string.
+ * onPosition gets PositionReports; onStatic gets ShipStaticData (type,
+ * destination, ETA, name) which each vessel broadcasts every ~6 minutes.
  */
-export function connectAis({ bbox, onPosition, onStatus }) {
+export function connectAis({ bbox, onPosition, onStatic, onStatus }) {
   let ws = null, closed = false, lastBbox = bbox, attempts = 0, gotData = false;
+  const TYPES = ["PositionReport", "ShipStaticData"];
 
   const open = () => {
     onStatus?.("connecting");
     const proto = location.protocol === "https:" ? "wss" : "ws";
     ws = new WebSocket(`${proto}://${location.host}/api/ais-stream`);
     ws.onopen = () => {
-      ws.send(JSON.stringify({ BoundingBoxes: [lastBbox], FilterMessageTypes: ["PositionReport"] }));
+      ws.send(JSON.stringify({ BoundingBoxes: [lastBbox], FilterMessageTypes: TYPES }));
     };
     ws.onmessage = (ev) => {
       try {
@@ -65,8 +89,22 @@ export function connectAis({ bbox, onPosition, onStatus }) {
         // Relay/aisstream error frames become readable status instead of a
         // silent CLOSED badge.
         if (m.error) { onStatus?.(String(m.error)); return; }
-        if (m.MessageType !== "PositionReport") return;
         const md = m.MetaData || m.Metadata || {};
+        if (m.MessageType === "ShipStaticData") {
+          const sd = m.Message?.ShipStaticData || {};
+          onStatic?.({
+            mmsi: md.MMSI,
+            type: sd.Type ?? null,
+            destination: String(sd.Destination || "").trim(),
+            eta: sd.Eta || null,
+            staticName: String(sd.Name || md.ShipName || "").trim(),
+            imo: sd.ImoNumber || null,
+            callSign: String(sd.CallSign || "").trim(),
+            draught: sd.MaximumStaticDraught || null,
+          });
+          return;
+        }
+        if (m.MessageType !== "PositionReport") return;
         const pr = m.Message?.PositionReport || {};
         const lat = md.latitude ?? pr.Latitude, lon = md.longitude ?? pr.Longitude;
         if (lat == null || lon == null) return;
@@ -95,7 +133,7 @@ export function connectAis({ bbox, onPosition, onStatus }) {
     subscribe: (b) => {
       lastBbox = b;
       if (ws?.readyState === 1) {
-        ws.send(JSON.stringify({ BoundingBoxes: [b], FilterMessageTypes: ["PositionReport"] }));
+        ws.send(JSON.stringify({ BoundingBoxes: [b], FilterMessageTypes: TYPES }));
       }
     },
   };

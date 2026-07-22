@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Radio, Anchor } from "lucide-react";
+import { Radio, Anchor, Ship, X } from "lucide-react";
 import { cn, fmtNum } from "@/lib/utils";
-import { connectAis, decodeLand, mercX, mercY, CORRIDORS } from "@/lib/ais";
+import { connectAis, decodeLand, mercX, mercY, CORRIDORS, shipCategory, formatEta } from "@/lib/ais";
 
 // Ship Tracking — live AIS vessel positions on a self-contained canvas map
 // (vendored Natural Earth coastlines, no external tiles → CSP stays tight,
@@ -13,6 +13,27 @@ import { connectAis, decodeLand, mercX, mercY, CORRIDORS } from "@/lib/ais";
 const STALE_MS = 10 * 60_000; // drop vessels not heard from in 10 min
 const MAX_VESSELS = 6000;
 
+const SHIP_FILTERS = [
+  { id: "all", label: "All" },
+  { id: "cargo", label: "Cargo" },
+  { id: "tanker", label: "Tanker" },
+  { id: "passenger", label: "Passenger" },
+  { id: "fishing", label: "Fishing" },
+  { id: "other", label: "Other" },
+];
+// "other" also holds vessels whose static (type) broadcast hasn't arrived
+// yet — ships send it only every ~6 minutes.
+const bucketOf = (v) => {
+  const c = shipCategory(v.type);
+  return c === "unknown" ? "other" : c;
+};
+const CAT_COLOR = {
+  cargo: "var(--viz-amber)",
+  tanker: "var(--viz-pink)",
+  passenger: "var(--viz-purple)",
+  fishing: "var(--viz-teal)",
+};
+
 const cssRgb = (name) => {
   const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   return v ? `rgb(${v.replaceAll(" ", ",")})` : "#888";
@@ -22,8 +43,13 @@ export default function Ships() {
   const key = true; // relay handles auth + key — nothing to enter client-side
   const [corridor, setCorridor] = useState("world");
   const [status, setStatus] = useState("connecting");
+  const [filter, setFilter] = useState("all");
+  const [counts, setCounts] = useState({ all: 0, cargo: 0, tanker: 0, passenger: 0, fishing: 0, other: 0 });
+  const [selected, setSelected] = useState(null); // vessel snapshot for the panel
   const [stats, setStats] = useState({ vessels: 0, moving: 0, anchored: 0, rate: 0 });
   const [hover, setHover] = useState(null); // { x, y, vessel }
+  const filterRef = useRef(filter);
+  filterRef.current = filter;
 
   const canvasRef = useRef(null);
   const wrapRef = useRef(null);
@@ -65,7 +91,9 @@ export default function Ships() {
       onStatus: setStatus,
       onPosition: (p) => {
         const store = vesselsRef.current;
-        store.set(p.mmsi, p);
+        // Keep static fields (type/destination/eta) from earlier broadcasts.
+        const prev = store.get(p.mmsi);
+        store.set(p.mmsi, prev ? { ...prev, ...p } : p);
         msgCount.current++;
         if (store.size > MAX_VESSELS) {
           // Drop the stalest fifth so we never do this per message.
@@ -73,6 +101,13 @@ export default function Ships() {
           for (let i = 0; i < sorted.length / 5; i++) store.delete(sorted[i][0]);
         }
         needsDraw.current = true;
+      },
+      onStatic: (s) => {
+        const store = vesselsRef.current;
+        const prev = store.get(s.mmsi);
+        // Static-only entries carry no position yet — they render once their
+        // first PositionReport arrives.
+        store.set(s.mmsi, { ...(prev || { mmsi: s.mmsi, t: Date.now() }), ...s });
       },
     });
     connRef.current = conn;
@@ -95,8 +130,15 @@ export default function Ships() {
       const now = Date.now();
       for (const [mmsi, v] of store) if (now - v.t > STALE_MS) store.delete(mmsi);
       let moving = 0, anchored = 0;
-      for (const v of store.values()) (v.sog >= 0.5 ? moving++ : anchored++);
-      setStats({ vessels: store.size, moving, anchored, rate: msgCount.current / 5 });
+      const c = { all: 0, cargo: 0, tanker: 0, passenger: 0, fishing: 0, other: 0 };
+      for (const v of store.values()) {
+        if (v.lat == null) continue; // static-only, not on the map yet
+        (v.sog >= 0.5 ? moving++ : anchored++);
+        c.all++;
+        c[bucketOf(v)]++;
+      }
+      setCounts(c);
+      setStats({ vessels: c.all, moving, anchored, rate: msgCount.current / 5 });
       msgCount.current = 0;
       needsDraw.current = true;
     }, 5000);
@@ -151,20 +193,26 @@ export default function Ships() {
       for (const poly of land) { tracePoly(poly); ctx.stroke(); }
       ctx.globalAlpha = 1;
 
-      // Vessels: moving = up-green with a heading tick, near-stationary = dim.
+      // Vessels: colored by category (cargo/tanker/passenger/fishing), dots
+      // dimmed when near-stationary; heading tick when zoomed in.
       const upCol = cssRgb("--c-up"), dimCol = cssRgb("--c-dim");
+      const f = filterRef.current;
       for (const v of vesselsRef.current.values()) {
+        if (v.lat == null) continue;
+        const bucket = bucketOf(v);
+        if (f !== "all" && bucket !== f) continue;
         const px = X(mercX(v.lon)), py = Y(mercY(v.lat));
         if (px < -8 || py < -8 || px > w + 8 || py > h + 8) continue;
         const moving = v.sog >= 0.5;
-        ctx.fillStyle = moving ? upCol : dimCol;
-        ctx.globalAlpha = moving ? 0.9 : 0.55;
+        const col = CAT_COLOR[bucket] || (moving ? upCol : dimCol);
+        ctx.fillStyle = col;
+        ctx.globalAlpha = moving ? 0.9 : 0.45;
         ctx.beginPath();
         ctx.arc(px, py, moving ? 2.2 : 1.6, 0, Math.PI * 2);
         ctx.fill();
         if (moving && scale > 2000) {
           const a = ((v.cog - 90) * Math.PI) / 180;
-          ctx.strokeStyle = upCol;
+          ctx.strokeStyle = col;
           ctx.lineWidth = 1;
           ctx.beginPath();
           ctx.moveTo(px, py);
@@ -193,7 +241,22 @@ export default function Ships() {
         px: e.clientX - r.left, py: e.clientY - r.top,
       };
     };
-    const onDown = (e) => { drag = toWorld(e); el.setPointerCapture(e.pointerId); };
+    const nearest = (px, py) => {
+      const { cx, cy, scale } = viewRef.current;
+      const r = el.getBoundingClientRect();
+      let best = null, bd = 100;
+      for (const v of vesselsRef.current.values()) {
+        if (v.lat == null) continue;
+        if (filterRef.current !== "all" && bucketOf(v) !== filterRef.current) continue;
+        const x = (mercX(v.lon) - cx) * scale + r.width / 2;
+        const y = (mercY(v.lat) - cy) * scale + r.height / 2;
+        const d = (x - px) ** 2 + (y - py) ** 2;
+        if (d < bd) { bd = d; best = { x, y, vessel: v }; }
+      }
+      return best;
+    };
+    let downAt = null;
+    const onDown = (e) => { drag = toWorld(e); downAt = { x: e.clientX, y: e.clientY }; el.setPointerCapture(e.pointerId); };
     const onMove = (e) => {
       const p = toWorld(e);
       if (drag) {
@@ -203,19 +266,16 @@ export default function Ships() {
         setHover(null);
         return;
       }
-      // Hover: nearest vessel within 10 px.
-      const { cx, cy, scale } = viewRef.current;
-      const r = el.getBoundingClientRect();
-      let best = null, bd = 100;
-      for (const v of vesselsRef.current.values()) {
-        const px = (mercX(v.lon) - cx) * scale + r.width / 2;
-        const py = (mercY(v.lat) - cy) * scale + r.height / 2;
-        const d = (px - p.px) ** 2 + (py - p.py) ** 2;
-        if (d < bd) { bd = d; best = { x: px, y: py, vessel: v }; }
-      }
-      setHover(best);
+      setHover(nearest(p.px, p.py));
     };
-    const onUp = () => { drag = null; };
+    const onUp = (e) => {
+      const wasClick = downAt && Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) < 5;
+      drag = null; downAt = null;
+      if (!wasClick) return;
+      const r = el.getBoundingClientRect();
+      const hit = nearest(e.clientX - r.left, e.clientY - r.top);
+      setSelected(hit ? { ...hit.vessel } : null);
+    };
     const onWheel = (e) => {
       e.preventDefault();
       const p = toWorld(e);
@@ -261,19 +321,81 @@ export default function Ships() {
         </span>
       </div>
 
-      <div ref={wrapRef} className="relative rounded-xl border border-line lg-glass overflow-hidden cursor-grab active:cursor-grabbing"
-        style={{ height: "min(62vh, 640px)" }}>
-        <canvas ref={canvasRef} className="block w-full h-full" />
-        {hover && (
-          <div className="absolute pointer-events-none rounded-lg border border-line bg-bg/95 px-2.5 py-1.5 text-[11px] font-mono whitespace-nowrap z-10"
-            style={{ left: hover.x + 12, top: hover.y - 10 }}>
-            <span className="text-text font-semibold">{hover.vessel.name}</span>
-            <span className="text-dim ml-2">{hover.vessel.sog.toFixed(1)} kn · {Math.round(hover.vessel.cog)}°</span>
-          </div>
-        )}
-        <p className="absolute bottom-2 left-3 text-[10px] text-dim pointer-events-none">
-          drag = pan · wheel = zoom · hover a dot for vessel info
-        </p>
+      {/* Type filter — colors match the dots on the map. */}
+      <div className="flex flex-wrap items-center gap-1.5">
+        {SHIP_FILTERS.map((sf) => (
+          <button key={sf.id} onClick={() => { setFilter(sf.id); needsDraw.current = true; }}
+            className={cn("chip !text-[11px] flex items-center gap-1.5", filter === sf.id ? "chip-active" : "chip-idle")}>
+            {sf.id !== "all" && sf.id !== "other" && <span className="w-2 h-2 rounded-full" style={{ background: CAT_COLOR[sf.id] }} />}
+            {sf.label}
+            <span className="font-mono text-[10px] opacity-70">{fmtNum(counts[sf.id] ?? 0, 0)}</span>
+          </button>
+        ))}
+      </div>
+
+      <div className="grid lg:grid-cols-[1fr_290px] gap-3 [&>*]:min-w-0">
+        <div ref={wrapRef} className="relative rounded-xl border border-line lg-glass overflow-hidden cursor-grab active:cursor-grabbing"
+          style={{ height: "min(58vh, 620px)" }}>
+          <canvas ref={canvasRef} className="block w-full h-full" />
+          {hover && (
+            <div className="absolute pointer-events-none rounded-lg border border-line bg-bg/95 px-2.5 py-1.5 text-[11px] font-mono whitespace-nowrap z-10"
+              style={{ left: hover.x + 12, top: hover.y - 10 }}>
+              <span className="text-text font-semibold">{hover.vessel.name}</span>
+              <span className="text-dim ml-2">{hover.vessel.sog.toFixed(1)} kn</span>
+              {hover.vessel.destination && <span className="text-dim ml-2">→ {hover.vessel.destination}</span>}
+            </div>
+          )}
+          <p className="absolute bottom-2 left-3 text-[10px] text-dim pointer-events-none">
+            drag = pan · wheel = zoom · click a ship for voyage details
+          </p>
+        </div>
+
+        {/* Voyage detail panel */}
+        <div className="rounded-xl border border-line lg-glass p-4">
+          {!selected ? (
+            <div className="h-full grid place-items-center text-center">
+              <div>
+                <Ship className="w-6 h-6 text-dim mx-auto mb-2" />
+                <p className="text-sm text-dim leading-relaxed">Click a ship on the map<br />for voyage details.</p>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-2 text-sm">
+              <div className="flex items-center justify-between gap-2">
+                <p className="font-semibold truncate">{selected.staticName || selected.name}</p>
+                <button onClick={() => setSelected(null)} className="text-dim hover:text-text shrink-0" aria-label="Close details">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full" style={{ background: CAT_COLOR[bucketOf(selected)] || "rgb(var(--c-dim))" }} />
+                <span className="text-xs text-dim capitalize">{bucketOf(selected) === "other" && selected.type == null ? "type not yet broadcast" : bucketOf(selected)}</span>
+              </div>
+              <div className="border-t border-line/60 pt-2 text-xs space-y-1.5">
+                {selected.destination ? (
+                  <p className="font-mono"><span className="text-dim">Destination</span> <span className="text-text font-semibold ml-1">{selected.destination}</span></p>
+                ) : (
+                  <p className="text-dim">No destination broadcast.</p>
+                )}
+                {formatEta(selected.eta) && (
+                  <p className="font-mono"><span className="text-dim">ETA</span> <span className="text-text ml-1">{formatEta(selected.eta)}</span> <span className="text-dim">(crew-entered)</span></p>
+                )}
+              </div>
+              <div className="border-t border-line/60 pt-2 grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs font-mono">
+                <span className="text-dim">Speed</span><span className="text-right">{(selected.sog ?? 0).toFixed(1)} kn</span>
+                <span className="text-dim">Course</span><span className="text-right">{Math.round(selected.cog ?? 0)}°</span>
+                <span className="text-dim">MMSI</span><span className="text-right">{selected.mmsi}</span>
+                {selected.imo ? (<><span className="text-dim">IMO</span><span className="text-right">{selected.imo}</span></>) : null}
+                {selected.callSign ? (<><span className="text-dim">Call sign</span><span className="text-right">{selected.callSign}</span></>) : null}
+                {selected.draught ? (<><span className="text-dim">Draught</span><span className="text-right">{selected.draught.toFixed(1)} m</span></>) : null}
+              </div>
+              <p className="text-[10px] text-dim leading-relaxed pt-1">
+                Destination &amp; ETA are crew-entered AIS fields — often stale or blank. Departure
+                port/time isn't broadcast in AIS at all (only paid port-call databases have it).
+              </p>
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs font-mono">
