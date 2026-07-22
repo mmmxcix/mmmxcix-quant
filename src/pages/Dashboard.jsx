@@ -159,8 +159,11 @@ function WatchlistCard() {
             const q = quotes[`${w.market}:${w.symbol}`];
             return (
               <tr key={`${w.market}:${w.symbol}`}
+                role="button" tabIndex={0}
+                aria-label={`Open ${w.symbol} chart`}
                 onClick={() => navigate(`/charts?market=${w.market}&symbol=${w.symbol}`)}
-                className="border-b border-line/50 last:border-0 hover:bg-bg/60 cursor-pointer transition-colors">
+                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); navigate(`/charts?market=${w.market}&symbol=${w.symbol}`); } }}
+                className="border-b border-line/50 last:border-0 hover:bg-bg/60 cursor-pointer transition-colors focus:outline-none focus-visible:bg-accent/5">
                 <td className="px-4 py-3">
                   <span className="font-mono font-semibold">{w.symbol}</span>
                   <span className="text-dim ml-2 hidden md:inline text-xs">{w.name}</span>

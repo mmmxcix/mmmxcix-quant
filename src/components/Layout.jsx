@@ -1,8 +1,13 @@
 import { useState, useEffect } from "react";
 import { NavLink, Link, useLocation } from "react-router-dom";
-import { LayoutDashboard, CandlestickChart, FlaskConical, Newspaper, Compass, Wrench, Activity, Scale, Star, Briefcase, Radar, GraduationCap, Sigma, Menu, X, Target, BookOpenCheck, Telescope, Cpu, Sun, Moon, Waypoints } from "lucide-react";
+import { LayoutDashboard, CandlestickChart, FlaskConical, Newspaper, Compass, Wrench, Activity, Scale, Star, Briefcase, Radar, GraduationCap, Sigma, Menu, X, Target, BookOpenCheck, Telescope, Cpu, Sun, Moon, Waypoints, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import DitherBackground from "@/components/DitherBackground";
+import CommandPalette from "@/components/CommandPalette";
+
+// ⌘ on macOS, Ctrl elsewhere — shown in the quick-nav affordance.
+const KBD_HINT = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform) ? "⌘K" : "Ctrl K";
+const openPalette = () => window.dispatchEvent(new Event("open-command-palette"));
 
 function useTheme() {
   const get = () => (typeof document !== "undefined" && document.documentElement.dataset.theme === "dark" ? "dark" : "light");
@@ -146,13 +151,22 @@ export default function Layout({ children }) {
       <div className="ambient-bg" aria-hidden="true" />
       <DitherBackground />
       <div className="grain-layer" aria-hidden="true" />
+      <CommandPalette />
 
       {/* Desktop sidebar */}
       <aside className="hidden md:flex fixed inset-y-0 left-0 w-56 flex-col border-r border-line lg-frost p-4">
-        <div className="mb-8 px-3 pt-2">
+        <div className="mb-5 px-3 pt-2">
           <p className="text-[10px] tracking-[0.3em] text-dim uppercase">MMMXCIX</p>
           <p className="text-lg font-bold text-text tracking-tight">Quant</p>
         </div>
+        <button
+          onClick={openPalette}
+          className="mb-5 flex w-full items-center gap-2 rounded-lg border border-line bg-surface/60 px-3 py-1.5 text-xs text-dim transition-colors hover:text-text hover:border-line/80"
+        >
+          <Search className="h-3.5 w-3.5" />
+          <span>Jump to…</span>
+          <kbd className="ml-auto font-mono text-[10px] text-dim/70">{KBD_HINT}</kbd>
+        </button>
         <nav className="flex flex-col gap-1 overflow-y-auto pr-1 -mr-1">
           <NavItems />
         </nav>
@@ -171,6 +185,13 @@ export default function Layout({ children }) {
           <span className="text-dim tracking-[0.25em] text-[10px] uppercase mr-2">MMMXCIX</span>Quant
         </p>
         <div className="flex items-center gap-1">
+          <button
+            onClick={openPalette}
+            aria-label="Search pages"
+            className="p-2 rounded-lg text-dim hover:text-text active:bg-surface transition-colors"
+          >
+            <Search className="w-5 h-5" />
+          </button>
           <ThemeToggle className="w-9 h-9" />
           <button
             onClick={() => setDrawerOpen(true)}
