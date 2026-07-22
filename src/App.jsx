@@ -1,20 +1,41 @@
+import { lazy, Suspense } from "react";
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import Layout from "@/components/Layout";
-import Dashboard from "@/pages/Dashboard";
-import Charts from "@/pages/Charts";
-import News from "@/pages/News";
-import Tools from "@/pages/Tools";
-import Regimes from "@/pages/Regimes";
-import Coach from "@/pages/Coach";
-import Cortex from "@/pages/Cortex";
-import { BacktestHub, PortfolioHub, ScreenerHub, LearnHub } from "@/pages/hubs";
 import RequireAdmin from "@/components/RequireAdmin";
-import Impressum from "@/pages/Impressum";
-import Datenschutz from "@/pages/Datenschutz";
-import Nutzung from "@/pages/Nutzung";
-import Login from "@/pages/Login";
-import Register from "@/pages/Register";
-import Account from "@/pages/Account";
+import Skeleton from "@/components/Skeleton";
+
+// Route-level code splitting: each page loads as its own chunk on first visit,
+// so the initial bundle stays lean (Charts' charting lib, the Academy content,
+// Cortex etc. no longer weigh down the landing). Layout stays eager — it IS the
+// shell. hubs.jsx exports several named hubs, hence the .then() default-mapping.
+const Dashboard = lazy(() => import("@/pages/Dashboard"));
+const Charts = lazy(() => import("@/pages/Charts"));
+const News = lazy(() => import("@/pages/News"));
+const Tools = lazy(() => import("@/pages/Tools"));
+const Regimes = lazy(() => import("@/pages/Regimes"));
+const Coach = lazy(() => import("@/pages/Coach"));
+const Cortex = lazy(() => import("@/pages/Cortex"));
+const BacktestHub = lazy(() => import("@/pages/hubs").then((m) => ({ default: m.BacktestHub })));
+const PortfolioHub = lazy(() => import("@/pages/hubs").then((m) => ({ default: m.PortfolioHub })));
+const ScreenerHub = lazy(() => import("@/pages/hubs").then((m) => ({ default: m.ScreenerHub })));
+const LearnHub = lazy(() => import("@/pages/hubs").then((m) => ({ default: m.LearnHub })));
+const Impressum = lazy(() => import("@/pages/Impressum"));
+const Datenschutz = lazy(() => import("@/pages/Datenschutz"));
+const Nutzung = lazy(() => import("@/pages/Nutzung"));
+const Login = lazy(() => import("@/pages/Login"));
+const Register = lazy(() => import("@/pages/Register"));
+const Account = lazy(() => import("@/pages/Account"));
+
+// Skeleton shown while a route chunk loads (usually just a flicker on repeat
+// visits — chunks are cached).
+function RouteFallback() {
+  return (
+    <div className="space-y-3">
+      <Skeleton className="h-6 w-44" />
+      <Skeleton className="h-64 w-full rounded-xl" />
+    </div>
+  );
+}
 
 // Redirect that preserves the query string, so deep links (e.g.
 // /academy?c=…&l=… into the Learn hub) keep their course/lesson params.
@@ -28,6 +49,7 @@ function Redir({ to }) {
 export default function App() {
   return (
     <BrowserRouter>
+      <Suspense fallback={null}>
       <Routes>
         <Route path="/impressum" element={<Impressum />} />
         <Route path="/datenschutz" element={<Datenschutz />} />
@@ -38,6 +60,7 @@ export default function App() {
           path="*"
           element={
             <Layout>
+              <Suspense fallback={<RouteFallback />}>
               <Routes>
                 <Route path="/" element={<Dashboard />} />
                 <Route path="/charts" element={<Charts />} />
@@ -81,10 +104,12 @@ export default function App() {
 
                 <Route path="*" element={<Dashboard />} />
               </Routes>
+              </Suspense>
             </Layout>
           }
         />
       </Routes>
+      </Suspense>
     </BrowserRouter>
   );
 }
