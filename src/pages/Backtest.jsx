@@ -9,6 +9,7 @@ import ValidationPanel from "@/components/ValidationPanel";
 import { fetchCandles, MARKETS, INTERVALS, rangesFor, INTERVAL_SECONDS } from "@/lib/data";
 import { runBacktest, compileStrategy, DEFAULT_STRATEGY_CODE, ORB_STRATEGY_CODE, BIAS_STRATEGY_CODE, BIAS_TREND_CODE } from "@/lib/backtest";
 import { runPythonSignals, signalsToFn, PYTHON_TEMPLATE } from "@/lib/pyRunner";
+import { useSession } from "@/lib/authClient";
 import { BUILT_IN_STRATEGIES } from "@/lib/strategies";
 import { saveEntry } from "@/lib/registry";
 import { cn, fmtNum, fmtPct } from "@/lib/utils";
@@ -45,27 +46,15 @@ export default function Backtest() {
   const [verdicts, setVerdicts] = useState({ wf: null, dsr: null, noise: null });
   const [saved, setSaved] = useState(false);
 
-  // AI code generation: the Anthropic key never reaches the browser — the
-  // Pages Function /api/generate holds it server-side; access requires the
-  // dev token (stored once per browser in localStorage).
+  // AI code generation: the provider keys never reach the browser — the Pages
+  // Function /api/generate holds them server-side; access requires the signed-in
+  // ADMIN (dev) session. The panel is simply hidden for everyone else.
   const [aiPrompt, setAiPrompt] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState(null);
   const [copied, setCopied] = useState(false);
-  const [devToken, setDevToken] = useState(() => {
-    try { return localStorage.getItem("quant_dev_token") || ""; } catch { return ""; }
-  });
-  const [tokenInput, setTokenInput] = useState("");
-
-  const saveToken = () => {
-    const t = tokenInput.trim();
-    if (!t) return;
-    try { localStorage.setItem("quant_dev_token", t); } catch { /* private mode */ }
-    setDevToken(t);
-    setTokenInput("");
-    setAiError(null);
-    window.dispatchEvent(new Event("quant-dev-token")); // reveal the Coach nav entry
-  };
+  const { data: session } = useSession();
+  const isDev = session?.user?.role === "admin";
 
   const copyCode = async () => {
     try {
@@ -84,13 +73,11 @@ export default function Backtest() {
       const res = await fetch("/api/generate", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ prompt: p, token: devToken, language: lang }),
+        body: JSON.stringify({ prompt: p, language: lang }),
       });
       const data = await res.json().catch(() => ({}));
       if (res.status === 401) {
-        setDevToken("");
-        try { localStorage.removeItem("quant_dev_token"); } catch { /* ignore */ }
-        throw new Error("Invalid token — please re-enter.");
+        throw new Error("Sign in with the dev account to use AI generation.");
       }
       if (res.status === 503) throw new Error("AI not configured yet (Cloudflare secrets missing).");
       if (res.status === 429) throw new Error("Rate limit reached — please wait a moment.");
@@ -398,43 +385,27 @@ export default function Backtest() {
                   </p>
                 )}
 
-                {/* KI-Generator */}
-                <div className="border-t border-line pt-3 space-y-2">
-                  <p className="text-[11px] text-dim flex items-center gap-1.5">
-                    <Sparkles className="w-3.5 h-3.5 text-accent" /> Generate strategy with AI
-                  </p>
-                  {devToken ? (
-                    <>
-                      <textarea
-                        value={aiPrompt}
-                        onChange={(e) => setAiPrompt(e.target.value)}
-                        placeholder="e.g. Buy when RSI drops below 30 and price is above the SMA 200…"
-                        rows={3}
-                        className="input-base w-full text-xs resize-y"
-                      />
-                      <button onClick={generateCode} disabled={aiLoading || !aiPrompt.trim()}
-                        className="btn-accent w-full flex items-center justify-center gap-2 !py-1.5 text-xs">
-                        {aiLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-                        {aiLoading ? "Generating…" : "Generate (replaces the editor content)"}
-                      </button>
-                    </>
-                  ) : (
-                    <div className="flex gap-2">
-                      <input
-                        type="password"
-                        value={tokenInput}
-                        onChange={(e) => setTokenInput(e.target.value)}
-                        onKeyDown={(e) => e.key === "Enter" && saveToken()}
-                        placeholder="Dev access token"
-                        className="input-base flex-1 text-xs"
-                      />
-                      <button onClick={saveToken} className="btn-ghost flex items-center gap-1.5 text-xs">
-                        <KeyRound className="w-3.5 h-3.5" /> Unlock
-                      </button>
-                    </div>
-                  )}
-                  {aiError && <p className="text-[11px] text-down">{aiError}</p>}
-                </div>
+                {/* KI-Generator — dev-account only; hidden for everyone else */}
+                {isDev && (
+                  <div className="border-t border-line pt-3 space-y-2">
+                    <p className="text-[11px] text-dim flex items-center gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5 text-accent" /> Generate strategy with AI
+                    </p>
+                    <textarea
+                      value={aiPrompt}
+                      onChange={(e) => setAiPrompt(e.target.value)}
+                      placeholder="e.g. Buy when RSI drops below 30 and price is above the SMA 200…"
+                      rows={3}
+                      className="input-base w-full text-xs resize-y"
+                    />
+                    <button onClick={generateCode} disabled={aiLoading || !aiPrompt.trim()}
+                      className="btn-accent w-full flex items-center justify-center gap-2 !py-1.5 text-xs">
+                      {aiLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                      {aiLoading ? "Generating…" : "Generate (replaces the editor content)"}
+                    </button>
+                    {aiError && <p className="text-[11px] text-down">{aiError}</p>}
+                  </div>
+                )}
               </>
             )}
           </div>

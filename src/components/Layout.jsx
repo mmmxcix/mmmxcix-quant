@@ -1,9 +1,10 @@
 import { useState, useEffect } from "react";
 import { NavLink, Link, useLocation } from "react-router-dom";
-import { LayoutDashboard, CandlestickChart, FlaskConical, Newspaper, Compass, Wrench, Activity, Scale, Star, Briefcase, Radar, GraduationCap, Sigma, Menu, X, Target, BookOpenCheck, Telescope, Cpu, Sun, Moon, Waypoints, Search } from "lucide-react";
+import { LayoutDashboard, CandlestickChart, FlaskConical, Newspaper, Compass, Wrench, Activity, Scale, Star, Briefcase, Radar, GraduationCap, Sigma, Menu, X, Target, BookOpenCheck, Telescope, Cpu, Sun, Moon, Waypoints, Search, LogIn } from "lucide-react";
 import { cn } from "@/lib/utils";
 import DitherBackground from "@/components/DitherBackground";
 import CommandPalette from "@/components/CommandPalette";
+import { useSession, signOut } from "@/lib/authClient";
 
 // ⌘ on macOS, Ctrl elsewhere — shown in the quick-nav affordance.
 const KBD_HINT = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform) ? "⌘K" : "Ctrl K";
@@ -51,7 +52,6 @@ const NAV_GROUPS = [
     items: [
       { to: "/backtest", label: "Backtest", icon: FlaskConical },
       { to: "/regimes", label: "Regimes", icon: Waypoints },
-      { to: "/cortex", label: "Cortex", icon: Cpu },
       { to: "/portfolio", label: "Portfolio", icon: Briefcase },
       { to: "/tools", label: "Tools", icon: Wrench },
     ],
@@ -64,29 +64,16 @@ const NAV_GROUPS = [
   },
 ];
 
-// The private Coach page only appears in the nav once the dev token exists in
-// this browser (set on /coach or in the Backtest AI panel). The route itself
-// stays gated server-side either way — this just hides the menu entry.
+// Dev-only nav entries appear ONLY for the signed-in admin (dev) account —
+// other users don't see that these areas exist. Routes are guarded server-side
+// and by RequireAdmin either way; this is just menu visibility.
 function useDevNav() {
-  const read = () => {
-    try { return !!localStorage.getItem("quant_dev_token"); } catch { return false; }
-  };
-  const [isDev, setIsDev] = useState(read);
-  useEffect(() => {
-    const update = () => setIsDev(read());
-    window.addEventListener("quant-dev-token", update);
-    window.addEventListener("storage", update);
-    return () => {
-      window.removeEventListener("quant-dev-token", update);
-      window.removeEventListener("storage", update);
-    };
-  }, []);
-  return isDev;
+  const { data: session } = useSession();
+  return session?.user?.role === "admin";
 }
 
-// Private, dev-token-gated nav entries, injected per group when a token exists.
-// (RiskGate + Brain Vault are now tabs inside the Cortex hub.)
 const DEV_ITEMS = {
+  Strategy: [{ to: "/cortex", label: "Cortex", icon: Cpu }],
   Learn: [{ to: "/coach", label: "Coach", icon: Target }],
 };
 
@@ -122,6 +109,36 @@ function NavItems({ onNavigate }) {
       ))}
     </div>
   ));
+}
+
+// Signed-in state + entry/exit, at the bottom of the sidebar / drawer. The dev
+// account is labelled; sign-out revokes the server-side session.
+function SessionBox() {
+  const { data: session, isPending } = useSession();
+  if (isPending) return null;
+  if (!session) {
+    return (
+      <Link
+        to="/login"
+        className="flex items-center gap-2 rounded-lg border border-line bg-surface/60 px-3 py-1.5 text-xs text-dim transition-colors hover:text-text"
+      >
+        <LogIn className="h-3.5 w-3.5" /> Sign in
+      </Link>
+    );
+  }
+  return (
+    <div className="rounded-lg border border-line bg-surface/60 px-3 py-2">
+      <p className="truncate text-xs text-text">{session.user.name || session.user.email}</p>
+      <div className="mt-0.5 flex items-center justify-between gap-2">
+        <span className="text-[10px] uppercase tracking-wide text-dim">
+          {session.user.role === "admin" ? "dev account" : "account"}
+        </span>
+        <button onClick={() => signOut()} className="text-[10px] text-dim transition-colors hover:text-text">
+          Sign out
+        </button>
+      </div>
+    </div>
+  );
 }
 
 function LegalLinks({ small }) {
@@ -171,6 +188,7 @@ export default function Layout({ children }) {
           <NavItems />
         </nav>
         <div className="mt-auto px-3 pb-2 space-y-2">
+          <SessionBox />
           <ThemeToggle className="w-8 h-8" />
           <p className="text-[10px] text-dim/60 leading-relaxed">
             Not investment advice. Backtests are hypothetical — past performance guarantees nothing.
@@ -221,7 +239,8 @@ export default function Layout({ children }) {
             <nav className="flex flex-col gap-1 overflow-y-auto">
               <NavItems onNavigate={() => setDrawerOpen(false)} />
             </nav>
-            <div className="mt-auto pt-4 border-t border-line">
+            <div className="mt-auto space-y-3 pt-4 border-t border-line">
+              <SessionBox />
               <LegalLinks />
             </div>
           </div>

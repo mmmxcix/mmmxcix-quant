@@ -15,19 +15,19 @@ const PROFILE_LABEL = Object.fromEntries(Object.entries(PROFILES).map(([id, p]) 
 // Survivors of the autonomous research loop (pushed by the PC's research
 // agent into lab:candidates). Private: only renders when the dev token exists.
 function AgentCandidates() {
-  const [items, setItems] = useState(undefined); // undefined = loading/no token
+  const [items, setItems] = useState(undefined); // undefined = loading
   const [imported, setImported] = useState({});
-  const token = (() => { try { return localStorage.getItem("quant_dev_token") || ""; } catch { return ""; } })();
 
+  // Admin session cookie gates this server-side (the page itself only renders
+  // inside the RequireAdmin-guarded Cortex hub).
   useEffect(() => {
-    if (!token) { setItems(null); return; }
-    fetch("/api/lab?what=candidates", { headers: { "x-lab-token": token } })
+    fetch("/api/lab?what=candidates")
       .then((r) => (r.ok ? r.json() : null))
       .then((out) => setItems(out?.candidates?.items || []))
       .catch(() => setItems([]));
-  }, [token]);
+  }, []);
 
-  if (!token || items === null || items === undefined || items.length === 0) return null;
+  if (items === null || items === undefined || items.length === 0) return null;
 
   // Import into the market the strategy was actually validated on — importing
   // everything as BTC 4h (as this used to) would silently misrepresent a rule
@@ -292,8 +292,6 @@ function PublishToAgent({ entries }) {
   const [msg, setMsg] = useState(null);
 
   const publish = async () => {
-    const token = (() => { try { return localStorage.getItem("quant_dev_token") || ""; } catch { return ""; } })();
-    if (!token) { setMsg({ err: true, text: "Dev token missing — unlock the Coach page once in this browser first." }); return; }
     setBusy(true);
     setMsg(null);
     try {
@@ -302,10 +300,11 @@ function PublishToAgent({ entries }) {
         mode: e.mode, strategyId: e.strategyId, params: e.params, code: e.code,
         positionPct: e.positionPct ?? 100, feeBps: e.feeBps ?? 10,
       }));
+      // Auth = the admin session cookie (sent automatically, same origin).
       const res = await fetch("/api/lab", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ token, strategies: payload }),
+        body: JSON.stringify({ strategies: payload }),
       });
       const out = await res.json().catch(() => ({}));
       if (!res.ok || !out.ok) throw new Error(out.error || `HTTP ${res.status}`);

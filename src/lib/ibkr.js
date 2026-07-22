@@ -42,13 +42,11 @@ export function setGatewayUrl(url) {
   emit();
 }
 
-function hasDevToken() {
-  try { return !!localStorage.getItem("quant_dev_token"); } catch { return false; }
-}
-
-/** Feature switch: dev token present AND user enabled it. */
+/** Feature switch: the user enabled it (Tools page — which is itself dev-only).
+ * No secret involved: the gateway runs on the OWNER's machine; other visitors
+ * simply have no gateway to talk to. */
 export function ibkrActive() {
-  try { return hasDevToken() && localStorage.getItem(KEY_ON) === "1"; } catch { return false; }
+  try { return localStorage.getItem(KEY_ON) === "1"; } catch { return false; }
 }
 export function setIbkrEnabled(on) {
   try { localStorage.setItem(KEY_ON, on ? "1" : "0"); } catch { /* quota */ }

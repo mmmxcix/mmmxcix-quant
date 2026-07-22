@@ -10,14 +10,13 @@ import { getCompleted, subscribeProgress } from "@/lib/academyProgress";
 import { strategyToCode } from "@/lib/strategyCode";
 import CopyButton from "@/components/CopyButton";
 import Skeleton from "@/components/Skeleton";
+import { useSession } from "@/lib/authClient";
 import { cn } from "@/lib/utils";
 
 // Private coach page — the personal roadmap to funded futures trading.
-// Gated behind the same dev token as the AI generator: the token is verified
-// server-side (constant-time compare in /api/generate with { validate: true }),
-// so the page content never shows without a valid token.
-
-const TOKEN_KEY = "quant_dev_token";
+// Gated on the signed-in ADMIN (dev) account: the session cookie is verified
+// server-side on every /api/lab read, and the page shows a lock screen for
+// everyone else.
 
 function taskIsDone(task, manualDone, academyDone) {
   if (task.course) {
@@ -64,10 +63,10 @@ function LabStatus() {
   const load = async (silent = false) => {
     if (!silent) setBusy(true);
     try {
-      const token = localStorage.getItem("quant_dev_token") || "";
+      // Auth is the admin session cookie — sent automatically on same-origin.
       const [stateRes, stratRes] = await Promise.all([
-        fetch("/api/lab", { headers: { "x-lab-token": token } }),
-        fetch("/api/lab?what=strategies", { headers: { "x-lab-token": token } }),
+        fetch("/api/lab"),
+        fetch("/api/lab?what=strategies"),
       ]);
       const stateOut = await stateRes.json();
       setData(stateRes.ok ? stateOut.state : null);
@@ -329,68 +328,16 @@ function TaskRow({ task, done, onToggle }) {
 }
 
 export default function Coach() {
-  const [token, setToken] = useState(() => {
-    try { return localStorage.getItem(TOKEN_KEY) || ""; } catch { return ""; }
-  });
-  // "checking" | "locked" | "open"
-  const [gate, setGate] = useState(token ? "checking" : "locked");
-  const [input, setInput] = useState("");
-  const [gateError, setGateError] = useState(null);
-  const [busy, setBusy] = useState(false);
+  // Gate = the Better Auth ADMIN session (the dev account). No more token
+  // unlock: sign in at /login and the page simply opens.
+  const { data: session, isPending } = useSession();
+  const authed = session?.user?.role === "admin";
 
   const [manualDone, setManualDone] = useState(getCoachDone());
   const [academyDone, setAcademyDone] = useState(getCompleted());
 
   useEffect(() => subscribeCoach(() => setManualDone(getCoachDone())), []);
   useEffect(() => subscribeProgress(() => setAcademyDone(getCompleted())), []);
-
-  const validate = async (t) => {
-    const res = await fetch("/api/generate", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ validate: true, token: t }),
-    });
-    return res.ok;
-  };
-
-  // Silently verify a stored token on mount; treat network failure as valid
-  // (the page holds a roadmap, not secrets — availability wins offline).
-  useEffect(() => {
-    if (!token) return;
-    let alive = true;
-    validate(token)
-      .then((ok) => {
-        if (!alive) return;
-        if (ok) setGate("open");
-        else {
-          try { localStorage.removeItem(TOKEN_KEY); } catch { /* ignore */ }
-          setToken("");
-          setGate("locked");
-        }
-      })
-      .catch(() => alive && setGate("open"));
-    return () => { alive = false; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const unlock = async () => {
-    const t = input.trim();
-    if (!t || busy) return;
-    setBusy(true);
-    setGateError(null);
-    try {
-      const ok = await validate(t);
-      if (!ok) throw new Error("Invalid token.");
-      try { localStorage.setItem(TOKEN_KEY, t); } catch { /* private mode */ }
-      setToken(t);
-      setGate("open");
-      window.dispatchEvent(new Event("quant-dev-token"));
-    } catch (e) {
-      setGateError(e.message === "Invalid token." ? "Invalid token." : "Verification failed — try again.");
-    } finally {
-      setBusy(false);
-    }
-  };
 
   // Progress + "next up" across the whole plan.
   const { phaseStats, nextUp, totalDone, totalTasks } = useMemo(() => {
@@ -413,35 +360,24 @@ export default function Coach() {
   }, [manualDone, academyDone]);
 
   // ── Lock screen ─────────────────────────────────────────────────────────
-  if (gate !== "open") {
+  if (!authed) {
     return (
       <div className="max-w-md mx-auto mt-16">
         <div className="rounded-xl border border-line lg-glass p-6 text-center">
           <Lock className="w-8 h-8 text-dim mx-auto mb-3" />
           <h1 className="text-lg font-bold mb-1">Private area</h1>
-          <p className="text-sm text-dim mb-5">This page is personal and requires the dev access token.</p>
-          {gate === "checking" ? (
+          {isPending ? (
             <p className="flex items-center justify-center gap-2 text-sm text-dim">
               <Loader2 className="w-4 h-4 animate-spin" /> Checking access…
             </p>
+          ) : session ? (
+            <p className="text-sm text-dim">This page is limited to the dev account.</p>
           ) : (
-            <>
-              <div className="flex gap-2">
-                <input
-                  type="password"
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && unlock()}
-                  placeholder="Dev access token"
-                  className="input-base flex-1 text-sm"
-                />
-                <button onClick={unlock} disabled={busy || !input.trim()}
-                  className="btn-accent flex items-center gap-1.5 text-sm">
-                  {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <KeyRound className="w-4 h-4" />} Unlock
-                </button>
-              </div>
-              {gateError && <p className="text-xs text-down mt-2">{gateError}</p>}
-            </>
+            <p className="text-sm text-dim">
+              This page is personal.{" "}
+              <Link to="/login?next=/coach" className="text-accent hover:underline">Sign in</Link>{" "}
+              with the dev account to continue.
+            </p>
           )}
         </div>
       </div>

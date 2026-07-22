@@ -10,8 +10,6 @@ import { cn } from "@/lib/utils";
 // prop firm enforces (daily loss limit, position caps, trading window, drawdown
 // ceiling, blackout calendar). Data comes from the paper agent via /api/lab.
 
-const TOKEN_KEY = "quant_dev_token";
-
 function ruleValue(key, rules) {
   const v = rules?.[key] ?? DEFAULT_RULES[key];
   if (key === "tradingWindowUtc") return v ? `${v.start}:00–${v.end}:00 UTC` : "—";
@@ -24,17 +22,18 @@ export default function RiskGate() {
   const [raw, setRaw] = useState(undefined); // undefined=loading, null=none
   const [busy, setBusy] = useState(false);
   const [profile, setProfile] = useState(DEFAULT_PROFILE);
-  const token = (() => { try { return localStorage.getItem(TOKEN_KEY) || ""; } catch { return ""; } })();
 
+  // Auth = the admin session cookie (page renders inside the RequireAdmin-
+  // guarded Cortex hub).
   const load = async () => {
     setBusy(true);
     try {
-      const res = await fetch("/api/lab", { headers: { "x-lab-token": token } });
+      const res = await fetch("/api/lab");
       const out = await res.json();
       setRaw(res.ok ? (out.state?.riskgate ?? null) : null);
     } catch { setRaw(null); } finally { setBusy(false); }
   };
-  useEffect(() => { if (token) load(); else setRaw(null); /* eslint-disable-next-line */ }, []);
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
 
   // Two books now. Older agent builds pushed a single flat report, so fall back
   // to it rather than rendering an empty page against pre-profile state.

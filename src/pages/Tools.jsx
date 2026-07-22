@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Calculator, Scale, Crosshair, Activity, TrendingUp, Satellite } from "lucide-react";
 import { cn, fmtNum, fmtPct } from "@/lib/utils";
 import { getGatewayUrl, setGatewayUrl, ibkrActive, setIbkrEnabled, checkGateway } from "@/lib/ibkr";
+import { useSession } from "@/lib/authClient";
 
 /* ── shared bits ──────────────────────────────────────────────────── */
 
@@ -417,22 +418,10 @@ function IbkrTool() {
   );
 }
 
-// Same dev-gating pattern as the Coach nav entry (Layout.jsx).
+// Same dev-gating pattern as the nav (Layout.jsx): the admin (dev) session.
 function useDevToken() {
-  const read = () => {
-    try { return !!localStorage.getItem("quant_dev_token"); } catch { return false; }
-  };
-  const [isDev, setIsDev] = useState(read);
-  useEffect(() => {
-    const update = () => setIsDev(read());
-    window.addEventListener("quant-dev-token", update);
-    window.addEventListener("storage", update);
-    return () => {
-      window.removeEventListener("quant-dev-token", update);
-      window.removeEventListener("storage", update);
-    };
-  }, []);
-  return isDev;
+  const { data: session } = useSession();
+  return session?.user?.role === "admin";
 }
 
 /* ── page ─────────────────────────────────────────────────────────── */

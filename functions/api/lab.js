@@ -10,9 +10,11 @@
 //                                   so good strategies accumulate on the site)
 //
 // Storage: the existing SUBSCRIBERS KV namespace, keys prefixed "lab:" — no
-// new bindings or dashboard work. Auth: DEV_ACCESS_TOKEN (same secret as the
-// AI generator), constant-time compared. Reads are token-gated too: the lab
-// state is the owner's private data.
+// new bindings or dashboard work. Auth (dual): the PC agents use the machine
+// token DEV_ACCESS_TOKEN (constant-time compared); humans use their Better Auth
+// ADMIN session cookie. Reads are gated too: the lab state is private data.
+
+import { isAdminRequest } from "../_lib/auth.mjs";
 
 const MAX_STATE_BYTES = 64 * 1024;
 // The "Deckel", now per profile: prop and private are two separate books, so a
@@ -59,15 +61,20 @@ export async function onRequest({ request, env }) {
       },
     });
   }
-  if (!env.DEV_ACCESS_TOKEN || !env.SUBSCRIBERS) {
+  if (!env.SUBSCRIBERS) {
     return json({ error: "not_configured" }, 503);
   }
 
-  // ── GET: token-gated reads. Default = agent state; ?what=strategies =
-  // the published paper strategies (what the PC agent should execute). ─────
+  // Dual auth everywhere below: the PC agents send the machine token
+  // (x-lab-token header / body.token = DEV_ACCESS_TOKEN); humans are gated by
+  // their Better Auth ADMIN session cookie instead. Non-admins get a 401 and
+  // the UI simply hides the private panels.
+  const headerTokenOk = !!env.DEV_ACCESS_TOKEN && safeEqual(request.headers.get("x-lab-token") || "", env.DEV_ACCESS_TOKEN);
+
+  // ── GET: agent-token- or admin-session-gated reads. Default = agent state;
+  // ?what=strategies = the published paper strategies. ─────────────────────
   if (request.method === "GET") {
-    const token = request.headers.get("x-lab-token") || "";
-    if (!safeEqual(token, env.DEV_ACCESS_TOKEN)) return json({ error: "unauthorized" }, 401);
+    if (!headerTokenOk && !(await isAdminRequest(env, request))) return json({ error: "unauthorized" }, 401);
     const whatParam = new URL(request.url).searchParams.get("what");
     const field = whatParam === "strategies" ? "strategies"
       : whatParam === "candidates" ? "candidates"
@@ -92,7 +99,8 @@ export async function onRequest({ request, env }) {
   } catch {
     return json({ error: "bad_request" }, 400);
   }
-  if (!safeEqual(String(body?.token || ""), env.DEV_ACCESS_TOKEN)) {
+  const bodyTokenOk = !!env.DEV_ACCESS_TOKEN && safeEqual(String(body?.token || ""), env.DEV_ACCESS_TOKEN);
+  if (!bodyTokenOk && !(await isAdminRequest(env, request))) {
     return json({ error: "unauthorized" }, 401);
   }
 

@@ -61,3 +61,27 @@ export function authFromEnv(env) {
     devEmail: env.DEV_EMAIL,
   });
 }
+
+/**
+ * The signed-in user for this request (HttpOnly session cookie), or null.
+ * Never throws — auth not being configured just reads as "not signed in".
+ */
+export async function sessionUser(env, request) {
+  if (!env.DB || !env.BETTER_AUTH_SECRET) return null;
+  try {
+    const s = await authFromEnv(env).api.getSession({ headers: request.headers });
+    return s?.user || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * True when the request carries a signed-in ADMIN session (the dev account).
+ * This is what gates every dev tool for humans; agents authenticate with their
+ * machine token instead (see generate.js / lab.js).
+ */
+export async function isAdminRequest(env, request) {
+  const u = await sessionUser(env, request);
+  return !!u && u.role === "admin";
+}

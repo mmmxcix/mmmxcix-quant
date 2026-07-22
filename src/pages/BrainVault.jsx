@@ -9,29 +9,29 @@ import { cn } from "@/lib/utils";
 // from MULTIPLE sources (arXiv + OpenAlex) to /api/lab (channel lab:brain).
 // Self-contained canvas force simulation — no external graph library.
 
-const TOKEN_KEY = "quant_dev_token";
 const COLORS = { candidate: "#34d399", graveyard: "#f87171", edge: "rgba(148,163,184,0.18)" };
 
 export default function BrainVault() {
   const [data, setData] = useState(undefined); // undefined=loading, null=none
   const [busy, setBusy] = useState(false);
   const [hover, setHover] = useState(null);
-  const token = (() => { try { return localStorage.getItem(TOKEN_KEY) || ""; } catch { return ""; } })();
 
   const wrapRef = useRef(null);
   const canvasRef = useRef(null);
   const simRef = useRef(null); // { nodes, edges, raf }
   const viewRef = useRef(null); // { reset } — re-frame the camera on demand
 
+  // Auth = the admin session cookie (this page only renders inside the
+  // RequireAdmin-guarded Cortex hub anyway).
   const load = async () => {
     setBusy(true);
     try {
-      const res = await fetch("/api/lab?what=brain", { headers: { "x-lab-token": token } });
+      const res = await fetch("/api/lab?what=brain");
       const out = await res.json();
       setData(res.ok ? (out.brain ?? null) : null);
     } catch { setData(null); } finally { setBusy(false); }
   };
-  useEffect(() => { if (token) load(); else setData(null); /* eslint-disable-next-line */ }, []);
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
 
   // ── force simulation + free pan/zoom camera (Obsidian-style) ───────────────
   useEffect(() => {
@@ -206,25 +206,19 @@ export default function BrainVault() {
       <div className="flex items-center gap-3 mb-4">
         <h1 className="text-2xl font-bold">Brain Vault</h1>
         <Network className="w-5 h-5 text-accent" />
-        <button onClick={load} disabled={busy || !token}
+        <button onClick={load} disabled={busy}
           className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-line px-2.5 py-1 text-xs text-dim hover:text-text disabled:opacity-50">
           <RefreshCw className={cn("w-3.5 h-3.5", busy && "animate-spin")} /> Refresh
         </button>
       </div>
 
-      {!token && (
-        <div className="rounded-xl border border-line lg-glass p-5 text-sm text-dim">
-          The Brain Vault is private. Set the dev token on the <Link to="/coach" className="text-accent underline">Coach</Link> page to view it.
-        </div>
-      )}
-
-      {token && data === null && (
+      {data === null && (
         <div className="rounded-xl border border-line lg-glass p-5 text-sm text-dim">
           No knowledge graph yet — the research agent hasn't reported. Once <code className="text-text">research-agent.mjs</code> runs, every paper it reads becomes a node here, linked by shared topic.
         </div>
       )}
 
-      {token && data?.nodes?.length > 0 && (
+      {data?.nodes?.length > 0 && (
         <div className="space-y-4">
           {/* stat strip */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 stagger">
@@ -283,7 +277,7 @@ export default function BrainVault() {
         </div>
       )}
 
-      {token && data?.nodes?.length === 0 && (
+      {data?.nodes?.length === 0 && (
         <div className="rounded-xl border border-line lg-glass p-5 text-sm text-dim">
           The agent has reported, but no papers are graphed yet. Give it a run or two.
         </div>

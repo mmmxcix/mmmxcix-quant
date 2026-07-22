@@ -8,6 +8,7 @@ import Regimes from "@/pages/Regimes";
 import Coach from "@/pages/Coach";
 import Cortex from "@/pages/Cortex";
 import { BacktestHub, PortfolioHub, ScreenerHub, LearnHub } from "@/pages/hubs";
+import RequireAdmin from "@/components/RequireAdmin";
 import Impressum from "@/pages/Impressum";
 import Datenschutz from "@/pages/Datenschutz";
 import Nutzung from "@/pages/Nutzung";
@@ -46,9 +47,9 @@ export default function App() {
                 <Route path="/regimes" element={<Regimes />} />
                 <Route path="/coach" element={<Coach />} />
 
-                {/* Cortex hub (Registry · Paper · RiskGate · Brain Vault) */}
+                {/* Cortex hub (Registry · Paper · RiskGate · Brain Vault) — dev only */}
                 <Route path="/cortex" element={<Redir to="/cortex/registry" replace />} />
-                <Route path="/cortex/:tab" element={<Cortex />} />
+                <Route path="/cortex/:tab" element={<RequireAdmin><Cortex /></RequireAdmin>} />
                 <Route path="/registry" element={<Redir to="/cortex/registry" replace />} />
                 <Route path="/lab" element={<Redir to="/cortex/paper" replace />} />
                 <Route path="/riskgate" element={<Redir to="/cortex/riskgate" replace />} />

@@ -21,6 +21,8 @@
 // personal data ever enters a prompt (the dev token authenticates the endpoint
 // only; the LLM sees the prompt, never the token).
 
+import { isAdminRequest } from "../_lib/auth.mjs";
+
 const ANTHROPIC_MODEL = "claude-sonnet-5";
 const MISTRAL_MODEL = "codestral-latest"; // Mistral's code-specialised model
 const GROQ_MODEL = "llama-3.3-70b-versatile";
@@ -230,8 +232,8 @@ export async function onRequest({ request, env }) {
   if (request.method !== "POST") return json({ error: "method_not_allowed" }, 405);
 
   const hasProvider = env.ANTHROPIC_API_KEY || env.MISTRAL_API_KEY || env.GROQ_API_KEY || env.GEMINI_API_KEY;
-  if (!env.DEV_ACCESS_TOKEN || !hasProvider) {
-    return json({ error: "not_configured", hint: "Set DEV_ACCESS_TOKEN plus at least one provider key (MISTRAL_API_KEY, GROQ_API_KEY, GEMINI_API_KEY or ANTHROPIC_API_KEY) as Cloudflare secrets." }, 503);
+  if (!hasProvider) {
+    return json({ error: "not_configured", hint: "Set at least one provider key (MISTRAL_API_KEY, GROQ_API_KEY, GEMINI_API_KEY or ANTHROPIC_API_KEY) as a Cloudflare secret." }, 503);
   }
 
   let body;
@@ -241,12 +243,17 @@ export async function onRequest({ request, env }) {
     return json({ error: "bad_request" }, 400);
   }
 
+  // Dual auth: the PC agents authenticate with the machine token
+  // (DEV_ACCESS_TOKEN — server-to-server, no browser); humans authenticate with
+  // their Better Auth ADMIN session cookie (the dev account). The old human
+  // token-unlock flow is gone.
   const token = String(body?.token || "");
-  if (!safeEqual(token, env.DEV_ACCESS_TOKEN)) {
+  const tokenOk = !!env.DEV_ACCESS_TOKEN && safeEqual(token, env.DEV_ACCESS_TOKEN);
+  if (!tokenOk && !(await isAdminRequest(env, request))) {
     return json({ error: "unauthorized" }, 401);
   }
 
-  // Cheap token check (no AI call) — used by the private Coach page gate.
+  // Cheap auth check (no AI call) — legacy probe, kept for compatibility.
   if (body?.validate === true) return json({ ok: true });
 
   // Four modes share the provider chain below:

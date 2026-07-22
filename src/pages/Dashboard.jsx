@@ -62,9 +62,9 @@ function useLabState() {
     let alive = true;
     const load = async () => {
       try {
-        const token = localStorage.getItem("quant_dev_token") || "";
-        if (!token) { if (alive) setState(null); return; }
-        const res = await fetch("/api/lab", { headers: { "x-lab-token": token } });
+        // Admin session cookie gates this server-side; a 401 (not signed in as
+        // the dev account) just means the private KPIs stay hidden.
+        const res = await fetch("/api/lab");
         const out = await res.json();
         if (alive) setState(res.ok ? out.state : null);
       } catch { if (alive) setState(null); }
