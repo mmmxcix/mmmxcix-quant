@@ -1,4 +1,4 @@
-import { FlaskConical, Scale, Briefcase, Sigma, GraduationCap, BookOpenCheck, Compass, Radar, Telescope, Grid3x3 } from "lucide-react";
+import { FlaskConical, Scale, Briefcase, Sigma, GraduationCap, BookOpenCheck, Compass, Radar, Telescope, Grid3x3, BrainCircuit } from "lucide-react";
 import TabHub from "@/components/TabHub";
 import Backtest from "@/pages/Backtest";
 import Compare from "@/pages/Compare";
@@ -10,6 +10,7 @@ import Resources from "@/pages/Resources";
 import Screener from "@/pages/Screener";
 import Anomalies from "@/pages/Anomalies";
 import Correlation from "@/pages/Correlation";
+import MLStudio from "@/pages/MLStudio";
 
 // Consolidated hubs — related pages merged into one tabbed route each. Old
 // routes redirect to the matching tab (see App.jsx).
@@ -19,6 +20,7 @@ export function BacktestHub() {
     <TabHub base="/backtest" tabs={[
       { id: "run", label: "Backtest", icon: FlaskConical, el: <Backtest /> },
       { id: "compare", label: "Compare", icon: Scale, el: <Compare /> },
+      { id: "ml", label: "ML Studio", icon: BrainCircuit, el: <MLStudio /> },
     ]} />
   );
 }
