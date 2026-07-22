@@ -31,9 +31,15 @@ export async function lseAvailable() {
 export async function fetchLseCandles({ symbol, interval = "1d", rangeDays = 365 }) {
   const tf = TF[interval];
   if (!tf) throw new Error(`London archive doesn't serve the ${interval} interval.`);
+  // LSE wants FX as "EUR/USD" — translate the Yahoo-style "EURUSD=X" the rest
+  // of the site uses. (Crypto stays on Binance: LSE's BTC/USD is a different
+  // quote currency than our USDT pairs — swapping them would falsify data.)
+  const up = symbol.toUpperCase();
+  const fx = /^([A-Z]{3})([A-Z]{3})=X$/.exec(up);
+  const lseSymbol = fx ? `${fx[1]}/${fx[2]}` : up;
   const end = new Date();
   const start = new Date(end.getTime() - rangeDays * 86400_000);
-  const url = `${PROXY}/v1/candles?symbol=${encodeURIComponent(symbol.toUpperCase())}&timeframe=${tf}&start=${iso(start)}&end=${iso(end)}`;
+  const url = `${PROXY}/v1/candles?symbol=${encodeURIComponent(lseSymbol)}&timeframe=${tf}&start=${iso(start)}&end=${iso(end)}`;
   const res = await fetch(url);
   if (res.status === 503) throw new Error("London data not configured — set the LSE_API_KEY secret.");
   if (!res.ok) throw new Error(`London data request failed (${res.status}) — is the symbol in the archive?`);
