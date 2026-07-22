@@ -6,6 +6,7 @@ import SymbolSearch from "@/components/SymbolSearch";
 import ChartDrawLayer, { DRAW_TOOLS } from "@/components/ChartDrawLayer";
 import AutoAnnotateLayer from "@/components/AutoAnnotateLayer";
 import BiasPanel from "@/components/BiasPanel";
+import SymbolInfoPanel from "@/components/SymbolInfoPanel";
 import IndicatorPane from "@/components/IndicatorPane";
 import { fetchCandles, fetchOlderCandles, fetchLatestCandles, MARKETS, INTERVALS, rangesFor } from "@/lib/data";
 import { openBinanceKlineStream, mergeLiveCandle } from "@/lib/liveStream";
@@ -14,7 +15,7 @@ import { sma, ema, bollinger, closes } from "@/lib/indicators";
 import { vizColor } from "@/lib/vizColors";
 import { getAlertsFor, addAlert, removeAlert, subscribeAlerts, checkAlerts, ensureNotificationPermission } from "@/lib/alerts";
 import { cn, fmtPrice, fmtPct } from "@/lib/utils";
-import { Bell, X, Scale } from "lucide-react";
+import { Bell, X, Scale, Info as InfoIcon } from "lucide-react";
 
 // Compact price header above the chart — last price (live tick if streaming),
 // change vs the previous bar, and the current bar's OHLC.
@@ -113,6 +114,8 @@ export default function Charts() {
 
   // Rule-based bias readout (mechanical long/short/neutral + SL/TP levels).
   const [showBias, setShowBias] = useState(false);
+  // "What is this symbol?" — profile + fundamentals panel.
+  const [showInfo, setShowInfo] = useState(false);
 
   // Esc cancels an active drawing tool.
   useEffect(() => {
@@ -501,6 +504,11 @@ export default function Charts() {
             className={cn("flex items-center gap-1.5 chip", showBias ? "chip-active" : "chip-idle")}>
             <Scale className="w-3.5 h-3.5" /> Bias check
           </button>
+          <button onClick={() => setShowInfo((v) => !v)}
+            title="What is this? Company/asset profile, analyst targets, quarterly earnings (estimate vs. delivered)."
+            className={cn("flex items-center gap-1.5 chip", showInfo ? "chip-active" : "chip-idle")}>
+            <InfoIcon className="w-3.5 h-3.5" /> Info
+          </button>
           {showAlertBox && (
             <div className="flex flex-wrap items-center gap-2">
               <input
@@ -580,6 +588,8 @@ export default function Charts() {
           </>
         ) : null}
       </div>
+
+      {showInfo && <SymbolInfoPanel market={market} symbol={symbol} />}
 
       {showBias && (
         <div className="mt-4">
