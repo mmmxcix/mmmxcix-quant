@@ -12,28 +12,22 @@ The code is already in the repo:
 - `src/lib/authClient.js`, `src/pages/Login.jsx`, `src/pages/Register.jsx` — the UI.
 - `db/better-auth-schema.sql` — the D1 schema (generated from the exact plugin set).
 
-## One-time infra steps (only you can do these — they touch your Cloudflare account)
+## One-time infra steps
 
-Run from the repo root with `wrangler` logged in (`npx wrangler login`).
+### 1. Create the D1 database — ✅ DONE (via Cloudflare MCP, 2026-07-22)
 
-### 1. Create the D1 database
+Database **`mmmxcix-quant-auth`**, id `abb35e48-e26d-456d-a567-f15903649e7e`, region WEUR.
 
-```bash
-npx wrangler d1 create mmmxcix-quant-auth
-```
+### 2. Apply the schema — ✅ DONE (via Cloudflare MCP, 2026-07-22)
 
-Note the `database_id` it prints.
-
-### 2. Apply the schema
+All 5 tables (user / session / account / verification / twoFactor) + 5 indexes
+verified live. To re-apply later (e.g. a fresh DB):
 
 ```bash
-# production (remote) DB:
 npx wrangler d1 execute mmmxcix-quant-auth --remote --file=./db/better-auth-schema.sql
-# and for local `wrangler pages dev` testing:
-npx wrangler d1 execute mmmxcix-quant-auth --local  --file=./db/better-auth-schema.sql
 ```
 
-### 3. Bind D1 to the Pages project — binding name **`DB`**
+### 3. Bind D1 to the Pages project — binding name **`DB`** (dashboard, you)
 
 Cloudflare dashboard → your Pages project → **Settings → Functions → D1 database
 bindings** → **Add binding**: variable name `DB`, database `mmmxcix-quant-auth`.
