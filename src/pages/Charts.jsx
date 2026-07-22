@@ -11,6 +11,7 @@ import { fetchCandles, fetchOlderCandles, fetchLatestCandles, MARKETS, INTERVALS
 import { openBinanceKlineStream, mergeLiveCandle } from "@/lib/liveStream";
 import { CHART_TYPES } from "@/lib/chartTypes";
 import { sma, ema, bollinger, closes } from "@/lib/indicators";
+import { vizColor } from "@/lib/vizColors";
 import { getAlertsFor, addAlert, removeAlert, subscribeAlerts, checkAlerts, ensureNotificationPermission } from "@/lib/alerts";
 import { cn, fmtPrice, fmtPct } from "@/lib/utils";
 import { Bell, X, Scale } from "lucide-react";
@@ -270,8 +271,8 @@ export default function Charts() {
       points: values.map((v, i) => (v === null ? null : { time: candles[i].time, value: v })).filter(Boolean),
     });
     const out = [];
-    if (indicators.sma2050) out.push(mk(sma(cl, 20), "#38bdf8", "SMA 20"), mk(sma(cl, 50), "#f59e0b", "SMA 50"));
-    if (indicators.ema200) out.push(mk(ema(cl, 200), "#a78bfa", "EMA 200"));
+    if (indicators.sma2050) out.push(mk(sma(cl, 20), vizColor("blue"), "SMA 20"), mk(sma(cl, 50), vizColor("amber"), "SMA 50"));
+    if (indicators.ema200) out.push(mk(ema(cl, 200), vizColor("purple"), "EMA 200"));
     if (indicators.bollinger) {
       const bb = bollinger(cl, 20, 2);
       const band = (key, color) => ({
@@ -386,7 +387,7 @@ export default function Charts() {
 
         {/* Auto-draw: the app detects and draws these from the data itself */}
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-dim">
-          <span className="flex items-center gap-1 text-[#a78bfa]" title="Automatically detected and drawn from the data">
+          <span className="flex items-center gap-1" style={{ color: "var(--viz-purple)" }} title="Automatically detected and drawn from the data">
             <Wand2 className="w-3.5 h-3.5" /> Auto
           </span>
           {[
@@ -399,7 +400,7 @@ export default function Charts() {
             <label key={key} className="flex items-center gap-1.5 cursor-pointer select-none">
               <input type="checkbox" checked={autoDraw[key]}
                 onChange={(e) => setAutoDraw((v) => ({ ...v, [key]: e.target.checked }))}
-                className="accent-[#a78bfa]" />
+                style={{ accentColor: "var(--viz-purple)" }} />
               {label}
             </label>
           ))}

@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { createChart } from "lightweight-charts";
 import { rsi, macd, closes } from "@/lib/indicators";
+import { vizColor } from "@/lib/vizColors";
 
 // A compact oscillator pane (RSI or MACD) rendered as its own lightweight-charts
 // instance below the main price chart and time-synced to it. lightweight-charts
@@ -35,7 +36,7 @@ export default function IndicatorPane({ candles, type, mainChart, height = 130 }
     chartRef.current = chart;
 
     if (type === "rsi") {
-      seriesRef.current.line = chart.addLineSeries({ color: "#a78bfa", lineWidth: 2, priceLineVisible: false, lastValueVisible: true });
+      seriesRef.current.line = chart.addLineSeries({ color: vizColor("purple"), lineWidth: 2, priceLineVisible: false, lastValueVisible: true });
       // 70/30 guide lines.
       const guide = (v, c) => {
         const s = chart.addLineSeries({ color: c, lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
@@ -47,8 +48,8 @@ export default function IndicatorPane({ candles, type, mainChart, height = 130 }
     } else {
       // MACD: histogram + macd line + signal line.
       seriesRef.current.hist = chart.addHistogramSeries({ priceLineVisible: false, lastValueVisible: false });
-      seriesRef.current.macd = chart.addLineSeries({ color: "#38bdf8", lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
-      seriesRef.current.signal = chart.addLineSeries({ color: "#f59e0b", lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+      seriesRef.current.macd = chart.addLineSeries({ color: vizColor("blue"), lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
+      seriesRef.current.signal = chart.addLineSeries({ color: vizColor("amber"), lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
     }
 
     const ro = new ResizeObserver(() => {
