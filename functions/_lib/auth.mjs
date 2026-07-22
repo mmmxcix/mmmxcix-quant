@@ -36,6 +36,14 @@ export function buildAuth({ db, secret, baseURL, devEmail }) {
       requireEmailVerification: false,
       minPasswordLength: 8,
     },
+    user: {
+      additionalFields: {
+        // Per-account theme preference ("light" | "dark" | "system") — synced
+        // across devices; the client mirrors it to localStorage for the
+        // before-paint script. Set via authClient.updateUser({ theme }).
+        theme: { type: "string", required: false, input: true },
+      },
+    },
     // The single privileged "dev" account: whoever registers with DEV_EMAIL is
     // minted with role "admin". Every dev tool gates on that role once the old
     // dev-token check is swapped over — no shared secret to leak.

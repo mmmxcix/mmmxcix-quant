@@ -1,36 +1,69 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { NavLink, Link, useLocation } from "react-router-dom";
-import { LayoutDashboard, CandlestickChart, FlaskConical, Newspaper, Compass, Wrench, Activity, Scale, Star, Briefcase, Radar, GraduationCap, Sigma, Menu, X, Target, BookOpenCheck, Telescope, Cpu, Sun, Moon, Waypoints, Search, LogIn } from "lucide-react";
+import { LayoutDashboard, CandlestickChart, FlaskConical, Newspaper, Compass, Wrench, Activity, Scale, Star, Briefcase, Radar, GraduationCap, Sigma, Menu, X, Target, BookOpenCheck, Telescope, Cpu, Sun, Moon, Monitor, Waypoints, Search, LogIn } from "lucide-react";
 import { cn } from "@/lib/utils";
 import DitherBackground from "@/components/DitherBackground";
 import CommandPalette from "@/components/CommandPalette";
-import { useSession, signOut } from "@/lib/authClient";
+import { authClient, useSession, signOut } from "@/lib/authClient";
+import { THEME_MODES, applyThemeMode, getThemeMode, storeThemeMode } from "@/lib/theme";
 
 // ⌘ on macOS, Ctrl elsewhere — shown in the quick-nav affordance.
 const KBD_HINT = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform) ? "⌘K" : "Ctrl K";
 const openPalette = () => window.dispatchEvent(new Event("open-command-palette"));
 
+// Theme mode ("light" | "dark" | "system") — a per-ACCOUNT preference: stored
+// on the user via Better Auth, mirrored to localStorage for the before-paint
+// script, so an account that picks dark stays dark on every device and reload
+// until it switches back. Signed-out visitors keep a device-local mode.
 function useTheme() {
-  const get = () => (typeof document !== "undefined" && document.documentElement.dataset.theme === "dark" ? "dark" : "light");
-  const [t, setT] = useState(get);
-  const toggle = () => {
-    const n = t === "dark" ? "light" : "dark";
-    document.documentElement.dataset.theme = n;
-    try { localStorage.setItem("theme", n); } catch { /* private mode */ }
-    setT(n);
+  const { data: session } = useSession();
+  const [mode, setModeState] = useState(getThemeMode);
+  const lastAccountTheme = useRef(null);
+
+  // The account's stored preference wins whenever it (newly) arrives or
+  // changes — that's what makes "dark on one device" mean dark everywhere.
+  useEffect(() => {
+    const t = session?.user?.theme;
+    if (t && THEME_MODES.includes(t) && t !== lastAccountTheme.current) {
+      lastAccountTheme.current = t;
+      setModeState(t);
+      storeThemeMode(t);
+    }
+  }, [session?.user?.theme]);
+
+  // Apply on change; in system mode follow the OS live.
+  useEffect(() => {
+    applyThemeMode(mode);
+    if (mode !== "system") return;
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const onChange = () => applyThemeMode("system");
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, [mode]);
+
+  const setMode = (next) => {
+    setModeState(next);
+    storeThemeMode(next);
+    applyThemeMode(next);
+    // Persist on the account so every device follows (fire-and-forget).
+    if (session?.user) authClient.updateUser({ theme: next }).catch(() => { /* offline */ });
   };
-  return [t, toggle];
+
+  return [mode, setMode];
 }
 
 function ThemeToggle({ className }) {
-  const [t, toggle] = useTheme();
+  const [mode, setMode] = useTheme();
+  const next = THEME_MODES[(THEME_MODES.indexOf(mode) + 1) % THEME_MODES.length];
+  const Icon = mode === "dark" ? Moon : mode === "system" ? Monitor : Sun;
   return (
     <button
-      onClick={toggle}
-      aria-label="Toggle light or dark theme"
+      onClick={() => setMode(next)}
+      aria-label={`Theme: ${mode} — switch to ${next}`}
+      title={`Theme: ${mode} · click for ${next}`}
       className={cn("inline-flex items-center justify-center rounded-lg border border-line text-dim hover:text-text transition-colors", className)}
     >
-      {t === "dark" ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+      <Icon className="w-4 h-4" />
     </button>
   );
 }

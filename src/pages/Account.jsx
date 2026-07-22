@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { ShieldCheck, ShieldOff, Loader2, Copy, Check, LogOut, KeyRound } from "lucide-react";
+import { ShieldCheck, ShieldOff, Loader2, Copy, Check, LogOut, KeyRound, Sun, Moon, Monitor } from "lucide-react";
 import QRCode from "qrcode";
 import { authClient, useSession, signOut } from "@/lib/authClient";
 import Skeleton from "@/components/Skeleton";
+import { applyThemeMode, getThemeMode, storeThemeMode } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 
 // Account settings — identity + security. 2FA is optional per user (TOTP for
@@ -66,7 +67,51 @@ export default function Account() {
         </button>
       </div>
 
+      <ThemeSection accountTheme={u.theme} />
+
       <TwoFactorSection user={u} />
+    </div>
+  );
+}
+
+// Appearance — the per-account theme. Dark on this device = dark on every
+// device (stored on the account, mirrored to localStorage for instant paint);
+// "System" follows the OS setting live.
+function ThemeSection({ accountTheme }) {
+  const [mode, setMode] = useState(() => accountTheme || getThemeMode());
+
+  const choose = (m) => {
+    setMode(m);
+    storeThemeMode(m);
+    applyThemeMode(m);
+    authClient.updateUser({ theme: m }).catch(() => { /* offline — local still applied */ });
+  };
+
+  const OPTIONS = [
+    ["light", "Light", Sun],
+    ["dark", "Dark", Moon],
+    ["system", "System", Monitor],
+  ];
+
+  return (
+    <div className="rounded-xl border border-line lg-glass p-5 mb-4">
+      <h2 className="font-semibold mb-1">Appearance</h2>
+      <p className="text-sm text-dim mb-3">
+        Saved on your account — the same theme on every device. System follows your OS.
+      </p>
+      <div className="flex gap-2" role="radiogroup" aria-label="Theme">
+        {OPTIONS.map(([id, label, Icon]) => (
+          <button
+            key={id}
+            role="radio"
+            aria-checked={mode === id}
+            onClick={() => choose(id)}
+            className={cn("chip flex items-center gap-1.5", mode === id ? "chip-active" : "chip-idle")}
+          >
+            <Icon className="w-3.5 h-3.5" /> {label}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
