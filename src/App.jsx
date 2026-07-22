@@ -11,6 +11,8 @@ import { BacktestHub, PortfolioHub, ScreenerHub, LearnHub } from "@/pages/hubs";
 import Impressum from "@/pages/Impressum";
 import Datenschutz from "@/pages/Datenschutz";
 import Nutzung from "@/pages/Nutzung";
+import Login from "@/pages/Login";
+import Register from "@/pages/Register";
 
 // Redirect that preserves the query string, so deep links (e.g.
 // /academy?c=…&l=… into the Learn hub) keep their course/lesson params.
@@ -28,6 +30,8 @@ export default function App() {
         <Route path="/impressum" element={<Impressum />} />
         <Route path="/datenschutz" element={<Datenschutz />} />
         <Route path="/nutzung" element={<Nutzung />} />
+        <Route path="/login" element={<Login />} />
+        <Route path="/register" element={<Register />} />
         <Route
           path="*"
           element={

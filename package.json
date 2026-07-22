@@ -9,7 +9,9 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "better-auth": "^1.6.24",
     "clsx": "^2.1.1",
+    "kysely-d1": "^0.4.0",
     "lightweight-charts": "^4.2.0",
     "lucide-react": "^0.475.0",
     "react": "^18.2.0",
