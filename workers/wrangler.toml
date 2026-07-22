@@ -1,0 +1,20 @@
+# quant-digest — deploy config. From this directory:
+#   npx wrangler deploy
+# (requires a one-time `npx wrangler login`)
+#
+# Secrets (RESEND_API_KEY, DIGEST_FROM, DIGEST_TEST_TOKEN) are set in the
+# dashboard / via `wrangler secret put` and PERSIST across deploys — they are
+# deliberately not in this file.
+
+name = "quant-digest"
+main = "digest-worker.js"
+compatibility_date = "2026-07-01"
+
+# Daily 06:00 UTC (08:00 CEST) — matches the trigger documented in README.md.
+[triggers]
+crons = ["0 6 * * *"]
+
+# Same KV namespace the Pages project uses for /api/subscribe.
+[[kv_namespaces]]
+binding = "SUBSCRIBERS"
+id = "66b41269f3814458a71839a07b685c15"

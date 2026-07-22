@@ -117,13 +117,31 @@ export async function onRequest(context) {
   }
 
   try {
-    // ── Confirm (double opt-in link from the worker email) ──────────────
+    // ── Confirm (double opt-in) + tokenized Unsubscribe links ───────────
     if (method === 'GET') {
       const url = new URL(request.url);
       const email = normalizeEmail(url.searchParams.get('email'));
       const token = url.searchParams.get('token') || '';
       if (!email) return html('<p>Invalid link.</p>', 400);
       const rec = await kv.get(`sub:${email}`, 'json');
+
+      // Unsubscribe from the digest email footer. Token-verified so nobody can
+      // unsubscribe someone else; a record without a token (legacy) or an
+      // already-deleted one degrades to a friendly success page.
+      if (url.searchParams.get('action') === 'unsub') {
+        if (rec && rec.confirmToken && rec.confirmToken !== token) {
+          return html('<p>Link invalid or expired.</p>', 400);
+        }
+        if (rec) await kv.delete(`sub:${email}`);
+        return html(
+          `<!doctype html><meta charset="utf-8"><title>Unsubscribed</title>` +
+          `<div style="font-family:system-ui;background:#fafafb;color:#0c0c0f;min-height:100vh;display:flex;align-items:center;justify-content:center;text-align:center">` +
+          `<div><h1>Unsubscribed</h1>` +
+          `<p style="color:#585860">You won't receive the MMMXCIX Quant Digest anymore.</p>` +
+          `<p><a href="https://quant.mmmxcix.com/news" style="color:#0c0c0f">Back to the site</a></p></div></div>`
+        );
+      }
+
       if (!rec || rec.confirmToken !== token) return html('<p>Link invalid or expired.</p>', 400);
       if (!rec.confirmed) {
         rec.confirmed = true;
@@ -140,6 +158,20 @@ export async function onRequest(context) {
     }
 
     if (method === 'POST') {
+      // RFC 8058 one-click unsubscribe (List-Unsubscribe-Post): mail clients
+      // POST to the unsubscribe URL with no meaningful body — handle it before
+      // any JSON parsing.
+      const postUrl = new URL(request.url);
+      if (postUrl.searchParams.get('action') === 'unsub') {
+        const email = normalizeEmail(postUrl.searchParams.get('email'));
+        const token = postUrl.searchParams.get('token') || '';
+        if (!email) return json({ error: 'invalid_email' }, 400);
+        const rec = await kv.get(`sub:${email}`, 'json');
+        if (rec && rec.confirmToken && rec.confirmToken !== token) return json({ error: 'invalid_token' }, 400);
+        if (rec) await kv.delete(`sub:${email}`);
+        return json({ status: 'removed' });
+      }
+
       let payload;
       try { payload = await request.json(); } catch { return json({ error: 'invalid_json' }, 400); }
 

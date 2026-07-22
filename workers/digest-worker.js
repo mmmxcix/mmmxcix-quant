@@ -1,7 +1,14 @@
 // MMMXCIX Quant — Daily Digest Worker (standalone Cloudflare Worker, NOT a Pages Function).
 //
-// Sends a daily market-news digest email to all newsletter subscribers.
+// Sends a personalized daily market digest to every confirmed subscriber:
+//   • a MARKET SNAPSHOT strip (BTC / ETH / SPY / QQQ day moves, up/down coloured)
+//   • news sections per the subscriber's prefs (portfolio/watchlist symbol
+//     matching, categories, freeOnly, sources) with summary + relative time
+//   • a dynamic subject line carrying the day's biggest moves
+//   • a TOKENIZED unsubscribe link + RFC 8058 one-click headers (deliverability)
+//
 // Setup (KV binding, secrets, cron trigger): see workers/README.md.
+// Deploy: `npx wrangler deploy` from workers/ (wrangler.toml beside this file).
 //
 // Bindings / secrets expected:
 //   SUBSCRIBERS       — KV namespace (same one the Pages project uses for /api/subscribe)
@@ -12,10 +19,25 @@
 const NEWS_URL = 'https://quant.mmmxcix.com/api/news';
 const SITE_URL = 'https://quant.mmmxcix.com/news';
 const CONFIRM_BASE = 'https://quant.mmmxcix.com/api/subscribe';
+const YAHOO_PROXY = 'https://quant.mmmxcix.com/api/yahoo/v8/finance/chart';
+const BINANCE_24H = 'https://api.binance.com/api/v3/ticker/24hr';
 const RESEND_URL = 'https://api.resend.com/emails';
 const MAX_ITEMS = 12;           // items in a "general" digest
 const MAX_ITEMS_PER_TOPIC = 8;  // cap per category section in a personalized digest
 const SEND_DELAY_MS = 600; // polite sequential sending (well under Resend rate limits)
+
+// Brand tokens — mirrors the site's light theme (src/index.css) so the mail
+// reads as the same product: graphite ink, silver hairlines, deep up/down.
+const C = {
+  ground: '#fafafb',
+  card: '#ffffff',
+  line: '#e4e4e7',
+  ink: '#0c0c0f',
+  dim: '#585860',
+  faint: '#8a8d94',
+  up: '#0b6e47',
+  down: '#be2830',
+};
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -30,7 +52,7 @@ function escapeHtml(str) {
     .replace(/'/g, '&#39;');
 }
 
-function formatDateDe(date) {
+function formatDate(date) {
   return date.toLocaleDateString('en-US', {
     weekday: 'long',
     year: 'numeric',
@@ -40,8 +62,66 @@ function formatDateDe(date) {
   });
 }
 
-// Fetch the FULL news list (each item carries source, category, access) so we
-// can filter it per subscriber. No slicing here.
+// "3h ago" / "yesterday" — relative time for item pubDates.
+function relTime(iso, now) {
+  if (!iso) return '';
+  const t = new Date(iso).getTime();
+  if (isNaN(t)) return '';
+  const mins = Math.max(0, Math.round((now.getTime() - t) / 60000));
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  return days === 1 ? 'yesterday' : `${days}d ago`;
+}
+
+const fmtPct = (p) => `${p >= 0 ? '+' : ''}${p.toFixed(2)}%`;
+const fmtPrice = (v) =>
+  v >= 1000 ? Math.round(v).toLocaleString('en-US') : v >= 10 ? v.toFixed(2) : v.toFixed(4);
+
+// ── market snapshot ─────────────────────────────────────────────────────────
+// Best-effort: any symbol that fails is simply omitted; an empty snapshot
+// omits the strip entirely. Never blocks the digest.
+async function fetchSnapshot() {
+  const out = [];
+  const jobs = [];
+
+  for (const sym of ['BTCUSDT', 'ETHUSDT']) {
+    jobs.push(
+      fetch(`${BINANCE_24H}?symbol=${sym}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => {
+          const price = +d?.lastPrice, chg = +d?.priceChangePercent;
+          if (isFinite(price) && isFinite(chg)) out.push({ label: sym.replace('USDT', ''), price, changePct: chg });
+        })
+        .catch(() => {})
+    );
+  }
+  for (const sym of ['SPY', 'QQQ']) {
+    jobs.push(
+      fetch(`${YAHOO_PROXY}/${sym}?range=5d&interval=1d`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => {
+          const res = d?.chart?.result?.[0];
+          const closes = (res?.indicators?.quote?.[0]?.close || []).filter((c) => isFinite(c));
+          const meta = res?.meta?.regularMarketPrice;
+          if (closes.length < 2) return;
+          const price = isFinite(meta) ? meta : closes[closes.length - 1];
+          const prev = closes[closes.length - 2];
+          if (prev > 0) out.push({ label: sym, price, changePct: ((price - prev) / prev) * 100 });
+        })
+        .catch(() => {})
+    );
+  }
+
+  await Promise.allSettled(jobs);
+  // Stable display order.
+  const order = { BTC: 0, ETH: 1, SPY: 2, QQQ: 3 };
+  out.sort((a, b) => (order[a.label] ?? 9) - (order[b.label] ?? 9));
+  return out;
+}
+
+// ── news selection (unchanged personalization model) ────────────────────────
 async function fetchAllNews() {
   const res = await fetch(NEWS_URL, { headers: { accept: 'application/json' } });
   if (!res.ok) throw new Error(`news fetch failed: HTTP ${res.status}`);
@@ -50,9 +130,6 @@ async function fetchAllNews() {
   return data.items;
 }
 
-// Does a news item mention any of the subscriber's symbols? Matches the ticker
-// (word-boundary) or the company/coin name (case-insensitive substring) in the
-// item's title + description.
 function matchesSymbols(item, symbols) {
   if (!symbols || symbols.length === 0) return false;
   const hay = `${item.title || ''} ${item.description || ''}`.toLowerCase();
@@ -65,14 +142,11 @@ function matchesSymbols(item, symbols) {
   return false;
 }
 
-// Build the personalized item set for one subscriber's prefs. Returns
-// { sections: [{ label, items }] } — empty sections omitted.
 function selectForPrefs(allItems, prefs) {
   const p = prefs || {};
   const freeOnly = p.freeOnly !== false;
   const sourceSet = Array.isArray(p.sources) && p.sources.length ? new Set(p.sources) : null;
 
-  // Base pool honoring source + access filters.
   const pool = allItems.filter((it) => {
     if (freeOnly && it.access !== 'free') return false;
     if (sourceSet && !sourceSet.has(it.source)) return false;
@@ -100,45 +174,76 @@ function selectForPrefs(allItems, prefs) {
   return { sections };
 }
 
-function groupBySource(items) {
-  const groups = new Map();
-  for (const item of items) {
-    const source = item.source || 'Weitere';
-    if (!groups.has(source)) groups.set(source, []);
-    groups.get(source).push(item);
-  }
-  return groups;
+// ── email build ─────────────────────────────────────────────────────────────
+function unsubscribeUrl(email, token) {
+  return `${CONFIRM_BASE}?action=unsub&email=${encodeURIComponent(email)}&token=${encodeURIComponent(token || '')}`;
 }
 
-// Build a personalized digest email from selected sections for one recipient.
-function buildEmail(sections, date, email) {
-  const dateStr = formatDateDe(date);
-  const subject = `MMMXCIX Quant — Daily Market Digest (${dateStr})`;
-  const unsubUrl = `${CONFIRM_BASE}?email=${encodeURIComponent(email)}`;
+function subjectFor(snapshot, dateStr) {
+  // Lead with the two biggest absolute movers — the quant hook in the inbox.
+  if (snapshot.length) {
+    const movers = [...snapshot].sort((a, b) => Math.abs(b.changePct) - Math.abs(a.changePct)).slice(0, 2);
+    const lead = movers.map((m) => `${m.label} ${fmtPct(m.changePct)}`).join(' · ');
+    return `${lead} — MMMXCIX Quant Digest (${dateStr})`;
+  }
+  return `MMMXCIX Quant — Daily Market Digest (${dateStr})`;
+}
 
-  // --- HTML version (dark-on-light, inline CSS only) ---
+function snapshotHtml(snapshot) {
+  if (!snapshot.length) return '';
+  const cells = snapshot
+    .map((m) => {
+      const color = m.changePct >= 0 ? C.up : C.down;
+      const arrow = m.changePct >= 0 ? '▲' : '▼';
+      return `
+        <td align="center" style="padding:10px 4px;border:1px solid ${C.line};border-radius:10px;background:${C.ground};">
+          <div style="font-size:11px;letter-spacing:1px;color:${C.dim};text-transform:uppercase;">${escapeHtml(m.label)}</div>
+          <div style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px;font-weight:700;color:${C.ink};margin-top:2px;">${fmtPrice(m.price)}</div>
+          <div style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;font-weight:600;color:${color};margin-top:1px;">${arrow} ${fmtPct(m.changePct)}</div>
+        </td>`;
+    })
+    .join('<td style="width:8px;"></td>');
+  return `
+    <tr>
+      <td style="padding:14px 0 4px 0;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>${cells}</tr></table>
+      </td>
+    </tr>`;
+}
+
+function buildEmail(sections, snapshot, date, email, unsubToken) {
+  const dateStr = formatDate(date);
+  const subject = subjectFor(snapshot, dateStr);
+  const unsubUrl = unsubscribeUrl(email, unsubToken);
+  const now = date;
+
   let sectionsHtml = '';
   for (const section of sections) {
     const rows = section.items
-      .map(
-        (it) => `
+      .map((it) => {
+        const meta = [it.source, relTime(it.pubDate, now)].filter(Boolean).join(' · ');
+        const desc = it.description
+          ? `<div style="font-size:12px;color:${C.dim};line-height:1.5;margin-top:3px;">${escapeHtml(it.description)}</div>`
+          : '';
+        return `
           <tr>
-            <td style="padding:6px 0 6px 0;">
+            <td style="padding:9px 0;border-bottom:1px solid ${C.line};">
               <a href="${escapeHtml(it.link)}"
-                 style="color:#1a1a2e;font-size:15px;font-weight:600;text-decoration:none;line-height:1.4;">
+                 style="color:${C.ink};font-size:15px;font-weight:600;text-decoration:none;line-height:1.4;">
                 ${escapeHtml(it.title)}
               </a>
-              <div style="font-size:11px;color:#9a9aae;margin-top:2px">${escapeHtml(it.source || '')}</div>
+              ${desc}
+              <div style="font-size:11px;color:${C.faint};margin-top:3px;">${escapeHtml(meta)}</div>
             </td>
-          </tr>`
-      )
+          </tr>`;
+      })
       .join('');
 
     sectionsHtml += `
       <tr>
-        <td style="padding:18px 0 4px 0;">
-          <span style="display:inline-block;padding:2px 10px;border:1px solid #d0d0dc;border-radius:999px;
-                       font-size:11px;letter-spacing:1px;text-transform:uppercase;color:#6b6b80;">
+        <td style="padding:20px 0 6px 0;">
+          <span style="display:inline-block;padding:2px 10px;border:1px solid ${C.line};border-radius:999px;
+                       font-size:11px;letter-spacing:1px;text-transform:uppercase;color:${C.dim};">
             ${escapeHtml(section.label)}
           </span>
         </td>
@@ -147,50 +252,55 @@ function buildEmail(sections, date, email) {
   }
 
   const html = `
-<div style="background:#f4f4f7;padding:24px 12px;font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+<div style="background:${C.ground};padding:24px 12px;font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
-         style="max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #e2e2ea;border-radius:12px;">
+         style="max-width:560px;margin:0 auto;background:${C.card};border:1px solid ${C.line};border-radius:12px;">
     <tr>
       <td style="padding:28px 28px 8px 28px;">
-        <div style="font-size:11px;letter-spacing:2px;text-transform:uppercase;color:#6b6b80;">
+        <div style="font-size:11px;letter-spacing:2px;text-transform:uppercase;color:${C.dim};">
           MMMXCIX Quant
         </div>
-        <h1 style="margin:6px 0 0 0;font-size:20px;color:#1a1a2e;">
+        <h1 style="margin:6px 0 0 0;font-size:20px;color:${C.ink};">
           Daily Market Digest
         </h1>
-        <div style="margin-top:4px;font-size:13px;color:#6b6b80;">${escapeHtml(dateStr)}</div>
+        <div style="margin-top:4px;font-size:13px;color:${C.dim};">${escapeHtml(dateStr)}</div>
       </td>
     </tr>
     <tr>
-      <td style="padding:8px 28px 24px 28px;">
+      <td style="padding:4px 28px 24px 28px;">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+          ${snapshotHtml(snapshot)}
           ${sectionsHtml}
         </table>
       </td>
     </tr>
     <tr>
-      <td style="padding:16px 28px 24px 28px;border-top:1px solid #e2e2ea;">
-        <p style="margin:0;font-size:12px;color:#6b6b80;line-height:1.6;">
+      <td style="padding:16px 28px 24px 28px;border-top:1px solid ${C.line};">
+        <p style="margin:0;font-size:12px;color:${C.dim};line-height:1.6;">
           You're receiving this because you subscribed to and confirmed the MMMXCIX Daily Digest.
-          <a href="${unsubUrl}" style="color:#1a1a2e;">Unsubscribe</a> ·
-          <a href="${SITE_URL}" style="color:#1a1a2e;">more news</a>.
+          <a href="${unsubUrl}" style="color:${C.ink};">Unsubscribe</a> ·
+          <a href="${SITE_URL}" style="color:${C.ink};">more news</a>.
+          Not investment advice.
         </p>
       </td>
     </tr>
   </table>
 </div>`;
 
-  // --- Plain-text fallback ---
   let text = `MMMXCIX Quant — Daily Market Digest\n${dateStr}\n`;
+  if (snapshot.length) {
+    text += `\n${snapshot.map((m) => `${m.label} ${fmtPrice(m.price)} (${fmtPct(m.changePct)})`).join(' · ')}\n`;
+  }
   for (const section of sections) {
     text += `\n## ${section.label}\n`;
     for (const it of section.items) {
-      text += `- ${it.title} (${it.source || ''})\n  ${it.link}\n`;
+      const meta = [it.source, relTime(it.pubDate, now)].filter(Boolean).join(' · ');
+      text += `- ${it.title}${meta ? ` (${meta})` : ''}\n  ${it.link}\n`;
     }
   }
-  text += `\n--\nUnsubscribe: ${unsubUrl}\nMore news: ${SITE_URL}\n`;
+  text += `\n--\nUnsubscribe: ${unsubUrl}\nMore news: ${SITE_URL}\nNot investment advice.\n`;
 
-  return { subject, html, text };
+  return { subject, html, text, unsubUrl };
 }
 
 // Confirmation (double opt-in) email — mirrors the one the Pages Function
@@ -199,14 +309,14 @@ function buildEmail(sections, date, email) {
 function buildConfirmEmail(email, token) {
   const link = `${CONFIRM_BASE}?email=${encodeURIComponent(email)}&token=${token}`;
   const html =
-    `<div style="background:#f4f4f7;padding:24px;font-family:system-ui,Segoe UI,sans-serif">` +
-    `<table width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;margin:0 auto;background:#fff;border:1px solid #e2e2ea;border-radius:12px">` +
+    `<div style="background:${C.ground};padding:24px;font-family:system-ui,Segoe UI,sans-serif">` +
+    `<table width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;margin:0 auto;background:${C.card};border:1px solid ${C.line};border-radius:12px">` +
     `<tr><td style="padding:28px">` +
-    `<div style="font-size:11px;letter-spacing:2px;text-transform:uppercase;color:#6b6b80">MMMXCIX Quant</div>` +
-    `<h1 style="margin:6px 0 12px;font-size:20px;color:#1a1a2e">Confirm your subscription</h1>` +
-    `<p style="color:#3a3a4a;font-size:14px;line-height:1.6">Please confirm your Daily Digest subscription:</p>` +
-    `<p style="margin:20px 0"><a href="${link}" style="background:#1a1a2e;color:#fff;padding:12px 22px;border-radius:8px;text-decoration:none;font-size:14px">Confirm subscription</a></p>` +
-    `<p style="color:#6b6b80;font-size:12px">Didn't request this? Just ignore this email.</p>` +
+    `<div style="font-size:11px;letter-spacing:2px;text-transform:uppercase;color:${C.dim}">MMMXCIX Quant</div>` +
+    `<h1 style="margin:6px 0 12px;font-size:20px;color:${C.ink}">Confirm your subscription</h1>` +
+    `<p style="color:${C.dim};font-size:14px;line-height:1.6">Please confirm your Daily Digest subscription:</p>` +
+    `<p style="margin:20px 0"><a href="${link}" style="background:${C.ink};color:#fff;padding:12px 22px;border-radius:8px;text-decoration:none;font-size:14px">Confirm subscription</a></p>` +
+    `<p style="color:${C.faint};font-size:12px">Didn't request this? Just ignore this email.</p>` +
     `</td></tr></table></div>`;
   return {
     subject: 'Confirm your MMMXCIX Quant Digest subscription',
@@ -215,7 +325,12 @@ function buildConfirmEmail(email, token) {
   };
 }
 
-// Full subscriber records (parsed JSON), keyed by email.
+function randomToken() {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
 async function listSubscriberRecords(kv) {
   const records = [];
   let cursor = undefined;
@@ -225,7 +340,7 @@ async function listSubscriberRecords(kv) {
       const email = key.name.slice('sub:'.length);
       const rec = await kv.get(key.name, 'json');
       if (rec && rec.email) records.push(rec);
-      else records.push({ email, confirmed: true, prefs: { categories: ['general'], freeOnly: true } }); // legacy record
+      else records.push({ email, confirmed: true, legacy: true, prefs: { categories: ['general'], freeOnly: true } });
     }
     cursor = page.list_complete ? undefined : page.cursor;
   } while (cursor);
@@ -233,10 +348,25 @@ async function listSubscriberRecords(kv) {
 }
 
 async function sendMail(env, to, mail) {
+  const body = {
+    from: env.DIGEST_FROM,
+    to: [to],
+    subject: mail.subject,
+    html: mail.html,
+    text: mail.text,
+  };
+  // RFC 8058 one-click unsubscribe headers — mail clients render their own
+  // unsubscribe button and deliverability scoring rewards it.
+  if (mail.unsubUrl) {
+    body.headers = {
+      'List-Unsubscribe': `<${mail.unsubUrl}>`,
+      'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+    };
+  }
   const res = await fetch(RESEND_URL, {
     method: 'POST',
     headers: { authorization: `Bearer ${env.RESEND_API_KEY}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ from: env.DIGEST_FROM, to: [to], subject: mail.subject, html: mail.html, text: mail.text }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`resend HTTP ${res.status}`);
 }
@@ -246,7 +376,7 @@ async function runDigest(env) {
   if (!env.RESEND_API_KEY) throw new Error('secret RESEND_API_KEY missing');
   if (!env.DIGEST_FROM) throw new Error('secret DIGEST_FROM missing');
 
-  const allItems = await fetchAllNews();
+  const [allItems, snapshot] = await Promise.all([fetchAllNews(), fetchSnapshot()]);
   const records = await listSubscriberRecords(env.SUBSCRIBERS);
   const now = new Date();
 
@@ -266,10 +396,17 @@ async function runDigest(env) {
         continue;
       }
 
+      // Legacy records carry no token — mint one so their unsubscribe links
+      // are tokenized like everyone else's.
+      if (!rec.confirmToken) {
+        rec.confirmToken = randomToken();
+        await env.SUBSCRIBERS.put(`sub:${rec.email}`, JSON.stringify(rec));
+      }
+
       // Confirmed: build the personalized digest.
       const { sections } = selectForPrefs(allItems, rec.prefs);
       if (sections.length === 0) { skippedEmpty++; continue; } // nothing matched today
-      await sendMail(env, rec.email, buildEmail(sections, now, rec.email));
+      await sendMail(env, rec.email, buildEmail(sections, snapshot, now, rec.email, rec.confirmToken));
       sent++;
       await sleep(SEND_DELAY_MS);
     } catch {
@@ -277,7 +414,7 @@ async function runDigest(env) {
     }
   }
 
-  return { subscribers: records.length, sent, failed, confirmSent, skippedEmpty, items: allItems.length };
+  return { subscribers: records.length, sent, failed, confirmSent, skippedEmpty, items: allItems.length, snapshot: snapshot.length };
 }
 
 export default {
@@ -286,6 +423,7 @@ export default {
   },
 
   // Manual test runs: GET https://<worker>/?token=<DIGEST_TEST_TOKEN>
+  // Preview without sending: GET ?token=<..>&preview=1 → returns the HTML.
   async fetch(request, env) {
     if (request.method !== 'GET') {
       return new Response(JSON.stringify({ error: 'method_not_allowed' }), {
@@ -304,6 +442,14 @@ export default {
     }
 
     try {
+      // Render-only preview: see today's digest in the browser, nothing sent.
+      if (url.searchParams.get('preview')) {
+        const [allItems, snapshot] = await Promise.all([fetchAllNews(), fetchSnapshot()]);
+        const { sections } = selectForPrefs(allItems, { categories: ['general'], freeOnly: true });
+        const mail = buildEmail(sections, snapshot, new Date(), 'preview@example.com', 'preview');
+        return new Response(mail.html, { headers: { 'content-type': 'text/html; charset=utf-8' } });
+      }
+
       const summary = await runDigest(env);
       return new Response(JSON.stringify({ status: 'ok', ...summary }), {
         status: 200,
