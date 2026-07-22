@@ -4,6 +4,7 @@ import { fetchCandles, MARKETS, INTERVALS } from "@/lib/data";
 import { detectRegimes } from "@/lib/hmmRegime";
 import { cn } from "@/lib/utils";
 import Skeleton from "@/components/Skeleton";
+import SymbolSearch from "@/components/SymbolSearch";
 
 // Regimes — Hidden Markov Model regime detection, visualised. The market's true
 // state (bull / bear / choppy) is hidden; the HMM infers it from returns and
@@ -20,7 +21,6 @@ const toneOf = (label) => REGIME_TONE[label] || REGIME_TONE.Neutral;
 export default function Regimes() {
   const [market, setMarket] = useState("stock");
   const [symbol, setSymbol] = useState("SPY");
-  const [input, setInput] = useState("SPY");
   const [interval, setIntervalId] = useState("1d");
   const [K, setK] = useState(3);
   const [state, setState] = useState({ loading: true, error: null, candles: null, regimes: null });
@@ -60,17 +60,27 @@ export default function Regimes() {
       <div className="flex flex-wrap items-end gap-3 mb-6">
         <label className="text-xs text-dim">
           <span className="block mb-1">Market</span>
-          <select value={market} onChange={(e) => { setMarket(e.target.value); }}
+          <select
+            value={market}
+            onChange={(e) => {
+              const m = e.target.value;
+              setMarket(m);
+              // Symbols don't cross markets — snap to a sensible default.
+              setSymbol(m === "crypto" ? "BTCUSDT" : "SPY");
+            }}
             className="rounded-lg border border-line bg-surface px-2 py-1.5 text-sm text-text">
             {MARKETS.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
           </select>
         </label>
         <label className="text-xs text-dim">
           <span className="block mb-1">Symbol</span>
-          <form onSubmit={(e) => { e.preventDefault(); setSymbol(input.trim().toUpperCase()); }}>
-            <input value={input} onChange={(e) => setInput(e.target.value)}
-              className="w-28 rounded-lg border border-line bg-surface px-2 py-1.5 text-sm text-text font-mono" />
-          </form>
+          <SymbolSearch
+            market={market}
+            value={symbol}
+            onSelect={(s) => setSymbol(String(s).toUpperCase())}
+            placeholder={market === "crypto" ? "e.g. BTCUSDT" : "e.g. SPY"}
+            className="w-36"
+          />
         </label>
         <label className="text-xs text-dim">
           <span className="block mb-1">Interval</span>
