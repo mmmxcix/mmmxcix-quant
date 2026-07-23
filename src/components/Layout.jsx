@@ -173,7 +173,10 @@ function NavItems({ onNavigate }) {
 function SessionBox() {
   const { data: session, isPending } = useSession();
   if (isPending) return null;
-  if (!session) {
+  // Guard on session.user, not just session: an auth hiccup can return a
+  // truthy error-shaped object, and SessionBox lives in the always-mounted
+  // shell — an unguarded read here white-screens the entire app.
+  if (!session?.user) {
     return (
       <Link
         to="/login"

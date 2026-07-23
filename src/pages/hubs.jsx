@@ -12,6 +12,9 @@ import Anomalies from "@/pages/Anomalies";
 import Correlation from "@/pages/Correlation";
 import MLStudio from "@/pages/MLStudio";
 import { Yields, EconCalendar, L3Archive } from "@/pages/Macro";
+import EventLab from "@/pages/EventLab";
+import Formulas from "@/pages/Formulas";
+import MMSim from "@/pages/MMSim";
 
 // Consolidated hubs — related pages merged into one tabbed route each. Old
 // routes redirect to the matching tab (see App.jsx).
