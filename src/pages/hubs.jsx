@@ -1,4 +1,4 @@
-import { FlaskConical, Scale, Briefcase, Sigma, GraduationCap, BookOpenCheck, Compass, Radar, Telescope, Grid3x3, BrainCircuit, Landmark, CalendarDays, Database, Ship, Plane } from "lucide-react";
+import { FlaskConical, Scale, Briefcase, Sigma, GraduationCap, BookOpenCheck, Compass, Radar, Telescope, Grid3x3, BrainCircuit, Landmark, CalendarDays, Database, Ship, Plane, CalendarSearch } from "lucide-react";
 import TabHub from "@/components/TabHub";
 import Backtest from "@/pages/Backtest";
 import Compare from "@/pages/Compare";
@@ -22,6 +22,7 @@ export function BacktestHub() {
       { id: "run", label: "Backtest", icon: FlaskConical, el: <Backtest /> },
       { id: "compare", label: "Compare", icon: Scale, el: <Compare /> },
       { id: "ml", label: "ML Studio", icon: BrainCircuit, el: <MLStudio /> },
+      { id: "events", label: "Event Lab", icon: CalendarSearch, el: <EventLab /> },
     ]} />
   );
 }
