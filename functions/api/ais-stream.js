@@ -50,23 +50,42 @@ export async function onRequest({ request, env }) {
     try { upstream.close(); } catch { /* already closed */ }
   };
 
-  // Browser → aisstream: inject the key into every subscription message; the
-  // client never sends (or knows) it.
+  // aisstream enforces two timing rules: the FIRST subscription must arrive
+  // within 3 seconds of the connect, and updates are limited to one per
+  // second. The client's subscription travels browser→edge and can lose the
+  // 3s race — so the relay immediately sends a world subscription itself,
+  // then forwards the client's real one no earlier than 1.1s later.
+  const subscribedAt = Date.now();
+  upstream.send(JSON.stringify({
+    APIKey: env.AISSTREAM_KEY,
+    BoundingBoxes: [[[-85, -180], [85, 180]]],
+    FilterMessageTypes: ["PositionReport", "ShipStaticData"],
+  }));
+
   server.addEventListener("message", (e) => {
     try {
       const m = JSON.parse(e.data);
-      m.APIKey = env.AISSTREAM_KEY;
-      upstream.send(JSON.stringify(m));
+      m.APIKey = env.AISSTREAM_KEY; // the client never sends (or knows) the key
+      const wait = Math.max(0, 1100 - (Date.now() - subscribedAt));
+      setTimeout(() => { try { upstream.send(JSON.stringify(m)); } catch { /* upstream gone */ } }, wait);
     } catch { /* non-JSON frame from client — drop it */ }
   });
   // aisstream → browser: pass through untouched (PositionReports + error frames).
   upstream.addEventListener("message", (e) => {
     try { server.send(e.data); } catch { closeBoth(); }
   });
+  // Surface WHY the upstream died instead of closing silently — the client
+  // shows this in its status badge.
+  upstream.addEventListener("close", (e) => {
+    try { server.send(JSON.stringify({ error: `aisstream closed (${e.code}${e.reason ? ": " + String(e.reason).slice(0, 80) : ""}) — reconnecting` })); } catch { /* client gone */ }
+    closeBoth();
+  });
+  upstream.addEventListener("error", () => {
+    try { server.send(JSON.stringify({ error: "aisstream connection error — reconnecting" })); } catch { /* client gone */ }
+    closeBoth();
+  });
   server.addEventListener("close", closeBoth);
-  upstream.addEventListener("close", closeBoth);
   server.addEventListener("error", closeBoth);
-  upstream.addEventListener("error", closeBoth);
 
   return new Response(null, { status: 101, webSocket: client });
 }
