@@ -1,8 +1,9 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { Trash2, Pencil, Check, X, Wallet, Plus, BadgeDollarSign, RotateCcw, DownloadCloud, Loader2 } from "lucide-react";
 import SymbolSearch from "@/components/SymbolSearch";
-import { MARKETS } from "@/lib/data";
+import { MARKETS, fetchCandles } from "@/lib/data";
 import { fetchQuotes } from "@/lib/quotes";
+import { hrpWeights } from "@/lib/hrp";
 import { searchSymbols } from "@/lib/search";
 import {
   getPortfolio,
@@ -102,6 +103,38 @@ export default function Portfolio() {
 
   // Only OPEN positions need live quotes — closed ones are frozen at the sale.
   const openPositions = useMemo(() => positions.filter((p) => !isClosed(p)), [positions]);
+
+  // ── HRP suggested allocation (López de Prado / Jansen) ────────────────────
+  // Clusters the open book by return correlation and splits risk down the tree
+  // — a diversified, stable target to compare the current weights against.
+  const [hrp, setHrp] = useState(null);
+  const [hrpStatus, setHrpStatus] = useState(null);
+  const computeHrp = async () => {
+    if (hrpStatus) return;
+    setHrp(null);
+    const syms = [...new Map(openPositions.map((p) => [`${p.market}:${p.symbol}`, p])).values()];
+    if (syms.length < 2) { setHrpStatus(null); setHrp({ error: "Need at least 2 open positions." }); return; }
+    setHrpStatus("Loading history…");
+    try {
+      const returnsBySym = {};
+      for (const p of syms) {
+        const candles = await fetchCandles({ market: p.market, symbol: p.symbol, interval: "1d", range: "2y" });
+        const c = candles.map((x) => x.close).filter((x) => x > 0);
+        if (c.length < 60) continue;
+        const r = [];
+        for (let i = 1; i < c.length; i++) r.push(Math.log(c[i] / c[i - 1]));
+        returnsBySym[p.symbol] = r;
+      }
+      if (Object.keys(returnsBySym).length < 2) { setHrp({ error: "Not enough price history for these symbols." }); return; }
+      setHrpStatus("Clustering & allocating…");
+      const { weights } = hrpWeights(returnsBySym);
+      setHrp({ weights });
+    } catch (e) {
+      setHrp({ error: String(e.message || e).slice(0, 120) });
+    } finally {
+      setHrpStatus(null);
+    }
+  };
   const symbolKey = useMemo(
     () => openPositions.map((p) => `${p.market}:${p.symbol}`).join(","),
     [openPositions]
@@ -318,6 +351,52 @@ export default function Portfolio() {
         )}
         <SummaryCard label="Positions" value={String(totals.count)} big />
       </div>
+
+      {/* HRP suggested allocation */}
+      {openPositions.length >= 2 && (
+        <div className="rounded-xl border border-line lg-glass p-4 mb-6">
+          <div className="flex items-center justify-between gap-2 mb-1">
+            <p className="text-xs text-dim uppercase tracking-widest">Suggested allocation · HRP</p>
+            <button onClick={computeHrp} disabled={!!hrpStatus}
+              className="chip chip-idle flex items-center gap-1.5 !text-[11px] disabled:opacity-50">
+              {hrpStatus ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
+              {hrpStatus || "Compute"}
+            </button>
+          </div>
+          <p className="text-[11px] text-dim mb-3 leading-relaxed">
+            Hierarchical Risk Parity clusters your book by return correlation and splits risk down
+            the tree — a diversified target that doesn't invert a covariance matrix. Two years of
+            daily history. Educational, not advice.
+          </p>
+          {hrp?.error && <p className="text-xs text-down">{hrp.error}</p>}
+          {hrp?.weights && (
+            <div className="space-y-1.5">
+              <div className="grid grid-cols-[1fr_auto_auto_auto] gap-x-4 text-[10px] uppercase tracking-wider text-dim">
+                <span>Symbol</span><span className="text-right">Current</span><span className="text-right">HRP</span><span className="text-right">Δ</span>
+              </div>
+              {(() => {
+                const curBySym = {};
+                for (const r of rows) if (!r.closed && r.allocPct != null) curBySym[r.symbol] = r.allocPct;
+                return Object.entries(hrp.weights)
+                  .sort((a, b) => b[1] - a[1])
+                  .map(([sym, w]) => {
+                    const cur = curBySym[sym] ?? 0, tgt = w * 100, d = tgt - cur;
+                    return (
+                      <div key={sym} className="grid grid-cols-[1fr_auto_auto_auto] gap-x-4 items-center text-xs font-mono">
+                        <span className="truncate">{sym}</span>
+                        <span className="text-right text-dim">{cur.toFixed(1)}%</span>
+                        <span className="text-right font-semibold">{tgt.toFixed(1)}%</span>
+                        <span className={cn("text-right", Math.abs(d) < 1 ? "text-dim" : d > 0 ? "text-up" : "text-down")}>
+                          {d >= 0 ? "+" : ""}{d.toFixed(1)}
+                        </span>
+                      </div>
+                    );
+                  });
+              })()}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Add form */}
       <div className="rounded-xl border border-line lg-glass p-4 mb-6">
