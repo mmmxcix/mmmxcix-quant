@@ -219,6 +219,7 @@ function LabStatus() {
                     <tr className="text-left text-dim border-b border-line">
                       <th className="py-1.5 pr-3 font-medium font-sans">Strategy</th>
                       <th className="py-1.5 pr-3 font-medium font-sans">Symbol</th>
+                      <th className="py-1.5 pr-3 font-medium font-sans">Incubation</th>
                       <th className="py-1.5 pr-3 font-medium font-sans">Position</th>
                       <th className="py-1.5 pr-3 font-medium font-sans text-right">Equity</th>
                       <th className="py-1.5 pr-3 font-medium font-sans text-right">Return</th>
@@ -255,6 +256,22 @@ function LabStatus() {
                               )}
                             </div>
                           )}
+                        </td>
+                        <td className="py-1.5 pr-3">
+                          {/* Incubation verdict — live paper vs backtest expectation */}
+                          {s.incubation ? (
+                            <span
+                              title={`${s.incubation.reason}${s.incubation.expDdPct != null ? ` · dd ${s.incubation.liveDdPct}% (budget from backtest ${s.incubation.expDdPct}%)` : ""}`}
+                              className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${
+                                s.incubation.verdict === "confirmed" ? "bg-up/10 text-up"
+                                : s.incubation.verdict === "diverged" ? "bg-down/10 text-down"
+                                : s.incubation.verdict === "watch" ? "bg-accent/10 text-accent"
+                                : "bg-line/50 text-dim"
+                              }`}
+                            >
+                              {s.incubation.verdict === "diverged" ? "quarantined" : s.incubation.verdict}
+                            </span>
+                          ) : <span className="text-dim/40 text-[10px]">—</span>}
                         </td>
                         <td className="py-1.5 pr-3">
                           {s.error

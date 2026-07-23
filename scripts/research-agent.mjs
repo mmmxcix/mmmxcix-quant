@@ -604,6 +604,14 @@ function queuePromotions(cand, verdict) {
         volTarget: true, // GARCH vol-targeted sizing — cuts drawdown by default
         dsr: verdict.byMarket[mid]?.dsr ?? cand.dsr, paper: cand.paper,
         profile: pid, candidateId: cand.id, marketId: mid,
+        // Backtest expectation — the incubation watchdog in the lab agent
+        // grades live paper behaviour against exactly this.
+        expect: {
+          retPct: verdict.byMarket[mid]?.ret ?? null,
+          ddPct: verdict.byMarket[mid]?.dd ?? null,
+          pf: verdict.byMarket[mid]?.pf ?? null,
+          n: verdict.byMarket[mid]?.n ?? null,
+        },
       });
       console.log(`  🤖 auto-promote queued: ${prof.label} · ${m.label}`);
     }

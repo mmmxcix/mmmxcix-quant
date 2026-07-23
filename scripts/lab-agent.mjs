@@ -154,6 +154,59 @@ function applyTarget(ps, target, price, feeBps, positionPct) {
   return trade;
 }
 
+// ── incubation & divergence (the Phase-5 gatekeeper) ────────────────────────
+// A promoted strategy is a HYPOTHESIS until live paper data confirms it.
+// Verdicts: incubating (<14d) → watch → confirmed (≥28d, behaving) or
+// diverged: live behaviour broke the backtest expectation → quarantined
+// (flattened, no fresh entries) until it's re-published. Sticky on purpose —
+// a strategy that blew its drawdown budget doesn't earn trust back by
+// drifting up afterwards.
+const DAY_MS = 86400_000;
+function assessIncubation(ps, s) {
+  const hist = ps.history || [];
+  if (hist.length < 2) return { verdict: "incubating", reason: "collecting data", days: 0 };
+  const days = (Date.now() - (ps.incubStart || hist[0].t)) / DAY_MS;
+  // Daily closes from the run-level snapshots (last value per UTC day).
+  const byDay = new Map();
+  for (const p of hist) byDay.set(new Date(p.t).toISOString().slice(0, 10), p.v);
+  const closes = [...byDay.values()];
+  const liveRetPct = (ps.markEquity / START_EQUITY - 1) * 100;
+  let peak = -Infinity, maxDd = 0;
+  for (const v of closes) { peak = Math.max(peak, v); if (peak > 0) maxDd = Math.max(maxDd, ((peak - v) / peak) * 100); }
+  const rets = [];
+  for (let i = 1; i < closes.length; i++) if (closes[i - 1] > 0) rets.push(closes[i] / closes[i - 1] - 1);
+  const mean = rets.length ? rets.reduce((a, b) => a + b, 0) / rets.length : 0;
+  const sd = rets.length > 2 ? Math.sqrt(rets.reduce((a, b) => a + (b - mean) ** 2, 0) / (rets.length - 1)) : 0;
+  const tStat = sd > 0 ? mean / (sd / Math.sqrt(rets.length)) : 0;
+
+  // Drawdown budget: 1.5× the backtest's max drawdown (min +5pp headroom);
+  // 25% hard fallback when an older promotion carries no expectation.
+  const expDd = s.expect?.ddPct ?? null;
+  const ddLimit = expDd != null ? Math.max(expDd * 1.5, expDd + 5) : 25;
+
+  let verdict = "incubating";
+  let reason = `${Math.floor(days)}d live`;
+  if (maxDd > ddLimit) {
+    verdict = "diverged";
+    reason = `live dd ${maxDd.toFixed(1)}% > budget ${ddLimit.toFixed(1)}% (backtest ${expDd != null ? expDd + "%" : "n/a"})`;
+  } else if (days >= 28 && rets.length >= 15 && tStat < -1) {
+    verdict = "diverged";
+    reason = `losing with confidence (t=${tStat.toFixed(1)}) after ${Math.floor(days)}d`;
+  } else if (days >= 28) {
+    verdict = liveRetPct > 0 ? "confirmed" : "watch";
+    reason = liveRetPct > 0 ? `${Math.floor(days)}d live · +${liveRetPct.toFixed(1)}%` : `flat/negative after ${Math.floor(days)}d`;
+  } else if (days >= 14) {
+    verdict = "watch";
+  }
+  if (verdict === "diverged") ps.verdictDiverged = reason;
+  if (ps.verdictDiverged) { verdict = "diverged"; reason = ps.verdictDiverged; }
+  return {
+    verdict, reason, days: +days.toFixed(1),
+    liveRetPct: +liveRetPct.toFixed(2), liveDdPct: +maxDd.toFixed(1),
+    expRetPct: s.expect?.retPct ?? null, expDdPct: expDd, trades: ps.tradeTotal || 0,
+  };
+}
+
 // ── main ────────────────────────────────────────────────────────────────────
 const stratRes = await fetch(`${SITE}/api/lab?what=strategies`, { headers: { "x-lab-token": TOKEN } });
 const stratOut = await stratRes.json().catch(() => ({}));
@@ -256,6 +309,14 @@ for (const s of published) {
     const ps = local.strategies[s.id] || { equity: START_EQUITY, position: "flat", units: 0, trades: [] };
     const pid = profileOf(s);
 
+    // Divergence quarantine: a strategy that broke from its backtest
+    // expectation is flattened and takes no fresh entries — the paper book
+    // must not keep compounding a disproven hypothesis.
+    if (ps.verdictDiverged && target !== "flat") {
+      if (target !== ps.position) gateBlocked.push({ name: s.name, profile: pid, reason: "quarantined (diverged from backtest)" });
+      target = "flat";
+    }
+
     // Current market regime (HMM). Causal here: the candle window ends at "now",
     // so the regime label uses only past+present data — no look-ahead, unlike a
     // backtest. Always reported; only enforced when a strategy opts in.
@@ -311,7 +372,20 @@ for (const s of published) {
       local.day.entries++;
       local.day.byProfile[pid] = (local.day.byProfile[pid] || 0) + 1;
     }
-    if (trade) { ps.trades = [...(ps.trades || []), trade].slice(-10); console.log(`${s.name}: ${trade.side} closed ${trade.pnlPct}%`); }
+    if (trade) {
+      ps.trades = [...(ps.trades || []), trade].slice(-10);
+      ps.tradeTotal = (ps.tradeTotal || 0) + 1;
+      console.log(`${s.name}: ${trade.side} closed ${trade.pnlPct}%`);
+    }
+    // Per-strategy equity history feeds the incubation watchdog (≈48 samples/
+    // day at the 30-min cadence; 1500 ≈ a month of context).
+    if (!ps.incubStart) ps.incubStart = Date.now();
+    ps.history = [...(ps.history || []), { t: Date.now(), v: ps.markEquity }].slice(-1500);
+    const incubation = assessIncubation(ps, s);
+    if (incubation?.verdict === "diverged" && !ps.divergedLogged) {
+      ps.divergedLogged = true;
+      console.log(`🧯 QUARANTINED ${s.name}: ${incubation.reason}`);
+    }
     local.strategies[s.id] = ps;
 
     // Mirror the DECISION to the IBKR paper account. Runs after the gate, so a
@@ -346,6 +420,7 @@ for (const s of published) {
       lastTrade: (ps.trades || [])[ps.trades.length - 1] || null,
       price,
       ibkr: ibkrResult,
+      incubation,
     });
   } catch (e) {
     summaries.push({ id: s.id, name: s.name, symbol: s.symbol, interval: s.interval, error: e.message });
@@ -415,12 +490,18 @@ const riskgate = {
     : { enabled: false },
 };
 
+// Incubation rollup: how much of the paper book has reality confirmed?
+const incubCounts = { incubating: 0, watch: 0, confirmed: 0, diverged: 0 };
+for (const x of summaries) if (x.incubation?.verdict) incubCounts[x.incubation.verdict]++;
+if (incubCounts.diverged) note = `${note ? note + " · " : ""}${incubCounts.diverged} strateg${incubCounts.diverged > 1 ? "ies" : "y"} quarantined (diverged from backtest)`;
+
 const state = {
-  agent: "lab-agent v0.3",
+  agent: "lab-agent v0.4",
   mode: published.length ? "paper" : "idle",
   lastRunAt: Date.now(),
   research: priorResearch, // preserve the research loop's stats
   riskgate,
+  incubation: incubCounts,
   strategies: summaries,
   combined: summaries.some((x) => !x.error)
     ? {
