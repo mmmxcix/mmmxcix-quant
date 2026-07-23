@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Layers, X, Ship, Plane, Activity, Anchor, Landmark, Radio, Cable, TrendingDown } from "lucide-react";
 import { cn, fmtNum, fmtPct } from "@/lib/utils";
-import { connectAis, shipCategory, formatEta, CORRIDORS } from "@/lib/ais";
+import { shipCategory, formatEta, CORRIDORS } from "@/lib/ais";
 import { fetchPlanes, fetchRoute } from "@/lib/planes";
 import { decodeCountries, projectCountries, countryAt, invMercLon, invMercLat, yieldCodeLookup } from "@/lib/geo";
 import { mercX, mercY } from "@/lib/ais";
@@ -78,7 +78,6 @@ export default function WorldMap() {
   const vesselsRef = useRef(new Map());
   const planesRef = useRef([]);
   const quakesRef = useRef([]);
-  const connRef = useRef(null);
   const cablesRef = useRef(null);       // projected cable polylines (lazy)
   const spreadsRef = useRef(new Map()); // ISO2 -> 10Y-2Y spread (pp)
   const chokeStatsRef = useRef(new Map()); // chokepoint id -> {n, anchored}
@@ -178,40 +177,45 @@ export default function WorldMap() {
     return { lat: invMercLat(cy), lon: invMercLon(cx) };
   };
 
-  /* ── Ships layer (AIS relay, viewport-scoped, re-subscribed on move) ── */
-  const resubTimer = useRef(null);
+  /* ── Ships layer: FLEET SNAPSHOT (worldmonitor pattern) ───────────────
+     aisstream ignores Cloudflare egress, so a server relay can't work.
+     Instead the 24/7 PC agent (scripts/ais-agent.mjs) holds the aisstream
+     connection and pushes a world snapshot to /api/ships every ~45s — the
+     map paints the ENTIRE fleet on load instead of filling a stream from
+     zero, and every visitor shares one cached read. */
   useEffect(() => {
-    if (!layers.ships) { setShipStatus("off"); return; }
-    const conn = connectAis({
-      bbox: viewportBbox(),
-      onStatus: setShipStatus,
-      onPosition: (p) => {
+    if (!layers.ships) { vesselsRef.current.clear(); setShipStatus("off"); needsDraw.current = true; return; }
+    let alive = true;
+    const load = async () => {
+      try {
+        const r = await fetch("/api/ships");
+        if (r.status === 404) { if (alive) setShipStatus("fleet agent warming up…"); return; }
+        if (!r.ok) throw new Error(`snapshot HTTP ${r.status}`);
+        const j = await r.json();
+        if (!alive) return;
         const store = vesselsRef.current;
-        const prev = store.get(p.mmsi);
-        store.set(p.mmsi, prev ? { ...prev, ...p } : p);
-        if (store.size > MAX_VESSELS) {
-          const sorted = [...store.entries()].sort((a, b) => a[1].t - b[1].t);
-          for (let i = 0; i < sorted.length / 5; i++) store.delete(sorted[i][0]);
+        store.clear();
+        for (const row of j.ships || []) {
+          const [mmsi, lat, lon, sog, cog, type, name, dest] = row;
+          store.set(mmsi, {
+            mmsi, lat, lon, sog, cog,
+            type: type || null,
+            name: name || `MMSI ${mmsi}`, staticName: name || "",
+            destination: dest || "", t: j.at,
+          });
         }
+        const age = Math.max(0, Math.round((Date.now() - j.at) / 1000));
+        setShipStatus(age > 300 ? `stale snapshot (${Math.round(age / 60)}min) — agent down?` : "live");
         needsDraw.current = true;
-      },
-      onStatic: (s) => {
-        const store = vesselsRef.current;
-        const prev = store.get(s.mmsi);
-        store.set(s.mmsi, { ...(prev || { mmsi: s.mmsi, t: Date.now() }), ...s });
-      },
-    });
-    connRef.current = conn;
-    return () => { connRef.current = null; conn.close(); setShipStatus("off"); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+      } catch (e) { if (alive) setShipStatus(String(e.message || e).slice(0, 60)); }
+    };
+    load();
+    const id = setInterval(() => { if (!document.hidden) load(); }, 45000);
+    return () => { alive = false; clearInterval(id); };
   }, [layers.ships]);
 
-  // Debounced re-subscribe after pan/zoom (aisstream allows 1 update/s).
-  const scheduleResub = () => {
-    if (!layersRef.current.ships || !connRef.current) return;
-    clearTimeout(resubTimer.current);
-    resubTimer.current = setTimeout(() => connRef.current?.subscribe(viewportBbox()), 1200);
-  };
+  // Viewport no longer drives a subscription — the snapshot is global.
+  const scheduleResub = () => {};
 
   /* ── Planes layer: viewport TILING, not one dot ──────────────────────── */
   // The point API caps at 250 nm per query, which used to mean "planes only
