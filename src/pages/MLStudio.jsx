@@ -4,6 +4,7 @@ import SymbolSearch from "@/components/SymbolSearch";
 import Skeleton from "@/components/Skeleton";
 import { MARKETS, fetchCandles } from "@/lib/data";
 import { ML_MODELS, runMlForecast, runMlLabeled } from "@/lib/mlStudio";
+import { garchFit } from "@/lib/garch";
 import { cn, fmtPct } from "@/lib/utils";
 import MLRanking from "@/pages/MLRanking";
 import MLTrackRecord from "@/pages/MLTrackRecord";
@@ -97,6 +98,7 @@ export default function MLStudio() {
   const [error, setError] = useState(null);
   const [out, setOut] = useState(null);
   const [labOut, setLabOut] = useState(null);
+  const [garch, setGarch] = useState(null);
   const [ranFor, setRanFor] = useState(null);
 
   const model = useMemo(() => ML_MODELS.find((m) => m.id === modelId), [modelId]);
@@ -106,10 +108,18 @@ export default function MLStudio() {
     setError(null);
     setOut(null);
     setLabOut(null);
+    setGarch(null);
     const sym = symbol.trim().toUpperCase();
     try {
       setStatus("Loading candles…");
       const candles = await fetchCandles({ market, symbol: sym, interval: "1d", range });
+      // GARCH(1,1) volatility regime from the same candles — cheap, always shown.
+      try {
+        const cl = candles.map((c) => c.close).filter((x) => x > 0);
+        const rets = [];
+        for (let i = 1; i < cl.length; i++) rets.push(Math.log(cl[i] / cl[i - 1]));
+        setGarch(garchFit(rets));
+      } catch { /* vol card simply hidden */ }
       if (studioMode === "barrier") {
         const res = await runMlLabeled(candles, {}, setStatus);
         setLabOut(res);
@@ -261,6 +271,33 @@ export default function MLStudio() {
             </div>
           )}
           {status && !out && !labOut && <Skeleton className="h-64 w-full rounded-xl" />}
+
+          {garch && (out || labOut) && (
+            <div className="rounded-xl border border-line lg-glass p-4">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-sm font-semibold">Volatility regime · GARCH(1,1)</p>
+                <p className="text-[11px] text-dim font-mono">persistence α+β = {garch.persistence.toFixed(3)}</p>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <MetricCard label="Current vol (ann.)" value={`${garch.currentVol.toFixed(1)}%`}
+                  sub={`long-run ${garch.uncondVol.toFixed(1)}%`}
+                  tone={garch.currentVol > garch.uncondVol ? "text-down" : "text-up"} />
+                <MetricCard label="Forecast +1d" value={`${garch.fwd1.toFixed(1)}%`}
+                  sub="annualized" />
+                <MetricCard label="Forecast +10d" value={`${garch.fwd10.toFixed(1)}%`}
+                  sub="annualized, mean-reverting" />
+                <MetricCard label="Shock reaction α" value={garch.alpha.toFixed(2)}
+                  sub={`memory β=${garch.beta.toFixed(2)}`} />
+              </div>
+              <p className="text-[11px] text-dim mt-2 leading-relaxed">
+                {garch.currentVol > garch.uncondVol * 1.15
+                  ? "Elevated regime — conditional vol sits above its long-run mean; the forecast decays back toward it."
+                  : garch.currentVol < garch.uncondVol * 0.85
+                    ? "Calm regime — vol is below its long-run mean; a shock would pull the forecast up."
+                    : "Near the long-run mean. High α+β means shocks fade slowly (vol clustering)."}
+              </p>
+            </div>
+          )}
 
           {labOut && studioMode === "barrier" && (
             <>
