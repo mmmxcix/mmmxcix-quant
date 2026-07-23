@@ -21,6 +21,7 @@ const COMMANDS = [
   { label: "Backtest", to: "/backtest", group: "Strategy" },
   { label: "ML Studio", to: "/backtest/ml", group: "Strategy" },
   { label: "Event Lab", to: "/backtest/events", group: "Strategy" },
+  { label: "Market-Making Simulator", to: "/backtest/mm", group: "Strategy" },
   { label: "Regimes", to: "/regimes", group: "Strategy" },
   { label: "Portfolio", to: "/portfolio", group: "Strategy" },
   { label: "Tools", to: "/tools", group: "Strategy" },

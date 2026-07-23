@@ -23,6 +23,7 @@ export function BacktestHub() {
       { id: "compare", label: "Compare", icon: Scale, el: <Compare /> },
       { id: "ml", label: "ML Studio", icon: BrainCircuit, el: <MLStudio /> },
       { id: "events", label: "Event Lab", icon: CalendarSearch, el: <EventLab /> },
+      { id: "mm", label: "MM Sim", icon: Scale, el: <MMSim /> },
     ]} />
   );
 }
