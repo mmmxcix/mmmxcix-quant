@@ -189,7 +189,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // post-processes with the same shared helpers the server uses. Any failure
 // falls back to the site's own provider chain — nothing gets less reliable.
 const LLM_URL = (process.env.LAB_LLM_URL || "").replace(/\/+$/, "");
-const LLM_MODEL = process.env.LAB_LLM_MODEL || "auto/coding:free";
+// auto/coding routes across the free cascade; the ":free" variant had an
+// empty candidate set on this install and 503s — avoid it.
+const LLM_MODEL = process.env.LAB_LLM_MODEL || "auto/coding";
 const LLM_CRITIQUE_MODEL = process.env.LAB_LLM_CRITIQUE_MODEL || "auto/reasoning";
 
 async function callLocalRouter(system, user, model) {
@@ -938,7 +940,8 @@ const MINE_PER_RUN = Math.max(0, +(process.env.LAB_MINE_PER_RUN ?? 1));
 if (ALWAYS_ON && datasets.length && MINE_PER_RUN > 0 && !(UNTIL_HIT && newCandidates.length)) {
   st.minedKeys = st.minedKeys || [];
   st.scannedKeys = st.scannedKeys || [];
-  const { hits, newScans, scanKeys } = mineAnomalies(datasets, new Set(st.minedKeys), new Set(st.scannedKeys));
+  const { hits, newScans, scanKeys, fdrDropped, fdrTests } = mineAnomalies(datasets, new Set(st.minedKeys), new Set(st.scannedKeys));
+  if (fdrDropped > 0) console.log(`mining: FDR (BH, q=0.1 over ${fdrTests} tests) dropped ${fdrDropped} nominal hit(s) as likely false discoveries`);
   if (newScans > 0) {
     // Charge the scan breadth ONCE per new combo — scanning 40 combos and
     // keeping the best is multiple testing, and the DSR must know.

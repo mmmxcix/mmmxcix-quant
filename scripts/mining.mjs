@@ -75,6 +75,7 @@ function mineWeekday(d) {
   return {
     key: `weekday:${d.market.id}:${best.dow}`,
     name: `mined · day-after-${day} effect · ${d.market.label}`,
+    t: best.s.t,
     stat: `t=${best.s.t.toFixed(1)} · ${bp}bp/next-bar · n=${best.s.n} (train only)`,
     code:
       thesis(
@@ -112,6 +113,7 @@ function mineAutocorr(d) {
   return {
     key: `autocorr:${d.market.id}:${fade ? "fade" : "follow"}`,
     name: `mined · lag-1 ${fade ? "reversal" : "momentum"} · ${d.market.label}`,
+    t: Math.abs(t),
     stat: `r=${r.toFixed(3)} · t=${t.toFixed(1)} · n=${n} (train only)`,
     code:
       thesis(
@@ -147,6 +149,7 @@ function mineTurnOfMonth(d) {
   return {
     key: `tom:${d.market.id}`,
     name: `mined · turn-of-month effect · ${d.market.label}`,
+    t,
     stat: `t=${t.toFixed(1)} vs rest · ${bp}bp/next-bar in window · n=${si.n} (train only)`,
     code:
       thesis(
@@ -163,12 +166,39 @@ function mineTurnOfMonth(d) {
 
 const FAMILIES = [mineWeekday, mineAutocorr, mineTurnOfMonth];
 
+// Standard normal CDF (Abramowitz & Stegun 7.1.26) → two-sided p from a t-stat
+// (large-n normal approximation; the mined windows all have n≥40).
+function normCdf(x) {
+  const t = 1 / (1 + 0.2316419 * Math.abs(x));
+  const d = 0.3989422804014327 * Math.exp((-x * x) / 2);
+  const p = d * t * (0.319381530 + t * (-0.356563782 + t * (1.781477937 + t * (-1.821255978 + t * 1.330274429))));
+  return x >= 0 ? 1 - p : p;
+}
+const pFromT = (t) => Math.min(1, Math.max(0, 2 * (1 - normCdf(Math.abs(t)))));
+
+/**
+ * Benjamini-Hochberg: which of these p-values survive at false-discovery rate
+ * `q`, given `m` total tests examined (m ≥ pvals.length — the sub-threshold
+ * scans the miners discarded all have larger p, so they only add to m). Returns
+ * a Set of indices into `pvals` that pass.
+ */
+export function benjaminiHochberg(pvals, m, q = 0.1) {
+  const order = pvals.map((p, i) => [p, i]).sort((a, b) => a[0] - b[0]);
+  let kMax = -1;
+  for (let k = 0; k < order.length; k++) {
+    if (order[k][0] <= ((k + 1) / m) * q) kMax = k;
+  }
+  const pass = new Set();
+  for (let k = 0; k <= kMax; k++) pass.add(order[k][1]);
+  return pass;
+}
+
 /**
  * Scan every dataset with every family. Returns the hits (deduped against
  * `minedKeys`), sorted strongest-first, plus how many NEW (market×family)
  * combos were examined — the caller charges those to the DSR trial window.
  */
-export function mineAnomalies(datasets, minedKeys = new Set(), scannedKeys = new Set()) {
+export function mineAnomalies(datasets, minedKeys = new Set(), scannedKeys = new Set(), fdrQ = 0.1) {
   const hits = [];
   let newScans = 0;
   for (const d of datasets) {
@@ -180,6 +210,22 @@ export function mineAnomalies(datasets, minedKeys = new Set(), scannedKeys = new
       if (hit && !minedKeys.has(hit.key)) hits.push({ ...hit, scanKey });
     }
   }
-  hits.sort((a, b) => (parseFloat(b.stat.match(/t=([\d.]+)/)?.[1] || 0)) - (parseFloat(a.stat.match(/t=([\d.]+)/)?.[1] || 0)));
-  return { hits, newScans, scanKeys: datasets.flatMap((d) => FAMILIES.map((f) => `${f.name}:${d.market.id}`)) };
+  // Multiple-testing control: every (market × family) combo examined this batch
+  // is a test, whether or not it cleared the per-family t-hurdle. Benjamini-
+  // Hochberg over the hits' p-values, with m = ALL combos scanned, keeps the
+  // false-discovery rate at fdrQ — the honest gate before these ever reach the
+  // gauntlet. The discarded sub-threshold scans all have larger p, so counting
+  // them only in m is exactly right.
+  const m = Math.max(hits.length, datasets.length * FAMILIES.length);
+  const pvals = hits.map((h) => pFromT(h.t ?? 0));
+  const pass = benjaminiHochberg(pvals, m, fdrQ);
+  const kept = hits
+    .map((h, i) => ({ ...h, pValue: pvals[i], fdrQ }))
+    .filter((_, i) => pass.has(i));
+  const dropped = hits.length - kept.length;
+  kept.sort((a, b) => (b.t ?? 0) - (a.t ?? 0));
+  return {
+    hits: kept, newScans, fdrDropped: dropped, fdrTests: m,
+    scanKeys: datasets.flatMap((d) => FAMILIES.map((f) => `${f.name}:${d.market.id}`)),
+  };
 }
