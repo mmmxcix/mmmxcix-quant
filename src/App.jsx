@@ -20,6 +20,7 @@ const PortfolioHub = lazy(() => import("@/pages/hubs").then((m) => ({ default: m
 const ScreenerHub = lazy(() => import("@/pages/hubs").then((m) => ({ default: m.ScreenerHub })));
 const LearnHub = lazy(() => import("@/pages/hubs").then((m) => ({ default: m.LearnHub })));
 const MacroHub = lazy(() => import("@/pages/hubs").then((m) => ({ default: m.MacroHub })));
+const WorldMap = lazy(() => import("@/pages/WorldMap"));
 const Impressum = lazy(() => import("@/pages/Impressum"));
 const Datenschutz = lazy(() => import("@/pages/Datenschutz"));
 const Nutzung = lazy(() => import("@/pages/Nutzung"));
@@ -98,8 +99,11 @@ export default function App() {
                 <Route path="/correlation" element={<Redir to="/screener/correlation" replace />} />
 
                 <Route path="/macro" element={<Redir to="/macro/yields" replace />} />
-                <Route path="/ships" element={<Redir to="/macro/ships" replace />} />
-                <Route path="/planes" element={<Redir to="/macro/planes" replace />} />
+                <Route path="/map" element={<WorldMap />} />
+                <Route path="/ships" element={<Redir to="/map" replace />} />
+                <Route path="/planes" element={<Redir to="/map" replace />} />
+                <Route path="/macro/ships" element={<Redir to="/map" replace />} />
+                <Route path="/macro/planes" element={<Redir to="/map" replace />} />
                 <Route path="/macro/:tab" element={<MacroHub />} />
 
                 {/* Learn hub (Academy · Guide · Resources) */}

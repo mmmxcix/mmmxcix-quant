@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Radio, Anchor, Ship, X } from "lucide-react";
 import { cn, fmtNum } from "@/lib/utils";
 import { connectAis, decodeLand, mercX, mercY, CORRIDORS, shipCategory, formatEta } from "@/lib/ais";
+import { vizColor } from "@/lib/vizColors";
 
 // Ship Tracking — live AIS vessel positions on a self-contained canvas map
 // (vendored Natural Earth coastlines, no external tiles → CSP stays tight,
@@ -204,7 +205,9 @@ export default function Ships() {
         const px = X(mercX(v.lon)), py = Y(mercY(v.lat));
         if (px < -8 || py < -8 || px > w + 8 || py > h + 8) continue;
         const moving = v.sog >= 0.5;
-        const col = CAT_COLOR[bucket] || (moving ? upCol : dimCol);
+        // Canvas can't resolve var() — CAT_COLOR is for DOM chips only.
+        const CAT_VIZ = { cargo: "amber", tanker: "pink", passenger: "purple", fishing: "teal" };
+        const col = CAT_VIZ[bucket] ? vizColor(CAT_VIZ[bucket]) : (moving ? upCol : dimCol);
         ctx.fillStyle = col;
         ctx.globalAlpha = moving ? 0.9 : 0.45;
         ctx.beginPath();

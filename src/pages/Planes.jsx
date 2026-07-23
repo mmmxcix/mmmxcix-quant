@@ -3,6 +3,7 @@ import { Radio, Plane, X } from "lucide-react";
 import { cn, fmtNum } from "@/lib/utils";
 import { decodeLand, mercX, mercY } from "@/lib/ais";
 import { REGIONS, fetchPlanes, fetchRoute } from "@/lib/planes";
+import { vizColor } from "@/lib/vizColors";
 
 // Plane Tracking — live aircraft from the community ADS-B network (adsb.lol),
 // polled through our proxy every ~8s. Same self-contained canvas map as the
@@ -139,12 +140,13 @@ export default function Planes() {
         if (f !== "all" && p.category !== f) continue;
         const px = X(mercX(p.lon)), py = Y(mercY(p.lat));
         if (px < -10 || py < -10 || px > w + 10 || py > h + 10) continue;
-        const col = CAT_COLOR[p.category] || CAT_COLOR.other;
+        // Canvas can't resolve var() — CAT_COLOR is for DOM chips only.
+        const VIZ = { passenger: "blue", cargo: "amber", light: "teal", other: "pink" };
         ctx.save();
         ctx.translate(px, py);
         ctx.rotate(((p.track || 0) * Math.PI) / 180);
         ctx.globalAlpha = p.onGround ? 0.35 : 0.9;
-        ctx.fillStyle = col;
+        ctx.fillStyle = vizColor(VIZ[p.category] || "pink");
         ctx.beginPath();
         ctx.moveTo(0, -5); ctx.lineTo(3.4, 4.4); ctx.lineTo(0, 2.2); ctx.lineTo(-3.4, 4.4);
         ctx.closePath();
