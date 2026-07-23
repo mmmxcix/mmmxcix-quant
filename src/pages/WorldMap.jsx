@@ -1083,8 +1083,16 @@ export default function WorldMap() {
       }
       return best;
     };
-    const onDown = (e) => { drag = toWorld(e); downAt = { x: e.clientX, y: e.clientY }; el.setPointerCapture(e.pointerId); };
+    // The overlay panels (layer toggles, selection, instability) live INSIDE
+    // the map wrapper, so their clicks bubble here. Without this guard, onDown
+    // would setPointerCapture and swallow every checkbox/button click.
+    const onUi = (e) => e.target.closest?.("[data-mapui]");
+    const onDown = (e) => {
+      if (onUi(e)) return;
+      drag = toWorld(e); downAt = { x: e.clientX, y: e.clientY }; el.setPointerCapture(e.pointerId);
+    };
     const onMove = (e) => {
+      if (!drag && onUi(e)) { setHover(null); return; }
       const p = toWorld(e);
       if (drag) {
         viewRef.current.cx += drag.u - p.u;
@@ -1176,6 +1184,7 @@ export default function WorldMap() {
       }
     };
     const onWheel = (e) => {
+      if (onUi(e)) return; // let the (scrollable) layer panel scroll
       e.preventDefault();
       const p = toWorld(e);
       const f = Math.exp(-e.deltaY * 0.0015);
@@ -1239,7 +1248,7 @@ export default function WorldMap() {
           <canvas ref={canvasRef} className="block w-full h-full" />
 
           {/* Layer panel (worldmonitor-style, our design language) */}
-          <div className="absolute top-3 left-3 rounded-xl border border-line bg-bg/85 backdrop-blur px-3 py-2.5 z-10 w-52">
+          <div data-mapui className="absolute top-3 left-3 rounded-xl border border-line bg-bg/85 backdrop-blur px-3 py-2.5 z-10 w-52 max-h-[calc(100%-1.5rem)] overflow-y-auto overscroll-contain">
             <p className="text-[10px] uppercase tracking-widest text-dim mb-1.5 flex items-center gap-1.5">
               <Layers className="w-3 h-3" /> Layers
               <button onClick={allLayers} className="ml-auto text-[9px] normal-case tracking-normal text-accent hover:underline">all on</button>
@@ -1313,7 +1322,7 @@ export default function WorldMap() {
             </div>
           )}
           {layers.instab && instabTop.length > 0 && (
-            <div className="absolute bottom-8 right-3 w-60 rounded-xl border border-line bg-bg/85 backdrop-blur px-3 py-2.5 z-10">
+            <div data-mapui className="absolute bottom-8 right-3 w-60 rounded-xl border border-line bg-bg/85 backdrop-blur px-3 py-2.5 z-10">
               <p className="text-[10px] uppercase tracking-widest text-dim mb-1.5 flex items-center gap-1.5">
                 <AlertTriangle className="w-3 h-3" /> Instability signals
               </p>
@@ -1336,7 +1345,7 @@ export default function WorldMap() {
 
         {/* Selection panel */}
         {sel && (
-          <div className="absolute top-3 right-3 w-72 max-w-[calc(100%-1.5rem)] rounded-xl border border-line bg-bg/90 backdrop-blur p-4 z-20 space-y-2 text-sm">
+          <div data-mapui className="absolute top-3 right-3 w-72 max-w-[calc(100%-1.5rem)] rounded-xl border border-line bg-bg/90 backdrop-blur p-4 z-20 space-y-2 text-sm">
             <div className="flex items-center justify-between gap-2">
               <p className="font-semibold truncate">
                 {sel.kind === "country" ? sel.name
