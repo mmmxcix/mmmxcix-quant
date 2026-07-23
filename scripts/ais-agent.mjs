@@ -450,4 +450,4 @@ async function sweepSatellites() {
 setInterval(sweepSatellites, SATS_EVERY_MS);
 setTimeout(sweepSatellites, 50_000);
 
-console.log("fleet agent running — ships 45s · planes+jamming now · fires 15s · conflicts 30s · disasters 20s · projects 40s · satellites 50s");
+console.log("fleet agent running — world push (ships+planes+jamming) every 3min · fires/disasters hourly · conflicts/projects 12h · satellites 8h · ~535 KV writes/day");
