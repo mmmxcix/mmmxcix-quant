@@ -3,7 +3,7 @@ import { BrainCircuit, Play, Loader2, AlertTriangle } from "lucide-react";
 import SymbolSearch from "@/components/SymbolSearch";
 import Skeleton from "@/components/Skeleton";
 import { MARKETS, fetchCandles } from "@/lib/data";
-import { ML_MODELS, runMlForecast } from "@/lib/mlStudio";
+import { ML_MODELS, runMlForecast, runMlLabeled } from "@/lib/mlStudio";
 import { cn, fmtPct } from "@/lib/utils";
 import MLRanking from "@/pages/MLRanking";
 import MLTrackRecord from "@/pages/MLTrackRecord";
@@ -96,6 +96,7 @@ export default function MLStudio() {
   const [status, setStatus] = useState(null);
   const [error, setError] = useState(null);
   const [out, setOut] = useState(null);
+  const [labOut, setLabOut] = useState(null);
   const [ranFor, setRanFor] = useState(null);
 
   const model = useMemo(() => ML_MODELS.find((m) => m.id === modelId), [modelId]);
@@ -104,12 +105,23 @@ export default function MLStudio() {
     if (status) return;
     setError(null);
     setOut(null);
+    setLabOut(null);
+    const sym = symbol.trim().toUpperCase();
     try {
       setStatus("Loading candles…");
-      const candles = await fetchCandles({ market, symbol: symbol.trim().toUpperCase(), interval: "1d", range });
+      const candles = await fetchCandles({ market, symbol: sym, interval: "1d", range });
+      if (studioMode === "barrier") {
+        const res = await runMlLabeled(candles, {}, setStatus);
+        setLabOut(res);
+        setRanFor(`${sym} · triple-barrier`);
+        logRun({
+          mode: "barrier", label: `Triple-barrier ${sym} · ${range}`,
+          metric: res.accMean, metricLabel: "acc", detail: `${res.folds} purged folds · base ${(res.baseRate * 100).toFixed(0)}%`,
+        });
+        return;
+      }
       const res = await runMlForecast(candles, modelId, setStatus);
       setOut(res);
-      const sym = symbol.trim().toUpperCase();
       setRanFor(`${sym} · ${model.label}`);
       // Memory: remember the run, and put tomorrow's forecast on the ledger —
       // reality grades it once the next bar exists.
@@ -144,7 +156,7 @@ export default function MLStudio() {
           a coin flip — shown honestly) and cross-sectional ranking (where
           equity ML actually has a track record). */}
       <div className="flex gap-1 mb-5">
-        {[["forecast", "Forecast (single asset)"], ["ranking", "Ranking (cross-sectional)"], ["record", "Track record"]].map(([id, label]) => (
+        {[["forecast", "Forecast (single asset)"], ["barrier", "Triple-barrier"], ["ranking", "Ranking (cross-sectional)"], ["record", "Track record"]].map(([id, label]) => (
           <button key={id} onClick={() => setStudioMode(id)}
             className={cn("chip", studioMode === id ? "chip-active" : "chip-idle")}>
             {label}
@@ -177,6 +189,22 @@ export default function MLStudio() {
             </div>
           </div>
 
+          {studioMode === "barrier" ? (
+            <div className="rounded-xl border border-line lg-glass p-4 space-y-2">
+              <p className="text-xs text-dim uppercase tracking-widest">Method</p>
+              <p className="text-sm font-semibold">Triple-barrier + meta-labeling</p>
+              <p className="text-[11px] text-dim leading-relaxed">
+                Each bar is labeled by which barrier it hits first — a volatility-scaled
+                profit-take (+1.5σ), stop-loss (−1.0σ), or a 10-bar time limit. A trend rule
+                proposes the side; a second "meta" model learns when to actually take the bet.
+                Scored with purged, embargoed walk-forward folds so overlapping labels can't leak.
+              </p>
+              <p className="text-[11px] text-dim/70 leading-relaxed pt-1">
+                The López de Prado / Jansen labeling that serious equity ML uses — instead of the
+                fragile "will the next bar be up?".
+              </p>
+            </div>
+          ) : (
           <div className="rounded-xl border border-line lg-glass p-4 space-y-2">
             <p className="text-xs text-dim uppercase tracking-widest">Model</p>
             {ML_MODELS.map((m) => (
@@ -192,6 +220,7 @@ export default function MLStudio() {
               WASM — these are the models that genuinely run here.
             </p>
           </div>
+          )}
 
           <button onClick={run} disabled={!!status} className="btn-accent w-full flex items-center justify-center gap-2 disabled:opacity-50">
             {status ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
@@ -206,19 +235,102 @@ export default function MLStudio() {
 
         {/* results */}
         <div className="space-y-4">
-          {!out && !status && (
+          {!out && !labOut && !status && (
             <div className="rounded-xl border border-line lg-glass p-10 text-center">
               <BrainCircuit className="w-8 h-8 text-dim mx-auto mb-3" />
-              <p className="font-semibold mb-1">Forecast the next bar — honestly</p>
-              <p className="text-sm text-dim max-w-lg mx-auto leading-relaxed">
-                Trains on the first 75% of history, evaluated only on the unseen last 25%.
-                Every number is shown against its naive baseline. Most daily forecasts are
-                coin flips — when that's the result, this page will say so.
-              </p>
+              {studioMode === "barrier" ? (
+                <>
+                  <p className="font-semibold mb-1">Label by barriers, not next-bar sign</p>
+                  <p className="text-sm text-dim max-w-lg mx-auto leading-relaxed">
+                    Each bar is labeled by which happens first — a volatility-scaled profit-take,
+                    stop-loss, or time limit — then validated with purged walk-forward folds and a
+                    meta-model that gates the bets. Honest: on daily data most of this stays near
+                    the base rate, and the folds will show it.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="font-semibold mb-1">Forecast the next bar — honestly</p>
+                  <p className="text-sm text-dim max-w-lg mx-auto leading-relaxed">
+                    Trains on the first 75% of history, evaluated only on the unseen last 25%.
+                    Every number is shown against its naive baseline. Most daily forecasts are
+                    coin flips — when that's the result, this page will say so.
+                  </p>
+                </>
+              )}
             </div>
           )}
-          {status && !out && <Skeleton className="h-64 w-full rounded-xl" />}
-          {out && (
+          {status && !out && !labOut && <Skeleton className="h-64 w-full rounded-xl" />}
+
+          {labOut && studioMode === "barrier" && (
+            <>
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                <MetricCard label="Purged-CV accuracy" value={`${(labOut.accMean * 100).toFixed(1)}%`}
+                  sub={`${labOut.folds} folds ±${(labOut.accStd * 100).toFixed(1)} · base ${(labOut.baseRate * 100).toFixed(1)}%`}
+                  tone={labOut.accMean > labOut.baseRate + labOut.accStd ? "text-up" : "text-text"} />
+                <MetricCard label="Rank IC (prob vs label)" value={labOut.icMean.toFixed(3)}
+                  sub="1 = perfect ranking · 0 = noise" tone={labOut.icMean > 0.03 ? "text-up" : "text-text"} />
+                <MetricCard label="Meta precision" value={`${(labOut.metaPrecision * 100).toFixed(1)}%`}
+                  sub={`when it says take it · base ${(labOut.metaBase * 100).toFixed(1)}% · covers ${(labOut.metaCoverage * 100).toFixed(0)}%`}
+                  tone={labOut.metaPrecision > labOut.metaBase + 0.02 ? "text-up" : "text-text"} />
+                <MetricCard label="Next-bet lean"
+                  value={labOut.pUp >= labOut.pDown ? `${(labOut.pUp * 100).toFixed(0)}% up` : `${(labOut.pDown * 100).toFixed(0)}% down`}
+                  sub="P(hits profit-take first)" tone={labOut.pUp >= labOut.pDown ? "text-up" : "text-down"} />
+              </div>
+
+              <div className="rounded-xl border border-line lg-glass p-4">
+                <p className={cn("text-sm leading-relaxed",
+                  labOut.accMean > labOut.baseRate + labOut.accStd ? "text-up"
+                    : labOut.accMean < labOut.baseRate - labOut.accStd ? "text-down" : "text-dim")}>
+                  {labOut.accMean > labOut.baseRate + labOut.accStd
+                    ? `The primary model reads the barriers at ${(labOut.accMean * 100).toFixed(1)}% across ${labOut.folds} purged folds — above the ${(labOut.baseRate * 100).toFixed(1)}% base rate by more than a fold's spread. The meta-model then keeps the ${(labOut.metaCoverage * 100).toFixed(0)}% of bets it trusts at ${(labOut.metaPrecision * 100).toFixed(1)}% precision.`
+                    : `Across ${labOut.folds} purged, embargoed folds the accuracy (${(labOut.accMean * 100).toFixed(1)}%) sits within a fold's spread of the ${(labOut.baseRate * 100).toFixed(1)}% base rate — no reliable edge on this asset. That's the honest, common result; the meta-model still tells you which bets are least bad.`}
+                </p>
+                <p className="text-[11px] text-dim font-mono mt-2">{ranFor}</p>
+              </div>
+
+              <div className="grid md:grid-cols-2 gap-4">
+                <div className="rounded-xl border border-line lg-glass p-4">
+                  <p className="text-sm font-semibold mb-3">What the model looks at</p>
+                  <div className="space-y-1.5">
+                    {labOut.importances.map(([name, val]) => (
+                      <div key={name} className="flex items-center gap-2">
+                        <span className="text-xs text-dim w-28 shrink-0">{name}</span>
+                        <div className="flex-1 h-2 rounded-sm bg-line/40 overflow-hidden">
+                          <div className="h-full rounded-sm" style={{ width: `${Math.max(2, val * 100 / (labOut.importances[0][1] || 1) * 0.9)}%`, background: "var(--viz-purple)" }} />
+                        </div>
+                        <span className="text-[10px] text-dim font-mono w-10 text-right">{(val * 100).toFixed(1)}%</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="rounded-xl border border-line lg-glass p-4">
+                  <p className="text-sm font-semibold mb-3">Barrier setup &amp; label balance</p>
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs font-mono">
+                    <span className="text-dim">Profit-take</span><span className="text-right text-up">+{labOut.ptMult}σ</span>
+                    <span className="text-dim">Stop-loss</span><span className="text-right text-down">−{labOut.slMult}σ</span>
+                    <span className="text-dim">Time limit</span><span className="text-right">{labOut.horizon} bars</span>
+                    <span className="text-dim">Usable bars</span><span className="text-right">{labOut.nUsable}</span>
+                  </div>
+                  <div className="mt-3 flex h-3 rounded-sm overflow-hidden">
+                    <div style={{ width: `${100 * labOut.labelUp / (labOut.labelUp + labOut.labelDown + labOut.labelFlat || 1)}%`, background: "var(--viz-teal)" }} title="profit-take first" />
+                    <div style={{ width: `${100 * labOut.labelDown / (labOut.labelUp + labOut.labelDown + labOut.labelFlat || 1)}%`, background: "var(--viz-pink)" }} title="stop-loss first" />
+                  </div>
+                  <p className="text-[10px] text-dim mt-1.5">
+                    <span style={{ color: "var(--viz-teal)" }}>■</span> {labOut.labelUp} up ·{" "}
+                    <span style={{ color: "var(--viz-pink)" }}>■</span> {labOut.labelDown} down
+                  </p>
+                </div>
+              </div>
+
+              <p className="text-xs text-dim leading-relaxed">
+                Triple-barrier labeling, meta-labeling, and purged walk-forward CV with an embargo
+                (López de Prado / Jansen). Barriers scale with EWM volatility, so the target adapts
+                to each regime. Educational tool — not investment advice.
+              </p>
+            </>
+          )}
+          {out && studioMode !== "barrier" && (
             <>
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
                 <MetricCard label="Direction accuracy" value={`${(out.hit * 100).toFixed(1)}%`}

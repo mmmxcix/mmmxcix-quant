@@ -234,6 +234,146 @@ def run_ranking(rows_json):
     })
 `;
 
+// ── Triple-barrier labeling + meta-labeling + purged CV (López de Prado /
+// Jansen ML4T). Instead of "will the next bar be up?", label each bar by which
+// of three barriers it hits first — a volatility-scaled profit-take, a stop-
+// loss, or a time limit. A primary trend rule proposes the side; a SECONDARY
+// "meta" model learns when to actually take that bet. Validation is a purged,
+// embargoed forward-chaining CV so overlapping labels don't leak. ───────────
+
+const PY_LABELED = `
+import numpy as np, pandas as pd, json
+from sklearn.ensemble import RandomForestClassifier
+
+def _rsi(s, period=14):
+    d = s.diff()
+    g = d.clip(lower=0).ewm(alpha=1/period, adjust=False).mean()
+    l = (-d.clip(upper=0)).ewm(alpha=1/period, adjust=False).mean()
+    rs = g / l.replace(0, np.nan)
+    return 100 - 100 / (1 + rs)
+
+def _triple_barrier(c, vol, pt_mult, sl_mult, horizon):
+    n = len(c)
+    lab = np.full(n, np.nan)
+    for i in range(n):
+        vi = vol[i]
+        if not np.isfinite(vi) or vi <= 0:
+            continue
+        end = min(i + horizon, n - 1)
+        if end <= i:
+            continue
+        up, dn = pt_mult * vi, -sl_mult * vi
+        hit = 0
+        for j in range(i + 1, end + 1):
+            r = c[j] / c[i] - 1.0
+            if r >= up:
+                hit = 1; break
+            if r <= dn:
+                hit = -1; break
+        else:
+            r = c[end] / c[i] - 1.0
+            hit = 1 if r > 0 else (-1 if r < 0 else 0)
+        lab[i] = hit
+    return lab
+
+def run_labeled(o, h, l, c, v, t, pt_mult, sl_mult, horizon):
+    df = pd.DataFrame({"open": o, "high": h, "low": l, "close": c, "volume": v})
+    close = df["close"]
+    ret = close.pct_change()
+    dt = pd.to_datetime(pd.Series(t), unit="s", utc=True)
+
+    X = pd.DataFrame(index=df.index)
+    for lag in (1, 2, 3, 5, 10):
+        X[f"return lag {lag}"] = ret.shift(lag - 1)
+    X["volatility 5d"] = ret.rolling(5).std()
+    X["volatility 20d"] = ret.rolling(20).std()
+    X["RSI 14"] = _rsi(close) / 100.0
+    X["dist to SMA20"] = close / close.rolling(20).mean() - 1
+    X["dist to SMA50"] = close / close.rolling(50).mean() - 1
+    X["day of week"] = dt.dt.dayofweek.to_numpy() / 4.0
+
+    vol = ret.ewm(span=20, adjust=False).std().to_numpy()
+    labels = _triple_barrier(close.to_numpy(), vol, pt_mult, sl_mult, horizon)
+    lab = pd.Series(labels, index=df.index)
+
+    side = np.sign((close / close.rolling(20).mean() - 1).to_numpy())
+    side_s = pd.Series(side, index=df.index)
+    meta = ((side_s == lab) & (lab != 0)).astype(float)
+
+    valid = X.notna().all(axis=1) & lab.notna()
+    Xf = X[valid]
+    yf = lab[valid].to_numpy().astype(int)
+    metaf = meta[valid].to_numpy().astype(int)
+    n = len(Xf)
+    if n < 200:
+        raise ValueError(f"only {n} usable rows after warmup — load more history")
+
+    K = 5
+    embargo = max(3, n // 100)
+    fold_edges = np.linspace(int(n * 0.35), n, K + 1).astype(int)
+    accs, base_rates, ics = [], [], []
+    for f in range(K):
+        s, e = fold_edges[f], fold_edges[f + 1]
+        if e - s < 15:
+            continue
+        cut = max(0, s - horizon - embargo)
+        if cut < 80:
+            continue
+        Xtr, ytr = Xf.iloc[:cut], yf[:cut]
+        if len(np.unique(ytr)) < 2:
+            continue
+        clf = RandomForestClassifier(n_estimators=200, max_depth=6, min_samples_leaf=10, random_state=7, n_jobs=1, class_weight="balanced")
+        clf.fit(Xtr, ytr)
+        Xte, yte = Xf.iloc[s:e], yf[s:e]
+        pred = clf.predict(Xte)
+        accs.append(float((pred == yte).mean()))
+        vals, cnts = np.unique(yte, return_counts=True)
+        base_rates.append(float(cnts.max() / cnts.sum()))
+        classes = list(clf.classes_)
+        if 1 in classes:
+            pup = clf.predict_proba(Xte)[:, classes.index(1)]
+            if pup.std() > 0 and yte.std() > 0:
+                ra, rb = np.argsort(np.argsort(pup)), np.argsort(np.argsort(yte))
+                ics.append(float(np.corrcoef(ra, rb)[0, 1]))
+
+    acc_m = float(np.mean(accs)) if accs else 0.0
+    acc_sd = float(np.std(accs)) if len(accs) > 1 else 0.0
+    base_m = float(np.mean(base_rates)) if base_rates else 0.0
+    ic_m = float(np.mean(ics)) if ics else 0.0
+
+    split = int(n * 0.7)
+    cut = max(0, split - horizon - embargo)
+    metatr, Xmtr = metaf[:cut], Xf.iloc[:cut]
+    meta_prec = meta_cov = meta_base = 0.0
+    if len(np.unique(metatr)) == 2 and metatr.sum() >= 20:
+        mclf = RandomForestClassifier(n_estimators=200, max_depth=5, min_samples_leaf=10, random_state=7, n_jobs=1, class_weight="balanced")
+        mclf.fit(Xmtr, metatr)
+        Xmte, metate = Xf.iloc[split:], metaf[split:]
+        take = mclf.predict(Xmte) == 1
+        meta_cov = float(take.mean())
+        meta_prec = float(metate[take].mean()) if take.sum() > 0 else 0.0
+        meta_base = float(metate.mean())
+
+    clf = RandomForestClassifier(n_estimators=200, max_depth=6, min_samples_leaf=10, random_state=7, n_jobs=1, class_weight="balanced")
+    clf.fit(Xf.iloc[: n - horizon], yf[: n - horizon])
+    live = X[X.notna().all(axis=1)].iloc[[-1]]
+    proba = clf.predict_proba(live)[0]
+    classes = list(clf.classes_)
+    p_up = float(proba[classes.index(1)]) if 1 in classes else 0.0
+    p_dn = float(proba[classes.index(-1)]) if -1 in classes else 0.0
+    imp = sorted(zip(Xf.columns.tolist(), clf.feature_importances_.tolist()), key=lambda kv: -kv[1])
+    dist = {int(k): int(vv) for k, vv in zip(*np.unique(yf, return_counts=True))}
+
+    return json.dumps({
+        "ptMult": pt_mult, "slMult": sl_mult, "horizon": horizon,
+        "nUsable": int(n), "folds": len(accs),
+        "accMean": acc_m, "accStd": acc_sd, "baseRate": base_m, "icMean": ic_m,
+        "metaPrecision": meta_prec, "metaCoverage": meta_cov, "metaBase": meta_base,
+        "pUp": p_up, "pDown": p_dn, "importances": imp[:10],
+        "labelUp": dist.get(1, 0), "labelDown": dist.get(-1, 0), "labelFlat": dist.get(0, 0),
+    })
+`;
+
 let _sklearnLoaded = false;
 
 /**
@@ -258,6 +398,40 @@ export async function runMlRanking(rows, onProgress) {
     throw new Error(msg.slice(0, 300));
   } finally {
     for (const k of ["_rank_rows", "_rank_out"]) { try { py.globals.delete(k); } catch { /* noop */ } }
+  }
+}
+
+/**
+ * Triple-barrier + meta-labeling forecast with purged CV, in the browser.
+ * @returns parsed result object (see PY_LABELED return payload)
+ */
+export async function runMlLabeled(candles, { ptMult = 1.5, slMult = 1.0, horizon = 10 } = {}, onProgress) {
+  const py = await loadPy(onProgress);
+  if (!_sklearnLoaded) {
+    onProgress?.("Loading scikit-learn (~12 MB, first time only)…");
+    await py.loadPackage(["scikit-learn"]);
+    _sklearnLoaded = true;
+  }
+  onProgress?.("Labeling barriers & training…");
+  py.globals.set("_o", candles.map((c) => c.open));
+  py.globals.set("_h", candles.map((c) => c.high));
+  py.globals.set("_l", candles.map((c) => c.low));
+  py.globals.set("_c", candles.map((c) => c.close));
+  py.globals.set("_v", candles.map((c) => c.volume ?? 0));
+  py.globals.set("_t", candles.map((c) => c.time));
+  py.globals.set("_pt", ptMult);
+  py.globals.set("_sl", slMult);
+  py.globals.set("_hz", horizon);
+  try {
+    py.runPython(PY_LABELED + "\n_lab_out = run_labeled(list(_o), list(_h), list(_l), list(_c), list(_v), list(_t), _pt, _sl, _hz)");
+    return JSON.parse(py.globals.get("_lab_out"));
+  } catch (e) {
+    const msg = String(e?.message || e).trim().split("\n").filter(Boolean).pop() || "Python error";
+    throw new Error(msg.slice(0, 300));
+  } finally {
+    for (const k of ["_o", "_h", "_l", "_c", "_v", "_t", "_pt", "_sl", "_hz", "_lab_out"]) {
+      try { py.globals.delete(k); } catch { /* noop */ }
+    }
   }
 }
 
