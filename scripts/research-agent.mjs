@@ -31,6 +31,7 @@ import { loadUniverse } from "./marketdata.mjs";
 import { UNIVERSE, MENTIONABLE, byId, costFor, effectiveTrials, describeMarkets } from "../src/lib/markets.js";
 import { initPy, compilePyStrategy, pyCompileCheck } from "./pyRunnerNode.mjs";
 import { mineAnomalies } from "./mining.mjs";
+import { plateauProbe } from "./optimizer.mjs";
 
 // Language Cortex writes AND validates in. Python (default) means the model emits
 // a vectorised `signals(df)`, and the ENTIRE gauntlet below runs that Python
@@ -107,6 +108,31 @@ function windowTrials(st) {
   // install does not suddenly get an artificially easy hurdle.
   const n = recent || (st.attempts || 1);
   return Math.max(1, Math.min(n, TRIAL_WINDOW_CAP));
+}
+
+
+// ── parameter plateau gate + cautious neighbor adoption (optimizer.mjs) ─────
+// Applied to every gauntlet survivor: probe the parameter neighborhood (±25%
+// per constant) on its best market. Knife-edge passes — where most neighbors
+// lose money — are REJECTED: a lone parameter spike is luck in disguise.
+// A neighbor that beats the original on the k-fold OOS criterion earns ONE
+// full re-gauntlet; it is adopted only if it passes with DSR >= the original.
+// Every probe and the re-gauntlet are charged to the DSR trial window.
+function applyPlateau(code, language, verdict, st, datasetsUsed) {
+  const ds = datasetsUsed.find((d) => d.market.id === verdict.bestMarket) || datasetsUsed[0];
+  if (!ds) return { ok: true, summary: "no dataset", code, verdict, optimized: null };
+  const probe = plateauProbe({ code, language, dataset: ds, compileFor, runBacktest, kFoldCode });
+  for (let i = 0; i < probe.probes; i++) st.attemptLog = [...(st.attemptLog || []), Date.now()].slice(-5000);
+  if (!probe.ok) return { ok: false, summary: probe.summary, code, verdict, optimized: null };
+  if (probe.better) {
+    st.attempts++;
+    st.attemptLog = [...(st.attemptLog || []), Date.now()].slice(-5000);
+    const v2 = gauntlet(probe.better.code, datasetsUsed, windowTrials(st), language);
+    if (v2.pass && (v2.dsr ?? 0) >= (verdict.dsr ?? 0)) {
+      return { ok: true, summary: probe.summary, code: probe.better.code, verdict: v2, optimized: probe.better.changed };
+    }
+  }
+  return { ok: true, summary: probe.summary, code, verdict, optimized: null };
 }
 
 // Harvesting, topic tagging and full-text extraction all live in sources.mjs
@@ -706,6 +732,19 @@ for (const paper of fresh) {
     const extras = await loadMentioned(paper);
     const verdict = gauntlet(code, [...datasets, ...extras], windowTrials(st), language);
     if (verdict.pass) {
+      // Optimizer: plateau gate + cautious neighbor adoption.
+      const plat = applyPlateau(code, language, verdict, st, [...datasets, ...extras]);
+      if (!plat.ok) {
+        st.graveyard = [{ title: paper.title.slice(0, 70), reason: `parameter knife-edge (${plat.summary})`, source: paper.source, link: paper.link, topics: paper.topics, code, language, improveTries: 0, at: Date.now() }, ...st.graveyard].slice(0, 200);
+        console.log(`✗ knife-edge → graveyard: ${paper.title.slice(0, 50)} — ${plat.summary}`);
+        verdict.pass = false; verdict.reason = "parameter knife-edge";
+      } else {
+        if (plat.optimized) console.log(`  🔧 optimizer: adopted neighbor ${plat.optimized} (re-gauntleted, DSR ${plat.verdict.dsr}%)`);
+        code = plat.code;
+        Object.assign(verdict, plat.verdict, { plateau: plat.summary, optimized: plat.optimized });
+      }
+    }
+    if (verdict.pass) {
       const cand = {
         id: `rc_${Date.now().toString(36)}`,
         name: paper.title.slice(0, 70),
@@ -803,6 +842,11 @@ if (improvePool.length && datasets.length && !(UNTIL_HIT && newCandidates.length
       const verdict = gauntlet(code, datasets, windowTrials(st), language);
       improvedThisRun++;
       if (verdict.pass) {
+        const plat = applyPlateau(code, language, verdict, st, datasets);
+        if (!plat.ok) { verdict.pass = false; verdict.reason = `parameter knife-edge (${plat.summary})`; }
+        else Object.assign(verdict, { plateau: plat.summary });
+      }
+      if (verdict.pass) {
         const cand = {
           id: `ri_${Date.now().toString(36)}`,
           name: `improved · ${g.title}`.slice(0, 70),
@@ -868,6 +912,15 @@ if (ALWAYS_ON && datasets.length && MINE_PER_RUN > 0 && !(UNTIL_HIT && newCandid
       st.attemptLog = [...(st.attemptLog || []), Date.now()].slice(-5000);
       const verdict = gauntlet(hit.code, datasets, windowTrials(st), "js");
       minedThisRun++;
+      if (verdict.pass) {
+        const plat = applyPlateau(hit.code, "js", verdict, st, datasets);
+        if (!plat.ok) { verdict.pass = false; verdict.reason = `parameter knife-edge (${plat.summary})`; }
+        else {
+          if (plat.optimized) console.log(`  🔧 optimizer: adopted neighbor ${plat.optimized}`);
+          hit.code = plat.code;
+          Object.assign(verdict, plat.verdict, { plateau: plat.summary, optimized: plat.optimized });
+        }
+      }
       if (verdict.pass) {
         const cand = {
           id: `rm_${Date.now().toString(36)}`,
