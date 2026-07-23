@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Layers, X, Ship, Plane, Activity, Anchor, Landmark, Radio, Cable, TrendingDown, Newspaper } from "lucide-react";
+import { Layers, X, Ship, Plane, Activity, Anchor, Landmark, Radio, Cable, TrendingDown, Newspaper, Flame, AlertTriangle } from "lucide-react";
 import { cn, fmtNum, fmtPct } from "@/lib/utils";
 import { shipCategory, formatEta, CORRIDORS } from "@/lib/ais";
 import { fetchRoute, planeCategory } from "@/lib/planes";
-import { fetchNewsPins } from "@/lib/geoNews";
+import { fetchNewsPins, COUNTRY_PINS } from "@/lib/geoNews";
 import { decodeCountries, projectCountries, countryAt, invMercLon, invMercLat, yieldCodeLookup } from "@/lib/geo";
 import { mercX, mercY } from "@/lib/ais";
 import { fetchYieldStats, fetchYields, yieldCurves } from "@/lib/macro";
@@ -44,10 +44,12 @@ const LAYER_DEFS = [
   { id: "cables", label: "Submarine cables", icon: Cable },
   { id: "yields", label: "Yield-curve stress", icon: TrendingDown },
   { id: "news", label: "News pins", icon: Newspaper },
+  { id: "fires", label: "Fires (24h)", icon: Flame },
+  { id: "instab", label: "Instability signals", icon: AlertTriangle },
 ];
 
 const LS_LAYERS = "quant_map_layers_v3"; // v3: cables + yield stress
-const LAYER_DEFAULTS = { ships: true, planes: true, quakes: true, chokepoints: true, cables: true, yields: true, news: true };
+const LAYER_DEFAULTS = { ships: true, planes: true, quakes: true, chokepoints: true, cables: true, yields: true, news: true, fires: true, instab: true };
 const loadLayers = () => {
   try {
     const v = JSON.parse(localStorage.getItem(LS_LAYERS) || "null");
@@ -68,7 +70,8 @@ export default function WorldMap() {
   const [hover, setHover] = useState(null);       // { x, y, label, sub }
   const [hoverCountry, setHoverCountry] = useState(null); // name (for redraw)
   const [selected, setSelected] = useState(null); // { kind, ...data }
-  const [counts, setCounts] = useState({ ships: 0, planes: 0, quakes: 0 });
+  const [counts, setCounts] = useState({ ships: 0, planes: 0, quakes: 0, fires: 0 });
+  const [instabTop, setInstabTop] = useState([]);
 
   const wrapRef = useRef(null);
   const canvasRef = useRef(null);
@@ -83,6 +86,10 @@ export default function WorldMap() {
   const cablesRef = useRef(null);       // projected cable polylines (lazy)
   const spreadsRef = useRef(new Map()); // ISO2 -> 10Y-2Y spread (pp)
   const newsRef = useRef([]);           // geolocated news pins
+  const firesRef = useRef([]);          // FIRMS detections {lat,lon,frp,u,v}
+  const instabRef = useRef({ byId: new Map(), top: [] });
+  const countryBoxesRef = useRef([]);   // per-polygon bounding boxes, small-first
+  const pinNameCacheRef = useRef(new Map()); // country name -> COUNTRY_PINS entry
   const chokeStatsRef = useRef(new Map()); // chokepoint id -> {n, anchored}
   const layersRef = useRef(layers);
   layersRef.current = layers;
@@ -97,20 +104,45 @@ export default function WorldMap() {
   };
 
   /* ── Country geometry: fast 110m first, exact 50m swapped in silently ── */
+  // Per-POLYGON bounding boxes (not per country — a per-country box for the
+  // US or Russia would span the dateline and swallow the world). Sorted
+  // smallest-area-first so point→country hits resolve to the tightest match.
+  const buildBoxes = () => {
+    const out = [];
+    for (const c of countriesRef.current) {
+      const boxes = [];
+      let area = 0;
+      for (const poly of c.polys) {
+        const ring = poly[0] || [];
+        let u1 = 9, v1 = 9, u2 = -9, v2 = -9;
+        for (const [u, v] of ring) {
+          if (u < u1) u1 = u; if (v < v1) v1 = v;
+          if (u > u2) u2 = u; if (v > v2) v2 = v;
+        }
+        if (u2 > -9) { boxes.push([u1, v1, u2, v2]); area += (u2 - u1) * (v2 - v1); }
+      }
+      out.push({ id: c.id, name: c.name, boxes, area });
+    }
+    out.sort((a, b) => a.area - b.area);
+    countryBoxesRef.current = out;
+  };
   useEffect(() => {
     let alive = true;
     fetch("/world-countries-110m.json").then((r) => r.json()).then((topo) => {
       if (!alive) return;
       countriesRef.current = projectCountries(decodeCountries(topo));
+      buildBoxes();
       needsDraw.current = true;
       // Detail upgrade in the background — exact borders, no coarse fallback.
       fetch("/world-countries-50m.json").then((r) => r.json()).then((topo50) => {
         if (!alive) return;
         countriesRef.current = projectCountries(decodeCountries(topo50));
+        buildBoxes();
         needsDraw.current = true;
       }).catch(() => { /* stay on 110m */ });
     }).catch(() => { /* map renders data layers only */ });
     return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /* ── Yield lookup for the country panel (LSE covers 34 countries) ────── */
@@ -288,6 +320,25 @@ export default function WorldMap() {
     return () => { alive = false; clearInterval(id); };
   }, [layers.news]);
 
+  /* ── Fires (NASA FIRMS 24h): global snapshot via the fleet agent ─────── */
+  useEffect(() => {
+    if (!layers.fires) { firesRef.current = []; needsDraw.current = true; return; }
+    let alive = true;
+    const load = async () => {
+      try {
+        const r = await fetch("/api/fires");
+        if (!r.ok) return; // 404 until the agent's first FIRMS sweep
+        const j = await r.json();
+        if (!alive) return;
+        firesRef.current = (j.fires || []).map(([lat, lon, frp]) => ({ lat, lon, frp, u: mercX(lon), v: mercY(lat) }));
+        needsDraw.current = true;
+      } catch { /* keep last data */ }
+    };
+    load();
+    const id = setInterval(load, 10 * 60_000);
+    return () => { alive = false; clearInterval(id); };
+  }, [layers.fires]);
+
   /* ── Quakes layer (USGS, direct — they send CORS) ────────────────────── */
   useEffect(() => {
     if (!layers.quakes) { quakesRef.current = []; needsDraw.current = true; return; }
@@ -333,7 +384,52 @@ export default function WorldMap() {
         }
         chokeStatsRef.current.set(cp.id, { n, anchoredPct: n >= 5 ? Math.round((anch / n) * 100) : null });
       }
-      setCounts({ ships, planes: planesRef.current.length, quakes: quakesRef.current.length });
+      // Instability signals: an honest 0–100 mix per country from OUR OWN
+      // layers — inverted yield curve, news attention, M5.5+ quakes, fire
+      // density. Point→country uses per-polygon bounding boxes: fast and
+      // deliberately border-fuzzy. A signal mix, not a forecast.
+      const boxes = countryBoxesRef.current;
+      if (boxes.length) {
+        const hits = new Map(); // country id -> { q, f }
+        const hit = (u, v) => {
+          for (const c of boxes) for (const b of c.boxes)
+            if (u >= b[0] && u <= b[2] && v >= b[1] && v <= b[3]) return c;
+          return null;
+        };
+        for (const q of quakesRef.current) {
+          if ((q.mag ?? 0) < 5.5) continue;
+          const c = hit(mercX(q.lon), mercY(q.lat));
+          if (c) { const e = hits.get(c.id) || { q: 0, f: 0 }; e.q++; hits.set(c.id, e); }
+        }
+        const fires = firesRef.current;
+        const step = Math.max(1, Math.floor(fires.length / 3000)); // sample, scale back up
+        for (let i = 0; i < fires.length; i += step) {
+          const c = hit(fires[i].u, fires[i].v);
+          if (c) { const e = hits.get(c.id) || { q: 0, f: 0 }; e.f += step; hits.set(c.id, e); }
+        }
+        const newsBy = new Map(newsRef.current.map((p) => [p.code, p.items.length]));
+        const pinCache = pinNameCacheRef.current;
+        const out = [];
+        for (const c of boxes) {
+          if (!pinCache.has(c.name)) pinCache.set(c.name, COUNTRY_PINS.find((p) => p.re.test(c.name)) || null);
+          const pin = pinCache.get(c.name);
+          const news = pin ? newsBy.get(pin.code) || 0 : 0;
+          const code = yieldLookupRef.current?.(c.name);
+          const spread = code != null ? spreadsRef.current.get(code) : undefined;
+          const e = hits.get(c.id) || { q: 0, f: 0 };
+          const inv = spread != null && spread < 0 ? Math.min(40, Math.round(14 + Math.abs(spread) * 26)) : 0;
+          const newsPts = Math.min(25, news * 5);
+          const qPts = Math.min(20, e.q * 10);
+          const fPts = Math.min(15, Math.round(Math.sqrt(e.f) * 1.6));
+          const score = inv + newsPts + qPts + fPts;
+          if (score > 0) out.push({ id: c.id, name: c.name, score, inv, newsPts, qPts, fPts });
+        }
+        out.sort((a, b) => b.score - a.score);
+        instabRef.current = { byId: new Map(out.map((o) => [o.id, o])), top: out.slice(0, 8) };
+        setInstabTop(instabRef.current.top);
+        if (layersRef.current.instab) needsDraw.current = true;
+      }
+      setCounts({ ships, planes: planesRef.current.length, quakes: quakesRef.current.length, fires: firesRef.current.length });
     }, 5000);
     return () => clearInterval(id);
   }, []);
@@ -387,6 +483,7 @@ export default function WorldMap() {
         }
       };
       const downCol = cssRgb("--c-down"), upColC = cssRgb("--c-up");
+      const amberC = vizColor("amber");
       for (const kCopy of copies) {
       kOff = kCopy;
       for (const c of countriesRef.current) {
@@ -395,8 +492,16 @@ export default function WorldMap() {
         // Yield-curve stress choropleth (our LSE data): an inverted 10Y−2Y
         // tints the country red, deeper inversion = deeper tint; healthy
         // curves get the faintest green; no coverage stays neutral ink.
-        let fill = ink, alpha = 0.06;
-        if (L.yields && !hot && spreadsRef.current.size) {
+        let fill = ink, alpha = 0.06, tinted = false;
+        // Instability tint (amber) wins over the yield choropleth for the
+        // handful of hot countries; everything else falls through to yields.
+        if (L.instab && !hot) {
+          const sc = instabRef.current.byId.get(c.id);
+          if (sc && sc.score >= 25) {
+            fill = amberC; alpha = Math.min(0.4, 0.1 + (sc.score / 100) * 0.35); tinted = true;
+          }
+        }
+        if (!tinted && L.yields && !hot && spreadsRef.current.size) {
           const code = yieldLookupRef.current?.(c.name);
           const spread = code != null ? spreadsRef.current.get(code) : undefined;
           if (spread != null) {
@@ -433,6 +538,22 @@ export default function WorldMap() {
       } // end world copies
       kOff = 0;
       ctx.globalAlpha = 1;
+
+      // Fires (NASA FIRMS VIIRS 24h): heat dots, hotter = redder + bigger.
+      if (L.fires && firesRef.current.length) {
+        const fCool = vizColor("amber"), fHot = downCol;
+        for (const f of firesRef.current) {
+          const px = XP(f.u), py = Y(f.v);
+          if (px < -6 || py < -6 || px > w + 6 || py > h + 6) continue;
+          const big = f.frp >= 40;
+          ctx.fillStyle = big ? fHot : fCool;
+          ctx.globalAlpha = big ? 0.8 : 0.5;
+          ctx.beginPath();
+          ctx.arc(px, py, big ? 2.2 : 1.3, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+      }
 
       // Quakes: circles sized by magnitude.
       if (L.quakes) {
@@ -589,6 +710,11 @@ export default function WorldMap() {
         const d = (x - px) ** 2 + (y - py) ** 2;
         if (d < bd) { bd = d; best = { kind: "news", x, y, data: pin }; }
       }
+      if (L.fires) for (const f of firesRef.current) {
+        const [x, y] = P(f.lon, f.lat);
+        const d = (x - px) ** 2 + (y - py) ** 2;
+        if (d < bd) { bd = d; best = { kind: "fire", x, y, data: f }; }
+      }
       return best;
     };
     const onDown = (e) => { drag = toWorld(e); downAt = { x: e.clientX, y: e.clientY }; el.setPointerCapture(e.pointerId); };
@@ -611,10 +737,12 @@ export default function WorldMap() {
           label: obj.kind === "ship" ? (d.staticName || d.name)
             : obj.kind === "plane" ? d.callsign
             : obj.kind === "news" ? `${d.name} · ${d.items.length} headline${d.items.length > 1 ? "s" : ""}`
+            : obj.kind === "fire" ? `Fire · ${d.frp} MW`
             : `M${d.mag?.toFixed(1)}`,
           sub: obj.kind === "ship" ? `${(d.sog ?? 0).toFixed(1)} kn${d.destination ? ` → ${d.destination}` : ""}`
             : obj.kind === "plane" ? `${d.type || ""} ${d.onGround ? "ground" : fmtNum(d.alt, 0) + " ft"}`
             : obj.kind === "news" ? (d.items[0]?.title || "").slice(0, 60)
+            : obj.kind === "fire" ? "VIIRS thermal anomaly · NASA FIRMS"
             : d.place,
         });
         return;
@@ -752,11 +880,13 @@ export default function WorldMap() {
                     : ld.id === "quakes" ? fmtNum(counts.quakes, 0)
                     : ld.id === "cables" ? (cablesRef.current ? cablesRef.current.length : "")
                     : ld.id === "yields" ? (spreadsRef.current.size || "")
-                    : ld.id === "news" ? (newsRef.current.length || "") : ""}
+                    : ld.id === "news" ? (newsRef.current.length || "")
+                    : ld.id === "fires" ? (counts.fires ? fmtNum(counts.fires, 0) : "")
+                    : ld.id === "instab" ? (instabTop.length || "") : ""}
                 </span>
               </label>
             ))}
-            <p className="text-[9px] text-dim/70 leading-snug mt-1">Air traffic tiles the visible area (full at regional zoom). Yield stress: <span className="text-down">red = inverted 10Y−2Y curve</span>, deeper = more inverted (our London bond data). Chokepoints label live vessel counts + anchored share.</p>
+            <p className="text-[9px] text-dim/70 leading-snug mt-1">Ships, planes and fires are global snapshots pushed by our 24/7 agent. Yield stress: <span className="text-down">red = inverted 10Y−2Y curve</span> (our London bond data); <span className="text-accent">amber</span> = instability signals. Chokepoints label live vessel counts + anchored share.</p>
           </div>
 
           {/* Hover tooltip: object or country name */}
@@ -772,8 +902,25 @@ export default function WorldMap() {
               {hoverCountry}
             </div>
           )}
+          {layers.instab && instabTop.length > 0 && (
+            <div className="absolute bottom-8 right-3 w-60 rounded-xl border border-line bg-bg/85 backdrop-blur px-3 py-2.5 z-10">
+              <p className="text-[10px] uppercase tracking-widest text-dim mb-1.5 flex items-center gap-1.5">
+                <AlertTriangle className="w-3 h-3" /> Instability signals
+              </p>
+              {instabTop.map((c) => (
+                <div key={c.id} className="flex items-center gap-2 py-0.5">
+                  <span className="text-xs truncate flex-1">{c.name}</span>
+                  <div className="w-16 h-1.5 rounded-full bg-line/60 overflow-hidden shrink-0">
+                    <div className="h-full bg-accent" style={{ width: `${c.score}%` }} />
+                  </div>
+                  <span className="text-[10px] font-mono text-dim w-6 text-right shrink-0">{c.score}</span>
+                </div>
+              ))}
+              <p className="text-[9px] text-dim/70 leading-snug mt-1">Mix of our own layers: inverted curve · news attention · M5.5+ quakes · fire density. A signal mix, not a forecast.</p>
+            </div>
+          )}
           <p className="absolute bottom-2 right-3 text-[10px] text-dim pointer-events-none">
-            drag = pan · wheel = zoom · click country / ship / plane / quake
+            drag = pan · wheel = zoom · click anything for details
           </p>
         </div>
 
@@ -786,6 +933,7 @@ export default function WorldMap() {
                   : sel.kind === "ship" ? (sel.data.staticName || sel.data.name)
                   : sel.kind === "plane" ? sel.data.callsign
                   : sel.kind === "news" ? `${sel.data.name} — news`
+                  : sel.kind === "fire" ? "Fire detection"
                   : `M${sel.data.mag?.toFixed(1)} earthquake`}
               </p>
               <button onClick={() => { setSelected(null); needsDraw.current = true; }} className="text-dim hover:text-text shrink-0" aria-label="Close">
@@ -813,6 +961,16 @@ export default function WorldMap() {
                 ) : (
                   <p className="text-dim">No bond-yield coverage for this country in the archive.</p>
                 )}
+                {(() => {
+                  const sc = instabRef.current.byId.get(sel.id);
+                  return sc ? (
+                    <p className="text-dim pt-1.5 border-t border-line/60">
+                      Instability <span className="text-text font-semibold">{sc.score}</span>/100
+                      {sc.inv ? ` · curve +${sc.inv}` : ""}{sc.newsPts ? ` · news +${sc.newsPts}` : ""}
+                      {sc.qPts ? ` · quakes +${sc.qPts}` : ""}{sc.fPts ? ` · fires +${sc.fPts}` : ""}
+                    </p>
+                  ) : null;
+                })()}
               </div>
             )}
 
@@ -865,6 +1023,16 @@ export default function WorldMap() {
               </div>
             )}
 
+            {sel.kind === "fire" && (
+              <div className="text-xs space-y-1.5">
+                <div className="grid grid-cols-2 gap-x-3 gap-y-1 font-mono">
+                  <span className="text-dim">Radiative power</span><span className="text-right">{sel.data.frp} MW</span>
+                  <span className="text-dim">Position</span><span className="text-right">{sel.data.lat.toFixed(2)}, {sel.data.lon.toFixed(2)}</span>
+                </div>
+                <p className="text-dim">VIIRS thermal anomaly, last 24h. Includes wildfires, agricultural burns, gas flares. Source: NASA FIRMS.</p>
+              </div>
+            )}
+
             {sel.kind === "quake" && (
               <div className="text-xs space-y-1.5">
                 <p className="text-dim">{sel.data.place}</p>
@@ -882,9 +1050,10 @@ export default function WorldMap() {
 
       <p className="text-xs text-dim leading-relaxed">
         One map, all layers: real country borders (detailed 50m outlines load in the background),
-        live AIS ships scoped to the viewport, community ADS-B air traffic around the map centre,
-        USGS earthquakes (24h, M2.5+), and the trade chokepoints. Click anything for details —
-        countries show our London bond-yield data where covered.
+        the global AIS fleet and worldwide air traffic (both pushed by our 24/7 agent),
+        NASA FIRMS fires, USGS earthquakes (24h, M2.5+), submarine cables, news pins,
+        the trade chokepoints, and per-country instability signals. Click anything for
+        details — countries show our London bond-yield data where covered.
       </p>
     </div>
   );

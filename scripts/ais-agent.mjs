@@ -168,4 +168,67 @@ async function sweepPlanes() {
 setInterval(sweepPlanes, PLANES_EVERY_MS);
 sweepPlanes();
 
-console.log("fleet agent running — ships push in 45s, plane sweep starting now");
+// ── NASA FIRMS fire sweep (24h global VIIRS, every 30 min) ──────────────────
+// The MAP_KEY lives only in the PC's env (never in files/commits/client).
+// FIRMS itself refreshes ~every 3h, so 30 min polling is already generous.
+const FIRMS_KEY = process.env.FIRMS_MAP_KEY;
+const FIRES_EVERY_MS = 30 * 60_000;
+let lastFires = null;
+let firesPushTries = 0;
+
+async function pushFires() {
+  if (!lastFires) return;
+  try {
+    const res = await fetch(`${SITE}/api/fires`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: TOKEN, fires: lastFires }),
+    });
+    const out = await res.json().catch(() => ({}));
+    if (!res.ok || !out.ok) throw new Error(`HTTP ${res.status}`);
+    firesPushTries = 0;
+    console.log(`[${new Date().toISOString()}] fires: pushed ${lastFires.length} detections → ok`);
+  } catch (e) {
+    // Re-POST only (no FIRMS re-fetch) — covers boot races and deploys.
+    const again = firesPushTries++ < 3;
+    console.error(`fires push failed (${e.message}) — ${again ? "retrying in 2min" : "waiting for next sweep"}`);
+    if (again) setTimeout(pushFires, 120_000);
+  }
+}
+
+async function sweepFires() {
+  try {
+    const r = await fetch(
+      `https://firms.modaps.eosdis.nasa.gov/api/area/csv/${FIRMS_KEY}/VIIRS_SNPP_NRT/world/1`,
+      { signal: AbortSignal.timeout(180_000) },
+    );
+    if (!r.ok) throw new Error(`FIRMS HTTP ${r.status}`);
+    const lines = (await r.text()).trim().split("\n");
+    const head = lines[0].split(",");
+    const iLat = head.indexOf("latitude"), iLon = head.indexOf("longitude"), iFrp = head.indexOf("frp");
+    if (iLat < 0 || iLon < 0) throw new Error("unexpected CSV header");
+    const byCell = new Map(); // 0.01°-rounded cell -> strongest detection
+    for (let i = 1; i < lines.length; i++) {
+      const p = lines[i].split(",");
+      const lat = +p[iLat], lon = +p[iLon], frp = +(p[iFrp] || 0);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+      const key = `${lat.toFixed(2)},${lon.toFixed(2)}`;
+      const cur = byCell.get(key);
+      if (!cur || frp > cur[2]) byCell.set(key, [+lat.toFixed(2), +lon.toFixed(2), +frp.toFixed(1)]);
+    }
+    lastFires = [...byCell.values()].sort((a, b) => b[2] - a[2]).slice(0, 12000);
+    firesPushTries = 0;
+    console.log(`[${new Date().toISOString()}] fires: FIRMS sent ${lines.length - 1} detections → ${lastFires.length} after dedupe/cap`);
+    await pushFires();
+  } catch (e) {
+    console.error(`FIRMS sweep failed: ${e.message}`);
+  }
+}
+if (FIRMS_KEY) {
+  setInterval(sweepFires, FIRES_EVERY_MS);
+  setTimeout(sweepFires, 15_000);
+} else {
+  console.log("FIRMS_MAP_KEY not set — fire sweep disabled");
+}
+
+console.log("fleet agent running — ships in 45s, planes now, fires in 15s");
