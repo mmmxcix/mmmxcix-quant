@@ -394,6 +394,17 @@ export async function onRequest({ request, env }) {
 
   const system = isPython ? PYTHON_SYSTEM_PROMPT : SYSTEM_PROMPT;
 
+  // promptOnly: hand the fully composed prompts to the caller instead of
+  // executing them. The local research agent uses this to run generation
+  // through its own LLM router (OmniRoute) — prompts stay defined in ONE
+  // place (here) and no provider key ever leaves the server. Same auth as a
+  // normal call, so the channel is exactly as private as execution.
+  // NOTE: the agent post-processes with functions/_lib/codegen.mjs — kept in
+  // sync with extractCode/ensureStrategyFn/parseVerdict below.
+  if (body?.promptOnly) {
+    return json({ system, user: userMsg, isCritique: !!isCritique, language: isPython ? "python" : "js" });
+  }
+
   // Fixed priority chain — best code model first, each falling through to the
   // next on ANY failure (rate limit, error, empty). Only keys that exist are
   // attempted, so the chain adapts to whichever secrets are set.

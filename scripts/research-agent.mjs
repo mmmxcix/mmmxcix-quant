@@ -32,6 +32,7 @@ import { UNIVERSE, MENTIONABLE, byId, costFor, effectiveTrials, describeMarkets 
 import { initPy, compilePyStrategy, pyCompileCheck } from "./pyRunnerNode.mjs";
 import { mineAnomalies } from "./mining.mjs";
 import { plateauProbe } from "./optimizer.mjs";
+import { extractCode, ensureStrategyFn, parseVerdict } from "../functions/_lib/codegen.mjs";
 
 // Language Cortex writes AND validates in. Python (default) means the model emits
 // a vectorised `signals(df)`, and the ENTIRE gauntlet below runs that Python
@@ -180,6 +181,71 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Rate limits are infrastructure noise, not strategy failures: retry with
 // backoff, and signal "SKIP" (don't bury, don't mark seen) if still limited.
+// ── local LLM router (OmniRoute) ────────────────────────────────────────────
+// With LAB_LLM_URL set (e.g. http://localhost:20128/v1), every generation call
+// runs through the local multi-provider router: the SITE still composes the
+// prompts (promptOnly — one source of truth, keys stay server-side), the
+// router executes them across its free-provider cascade, and this agent
+// post-processes with the same shared helpers the server uses. Any failure
+// falls back to the site's own provider chain — nothing gets less reliable.
+const LLM_URL = (process.env.LAB_LLM_URL || "").replace(/\/+$/, "");
+const LLM_MODEL = process.env.LAB_LLM_MODEL || "auto/coding:free";
+const LLM_CRITIQUE_MODEL = process.env.LAB_LLM_CRITIQUE_MODEL || "auto/reasoning";
+
+async function callLocalRouter(system, user, model) {
+  const res = await fetch(`${LLM_URL}/chat/completions`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      model, stream: false, max_tokens: 4000,
+      messages: [
+        ...(system ? [{ role: "system", content: system }] : []),
+        { role: "user", content: user },
+      ],
+    }),
+    signal: AbortSignal.timeout(180000),
+  });
+  if (!res.ok) throw new Error(`router HTTP ${res.status}`);
+  const j = await res.json();
+  const text = j?.choices?.[0]?.message?.content || "";
+  if (!text.trim()) throw new Error("router empty reply");
+  return text;
+}
+
+/**
+ * One AI call: local router first (prompts from the site), site chain as
+ * fallback. Returns the same shape the site returns ({code, language} or
+ * {critique}); throws with .skip on rate limits like the old direct calls.
+ */
+async function aiCall(payload) {
+  if (LLM_URL) {
+    try {
+      const pRes = await fetch(`${SITE}/api/generate`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ...payload, promptOnly: true }),
+      });
+      const p = await pRes.json().catch(() => ({}));
+      if (pRes.ok && p.user) {
+        const text = await callLocalRouter(p.system || "", p.user, p.isCritique ? LLM_CRITIQUE_MODEL : LLM_MODEL);
+        if (p.isCritique) return { critique: parseVerdict(text) };
+        const out = extractCode(text);
+        return { code: p.language === "python" ? out : ensureStrategyFn(out), language: p.language };
+      }
+    } catch (e) {
+      console.log(`  ~ local router failed (${String(e.message || "").slice(0, 50)}) — falling back to site AI`);
+    }
+  }
+  const res = await fetch(`${SITE}/api/generate`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const out = await res.json().catch(() => ({}));
+  if (res.ok && (out.code || out.critique)) return out;
+  const e = new Error(out.error || `generate HTTP ${res.status}`);
+  if (res.status === 429 || out.error === "rate_limited") e.skip = true;
+  throw e;
+}
+
 async function generateStrategy(item) {
   // Full text where we could get it, abstract otherwise. `research` is a
   // separate endpoint channel because a document does not fit the 2000-char
@@ -193,18 +259,14 @@ async function generateStrategy(item) {
     research: { title: item.title.slice(0, 200), kind: item.kind || "document", text },
   };
   for (let attempt = 1; attempt <= 3; attempt++) {
-    const res = await fetch(`${SITE}/api/generate`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    const out = await res.json().catch(() => ({}));
-    if (res.ok && out.code) return { code: out.code, language: out.language || RESEARCH_LANG };
-    if (res.status === 429 || out.error === "rate_limited") {
-      if (attempt < 3) { console.log(`  rate-limited, retry ${attempt}/2 in ${attempt * 45}s…`); await sleep(attempt * 45000); continue; }
-      const e = new Error("rate_limited"); e.skip = true; throw e;
+    try {
+      const out = await aiCall(payload);
+      if (out.code) return { code: out.code, language: out.language || RESEARCH_LANG };
+      throw new Error("no code in reply");
+    } catch (e) {
+      if (e.skip && attempt < 3) { console.log(`  rate-limited, retry ${attempt}/2 in ${attempt * 45}s…`); await sleep(attempt * 45000); continue; }
+      throw e;
     }
-    throw new Error(out.error || `generate HTTP ${res.status}`);
   }
 }
 
@@ -212,16 +274,9 @@ async function generateStrategy(item) {
 // the error and ask the model to fix the signature/format. One extra call, only
 // on failure — cheap insurance against a model that ignored the naming contract.
 async function repairStrategy(code, error, language = RESEARCH_LANG) {
-  const res = await fetch(`${SITE}/api/generate`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ token: TOKEN, language, repair: { code: String(code).slice(0, 8000), error: String(error).slice(0, 300) } }),
-  });
-  const out = await res.json().catch(() => ({}));
-  if (res.ok && out.code) return out.code;
-  const e = new Error(out.error || `repair HTTP ${res.status}`);
-  if (res.status === 429 || out.error === "rate_limited") e.skip = true;
-  throw e;
+  const out = await aiCall({ token: TOKEN, language, repair: { code: String(code).slice(0, 8000), error: String(error).slice(0, 300) } });
+  if (out.code) return out.code;
+  throw new Error("repair: no code in reply");
 }
 
 // Turn a gauntlet failure reason into targeted improvement guidance — the model
@@ -241,19 +296,12 @@ function improveFacts(reason) {
 // One improvement iteration via the site's AI endpoint (improve channel).
 async function improveStrategy(g) {
   const language = g.language || RESEARCH_LANG;
-  const res = await fetch(`${SITE}/api/generate`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      token: TOKEN, language,
-      improve: { code: String(g.code).slice(0, 8000), title: g.title, facts: improveFacts(g.reason || "") },
-    }),
+  const out = await aiCall({
+    token: TOKEN, language,
+    improve: { code: String(g.code).slice(0, 8000), title: g.title, facts: improveFacts(g.reason || "") },
   });
-  const out = await res.json().catch(() => ({}));
-  if (res.ok && out.code) return { code: out.code, language: out.language || language };
-  const e = new Error(out.error || `improve HTTP ${res.status}`);
-  if (res.status === 429 || out.error === "rate_limited") e.skip = true;
-  throw e;
+  if (out.code) return { code: out.code, language: out.language || language };
+  throw new Error("improve: no code in reply");
 }
 
 // ── 3. validation gauntlet (candle fetchers live in marketdata.mjs) ─────────
@@ -315,12 +363,8 @@ async function committeeReview(code, cand) {
     .map(([mid, v]) => `${mid}: ret ${v.ret}% PF ${v.pf} dd ${v.dd}% n=${v.n} DSR ${v.dsr}%`)
     .join("; ");
   try {
-    const res = await fetch(`${SITE}/api/generate`, {
-      method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ token: TOKEN, critique: { code, title: cand.name, facts } }),
-    });
-    const out = await res.json().catch(() => ({}));
-    if (res.ok && out.critique) return out.critique;
+    const out = await aiCall({ token: TOKEN, critique: { code, title: cand.name, facts } });
+    if (out.critique) return out.critique;
   } catch (e) {
     console.error(`  committee review failed: ${e.message.slice(0, 50)}`);
   }
