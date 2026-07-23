@@ -42,13 +42,13 @@ const LAYER_DEFS = [
   { id: "chokepoints", label: "Chokepoints", icon: Anchor },
 ];
 
-const LS_LAYERS = "quant_map_layers";
+const LS_LAYERS = "quant_map_layers_v2"; // v2: planes default ON
 const loadLayers = () => {
   try {
     const v = JSON.parse(localStorage.getItem(LS_LAYERS) || "null");
-    if (v && typeof v === "object") return { ships: true, planes: false, quakes: true, chokepoints: true, ...v };
+    if (v && typeof v === "object") return { ships: true, planes: true, quakes: true, chokepoints: true, ...v };
   } catch { /* fall through */ }
-  return { ships: true, planes: false, quakes: true, chokepoints: true };
+  return { ships: true, planes: true, quakes: true, chokepoints: true };
 };
 
 const cssRgb = (name) => {
@@ -166,22 +166,54 @@ export default function WorldMap() {
     resubTimer.current = setTimeout(() => connRef.current?.subscribe(viewportBbox()), 1200);
   };
 
-  /* ── Planes layer (poll around map centre) ───────────────────────────── */
+  /* ── Planes layer: viewport TILING, not one dot ──────────────────────── */
+  // The point API caps at 250 nm per query, which used to mean "planes only
+  // near the map centre". Now the visible area is tiled with up to 6 query
+  // circles (merged, deduped by hex) — regional views get full coverage;
+  // at world zoom the tiles cover the central band and the hint says so.
+  const planeTiles = () => {
+    const [[latMin, lonMin], [latMax, lonMax]] = viewportBbox();
+    const la1 = Math.max(-60, latMin), la2 = Math.min(72, latMax);
+    if (la2 <= la1) return [];
+    const midLat = (la1 + la2) / 2;
+    const spanLatNm = (la2 - la1) * 60;
+    const spanLonNm = (lonMax - lonMin) * 60 * Math.max(0.2, Math.cos((midLat * Math.PI) / 180));
+    const rows = Math.min(2, Math.max(1, Math.ceil(spanLatNm / 480)));
+    const cols = Math.min(3, Math.max(1, Math.ceil(spanLonNm / 480)));
+    const tiles = [];
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        tiles.push({
+          lat: la1 + ((r + 0.5) / rows) * (la2 - la1),
+          lon: lonMin + ((c + 0.5) / cols) * (lonMax - lonMin),
+          radius: 250,
+        });
+      }
+    }
+    return tiles.slice(0, 6);
+  };
   useEffect(() => {
     if (!layers.planes) { planesRef.current = []; setPlaneStatus("off"); needsDraw.current = true; return; }
     let alive = true;
     const load = async () => {
       try {
-        const c = viewportCenter();
-        const planes = await fetchPlanes({ lat: c.lat, lon: c.lon, radius: 250 });
+        const results = await Promise.allSettled(planeTiles().map((t) => fetchPlanes(t)));
         if (!alive) return;
-        planesRef.current = planes;
+        const byHex = new Map();
+        let okTiles = 0;
+        for (const r of results) {
+          if (r.status !== "fulfilled") continue;
+          okTiles++;
+          for (const p of r.value) byHex.set(p.hex, p);
+        }
+        if (okTiles === 0) throw new Error(results[0]?.reason?.message || "ADS-B unreachable");
+        planesRef.current = [...byHex.values()];
         setPlaneStatus("live");
         needsDraw.current = true;
       } catch (e) { if (alive) setPlaneStatus(e.message); }
     };
     load();
-    const id = setInterval(() => { if (!document.hidden) load(); }, 8000);
+    const id = setInterval(() => { if (!document.hidden) load(); }, 10000);
     return () => { alive = false; clearInterval(id); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [layers.planes]);
@@ -551,7 +583,7 @@ export default function WorldMap() {
                 </span>
               </label>
             ))}
-            <p className="text-[9px] text-dim/70 leading-snug mt-1">Air traffic streams within 250 nm of the map centre.</p>
+            <p className="text-[9px] text-dim/70 leading-snug mt-1">Air traffic tiles the visible area (full coverage at regional zoom; the central band at world zoom — zoom into a region for everything).</p>
           </div>
 
           {/* Hover tooltip: object or country name */}
