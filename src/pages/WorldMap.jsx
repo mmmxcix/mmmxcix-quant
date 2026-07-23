@@ -174,7 +174,23 @@ export default function WorldMap() {
   };
   const viewportCenter = () => {
     const { cx, cy } = viewRef.current;
-    return { lat: invMercLat(cy), lon: invMercLon(cx) };
+    return { lat: invMercLat(cy), lon: invMercLon(((cx % 1) + 1) % 1) };
+  };
+
+  // Google-Maps geometry: the map wraps forever left/right (cx normalized to
+  // [0,1), the world redraws per visible copy), can't scroll past the poles
+  // (cy clamped), and can't zoom out past "world fills the viewport width".
+  const clampView = () => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const w = el.clientWidth || 800, h = el.clientHeight || 560;
+    const v = viewRef.current;
+    v.scale = Math.max(w, Math.min(600_000, v.scale || w));
+    v.cx = ((v.cx % 1) + 1) % 1;
+    const vTop = 0.02, vBot = 0.98;
+    const halfV = h / (2 * v.scale);
+    if (vBot - vTop <= 2 * halfV) v.cy = (vTop + vBot) / 2;
+    else v.cy = Math.max(vTop + halfV, Math.min(vBot - halfV, v.cy));
   };
 
   /* ── Ships layer: FLEET SNAPSHOT (worldmonitor pattern) ───────────────
@@ -214,8 +230,6 @@ export default function WorldMap() {
     return () => { alive = false; clearInterval(id); };
   }, [layers.ships]);
 
-  // Viewport no longer drives a subscription — the snapshot is global.
-  const scheduleResub = () => {};
 
   /* ── Planes layer: viewport TILING, not one dot ──────────────────────── */
   // The point API caps at 250 nm per query, which used to mean "planes only
@@ -347,9 +361,18 @@ export default function WorldMap() {
       const ctx = canvas.getContext("2d");
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, w, h);
+      clampView();
       const { cx, cy, scale } = viewRef.current;
-      const X = (u) => (u - cx) * scale + w / 2;
+      // Static layers (countries, cables) redraw once per visible world copy
+      // via kOff; point layers use XP, which snaps each point to its nearest
+      // copy — that is the seamless wrap.
+      let kOff = 0;
+      const X = (u) => (u + kOff - cx) * scale + w / 2;
       const Y = (v) => (v - cy) * scale + h / 2;
+      const XP = (u) => { let du = u - cx; du -= Math.round(du); return du * scale + w / 2; };
+      const halfW = w / (2 * scale);
+      const copies = [];
+      for (let k = Math.floor(cx - halfW - 1); k <= Math.floor(cx + halfW); k++) copies.push(k);
       const L = layersRef.current;
 
       // Countries: subtle fill + real borders; hovered/selected outlined hot.
@@ -368,6 +391,8 @@ export default function WorldMap() {
         }
       };
       const downCol = cssRgb("--c-down"), upColC = cssRgb("--c-up");
+      for (const kCopy of copies) {
+      kOff = kCopy;
       for (const c of countriesRef.current) {
         const hot = c.id === hovId || c.id === selId;
         trace(c.polys);
@@ -391,7 +416,6 @@ export default function WorldMap() {
         ctx.lineWidth = hot ? 1.2 : 0.5;
         ctx.stroke();
       }
-      ctx.globalAlpha = 1;
 
       // Submarine cables — thin teal arcs under the traffic layers.
       if (L.cables && cablesRef.current) {
@@ -409,14 +433,16 @@ export default function WorldMap() {
           }
           ctx.stroke();
         }
-        ctx.globalAlpha = 1;
       }
+      } // end world copies
+      kOff = 0;
+      ctx.globalAlpha = 1;
 
       // Quakes: circles sized by magnitude.
       if (L.quakes) {
         const qc = vizColor("pink");
         for (const q of quakesRef.current) {
-          const px = X(mercX(q.lon)), py = Y(mercY(q.lat));
+          const px = XP(mercX(q.lon)), py = Y(mercY(q.lat));
           if (px < -20 || py < -20 || px > w + 20 || py > h + 20) continue;
           const r = Math.max(2, (q.mag - 2) * 2.4);
           ctx.beginPath();
@@ -437,7 +463,7 @@ export default function WorldMap() {
         const dim = cssRgb("--c-dim"), up = cssRgb("--c-up");
         for (const v of vesselsRef.current.values()) {
           if (v.lat == null) continue;
-          const px = X(mercX(v.lon)), py = Y(mercY(v.lat));
+          const px = XP(mercX(v.lon)), py = Y(mercY(v.lat));
           if (px < -8 || py < -8 || px > w + 8 || py > h + 8) continue;
           const moving = v.sog >= 0.5;
           const vk = SHIP_VIZ[bucketOf(v)];
@@ -453,7 +479,7 @@ export default function WorldMap() {
       // Planes: track-rotated triangles.
       if (L.planes) {
         for (const p of planesRef.current) {
-          const px = X(mercX(p.lon)), py = Y(mercY(p.lat));
+          const px = XP(mercX(p.lon)), py = Y(mercY(p.lat));
           if (px < -10 || py < -10 || px > w + 10 || py > h + 10) continue;
           ctx.save();
           ctx.translate(px, py);
@@ -473,7 +499,7 @@ export default function WorldMap() {
       if (L.chokepoints) {
         ctx.fillStyle = accent;
         for (const cp of CHOKEPOINTS) {
-          const px = X(mercX(cp.lon)), py = Y(mercY(cp.lat));
+          const px = XP(mercX(cp.lon)), py = Y(mercY(cp.lat));
           if (px < -20 || py < -20 || px > w + 20 || py > h + 20) continue;
           ctx.globalAlpha = 0.9;
           ctx.save();
@@ -515,7 +541,11 @@ export default function WorldMap() {
     const nearestObject = (px, py) => {
       const { cx, cy, scale } = viewRef.current;
       const r = el.getBoundingClientRect();
-      const P = (lon, lat) => [(mercX(lon) - cx) * scale + r.width / 2, (mercY(lat) - cy) * scale + r.height / 2];
+      const P = (lon, lat) => {
+        let du = mercX(lon) - cx;
+        du -= Math.round(du); // nearest world copy — matches the wrapped draw
+        return [du * scale + r.width / 2, (mercY(lat) - cy) * scale + r.height / 2];
+      };
       let best = null, bd = 144;
       const L = layersRef.current;
       if (L.planes) for (const p of planesRef.current) {
@@ -542,9 +572,9 @@ export default function WorldMap() {
       if (drag) {
         viewRef.current.cx += drag.u - p.u;
         viewRef.current.cy += drag.v - p.v;
+        clampView();
         needsDraw.current = true;
         setHover(null);
-        scheduleResub();
         return;
       }
       const obj = nearestObject(p.px, p.py);
@@ -561,7 +591,7 @@ export default function WorldMap() {
         return;
       }
       setHover(null);
-      const c = countryAt(countriesRef.current, p.u, p.v);
+      const c = countryAt(countriesRef.current, ((p.u % 1) + 1) % 1, p.v);
       const id = c?.id ?? null;
       if (id !== hoverCountryRef.current) {
         hoverCountryRef.current = id;
@@ -590,7 +620,7 @@ export default function WorldMap() {
       }
       const { cx, cy, scale } = viewRef.current;
       const u = (px - r.width / 2) / scale + cx, v = (py - r.height / 2) / scale + cy;
-      const c = countryAt(countriesRef.current, u, v);
+      const c = countryAt(countriesRef.current, ((u % 1) + 1) % 1, v);
       if (c) {
         const sel = { kind: "country", id: c.id, name: c.name, yield: undefined };
         setSelected(sel);
@@ -619,12 +649,12 @@ export default function WorldMap() {
       const p = toWorld(e);
       const f = Math.exp(-e.deltaY * 0.0015);
       const view = viewRef.current;
-      const ns = Math.max(250, Math.min(600_000, view.scale * f));
+      const ns = Math.min(600_000, view.scale * f);
       view.cx = p.u - (p.u - view.cx) * (view.scale / ns);
       view.cy = p.v - (p.v - view.cy) * (view.scale / ns);
       view.scale = ns;
+      clampView();
       needsDraw.current = true;
-      scheduleResub();
     };
     el.addEventListener("pointerdown", onDown);
     el.addEventListener("pointermove", onMove);
@@ -649,8 +679,8 @@ export default function WorldMap() {
       cx: (x1 + x2) / 2, cy: (y1 + y2) / 2,
       scale: Math.min(w / (x2 - x1), h / (y2 - y1)) * 0.9,
     };
+    clampView();
     needsDraw.current = true;
-    scheduleResub();
   };
 
   const sel = selected;
@@ -658,7 +688,7 @@ export default function WorldMap() {
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
-        <button onClick={() => { viewRef.current = { cx: 0.5, cy: 0.42, scale: (wrapRef.current?.clientWidth || 800) * 1.05 }; needsDraw.current = true; scheduleResub(); }}
+        <button onClick={() => { viewRef.current = { cx: 0.5, cy: 0.42, scale: (wrapRef.current?.clientWidth || 800) * 1.05 }; clampView(); needsDraw.current = true; }}
           className="chip chip-idle">World</button>
         {CHOKEPOINTS.map((cp) => (
           <button key={cp.id} onClick={() => jumpTo(cp)} className="chip chip-idle">{cp.label}</button>
