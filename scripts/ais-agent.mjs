@@ -409,4 +409,40 @@ async function sweepProjects() {
 setInterval(sweepProjects, PROJECTS_EVERY_MS);
 setTimeout(sweepProjects, 40_000);
 
-console.log("fleet agent running — ships 45s · planes+jamming now · fires 15s · conflicts 30s · disasters 20s · projects 40s");
+// ── Satellite TLEs (curated CelesTrak groups), every 8h ─────────────────────
+// Group -> how many to keep (Starlink is 10k+; a sample is plenty visually).
+const SAT_GROUPS = {
+  stations: 999, "gps-ops": 999, galileo: 999, "glo-ops": 999, beidou: 999,
+  weather: 999, science: 999, "geo": 200, starlink: 300,
+};
+const SATS_EVERY_MS = 8 * 3600_000;
+async function sweepSatellites() {
+  try {
+    const rows = [];
+    for (const [group, keep] of Object.entries(SAT_GROUPS)) {
+      let text;
+      try {
+        const r = await fetch(`https://celestrak.org/NORAD/elements/gp.php?GROUP=${group}&FORMAT=tle`, { signal: AbortSignal.timeout(30_000) });
+        if (!r.ok) continue;
+        text = await r.text();
+      } catch { continue; }
+      const lines = text.split("\n").map((l) => l.replace(/\r$/, ""));
+      const set = [];
+      for (let i = 0; i + 2 < lines.length; i += 3) {
+        const name = lines[i].trim(), l1 = lines[i + 1], l2 = lines[i + 2];
+        if (!l1.startsWith("1 ") || !l2.startsWith("2 ")) continue;
+        set.push([name.slice(0, 30), group, l1, l2]);
+      }
+      const step = set.length > keep ? Math.ceil(set.length / keep) : 1;
+      for (let i = 0; i < set.length; i += step) rows.push(set[i]);
+      await new Promise((r) => setTimeout(r, 300));
+    }
+    if (!rows.length) throw new Error("no TLEs fetched");
+    await pushJson("/api/satellites", { satellites: rows }, "satellites");
+    console.log(`[${new Date().toISOString()}] satellites: pushed ${rows.length} TLEs → ok`);
+  } catch (e) { console.error(`satellites sweep failed: ${e.message}`); }
+}
+setInterval(sweepSatellites, SATS_EVERY_MS);
+setTimeout(sweepSatellites, 50_000);
+
+console.log("fleet agent running — ships 45s · planes+jamming now · fires 15s · conflicts 30s · disasters 20s · projects 40s · satellites 50s");

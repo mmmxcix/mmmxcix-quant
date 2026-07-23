@@ -4,6 +4,7 @@ import { cn, fmtNum, fmtPct } from "@/lib/utils";
 import { shipCategory, formatEta, CORRIDORS } from "@/lib/ais";
 import { fetchRoute, planeCategory } from "@/lib/planes";
 import { fetchNewsPins, COUNTRY_PINS } from "@/lib/geoNews";
+import { fetchSatellites, propagateAll, SAT_GROUPS } from "@/lib/satellites";
 import { decodeCountries, projectCountries, countryAt, invMercLon, invMercLat, yieldCodeLookup } from "@/lib/geo";
 import { mercX, mercY } from "@/lib/ais";
 import { fetchYieldStats, fetchYields, yieldCurves } from "@/lib/macro";
@@ -39,6 +40,7 @@ const CHOKEPOINTS = CORRIDORS.filter((c) => c.id !== "world").map((c) => ({
 const LAYER_DEFS = [
   { id: "ships", label: "Ship traffic", icon: Ship },
   { id: "planes", label: "Air traffic", icon: Plane },
+  { id: "satellites", label: "Satellites (live)", icon: Satellite },
   { id: "quakes", label: "Earthquakes (24h)", icon: Activity },
   { id: "chokepoints", label: "Chokepoints + transits", icon: Anchor },
   { id: "cables", label: "Submarine cables", icon: Cable },
@@ -57,7 +59,7 @@ const LAYER_DEFS = [
 ];
 
 const LS_LAYERS = "quant_map_layers_v3"; // v3: cables + yield stress
-const LAYER_DEFAULTS = { ships: true, planes: true, quakes: true, chokepoints: true, cables: true, yields: true, news: true, fires: true, conflicts: true, disasters: true, power: false, pipelines: false, mines: false, rigs: false, jamming: false, projects: false, instab: true };
+const LAYER_DEFAULTS = { ships: true, planes: true, satellites: false, quakes: true, chokepoints: true, cables: true, yields: true, news: true, fires: true, conflicts: true, disasters: true, power: false, pipelines: false, mines: false, rigs: false, jamming: false, projects: false, instab: true };
 
 const RIG_TYPES = { o: ["pink", "Oil"], g: ["amber", "Gas"], p: ["blue", "Platform"] };
 
@@ -148,6 +150,8 @@ export default function WorldMap() {
   const pipesRef = useRef(null);        // projected pipeline polylines (lazy)
   const minesRef = useRef([]);          // producing mines {lat,lon,commod,name,u,v}
   const rigsRef = useRef([]);           // offshore platforms {lat,lon,k,name,u,v}
+  const satsRef = useRef([]);           // parsed satrecs {name,group,satrec}
+  const satPosRef = useRef([]);         // current sub-points {name,group,lon,lat,alt}
   const jammingRef = useRef([]);        // GPS-interference cells {lat,lon,frac,total,u,v}
   const projectsRef = useRef([]);       // WB per-country {country,count,usd,names,u,v}
   const centroidRef = useRef(new Map()); // country-name(lower) -> {u,v} for project pins
@@ -506,6 +510,29 @@ export default function WorldMap() {
     }).catch(() => { /* layer stays empty */ });
     return () => { alive = false; };
   }, [layers.mines]);
+
+  /* ── Satellites (live SGP4 from CelesTrak TLEs) ──────────────────────── */
+  useEffect(() => {
+    if (!layers.satellites) { satsRef.current = []; satPosRef.current = []; needsDraw.current = true; return; }
+    let alive = true, timer = null;
+    const tick = () => {
+      if (!satsRef.current.length) return;
+      satPosRef.current = propagateAll(satsRef.current, new Date());
+      needsDraw.current = true;
+    };
+    fetchSatellites().then((sats) => {
+      if (!alive) return;
+      satsRef.current = sats;
+      tick();
+      // 1s steps are smooth enough for orbital motion and cheap for ~700 sats.
+      timer = setInterval(() => { if (!document.hidden) tick(); }, 1000);
+    }).catch(() => { /* layer stays empty */ });
+    // Refresh the TLE set every 6h in case the tab lives that long.
+    const reload = setInterval(() => {
+      fetchSatellites().then((sats) => { if (alive && sats.length) satsRef.current = sats; }).catch(() => {});
+    }, 6 * 3600_000);
+    return () => { alive = false; if (timer) clearInterval(timer); clearInterval(reload); };
+  }, [layers.satellites]);
 
   /* ── Offshore oil/gas platforms (vendored OpenStreetMap) ─────────────── */
   useEffect(() => {
@@ -886,6 +913,21 @@ export default function WorldMap() {
         ctx.globalAlpha = 1;
       }
 
+      // Satellites: live sub-points, colored by constellation group.
+      if (L.satellites && satPosRef.current.length) {
+        for (const st of satPosRef.current) {
+          const px = XP(mercX(st.lon)), py = Y(mercY(st.lat));
+          if (px < -4 || py < -4 || px > w + 4 || py > h + 4) continue;
+          const [vk] = SAT_GROUPS[st.group] || ["dim"];
+          ctx.fillStyle = vk === "accent" ? accent : vk === "dim" ? cssRgb("--c-dim") : vizColor(vk);
+          ctx.globalAlpha = vk === "dim" ? 0.5 : 0.9;
+          ctx.beginPath();
+          ctx.arc(px, py, vk === "accent" ? 2.4 : 1.5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+      }
+
       // Quakes: circles sized by magnitude.
       if (L.quakes) {
         const qc = vizColor("pink");
@@ -1064,6 +1106,11 @@ export default function WorldMap() {
       let best = null, bd = 144;
       const L = layersRef.current;
       const F = filtersRef.current;
+      if (L.satellites) for (const st of satPosRef.current) {
+        const [x, y] = P(st.lon, st.lat);
+        const d = (x - px) ** 2 + (y - py) ** 2;
+        if (d < bd) { bd = d; best = { kind: "satellite", x, y, data: st }; }
+      }
       if (L.planes) for (const p of planesRef.current) {
         if (F.plane[p.category] === false) continue;
         const [x, y] = P(p.lon, p.lat);
@@ -1144,6 +1191,7 @@ export default function WorldMap() {
         setHover({
           x: obj.x, y: obj.y,
           label: obj.kind === "ship" ? (d.staticName || d.name)
+            : obj.kind === "satellite" ? d.name
             : obj.kind === "plane" ? d.callsign
             : obj.kind === "news" ? `${d.name} · ${d.items.length} headline${d.items.length > 1 ? "s" : ""}`
             : obj.kind === "fire" ? `Fire · ${d.frp} MW`
@@ -1154,6 +1202,7 @@ export default function WorldMap() {
             : obj.kind === "rig" ? (d.name || "Offshore platform")
             : `M${d.mag?.toFixed(1)}`,
           sub: obj.kind === "ship" ? `${(d.sog ?? 0).toFixed(1)} kn${d.destination ? ` → ${d.destination}` : ""}`
+            : obj.kind === "satellite" ? `${(SAT_GROUPS[d.group] || [])[1] || "satellite"} · ${fmtNum(d.alt, 0)} km`
             : obj.kind === "plane" ? `${d.type || ""} ${d.onGround ? "ground" : fmtNum(d.alt, 0) + " ft"}`
             : obj.kind === "news" ? (d.items[0]?.title || "").slice(0, 60)
             : obj.kind === "fire" ? "VIIRS thermal anomaly · NASA FIRMS"
@@ -1301,6 +1350,7 @@ export default function WorldMap() {
                 <span className="ml-auto text-[10px] font-mono text-dim">
                   {ld.id === "ships" ? fmtNum(counts.ships, 0)
                     : ld.id === "planes" ? fmtNum(counts.planes, 0)
+                    : ld.id === "satellites" ? (satPosRef.current.length || "")
                     : ld.id === "quakes" ? fmtNum(counts.quakes, 0)
                     : ld.id === "cables" ? (cablesRef.current ? cablesRef.current.length : "")
                     : ld.id === "yields" ? (spreadsRef.current.size || "")
@@ -1388,6 +1438,7 @@ export default function WorldMap() {
               <p className="font-semibold truncate">
                 {sel.kind === "country" ? sel.name
                   : sel.kind === "ship" ? (sel.data.staticName || sel.data.name)
+                  : sel.kind === "satellite" ? sel.data.name
                   : sel.kind === "plane" ? sel.data.callsign
                   : sel.kind === "news" ? `${sel.data.name} — news`
                   : sel.kind === "fire" ? "Fire detection"
@@ -1433,6 +1484,17 @@ export default function WorldMap() {
                     </p>
                   ) : null;
                 })()}
+              </div>
+            )}
+
+            {sel.kind === "satellite" && (
+              <div className="text-xs space-y-1.5">
+                <p className="text-dim">{(SAT_GROUPS[sel.data.group] || [])[1] || "satellite"}</p>
+                <div className="grid grid-cols-2 gap-x-3 gap-y-1 font-mono pt-1 border-t border-line/60">
+                  <span className="text-dim">Altitude</span><span className="text-right">{fmtNum(sel.data.alt, 0)} km</span>
+                  <span className="text-dim">Sub-point</span><span className="text-right">{sel.data.lat.toFixed(1)}, {sel.data.lon.toFixed(1)}</span>
+                </div>
+                <p className="text-[10px] text-dim/70">Live SGP4 from CelesTrak TLEs. Position is the ground track, not the orbit.</p>
               </div>
             )}
 
@@ -1572,6 +1634,7 @@ export default function WorldMap() {
       <p className="text-xs text-dim leading-relaxed">
         One map, all layers: real country borders (detailed 50m outlines load in the background),
         the global AIS fleet and worldwide air traffic (both pushed by our 24/7 agent),
+        live satellites (SGP4 from CelesTrak),
         NASA FIRMS fires, GDACS disasters (floods/droughts/cyclones/wildfires),
         UCDP conflict events (~6 months, preliminary), USGS earthquakes (24h, M2.5+),
         power infrastructure, oil/NGL pipelines, producing mines and offshore platforms,
