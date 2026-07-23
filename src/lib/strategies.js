@@ -477,4 +477,103 @@ export const BUILT_IN_STRATEGIES = [
       };
     },
   },
+  {
+    id: "vwap-session-reclaim",
+    name: "VWAP Session Reclaim (Intraday)",
+    description:
+      "The session-VWAP reclaim setup: bias from daily VWAP vs session VWAP, a sweep of the opening range, then a reclaim-and-reject of the session VWAP triggers the entry. Stop beyond the reclaim extreme, take-profit as an R-multiple (the popular version targets the 'nearest swing' — an R-multiple is the testable equivalent). One trade per day, long and short. For intraday intervals (5m/15m) on session markets; defaults are the US cash open in UTC (13:30 summer / 14:30 winter — adjust for DST).",
+    params: [
+      { key: "sessionStartH", label: "Session start (UTC h)", default: 13, min: 0, max: 23, step: 1 },
+      { key: "sessionStartM", label: "Session start (UTC min)", default: 30, min: 0, max: 59, step: 15 },
+      { key: "orMinutes", label: "Opening range (min)", default: 30, min: 5, max: 120, step: 5 },
+      { key: "targetR", label: "Take-profit (R)", default: 1.5, min: 0.5, max: 5, step: 0.25 },
+      { key: "longOnly", label: "Long only (1/0)", default: 0, min: 0, max: 1, step: 1 },
+    ],
+    build({ sessionStartH = 13, sessionStartM = 30, orMinutes = 30, targetR = 1.5, longOnly = 0 } = {}) {
+      // Two anchored VWAPs, accumulated bar by bar (typical price x volume):
+      // the DAILY one from the UTC day open, the SESSION one from the cash
+      // open. Their relation is the bias filter; the entry is the classic
+      // sweep -> reclaim -> reject sequence around the session VWAP.
+      let dayPV = 0, dayV = 0, sesPV = 0, sesV = 0, inSession = false;
+      let prevDayVwap = null; // yesterday's full-day VWAP — the bias fallback
+      let orHi = -Infinity, orLo = Infinity;
+      let sweptLow = false, sweptHigh = false, reclaimedAbove = false, reclaimedBelow = false;
+      let traded = false, side = 0, stop = 0, target = 0;
+      return (ctx) => {
+        if (ctx.session.isNewDay) {
+          if (dayV > 0) prevDayVwap = dayPV / dayV;
+          dayPV = 0; dayV = 0; sesPV = 0; sesV = 0; inSession = false;
+          orHi = -Infinity; orLo = Infinity;
+          sweptLow = sweptHigh = reclaimedAbove = reclaimedBelow = false;
+          traded = false; side = 0;
+        }
+        const typ = (ctx.high + ctx.low + ctx.close) / 3;
+        const vol = ctx.candles[ctx.index].volume ?? 0;
+        dayPV += typ * vol; dayV += vol;
+
+        const sesStart = sessionStartH * 60 + sessionStartM;
+        const m = ctx.session.minuteOfDay;
+        if (m >= sesStart) {
+          if (!inSession) { inSession = true; sesPV = 0; sesV = 0; } // fresh session anchor
+          sesPV += typ * vol; sesV += vol;
+        }
+        const dailyVwap = dayV > 0 ? dayPV / dayV : null;
+        const sesVwap = sesV > 0 ? sesPV / sesV : null;
+
+        // Hold an open trade -- the engine's brackets do the exiting.
+        if (ctx.position !== "flat") {
+          return side === 1 ? { signal: "long", stop, target } : { signal: "short", stop, target };
+        }
+        if (traded || !inSession || dailyVwap == null || sesVwap == null) return "flat";
+
+        // Opening-range build phase (first orMinutes of the session).
+        if (m < sesStart + orMinutes) {
+          if (ctx.high > orHi) orHi = ctx.high;
+          if (ctx.low < orLo) orLo = ctx.low;
+          return "flat";
+        }
+        if (!(orHi > -Infinity) || !(vol > 0)) return "flat";
+
+        // Bias anchor. On 24/7 or futures data the daily VWAP (from the UTC
+        // day open) genuinely differs from the session VWAP. Cash-session-only
+        // data (Yahoo stocks: no premarket bars) makes the two accumulators
+        // IDENTICAL — there the prior day's full VWAP is the honest stand-in
+        // for "broader value vs today's session".
+        const sameAnchor = Math.abs(dailyVwap - sesVwap) < ctx.close * 1e-9;
+        const biasRef = sameAnchor ? prevDayVwap : dailyVwap;
+        if (biasRef == null) return "flat";
+
+        // SHORT: bias VWAP above session VWAP (seller bias), price sweeps the
+        // opening-range low, retraces to CLOSE above the session VWAP, then
+        // closes back below it -> short, stop above the reclaim.
+        if (!longOnly && biasRef > sesVwap) {
+          if (ctx.low < orLo) sweptLow = true;
+          if (sweptLow && ctx.close > sesVwap) reclaimedAbove = true;
+          else if (sweptLow && reclaimedAbove && ctx.close < sesVwap) {
+            const risk = Math.max(ctx.high, sesVwap) - ctx.close;
+            if (risk > 0) {
+              traded = true; side = -1;
+              stop = ctx.close + risk; target = ctx.close - risk * targetR;
+              return { signal: "short", stop, target };
+            }
+          }
+        }
+        // LONG mirror: bias VWAP below session VWAP, sweep of the range high,
+        // close below the session VWAP, then reclaim above it.
+        if (biasRef < sesVwap) {
+          if (ctx.high > orHi) sweptHigh = true;
+          if (sweptHigh && ctx.close < sesVwap) reclaimedBelow = true;
+          else if (sweptHigh && reclaimedBelow && ctx.close > sesVwap) {
+            const risk = ctx.close - Math.min(ctx.low, sesVwap);
+            if (risk > 0) {
+              traded = true; side = 1;
+              stop = ctx.close - risk; target = ctx.close + risk * targetR;
+              return { signal: "long", stop, target };
+            }
+          }
+        }
+        return "flat";
+      };
+    },
+  },
 ];
