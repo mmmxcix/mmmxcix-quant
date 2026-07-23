@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Layers, X, Ship, Plane, Activity, Anchor, Landmark, Radio, Cable, TrendingDown, Newspaper, Flame, AlertTriangle } from "lucide-react";
+import { Layers, X, Ship, Plane, Activity, Anchor, Landmark, Radio, Cable, TrendingDown, Newspaper, Flame, AlertTriangle, Swords } from "lucide-react";
 import { cn, fmtNum, fmtPct } from "@/lib/utils";
 import { shipCategory, formatEta, CORRIDORS } from "@/lib/ais";
 import { fetchRoute, planeCategory } from "@/lib/planes";
@@ -45,11 +45,33 @@ const LAYER_DEFS = [
   { id: "yields", label: "Yield-curve stress", icon: TrendingDown },
   { id: "news", label: "News pins", icon: Newspaper },
   { id: "fires", label: "Fires (24h)", icon: Flame },
+  { id: "conflicts", label: "Conflict events", icon: Swords },
   { id: "instab", label: "Instability signals", icon: AlertTriangle },
 ];
 
 const LS_LAYERS = "quant_map_layers_v3"; // v3: cables + yield stress
-const LAYER_DEFAULTS = { ships: true, planes: true, quakes: true, chokepoints: true, cables: true, yields: true, news: true, fires: true, instab: true };
+const LAYER_DEFAULTS = { ships: true, planes: true, quakes: true, chokepoints: true, cables: true, yields: true, news: true, fires: true, conflicts: true, instab: true };
+
+// Sub-category filters (ships/planes) — "only cargo", "only tankers", etc.
+const LS_FILTERS = "quant_map_filters_v1";
+const SHIP_CATS = ["cargo", "tanker", "passenger", "fishing", "other"];
+const PLANE_CATS = ["passenger", "cargo", "light", "other"];
+const FILTER_DEFAULTS = {
+  ship: Object.fromEntries(SHIP_CATS.map((c) => [c, true])),
+  plane: Object.fromEntries(PLANE_CATS.map((c) => [c, true])),
+};
+const loadFilters = () => {
+  try {
+    const v = JSON.parse(localStorage.getItem(LS_FILTERS) || "null");
+    if (v && typeof v === "object") return {
+      ship: { ...FILTER_DEFAULTS.ship, ...(v.ship || {}) },
+      plane: { ...FILTER_DEFAULTS.plane, ...(v.plane || {}) },
+    };
+  } catch { /* fall through */ }
+  return { ship: { ...FILTER_DEFAULTS.ship }, plane: { ...FILTER_DEFAULTS.plane } };
+};
+// UCDP type_of_violence → viz color key + label
+const CONFLICT_TYPES = { 1: ["down", "state-based"], 2: ["amber", "non-state"], 3: ["purple", "one-sided"] };
 const loadLayers = () => {
   try {
     const v = JSON.parse(localStorage.getItem(LS_LAYERS) || "null");
@@ -72,6 +94,7 @@ export default function WorldMap() {
   const [selected, setSelected] = useState(null); // { kind, ...data }
   const [counts, setCounts] = useState({ ships: 0, planes: 0, quakes: 0, fires: 0 });
   const [instabTop, setInstabTop] = useState([]);
+  const [filters, setFilters] = useState(loadFilters);
 
   const wrapRef = useRef(null);
   const canvasRef = useRef(null);
@@ -87,18 +110,39 @@ export default function WorldMap() {
   const spreadsRef = useRef(new Map()); // ISO2 -> 10Y-2Y spread (pp)
   const newsRef = useRef([]);           // geolocated news pins
   const firesRef = useRef([]);          // FIRMS detections {lat,lon,frp,u,v}
+  const conflictsRef = useRef([]);      // UCDP events {lat,lon,best,type,date,country,a,b,u,v}
   const instabRef = useRef({ byId: new Map(), top: [] });
   const countryBoxesRef = useRef([]);   // per-polygon bounding boxes, small-first
   const pinNameCacheRef = useRef(new Map()); // country name -> COUNTRY_PINS entry
   const chokeStatsRef = useRef(new Map()); // chokepoint id -> {n, anchored}
   const layersRef = useRef(layers);
   layersRef.current = layers;
+  const filtersRef = useRef(filters);
+  filtersRef.current = filters;
   selectedRef.current = selected;
 
   const toggleLayer = (id) => {
     setLayers((l) => {
       const next = { ...l, [id]: !l[id] };
       try { localStorage.setItem(LS_LAYERS, JSON.stringify(next)); } catch { /* quota */ }
+      return next;
+    });
+  };
+  // Solo mode: show ONLY this layer; "all on" restores everything.
+  const soloLayer = (id) => {
+    const next = Object.fromEntries(LAYER_DEFS.map((d) => [d.id, d.id === id]));
+    setLayers(next);
+    try { localStorage.setItem(LS_LAYERS, JSON.stringify(next)); } catch { /* quota */ }
+  };
+  const allLayers = () => {
+    setLayers({ ...LAYER_DEFAULTS });
+    try { localStorage.setItem(LS_LAYERS, JSON.stringify(LAYER_DEFAULTS)); } catch { /* quota */ }
+  };
+  const toggleCat = (kind, cat) => {
+    setFilters((f) => {
+      const next = { ...f, [kind]: { ...f[kind], [cat]: !f[kind][cat] } };
+      try { localStorage.setItem(LS_FILTERS, JSON.stringify(next)); } catch { /* quota */ }
+      needsDraw.current = true;
       return next;
     });
   };
@@ -339,6 +383,27 @@ export default function WorldMap() {
     return () => { alive = false; clearInterval(id); };
   }, [layers.fires]);
 
+  /* ── Conflicts (UCDP candidate, ~6 months): snapshot via fleet agent ─── */
+  useEffect(() => {
+    if (!layers.conflicts) { conflictsRef.current = []; needsDraw.current = true; return; }
+    let alive = true;
+    const load = async () => {
+      try {
+        const r = await fetch("/api/conflicts");
+        if (!r.ok) return; // 404 until the agent's first UCDP sweep
+        const j = await r.json();
+        if (!alive) return;
+        conflictsRef.current = (j.conflicts || []).map(([lat, lon, best, type, date, country, a, b]) => ({
+          lat, lon, best, type, date, country, a, b, u: mercX(lon), v: mercY(lat),
+        }));
+        needsDraw.current = true;
+      } catch { /* keep last data */ }
+    };
+    load();
+    const id = setInterval(load, 30 * 60_000);
+    return () => { alive = false; clearInterval(id); };
+  }, [layers.conflicts]);
+
   /* ── Quakes layer (USGS, direct — they send CORS) ────────────────────── */
   useEffect(() => {
     if (!layers.quakes) { quakesRef.current = []; needsDraw.current = true; return; }
@@ -368,8 +433,11 @@ export default function WorldMap() {
       const store = vesselsRef.current;
       const now = Date.now();
       for (const [k, v] of store) if (now - v.t > STALE_MS) store.delete(k);
+      const F = filtersRef.current;
       let ships = 0;
-      for (const v of store.values()) if (v.lat != null) ships++;
+      for (const v of store.values()) if (v.lat != null && F.ship[bucketOf(v)] !== false) ships++;
+      let planesN = 0;
+      for (const pl of planesRef.current) if (F.plane[pl.category] !== false) planesN++;
       // Live transit stats per chokepoint: vessels inside its bbox and the
       // anchored share — the queue signal commodity traders actually watch.
       for (const cp of CHOKEPOINTS) {
@@ -407,6 +475,11 @@ export default function WorldMap() {
           const c = hit(fires[i].u, fires[i].v);
           if (c) { const e = hits.get(c.id) || { q: 0, f: 0 }; e.f += step; hits.set(c.id, e); }
         }
+        for (const ev of conflictsRef.current) {
+          if (!ev.best) continue;
+          const c = hit(ev.u, ev.v);
+          if (c) { const e = hits.get(c.id) || { q: 0, f: 0 }; e.k = (e.k || 0) + ev.best; hits.set(c.id, e); }
+        }
         const newsBy = new Map(newsRef.current.map((p) => [p.code, p.items.length]));
         const pinCache = pinNameCacheRef.current;
         const out = [];
@@ -421,15 +494,17 @@ export default function WorldMap() {
           const newsPts = Math.min(25, news * 5);
           const qPts = Math.min(20, e.q * 10);
           const fPts = Math.min(15, Math.round(Math.sqrt(e.f) * 1.6));
-          const score = inv + newsPts + qPts + fPts;
-          if (score > 0) out.push({ id: c.id, name: c.name, score, inv, newsPts, qPts, fPts });
+          // Conflict fatalities (UCDP, ~6 months) — the strongest signal we have.
+          const kPts = Math.min(35, Math.round(Math.sqrt(e.k || 0) * 1.4));
+          const score = Math.min(100, inv + newsPts + qPts + fPts + kPts);
+          if (score > 0) out.push({ id: c.id, name: c.name, score, inv, newsPts, qPts, fPts, kPts });
         }
         out.sort((a, b) => b.score - a.score);
         instabRef.current = { byId: new Map(out.map((o) => [o.id, o])), top: out.slice(0, 8) };
         setInstabTop(instabRef.current.top);
         if (layersRef.current.instab) needsDraw.current = true;
       }
-      setCounts({ ships, planes: planesRef.current.length, quakes: quakesRef.current.length, fires: firesRef.current.length });
+      setCounts({ ships, planes: planesN, quakes: quakesRef.current.length, fires: firesRef.current.length });
     }, 5000);
     return () => clearInterval(id);
   }, []);
@@ -555,6 +630,21 @@ export default function WorldMap() {
         ctx.globalAlpha = 1;
       }
 
+      // Conflict events (UCDP): dots colored by violence type, sized by deaths.
+      if (L.conflicts && conflictsRef.current.length) {
+        for (const ev of conflictsRef.current) {
+          const px = XP(ev.u), py = Y(ev.v);
+          if (px < -8 || py < -8 || px > w + 8 || py > h + 8) continue;
+          const [vk] = CONFLICT_TYPES[ev.type] || ["pink"];
+          ctx.fillStyle = vk === "down" ? downCol : vizColor(vk);
+          ctx.globalAlpha = ev.best > 0 ? 0.6 : 0.3;
+          ctx.beginPath();
+          ctx.arc(px, py, Math.min(7, 1.6 + Math.sqrt(ev.best) * 0.7), 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+      }
+
       // Quakes: circles sized by magnitude.
       if (L.quakes) {
         const qc = vizColor("pink");
@@ -578,8 +668,9 @@ export default function WorldMap() {
       // Ships.
       if (L.ships) {
         const dim = cssRgb("--c-dim"), up = cssRgb("--c-up");
+        const FS = filtersRef.current.ship;
         for (const v of vesselsRef.current.values()) {
-          if (v.lat == null) continue;
+          if (v.lat == null || FS[bucketOf(v)] === false) continue;
           const px = XP(mercX(v.lon)), py = Y(mercY(v.lat));
           if (px < -8 || py < -8 || px > w + 8 || py > h + 8) continue;
           const moving = v.sog >= 0.5;
@@ -595,7 +686,9 @@ export default function WorldMap() {
 
       // Planes: track-rotated triangles.
       if (L.planes) {
+        const FP = filtersRef.current.plane;
         for (const p of planesRef.current) {
+          if (FP[p.category] === false) continue;
           const px = XP(mercX(p.lon)), py = Y(mercY(p.lat));
           if (px < -10 || py < -10 || px > w + 10 || py > h + 10) continue;
           ctx.save();
@@ -689,13 +782,15 @@ export default function WorldMap() {
       };
       let best = null, bd = 144;
       const L = layersRef.current;
+      const F = filtersRef.current;
       if (L.planes) for (const p of planesRef.current) {
+        if (F.plane[p.category] === false) continue;
         const [x, y] = P(p.lon, p.lat);
         const d = (x - px) ** 2 + (y - py) ** 2;
         if (d < bd) { bd = d; best = { kind: "plane", x, y, data: p }; }
       }
       if (L.ships) for (const v of vesselsRef.current.values()) {
-        if (v.lat == null) continue;
+        if (v.lat == null || F.ship[bucketOf(v)] === false) continue;
         const [x, y] = P(v.lon, v.lat);
         const d = (x - px) ** 2 + (y - py) ** 2;
         if (d < bd) { bd = d; best = { kind: "ship", x, y, data: v }; }
@@ -709,6 +804,11 @@ export default function WorldMap() {
         const [x, y] = P(pin.lon, pin.lat);
         const d = (x - px) ** 2 + (y - py) ** 2;
         if (d < bd) { bd = d; best = { kind: "news", x, y, data: pin }; }
+      }
+      if (L.conflicts) for (const ev of conflictsRef.current) {
+        const [x, y] = P(ev.lon, ev.lat);
+        const d = (x - px) ** 2 + (y - py) ** 2;
+        if (d < bd) { bd = d; best = { kind: "conflict", x, y, data: ev }; }
       }
       if (L.fires) for (const f of firesRef.current) {
         const [x, y] = P(f.lon, f.lat);
@@ -738,11 +838,13 @@ export default function WorldMap() {
             : obj.kind === "plane" ? d.callsign
             : obj.kind === "news" ? `${d.name} · ${d.items.length} headline${d.items.length > 1 ? "s" : ""}`
             : obj.kind === "fire" ? `Fire · ${d.frp} MW`
+            : obj.kind === "conflict" ? `${d.country} · ${d.best} death${d.best === 1 ? "" : "s"}`
             : `M${d.mag?.toFixed(1)}`,
           sub: obj.kind === "ship" ? `${(d.sog ?? 0).toFixed(1)} kn${d.destination ? ` → ${d.destination}` : ""}`
             : obj.kind === "plane" ? `${d.type || ""} ${d.onGround ? "ground" : fmtNum(d.alt, 0) + " ft"}`
             : obj.kind === "news" ? (d.items[0]?.title || "").slice(0, 60)
             : obj.kind === "fire" ? "VIIRS thermal anomaly · NASA FIRMS"
+            : obj.kind === "conflict" ? `${(CONFLICT_TYPES[d.type] || [])[1] || "violence"} · ${d.date}`
             : d.place,
         });
         return;
@@ -868,12 +970,16 @@ export default function WorldMap() {
           <div className="absolute top-3 left-3 rounded-xl border border-line bg-bg/85 backdrop-blur px-3 py-2.5 z-10 w-52">
             <p className="text-[10px] uppercase tracking-widest text-dim mb-1.5 flex items-center gap-1.5">
               <Layers className="w-3 h-3" /> Layers
+              <button onClick={allLayers} className="ml-auto text-[9px] normal-case tracking-normal text-accent hover:underline">all on</button>
             </p>
             {LAYER_DEFS.map((ld) => (
-              <label key={ld.id} className="flex items-center gap-2 py-1 cursor-pointer select-none">
+              <div key={ld.id}>
+              <label className="group flex items-center gap-2 py-1 cursor-pointer select-none">
                 <input type="checkbox" checked={!!layers[ld.id]} onChange={() => toggleLayer(ld.id)} className="accent-current w-3.5 h-3.5" />
                 <ld.icon className="w-3.5 h-3.5 text-dim" />
                 <span className="text-xs">{ld.label}</span>
+                <button onClick={(e) => { e.preventDefault(); soloLayer(ld.id); }}
+                  className="text-[9px] text-dim/0 group-hover:text-dim hover:!text-accent transition-colors" title="Show only this layer">only</button>
                 <span className="ml-auto text-[10px] font-mono text-dim">
                   {ld.id === "ships" ? fmtNum(counts.ships, 0)
                     : ld.id === "planes" ? fmtNum(counts.planes, 0)
@@ -882,9 +988,35 @@ export default function WorldMap() {
                     : ld.id === "yields" ? (spreadsRef.current.size || "")
                     : ld.id === "news" ? (newsRef.current.length || "")
                     : ld.id === "fires" ? (counts.fires ? fmtNum(counts.fires, 0) : "")
+                    : ld.id === "conflicts" ? (conflictsRef.current.length ? fmtNum(conflictsRef.current.length, 0) : "")
                     : ld.id === "instab" ? (instabTop.length || "") : ""}
                 </span>
               </label>
+              {ld.id === "ships" && layers.ships && (
+                <div className="flex flex-wrap gap-1 pl-6 pb-1">
+                  {SHIP_CATS.map((cat) => (
+                    <button key={cat} onClick={() => toggleCat("ship", cat)}
+                      className={cn("inline-flex items-center gap-1 rounded-full border px-1.5 py-px text-[9px] capitalize transition-colors",
+                        filters.ship[cat] ? "border-line text-text" : "border-line/40 text-dim/50 line-through")}>
+                      <span className="w-1.5 h-1.5 rounded-full" style={{ background: SHIP_VIZ[cat] ? vizColor(SHIP_VIZ[cat]) : "var(--tw-prose-body, #888)" }} />
+                      {cat}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {ld.id === "planes" && layers.planes && (
+                <div className="flex flex-wrap gap-1 pl-6 pb-1">
+                  {PLANE_CATS.map((cat) => (
+                    <button key={cat} onClick={() => toggleCat("plane", cat)}
+                      className={cn("inline-flex items-center gap-1 rounded-full border px-1.5 py-px text-[9px] capitalize transition-colors",
+                        filters.plane[cat] ? "border-line text-text" : "border-line/40 text-dim/50 line-through")}>
+                      <span className="w-1.5 h-1.5 rounded-full" style={{ background: PLANE_VIZ[cat] ? vizColor(PLANE_VIZ[cat]) : "#888" }} />
+                      {cat}
+                    </button>
+                  ))}
+                </div>
+              )}
+              </div>
             ))}
             <p className="text-[9px] text-dim/70 leading-snug mt-1">Ships, planes and fires are global snapshots pushed by our 24/7 agent. Yield stress: <span className="text-down">red = inverted 10Y−2Y curve</span> (our London bond data); <span className="text-accent">amber</span> = instability signals. Chokepoints label live vessel counts + anchored share.</p>
           </div>
@@ -916,7 +1048,7 @@ export default function WorldMap() {
                   <span className="text-[10px] font-mono text-dim w-6 text-right shrink-0">{c.score}</span>
                 </div>
               ))}
-              <p className="text-[9px] text-dim/70 leading-snug mt-1">Mix of our own layers: inverted curve · news attention · M5.5+ quakes · fire density. A signal mix, not a forecast.</p>
+              <p className="text-[9px] text-dim/70 leading-snug mt-1">Mix of our own layers: UCDP conflict deaths · inverted curve · news attention · M5.5+ quakes · fire density. A signal mix, not a forecast.</p>
             </div>
           )}
           <p className="absolute bottom-2 right-3 text-[10px] text-dim pointer-events-none">
@@ -934,6 +1066,7 @@ export default function WorldMap() {
                   : sel.kind === "plane" ? sel.data.callsign
                   : sel.kind === "news" ? `${sel.data.name} — news`
                   : sel.kind === "fire" ? "Fire detection"
+                  : sel.kind === "conflict" ? `${sel.data.country} — conflict event`
                   : `M${sel.data.mag?.toFixed(1)} earthquake`}
               </p>
               <button onClick={() => { setSelected(null); needsDraw.current = true; }} className="text-dim hover:text-text shrink-0" aria-label="Close">
@@ -967,7 +1100,7 @@ export default function WorldMap() {
                     <p className="text-dim pt-1.5 border-t border-line/60">
                       Instability <span className="text-text font-semibold">{sc.score}</span>/100
                       {sc.inv ? ` · curve +${sc.inv}` : ""}{sc.newsPts ? ` · news +${sc.newsPts}` : ""}
-                      {sc.qPts ? ` · quakes +${sc.qPts}` : ""}{sc.fPts ? ` · fires +${sc.fPts}` : ""}
+                      {sc.kPts ? ` · conflict +${sc.kPts}` : ""}{sc.qPts ? ` · quakes +${sc.qPts}` : ""}{sc.fPts ? ` · fires +${sc.fPts}` : ""}
                     </p>
                   ) : null;
                 })()}
@@ -1033,6 +1166,18 @@ export default function WorldMap() {
               </div>
             )}
 
+            {sel.kind === "conflict" && (
+              <div className="text-xs space-y-1.5">
+                <p className="text-dim capitalize">{(CONFLICT_TYPES[sel.data.type] || [])[1] || "organized violence"}</p>
+                <p className="leading-snug">{sel.data.a}{sel.data.b ? <span className="text-dim"> vs </span> : null}{sel.data.b}</p>
+                <div className="grid grid-cols-2 gap-x-3 gap-y-1 font-mono pt-1 border-t border-line/60">
+                  <span className="text-dim">Fatalities (best)</span><span className="text-right">{sel.data.best}</span>
+                  <span className="text-dim">Date</span><span className="text-right">{sel.data.date}</span>
+                </div>
+                <p className="text-dim">Source: UCDP candidate (preliminary monthly coding, Uppsala University).</p>
+              </div>
+            )}
+
             {sel.kind === "quake" && (
               <div className="text-xs space-y-1.5">
                 <p className="text-dim">{sel.data.place}</p>
@@ -1051,8 +1196,10 @@ export default function WorldMap() {
       <p className="text-xs text-dim leading-relaxed">
         One map, all layers: real country borders (detailed 50m outlines load in the background),
         the global AIS fleet and worldwide air traffic (both pushed by our 24/7 agent),
-        NASA FIRMS fires, USGS earthquakes (24h, M2.5+), submarine cables, news pins,
-        the trade chokepoints, and per-country instability signals. Click anything for
+        NASA FIRMS fires, UCDP conflict events (~6 months, preliminary), USGS earthquakes
+        (24h, M2.5+), submarine cables, news pins, the trade chokepoints, and per-country
+        instability signals. Ship/plane categories are filterable; hover a layer for
+        "only" to view it solo. Click anything for
         details — countries show our London bond-yield data where covered.
       </p>
     </div>

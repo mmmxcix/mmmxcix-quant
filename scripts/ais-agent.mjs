@@ -231,4 +231,93 @@ if (FIRMS_KEY) {
   console.log("FIRMS_MAP_KEY not set — fire sweep disabled");
 }
 
-console.log("fleet agent running — ships in 45s, planes now, fires in 15s");
+// ── UCDP conflict sweep (monthly candidate CSVs, every 12h) ─────────────────
+// Uppsala Conflict Data Program: free direct downloads, no key. "Candidate"
+// files are the preliminary monthly coding (revised in the annual release) —
+// the only free source with this recency at academic quality.
+const CONFLICTS_EVERY_MS = 12 * 3600_000;
+let lastConflicts = null;
+let conflictsPushTries = 0;
+
+// Minimal quote-aware CSV parser (UCDP fields embed commas, quotes, newlines).
+function parseCsv(text) {
+  const rows = [];
+  let row = [], field = "", inQ = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inQ) {
+      if (ch === '"') { if (text[i + 1] === '"') { field += '"'; i++; } else inQ = false; }
+      else field += ch;
+    } else if (ch === '"') inQ = true;
+    else if (ch === ",") { row.push(field); field = ""; }
+    else if (ch === "\n") { row.push(field.replace(/\r$/, "")); rows.push(row); row = []; field = ""; }
+    else field += ch;
+  }
+  if (field || row.length) { row.push(field); rows.push(row); }
+  return rows;
+}
+
+async function pushConflicts() {
+  if (!lastConflicts) return;
+  try {
+    const res = await fetch(`${SITE}/api/conflicts`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: TOKEN, conflicts: lastConflicts }),
+    });
+    const out = await res.json().catch(() => ({}));
+    if (!res.ok || !out.ok) throw new Error(`HTTP ${res.status}`);
+    conflictsPushTries = 0;
+    console.log(`[${new Date().toISOString()}] conflicts: pushed ${lastConflicts.length} events → ok`);
+  } catch (e) {
+    const again = conflictsPushTries++ < 3;
+    console.error(`conflicts push failed (${e.message}) — ${again ? "retrying in 2min" : "waiting for next sweep"}`);
+    if (again) setTimeout(pushConflicts, 120_000);
+  }
+}
+
+async function sweepConflicts() {
+  try {
+    const now = new Date();
+    const events = [];
+    let months = 0;
+    // Probe backwards from the current month; keep the last 6 that exist.
+    for (let k = 0; k < 10 && months < 6; k++) {
+      const d = new Date(now.getFullYear(), now.getMonth() - k, 1);
+      const url = `https://ucdp.uu.se/downloads/candidateged/GEDEvent_v${String(d.getFullYear()).slice(2)}_0_${d.getMonth() + 1}.csv`;
+      let r;
+      try { r = await fetch(url, { signal: AbortSignal.timeout(120_000) }); } catch { continue; }
+      if (!r.ok) continue;
+      months++;
+      const rows = parseCsv(await r.text());
+      const head = rows[0];
+      const col = (n) => head.indexOf(n);
+      const iTov = col("type_of_violence"), iA = col("side_a"), iB = col("side_b"),
+        iLat = col("latitude"), iLon = col("longitude"), iC = col("country"),
+        iD = col("date_start"), iBest = col("best");
+      if (iLat < 0 || iLon < 0) continue;
+      for (let i = 1; i < rows.length; i++) {
+        const p = rows[i];
+        const lat = +p[iLat], lon = +p[iLon];
+        if (!Number.isFinite(lat) || !Number.isFinite(lon) || (!lat && !lon)) continue;
+        events.push([
+          +lat.toFixed(2), +lon.toFixed(2), Math.max(0, Math.round(+p[iBest] || 0)), +p[iTov] || 0,
+          String(p[iD] || "").slice(0, 10), String(p[iC] || "").slice(0, 30),
+          String(p[iA] || "").slice(0, 40), String(p[iB] || "").slice(0, 40),
+        ]);
+      }
+    }
+    if (!events.length) throw new Error("no candidate files reachable");
+    events.sort((a, b) => b[4].localeCompare(a[4])); // newest first
+    lastConflicts = events.slice(0, 9000);
+    conflictsPushTries = 0;
+    console.log(`[${new Date().toISOString()}] conflicts: ${events.length} events from ${months} UCDP months → ${lastConflicts.length} kept`);
+    await pushConflicts();
+  } catch (e) {
+    console.error(`UCDP sweep failed: ${e.message}`);
+  }
+}
+setInterval(sweepConflicts, CONFLICTS_EVERY_MS);
+setTimeout(sweepConflicts, 30_000);
+
+console.log("fleet agent running — ships 45s, planes now, fires 15s, conflicts 30s");
