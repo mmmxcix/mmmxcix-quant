@@ -142,6 +142,18 @@ function LabStatus() {
                 {data.research.autoPromoted > 0 && (
                   <span className="text-dim">auto-promoted <span className="text-accent">{data.research.autoPromoted}</span></span>
                 )}
+                {/* why attempts > papers: every improve-iteration and every
+                    mined anomaly is its own attempt — variants, not re-tests */}
+                {data.research.improved > 0 && (
+                  <span className="text-dim" title="Improve loop: near-misses iterated with the failure fed back — each try is a NEW variant and counts as one attempt">
+                    improved <span className="text-text">{data.research.improved}</span>
+                  </span>
+                )}
+                {data.research.mined > 0 && (
+                  <span className="text-dim" title="Data-mining channel: anomalies found in our own market data — each counts as one attempt">
+                    mined <span className="text-text">{data.research.mined}</span>
+                  </span>
+                )}
               </div>
               {/* Per-source yield: a feed that quietly went dead shows up here
                   instead of only in the 3am log. */}
