@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Layers, X, Ship, Plane, Activity, Anchor, Landmark, Radio, Cable, TrendingDown } from "lucide-react";
+import { Layers, X, Ship, Plane, Activity, Anchor, Landmark, Radio, Cable, TrendingDown, Newspaper } from "lucide-react";
 import { cn, fmtNum, fmtPct } from "@/lib/utils";
 import { shipCategory, formatEta, CORRIDORS } from "@/lib/ais";
-import { fetchPlanes, fetchRoute } from "@/lib/planes";
+import { fetchRoute, planeCategory } from "@/lib/planes";
+import { fetchNewsPins } from "@/lib/geoNews";
 import { decodeCountries, projectCountries, countryAt, invMercLon, invMercLat, yieldCodeLookup } from "@/lib/geo";
 import { mercX, mercY } from "@/lib/ais";
 import { fetchYieldStats, fetchYields, yieldCurves } from "@/lib/macro";
@@ -42,10 +43,11 @@ const LAYER_DEFS = [
   { id: "chokepoints", label: "Chokepoints + transits", icon: Anchor },
   { id: "cables", label: "Submarine cables", icon: Cable },
   { id: "yields", label: "Yield-curve stress", icon: TrendingDown },
+  { id: "news", label: "News pins", icon: Newspaper },
 ];
 
 const LS_LAYERS = "quant_map_layers_v3"; // v3: cables + yield stress
-const LAYER_DEFAULTS = { ships: true, planes: true, quakes: true, chokepoints: true, cables: true, yields: true };
+const LAYER_DEFAULTS = { ships: true, planes: true, quakes: true, chokepoints: true, cables: true, yields: true, news: true };
 const loadLayers = () => {
   try {
     const v = JSON.parse(localStorage.getItem(LS_LAYERS) || "null");
@@ -80,6 +82,7 @@ export default function WorldMap() {
   const quakesRef = useRef([]);
   const cablesRef = useRef(null);       // projected cable polylines (lazy)
   const spreadsRef = useRef(new Map()); // ISO2 -> 10Y-2Y spread (pp)
+  const newsRef = useRef([]);           // geolocated news pins
   const chokeStatsRef = useRef(new Map()); // chokepoint id -> {n, anchored}
   const layersRef = useRef(layers);
   layersRef.current = layers;
@@ -185,9 +188,11 @@ export default function WorldMap() {
     if (!el) return;
     const w = el.clientWidth || 800, h = el.clientHeight || 560;
     const v = viewRef.current;
-    v.scale = Math.max(w, Math.min(600_000, v.scale || w));
-    v.cx = ((v.cx % 1) + 1) % 1;
     const vTop = 0.02, vBot = 0.98;
+    // Min zoom shows the FULL map band — both poles on screen at once; the
+    // horizontal wrap fills whatever width is left (Google-Maps behaviour).
+    v.scale = Math.max(h / (vBot - vTop), Math.min(600_000, v.scale || w));
+    v.cx = ((v.cx % 1) + 1) % 1;
     const halfV = h / (2 * v.scale);
     if (vBot - vTop <= 2 * halfV) v.cy = (vTop + vBot) / 2;
     else v.cy = Math.max(vTop + halfV, Math.min(vBot - halfV, v.cy));
@@ -231,66 +236,57 @@ export default function WorldMap() {
   }, [layers.ships]);
 
 
-  /* ── Planes layer: viewport TILING, not one dot ──────────────────────── */
-  // The point API caps at 250 nm per query, which used to mean "planes only
-  // near the map centre". Now the visible area is tiled with up to 6 query
-  // circles (merged, deduped by hex) — regional views get full coverage;
-  // at world zoom the tiles cover the central band and the hint says so.
-  const planeTiles = () => {
-    const [[latMin, lonMin], [latMax, lonMax]] = viewportBbox();
-    const la1 = Math.max(-60, latMin), la2 = Math.min(72, latMax);
-    if (la2 <= la1) return [];
-    const midLat = (la1 + la2) / 2;
-    const spanLatNm = (la2 - la1) * 60;
-    const spanLonNm = (lonMax - lonMin) * 60 * Math.max(0.2, Math.cos((midLat * Math.PI) / 180));
-    const rows = Math.min(2, Math.max(1, Math.ceil(spanLatNm / 480)));
-    const cols = Math.min(3, Math.max(1, Math.ceil(spanLonNm / 480)));
-    const tiles = [];
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        tiles.push({
-          // Quantized so cache keys repeat while panning (rate-limit hygiene).
-          lat: Math.round((la1 + ((r + 0.5) / rows) * (la2 - la1)) * 10) / 10,
-          lon: Math.round((lonMin + ((c + 0.5) / cols) * (lonMax - lonMin)) * 10) / 10,
-          radius: 250,
-        });
-      }
-    }
-    return tiles.slice(0, 4);
-  };
+  /* ── Planes layer: GLOBAL SNAPSHOT (same fleet agent as ships) ───────
+     The PC agent sweeps ~26 dense flight regions from a home IP (no
+     Cloudflare-egress rate limits) and pushes one merged snapshot every
+     ~90s — global air traffic paints instantly, no per-viewport polling. */
   useEffect(() => {
     if (!layers.planes) { planesRef.current = []; setPlaneStatus("off"); needsDraw.current = true; return; }
     let alive = true;
     const load = async () => {
       try {
-        const results = await Promise.allSettled(planeTiles().map((t) => fetchPlanes(t)));
+        const r = await fetch("/api/planes");
+        if (r.status === 404) { if (alive) setPlaneStatus("plane sweep warming up…"); return; }
+        if (!r.ok) throw new Error(`snapshot HTTP ${r.status}`);
+        const j = await r.json();
         if (!alive) return;
-        const byHex = new Map();
-        let okTiles = 0;
-        for (const r of results) {
-          if (r.status !== "fulfilled") continue;
-          okTiles++;
-          for (const p of r.value) byHex.set(p.hex, p);
-        }
-        if (okTiles === 0) throw new Error(results[0]?.reason?.message || "ADS-B unreachable");
-        planesRef.current = [...byHex.values()];
-        setPlaneStatus("live");
+        planesRef.current = (j.planes || []).map((row) => {
+          const [hex, lat, lon, alt, gs, track, category, callsign, type] = row;
+          return {
+            hex, lat, lon,
+            alt: alt < 0 ? 0 : alt, onGround: alt < 0,
+            gs, track, reg: "", type: type || "",
+            callsign: callsign || hex,
+            category: planeCategory(callsign, category),
+            t: j.at,
+          };
+        });
+        const age = Math.max(0, Math.round((Date.now() - j.at) / 1000));
+        setPlaneStatus(age > 300 ? `stale (${Math.round(age / 60)}min) — agent down?` : "live");
         needsDraw.current = true;
-      } catch (e) { if (alive) setPlaneStatus(e.message); }
+      } catch (e) { if (alive) setPlaneStatus(String(e.message || e).slice(0, 60)); }
     };
     load();
-    // 15s poll (matches the proxy cache TTL); on a rate-limit the next poll
-    // is skipped so the upstream gets air.
-    let cooldown = 0;
-    const id = setInterval(() => {
-      if (document.hidden) return;
-      if (cooldown > 0) { cooldown--; return; }
-      load().catch(() => {});
-      if (String(planeStatus).includes("429")) cooldown = 4;
-    }, 15000);
+    const id = setInterval(() => { if (!document.hidden) load(); }, 30000);
     return () => { alive = false; clearInterval(id); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [layers.planes]);
+
+  /* ── News pins: headlines from our feed, pinned by country ──────────── */
+  useEffect(() => {
+    if (!layers.news) { newsRef.current = []; needsDraw.current = true; return; }
+    let alive = true;
+    const load = async () => {
+      try {
+        const pins = await fetchNewsPins();
+        if (!alive) return;
+        newsRef.current = pins;
+        needsDraw.current = true;
+      } catch { /* pins simply stay absent */ }
+    };
+    load();
+    const id = setInterval(load, 5 * 60_000);
+    return () => { alive = false; clearInterval(id); };
+  }, [layers.news]);
 
   /* ── Quakes layer (USGS, direct — they send CORS) ────────────────────── */
   useEffect(() => {
@@ -519,6 +515,30 @@ export default function WorldMap() {
         }
         ctx.globalAlpha = 1;
       }
+
+      // News pins — accent dots sized by headline count.
+      if (L.news && newsRef.current.length) {
+        const nCol = accent;
+        for (const pin of newsRef.current) {
+          const px = XP(mercX(pin.lon)), py = Y(mercY(pin.lat));
+          if (px < -20 || py < -20 || px > w + 20 || py > h + 20) continue;
+          const rr = Math.min(7, 2.5 + pin.items.length * 0.8);
+          ctx.fillStyle = nCol;
+          ctx.globalAlpha = 0.3;
+          ctx.beginPath(); ctx.arc(px, py, rr + 3, 0, Math.PI * 2); ctx.fill();
+          ctx.globalAlpha = 0.95;
+          ctx.beginPath(); ctx.arc(px, py, rr, 0, Math.PI * 2); ctx.fill();
+          if (pin.items.length > 1) {
+            ctx.globalAlpha = 1;
+            ctx.fillStyle = cssRgb("--c-bg");
+            ctx.font = "bold 8px ui-monospace, monospace";
+            ctx.textAlign = "center";
+            ctx.fillText(String(pin.items.length), px, py + 3);
+            ctx.textAlign = "start";
+          }
+        }
+        ctx.globalAlpha = 1;
+      }
     };
     raf = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(raf);
@@ -564,6 +584,11 @@ export default function WorldMap() {
         const d = (x - px) ** 2 + (y - py) ** 2;
         if (d < bd) { bd = d; best = { kind: "quake", x, y, data: q }; }
       }
+      if (L.news) for (const pin of newsRef.current) {
+        const [x, y] = P(pin.lon, pin.lat);
+        const d = (x - px) ** 2 + (y - py) ** 2;
+        if (d < bd) { bd = d; best = { kind: "news", x, y, data: pin }; }
+      }
       return best;
     };
     const onDown = (e) => { drag = toWorld(e); downAt = { x: e.clientX, y: e.clientY }; el.setPointerCapture(e.pointerId); };
@@ -583,9 +608,13 @@ export default function WorldMap() {
         const d = obj.data;
         setHover({
           x: obj.x, y: obj.y,
-          label: obj.kind === "ship" ? (d.staticName || d.name) : obj.kind === "plane" ? d.callsign : `M${d.mag?.toFixed(1)}`,
+          label: obj.kind === "ship" ? (d.staticName || d.name)
+            : obj.kind === "plane" ? d.callsign
+            : obj.kind === "news" ? `${d.name} · ${d.items.length} headline${d.items.length > 1 ? "s" : ""}`
+            : `M${d.mag?.toFixed(1)}`,
           sub: obj.kind === "ship" ? `${(d.sog ?? 0).toFixed(1)} kn${d.destination ? ` → ${d.destination}` : ""}`
             : obj.kind === "plane" ? `${d.type || ""} ${d.onGround ? "ground" : fmtNum(d.alt, 0) + " ft"}`
+            : obj.kind === "news" ? (d.items[0]?.title || "").slice(0, 60)
             : d.place,
         });
         return;
@@ -722,7 +751,8 @@ export default function WorldMap() {
                     : ld.id === "planes" ? fmtNum(counts.planes, 0)
                     : ld.id === "quakes" ? fmtNum(counts.quakes, 0)
                     : ld.id === "cables" ? (cablesRef.current ? cablesRef.current.length : "")
-                    : ld.id === "yields" ? (spreadsRef.current.size || "") : ""}
+                    : ld.id === "yields" ? (spreadsRef.current.size || "")
+                    : ld.id === "news" ? (newsRef.current.length || "") : ""}
                 </span>
               </label>
             ))}
@@ -755,6 +785,7 @@ export default function WorldMap() {
                 {sel.kind === "country" ? sel.name
                   : sel.kind === "ship" ? (sel.data.staticName || sel.data.name)
                   : sel.kind === "plane" ? sel.data.callsign
+                  : sel.kind === "news" ? `${sel.data.name} — news`
                   : `M${sel.data.mag?.toFixed(1)} earthquake`}
               </p>
               <button onClick={() => { setSelected(null); needsDraw.current = true; }} className="text-dim hover:text-text shrink-0" aria-label="Close">
@@ -818,6 +849,19 @@ export default function WorldMap() {
                   <span className="text-dim">Speed</span><span className="text-right">{fmtNum(sel.data.gs, 0)} kt</span>
                   <span className="text-dim">Track</span><span className="text-right">{Math.round(sel.data.track)}°</span>
                 </div>
+              </div>
+            )}
+
+            {sel.kind === "news" && (
+              <div className="text-xs space-y-2 max-h-72 overflow-y-auto">
+                {sel.data.items.map((it, i) => (
+                  <a key={i} href={it.link} target="_blank" rel="noreferrer"
+                    className="block leading-snug hover:text-accent transition-colors">
+                    {it.title}
+                    <span className="block text-[10px] text-dim mt-0.5">{it.source}</span>
+                  </a>
+                ))}
+                <p className="text-[10px] text-dim/70 pt-1">Headline keyword matching — first country named wins. Not NLP.</p>
               </div>
             )}
 

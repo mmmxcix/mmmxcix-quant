@@ -103,4 +103,69 @@ async function push() {
   msgCount = 0;
 }
 setInterval(push, PUSH_MS);
-console.log("fleet agent running — first push in 45s");
+
+// ── global AIR-TRAFFIC sweep (same agent, same pattern) ─────────────────────
+// Cloudflare egress gets rate-limited by the community ADS-B APIs; a home IP
+// with gentle pacing doesn't. ~26 dense flight regions, 250 nm each, one
+// sweep per ~90s at ≤2.5 req/s — merged by hex and pushed as one snapshot.
+const PLANE_TILES = [
+  // Europe
+  [50, 0], [50, 15], [45, 25], [60, 15], [40, -5], [52, -8],
+  // North America
+  [40, -75], [34, -85], [42, -90], [33, -100], [37, -120], [48, -122], [26, -80],
+  // Asia
+  [35, 138], [31, 121], [23, 113], [37, 127], [13, 100], [28, 77], [1, 103],
+  // Middle East · LatAm · Oceania · Africa
+  [25, 55], [30, 35], [-23, -46], [19, -99], [-34, 151], [-26, 28],
+];
+const PLANES_EVERY_MS = 90_000;
+let planeSweepRunning = false;
+
+async function fetchTile(lat, lon) {
+  for (const base of ["https://api.adsb.lol", "https://api.airplanes.live"]) {
+    try {
+      const r = await fetch(`${base}/v2/point/${lat}/${lon}/250`, { signal: AbortSignal.timeout(15000) });
+      if (!r.ok) continue;
+      const j = await r.json();
+      if (Array.isArray(j?.ac)) return j.ac;
+    } catch { /* next provider */ }
+  }
+  return [];
+}
+
+async function sweepPlanes() {
+  if (planeSweepRunning) return;
+  planeSweepRunning = true;
+  try {
+    const byHex = new Map();
+    for (const [lat, lon] of PLANE_TILES) {
+      const ac = await fetchTile(lat, lon);
+      for (const a of ac) {
+        if (a.lat == null || a.lon == null || !a.hex) continue;
+        byHex.set(a.hex, [
+          a.hex, +(+a.lat).toFixed(3), +(+a.lon).toFixed(3),
+          a.alt_baro === "ground" ? -1 : Math.round(+a.alt_baro || 0),
+          Math.round(+a.gs || 0), Math.round(+(a.track ?? a.true_heading) || 0),
+          a.category || "", String(a.flight || "").trim(), a.t || "",
+        ]);
+      }
+      await new Promise((r) => setTimeout(r, 400)); // fair-use pacing
+    }
+    const planes = [...byHex.values()];
+    const res = await fetch(`${SITE}/api/planes`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: TOKEN, planes }),
+    });
+    const out = await res.json().catch(() => ({}));
+    console.log(`[${new Date().toISOString()}] planes: pushed ${planes.length} aircraft → ${res.status} ${out.ok ? "ok" : JSON.stringify(out).slice(0, 50)}`);
+  } catch (e) {
+    console.error(`plane sweep failed: ${e.message}`);
+  } finally {
+    planeSweepRunning = false;
+  }
+}
+setInterval(sweepPlanes, PLANES_EVERY_MS);
+sweepPlanes();
+
+console.log("fleet agent running — ships push in 45s, plane sweep starting now");
