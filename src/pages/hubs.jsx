@@ -52,6 +52,7 @@ export function LearnHub() {
       { id: "academy", label: "Academy", icon: GraduationCap, el: <Academy /> },
       { id: "guide", label: "Guide", icon: BookOpenCheck, el: <Guide /> },
       { id: "resources", label: "Resources", icon: Compass, el: <Resources /> },
+      { id: "formulas", label: "Formulas", icon: Sigma, el: <Formulas /> },
     ]} />
   );
 }
