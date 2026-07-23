@@ -215,6 +215,44 @@ export function posterior(X, model) {
   return gamma;
 }
 
+/**
+ * FILTERED posterior P(state_t | x_1..t) — forward pass only. This is what a
+ * LIVE system actually knows at bar t; posterior() above is smoothed with the
+ * benefit of hindsight (it has seen the future). The difference between the
+ * two is the model's honest real-time lag. Also returns the one-step prior
+ * and the (normalized) emission likelihood per step, so a UI can show
+ * prior × likelihood = posterior.
+ */
+export function filtered(X, model) {
+  const { K, means, vars, startLog, transLog } = model;
+  const T = X.length;
+  const B = logEmissions(X, means, vars);
+  const trans = transLog.map((row) => row.map((v) => Math.exp(v)));
+  const probs = [], priors = [], likes = [];
+  let prev = null;
+  for (let t = 0; t < T; t++) {
+    const prior = new Array(K);
+    for (let k = 0; k < K; k++) {
+      if (t === 0) prior[k] = Math.exp(startLog[k]);
+      else { let s = 0; for (let j = 0; j < K; j++) s += prev[j] * trans[j][k]; prior[k] = s; }
+    }
+    // emission likelihood, normalized across states (display + numerics)
+    let maxB = -Infinity;
+    for (let k = 0; k < K; k++) if (B[t][k] > maxB) maxB = B[t][k];
+    const like = new Array(K);
+    let sumL = 0;
+    for (let k = 0; k < K; k++) { like[k] = Math.exp(B[t][k] - maxB); sumL += like[k]; }
+    for (let k = 0; k < K; k++) like[k] /= sumL || 1;
+    const post = new Array(K);
+    let sum = 0;
+    for (let k = 0; k < K; k++) { post[k] = prior[k] * like[k]; sum += post[k]; }
+    for (let k = 0; k < K; k++) post[k] = sum > 0 ? post[k] / sum : 1 / K;
+    priors.push(prior); likes.push(like); probs.push(post);
+    prev = post;
+  }
+  return { probs, priors, likes };
+}
+
 /** Most likely hidden-state sequence (Viterbi), length T. */
 export function viterbi(X, model) {
   const { K, means, vars, startLog, transLog } = model;

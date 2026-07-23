@@ -172,6 +172,9 @@ export default function Regimes() {
               </p>
             </section>
           </div>
+
+          {/* live vs hindsight — the honest panel */}
+          <LiveVsHindsight candles={candles} regimes={regimes} />
         </div>
       )}
     </div>
@@ -289,5 +292,121 @@ function RegimeChart({ candles, regimes }) {
         <polyline points={pts} fill="none" stroke="rgb(var(--c-text))" strokeWidth="1.2" strokeLinejoin="round" opacity="0.85" />
       </svg>
     </div>
+  );
+}
+
+// Live vs hindsight — the honest panel. Everything above is SMOOTHED: the
+// model labelled the past with the benefit of having seen the whole series.
+// A live system only has the forward pass — later and noisier. Showing both,
+// with the measured lag, is the difference between a demo and a tool.
+function LiveVsHindsight({ candles, regimes }) {
+  const wrapRef = useRef(null);
+  const [w, setW] = useState(800);
+  const STRIP = 16, GAP = 22, H_PROB = 110, PAD = 8;
+  const H = GAP * 2 + STRIP * 2 + H_PROB + 18;
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([e]) => setW(Math.max(320, e.contentRect.width)));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const { hindBands, liveBands, probPts } = useMemo(() => {
+    const n = candles.length;
+    const x = (i) => PAD + (i / (n - 1)) * (w - 2 * PAD);
+    const mkBands = (labels) => {
+      const bands = [];
+      let startI = 0, cur = labels[0];
+      for (let i = 1; i < n; i++) {
+        if (labels[i] !== cur) {
+          if (cur) bands.push({ x0: x(startI), x1: x(i), label: cur });
+          startI = i; cur = labels[i];
+        }
+      }
+      if (cur) bands.push({ x0: x(startI), x1: x(n - 1), label: cur });
+      return bands;
+    };
+    const probTop = GAP * 2 + STRIP * 2 + 8;
+    const probPts = [];
+    for (let i = 0; i < n; i++) {
+      const p = regimes.perCandleBearProb?.[i];
+      if (p == null) continue;
+      probPts.push(`${x(i).toFixed(1)},${(probTop + (1 - p) * H_PROB).toFixed(1)}`);
+    }
+    return { hindBands: mkBands(regimes.perCandle), liveBands: mkBands(regimes.perCandleLive || []), probPts: probPts.join(" ") };
+  }, [candles, regimes, w]);
+
+  const h = regimes.honesty || {};
+  const b = regimes.belief;
+  const probTop = GAP * 2 + STRIP * 2 + 8;
+
+  return (
+    <section className="rounded-xl border border-line lg-glass p-5 hover-lift">
+      <h2 className="font-semibold mb-1">Live belief vs hindsight</h2>
+      <p className="text-[11px] text-dim mb-3 leading-relaxed">
+        The chart above is <em>smoothed</em> — the model labelled the past knowing the whole series.
+        Live, it only has the data so far. This is what that honestly looks like:
+      </p>
+      <div ref={wrapRef} className="w-full overflow-x-auto">
+        <svg width={w} height={H} className="block">
+          <text x={PAD} y={GAP - 8} className="fill-current text-dim" fontSize="9">HINDSIGHT (smoothed — has seen the future)</text>
+          {hindBands.map((bd, i) => (
+            <rect key={`h${i}`} x={bd.x0} y={GAP} width={Math.max(0.5, bd.x1 - bd.x0)} height={STRIP} fill={toneOf(bd.label).soft} />
+          ))}
+          <text x={PAD} y={GAP + STRIP + GAP - 8} className="fill-current text-dim" fontSize="9">LIVE (filtered — only the data so far)</text>
+          {liveBands.map((bd, i) => (
+            <rect key={`l${i}`} x={bd.x0} y={GAP + STRIP + GAP} width={Math.max(0.5, bd.x1 - bd.x0)} height={STRIP} fill={toneOf(bd.label).soft} />
+          ))}
+          {/* filtered P(bear) */}
+          <line x1={PAD} x2={w - PAD} y1={probTop + H_PROB / 2} y2={probTop + H_PROB / 2}
+            stroke="rgb(var(--c-line))" strokeDasharray="3 4" />
+          <text x={w - PAD - 2} y={probTop + 9} textAnchor="end" className="fill-current text-dim" fontSize="9">P(Bear | data so far)</text>
+          <polyline points={probPts} fill="none" stroke="rgb(var(--c-down))" strokeWidth="1.3" strokeLinejoin="round" opacity="0.9" />
+        </svg>
+      </div>
+
+      {/* measured honesty */}
+      <div className="flex flex-wrap gap-x-6 gap-y-1 mt-3 text-xs font-mono">
+        {h.avgLagBars != null && (
+          <span className="text-dim">live confirms a change <span className="text-warn font-semibold">{h.avgLagBars} bars late</span> on average ({h.changesMeasured} changes measured)</span>
+        )}
+        <span className="text-dim">flips: live <span className="text-text">{h.liveFlips ?? "–"}</span> vs hindsight <span className="text-text">{h.smoothFlips ?? "–"}</span></span>
+      </div>
+
+      {/* prior × likelihood = posterior, current bar */}
+      {b && (
+        <div className="mt-4 border-t border-line/60 pt-3">
+          <p className="text-[10px] uppercase tracking-widest text-dim mb-2">Current bar: prior × likelihood = posterior</p>
+          <div className="flex flex-wrap items-end gap-4">
+            {[["Prior", b.prior, "×"], ["Likelihood", b.likelihood, "="], ["Posterior", b.posterior, null]].map(([name, vals, op]) => (
+              <div key={name} className="flex items-end gap-4">
+                <div>
+                  <div className="flex items-end gap-1.5 h-16">
+                    {regimes.labels.map((lab, rank) => (
+                      <div key={lab} className="w-7 flex flex-col items-center justify-end h-full" title={`${lab}: ${((vals[rank] ?? 0) * 100).toFixed(1)}%`}>
+                        <div className={cn("w-full rounded-t", toneOf(lab).bg)} style={{ height: `${Math.max(2, (vals[rank] ?? 0) * 100)}%`, opacity: 0.85 }} />
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-[10px] text-dim text-center mt-1">{name}</p>
+                </div>
+                {op && <span className="text-dim text-lg pb-5">{op}</span>}
+              </div>
+            ))}
+            <p className="text-[11px] text-dim/80 leading-relaxed max-w-xs pb-1">
+              Where the model's belief comes from: what it expected after the last bar (prior),
+              what this bar's return/vol look like per regime (likelihood), and the resulting belief.
+            </p>
+          </div>
+        </div>
+      )}
+
+      <p className="text-[11px] text-dim/70 mt-3 leading-relaxed">
+        Why this matters: regime models look clairvoyant in backtests because smoothing has seen the future.
+        The lag and flicker above are what you actually trade on — it's why the paper agent's regime gate
+        uses the causal (live) estimate, and why regime signals are filters here, not entries.
+      </p>
+    </section>
   );
 }

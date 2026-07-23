@@ -12,7 +12,7 @@
 //
 // Pure module: no DOM, no fetch. Deterministic given a seed.
 
-import { fit, viterbi, posterior } from "./hmm.js";
+import { fit, viterbi, posterior, filtered } from "./hmm.js";
 
 const LABELS_3 = ["Bear", "Neutral", "Bull"];
 const LABELS_2 = ["Bear", "Bull"];
@@ -134,10 +134,64 @@ export function detectRegimes(candles, { K = 3, volWindow = 20, iters = 40, seed
     probs: labels.map((lab, rank) => +gamma[lastT][order[rank]].toFixed(3)),
   };
 
+  // ── LIVE view (filtered, forward-only) vs the smoothed hindsight above ────
+  // perCandle/gamma use the full series (they've "seen the future"). A live
+  // system only has the forward pass. Surfacing both — plus how much later
+  // and noisier the live view is — is the honest part of this page.
+  const flt = filtered(X, model);
+  const liveArg = flt.probs.map((p) => {
+    let best = 0;
+    for (let k = 1; k < K; k++) if (p[k] > p[best]) best = k;
+    return best;
+  });
+  const perCandleLive = new Array(candles.length).fill(null);
+  const perCandleBearProb = new Array(candles.length).fill(null); // filtered P(bear-most state)
+  const bearRaw = order[0];
+  for (let t = 0; t < flt.probs.length; t++) {
+    const ci = candleIndex[t];
+    perCandleLive[ci] = stateLabel[liveArg[t]];
+    perCandleBearProb[ci] = +flt.probs[t][bearRaw].toFixed(3);
+  }
+
+  // Honesty metrics: how much does live flicker vs hindsight, and how late
+  // does it confirm a regime change?
+  let liveFlips = 0, smoothFlips = 0;
+  for (let t = 1; t < path.length; t++) {
+    if (liveArg[t] !== liveArg[t - 1]) liveFlips++;
+    if (path[t] !== path[t - 1]) smoothFlips++;
+  }
+  const lags = [];
+  for (let t = 1; t < path.length; ) {
+    if (path[t] === path[t - 1]) { t++; continue; }
+    const target = path[t];
+    let end = t;
+    while (end < path.length && path[end] === target) end++;
+    // first bar within the run where the LIVE view agrees with hindsight
+    let hit = -1;
+    for (let u = t; u < end; u++) if (liveArg[u] === target) { hit = u; break; }
+    if (hit >= 0) lags.push(hit - t);
+    t = end;
+  }
+  const honesty = {
+    liveFlips, smoothFlips,
+    avgLagBars: lags.length ? +(lags.reduce((a, b) => a + b, 0) / lags.length).toFixed(1) : null,
+    changesMeasured: lags.length,
+  };
+
+  // Current-bar belief decomposition (in LABEL rank order, bear→…→bull):
+  // one-step prior × emission likelihood = filtered posterior.
+  const belief = {
+    prior: labels.map((_, rank) => +flt.priors[lastT][order[rank]].toFixed(3)),
+    likelihood: labels.map((_, rank) => +flt.likes[lastT][order[rank]].toFixed(3)),
+    posterior: labels.map((_, rank) => +flt.probs[lastT][order[rank]].toFixed(3)),
+  };
+
   return {
     ok: true, K, volWindow, interval,
     labels, states, transition, current,
     perCandle, perCandleProb,
+    perCandleLive, perCandleBearProb,
+    honesty, belief,
     logLik: +model.logLik.toFixed(1),
     iterations: model.iterations,
   };
