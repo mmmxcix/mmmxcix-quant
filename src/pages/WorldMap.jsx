@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Layers, X, Ship, Plane, Activity, Anchor, Landmark, Radio } from "lucide-react";
+import { Layers, X, Ship, Plane, Activity, Anchor, Landmark, Radio, Cable, TrendingDown } from "lucide-react";
 import { cn, fmtNum, fmtPct } from "@/lib/utils";
 import { connectAis, shipCategory, formatEta, CORRIDORS } from "@/lib/ais";
 import { fetchPlanes, fetchRoute } from "@/lib/planes";
@@ -37,18 +37,21 @@ const CHOKEPOINTS = CORRIDORS.filter((c) => c.id !== "world").map((c) => ({
 
 const LAYER_DEFS = [
   { id: "ships", label: "Ship traffic", icon: Ship },
-  { id: "planes", label: "Air traffic", icon: Plane, hint: "streams within 250 nm of map centre" },
+  { id: "planes", label: "Air traffic", icon: Plane },
   { id: "quakes", label: "Earthquakes (24h)", icon: Activity },
-  { id: "chokepoints", label: "Chokepoints", icon: Anchor },
+  { id: "chokepoints", label: "Chokepoints + transits", icon: Anchor },
+  { id: "cables", label: "Submarine cables", icon: Cable },
+  { id: "yields", label: "Yield-curve stress", icon: TrendingDown },
 ];
 
-const LS_LAYERS = "quant_map_layers_v2"; // v2: planes default ON
+const LS_LAYERS = "quant_map_layers_v3"; // v3: cables + yield stress
+const LAYER_DEFAULTS = { ships: true, planes: true, quakes: true, chokepoints: true, cables: true, yields: true };
 const loadLayers = () => {
   try {
     const v = JSON.parse(localStorage.getItem(LS_LAYERS) || "null");
-    if (v && typeof v === "object") return { ships: true, planes: true, quakes: true, chokepoints: true, ...v };
+    if (v && typeof v === "object") return { ...LAYER_DEFAULTS, ...v };
   } catch { /* fall through */ }
-  return { ships: true, planes: true, quakes: true, chokepoints: true };
+  return { ...LAYER_DEFAULTS };
 };
 
 const cssRgb = (name) => {
@@ -76,6 +79,9 @@ export default function WorldMap() {
   const planesRef = useRef([]);
   const quakesRef = useRef([]);
   const connRef = useRef(null);
+  const cablesRef = useRef(null);       // projected cable polylines (lazy)
+  const spreadsRef = useRef(new Map()); // ISO2 -> 10Y-2Y spread (pp)
+  const chokeStatsRef = useRef(new Map()); // chokepoint id -> {n, anchored}
   const layersRef = useRef(layers);
   layersRef.current = layers;
   selectedRef.current = selected;
@@ -113,6 +119,47 @@ export default function WorldMap() {
       .then((s) => { yieldLookupRef.current = yieldCodeLookup(s.countries); })
       .catch(() => { /* panel simply shows no yield data */ });
   }, []);
+
+  /* ── Submarine cables: vendored TeleGeography lines, loaded on demand ── */
+  useEffect(() => {
+    if (!layers.cables || cablesRef.current) { needsDraw.current = true; return; }
+    let alive = true;
+    fetch("/cables.json").then((r) => r.json()).then((cables) => {
+      if (!alive) return;
+      cablesRef.current = cables.map((c) => ({
+        n: c.n,
+        p: c.p.map((line) => line.map(([lon, lat]) => [mercX(lon), mercY(lat)])),
+      }));
+      needsDraw.current = true;
+    }).catch(() => { /* layer stays empty */ });
+    return () => { alive = false; };
+  }, [layers.cables]);
+
+  /* ── Yield-curve stress: 10Y−2Y per covered country (OUR LSE data) ───── */
+  useEffect(() => {
+    if (!layers.yields || spreadsRef.current.size) { needsDraw.current = true; return; }
+    let alive = true;
+    (async () => {
+      try {
+        const stats = await fetchYieldStats();
+        const since = new Date(Date.now() - 60 * 864e5).toISOString().slice(0, 10);
+        const results = await Promise.allSettled(stats.countries.map(async (c) => {
+          const rows = await fetchYields(c.code, since);
+          const { latest } = yieldCurves(rows);
+          const p10 = latest?.points.find((p) => p.tenor === "10Y");
+          const p2 = latest?.points.find((p) => p.tenor === "2Y");
+          return p10 && p2 ? { code: c.code, spread: p10.close - p2.close } : null;
+        }));
+        if (!alive) return;
+        for (const r of results) {
+          if (r.status === "fulfilled" && r.value) spreadsRef.current.set(r.value.code, r.value.spread);
+        }
+        needsDraw.current = true;
+      } catch { /* choropleth simply stays neutral */ }
+    })();
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [layers.yields]);
 
   /* ── Viewport helpers ────────────────────────────────────────────────── */
   const viewportBbox = () => {
@@ -184,13 +231,14 @@ export default function WorldMap() {
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         tiles.push({
-          lat: la1 + ((r + 0.5) / rows) * (la2 - la1),
-          lon: lonMin + ((c + 0.5) / cols) * (lonMax - lonMin),
+          // Quantized so cache keys repeat while panning (rate-limit hygiene).
+          lat: Math.round((la1 + ((r + 0.5) / rows) * (la2 - la1)) * 10) / 10,
+          lon: Math.round((lonMin + ((c + 0.5) / cols) * (lonMax - lonMin)) * 10) / 10,
           radius: 250,
         });
       }
     }
-    return tiles.slice(0, 6);
+    return tiles.slice(0, 4);
   };
   useEffect(() => {
     if (!layers.planes) { planesRef.current = []; setPlaneStatus("off"); needsDraw.current = true; return; }
@@ -213,7 +261,15 @@ export default function WorldMap() {
       } catch (e) { if (alive) setPlaneStatus(e.message); }
     };
     load();
-    const id = setInterval(() => { if (!document.hidden) load(); }, 10000);
+    // 15s poll (matches the proxy cache TTL); on a rate-limit the next poll
+    // is skipped so the upstream gets air.
+    let cooldown = 0;
+    const id = setInterval(() => {
+      if (document.hidden) return;
+      if (cooldown > 0) { cooldown--; return; }
+      load().catch(() => {});
+      if (String(planeStatus).includes("429")) cooldown = 4;
+    }, 15000);
     return () => { alive = false; clearInterval(id); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [layers.planes]);
@@ -249,6 +305,20 @@ export default function WorldMap() {
       for (const [k, v] of store) if (now - v.t > STALE_MS) store.delete(k);
       let ships = 0;
       for (const v of store.values()) if (v.lat != null) ships++;
+      // Live transit stats per chokepoint: vessels inside its bbox and the
+      // anchored share — the queue signal commodity traders actually watch.
+      for (const cp of CHOKEPOINTS) {
+        const [[laMin, loMin], [laMax, loMax]] = cp.bbox;
+        let n = 0, anch = 0;
+        for (const v of store.values()) {
+          if (v.lat == null) continue;
+          if (v.lat >= laMin && v.lat <= laMax && v.lon >= loMin && v.lon <= loMax) {
+            n++;
+            if ((v.sog ?? 0) < 0.5) anch++;
+          }
+        }
+        chokeStatsRef.current.set(cp.id, { n, anchoredPct: n >= 5 ? Math.round((anch / n) * 100) : null });
+      }
       setCounts({ ships, planes: planesRef.current.length, quakes: quakesRef.current.length });
     }, 5000);
     return () => clearInterval(id);
@@ -293,12 +363,24 @@ export default function WorldMap() {
           }
         }
       };
+      const downCol = cssRgb("--c-down"), upColC = cssRgb("--c-up");
       for (const c of countriesRef.current) {
         const hot = c.id === hovId || c.id === selId;
-        // Cheap viewport cull via first polygon bbox union
         trace(c.polys);
-        ctx.fillStyle = hot ? accent : ink;
-        ctx.globalAlpha = hot ? 0.14 : 0.06;
+        // Yield-curve stress choropleth (our LSE data): an inverted 10Y−2Y
+        // tints the country red, deeper inversion = deeper tint; healthy
+        // curves get the faintest green; no coverage stays neutral ink.
+        let fill = ink, alpha = 0.06;
+        if (L.yields && !hot && spreadsRef.current.size) {
+          const code = yieldLookupRef.current?.(c.name);
+          const spread = code != null ? spreadsRef.current.get(code) : undefined;
+          if (spread != null) {
+            if (spread < 0) { fill = downCol; alpha = Math.min(0.42, 0.14 + Math.abs(spread) * 0.28); }
+            else { fill = upColC; alpha = 0.07; }
+          }
+        }
+        ctx.fillStyle = hot ? accent : fill;
+        ctx.globalAlpha = hot ? 0.14 : alpha;
         ctx.fill("evenodd");
         ctx.strokeStyle = hot ? accent : ink;
         ctx.globalAlpha = hot ? 0.8 : 0.2;
@@ -306,6 +388,25 @@ export default function WorldMap() {
         ctx.stroke();
       }
       ctx.globalAlpha = 1;
+
+      // Submarine cables — thin teal arcs under the traffic layers.
+      if (L.cables && cablesRef.current) {
+        ctx.strokeStyle = vizColor("teal");
+        ctx.lineWidth = 0.7;
+        ctx.globalAlpha = 0.28;
+        for (const cab of cablesRef.current) {
+          ctx.beginPath();
+          for (const line of cab.p) {
+            for (let i = 0; i < line.length; i++) {
+              const [u, v] = line[i];
+              if (i === 0 || Math.abs(u - line[i - 1][0]) > 0.5) ctx.moveTo(X(u), Y(v));
+              else ctx.lineTo(X(u), Y(v));
+            }
+          }
+          ctx.stroke();
+        }
+        ctx.globalAlpha = 1;
+      }
 
       // Quakes: circles sized by magnitude.
       if (L.quakes) {
@@ -376,10 +477,14 @@ export default function WorldMap() {
           ctx.rotate(Math.PI / 4);
           ctx.fillRect(-3, -3, 6, 6);
           ctx.restore();
-          if (scale > 1600) {
-            ctx.globalAlpha = 0.75;
+          const cs = chokeStatsRef.current.get(cp.id);
+          if (scale > 1600 || (cs && cs.n > 0)) {
+            ctx.globalAlpha = 0.8;
             ctx.font = "10px ui-monospace, monospace";
-            ctx.fillText(cp.label, px + 7, py + 3);
+            const label = cs && cs.n > 0
+              ? `${cp.label} · ${cs.n} ships${cs.anchoredPct != null ? ` · ${cs.anchoredPct}% anchored` : ""}`
+              : cp.label;
+            ctx.fillText(label, px + 7, py + 3);
           }
         }
         ctx.globalAlpha = 1;
@@ -579,11 +684,15 @@ export default function WorldMap() {
                 <ld.icon className="w-3.5 h-3.5 text-dim" />
                 <span className="text-xs">{ld.label}</span>
                 <span className="ml-auto text-[10px] font-mono text-dim">
-                  {ld.id === "ships" ? fmtNum(counts.ships, 0) : ld.id === "planes" ? fmtNum(counts.planes, 0) : ld.id === "quakes" ? fmtNum(counts.quakes, 0) : ""}
+                  {ld.id === "ships" ? fmtNum(counts.ships, 0)
+                    : ld.id === "planes" ? fmtNum(counts.planes, 0)
+                    : ld.id === "quakes" ? fmtNum(counts.quakes, 0)
+                    : ld.id === "cables" ? (cablesRef.current ? cablesRef.current.length : "")
+                    : ld.id === "yields" ? (spreadsRef.current.size || "") : ""}
                 </span>
               </label>
             ))}
-            <p className="text-[9px] text-dim/70 leading-snug mt-1">Air traffic tiles the visible area (full coverage at regional zoom; the central band at world zoom — zoom into a region for everything).</p>
+            <p className="text-[9px] text-dim/70 leading-snug mt-1">Air traffic tiles the visible area (full at regional zoom). Yield stress: <span className="text-down">red = inverted 10Y−2Y curve</span>, deeper = more inverted (our London bond data). Chokepoints label live vessel counts + anchored share.</p>
           </div>
 
           {/* Hover tooltip: object or country name */}

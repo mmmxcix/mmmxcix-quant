@@ -26,7 +26,11 @@ export async function onRequest({ request, env }) {
     return new Response(JSON.stringify({ error: "websocket only" }), { status: 426, headers: { "content-type": "application/json" } });
   }
   if (!env.AISSTREAM_KEY) return refuse("Ship tracking not configured (AISSTREAM_KEY secret missing).");
-  if (!(await isAdminRequest(env, request))) return refuse("Sign in with the dev account to use ship tracking.");
+  // Browser auth: admin session cookie. Machine auth (agents, health checks):
+  // ?token= matching the machine token — WS clients can't set headers.
+  const url = new URL(request.url);
+  const tokenOk = !!env.DEV_ACCESS_TOKEN && url.searchParams.get("token") === env.DEV_ACCESS_TOKEN;
+  if (!tokenOk && !(await isAdminRequest(env, request))) return refuse("Sign in with the dev account to use ship tracking.");
 
   let upstream;
   try {
