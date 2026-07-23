@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Layers, X, Ship, Plane, Activity, Anchor, Landmark, Radio, Cable, TrendingDown, Newspaper, Flame, AlertTriangle, Swords, CloudRain, Zap, Satellite, Building2, Pickaxe, Waypoints, Factory } from "lucide-react";
+import { Layers, X, Ship, Plane, Activity, Anchor, Landmark, Radio, Cable, TrendingDown, Newspaper, Flame, AlertTriangle, Swords, CloudRain, Zap, Satellite, Building2, Pickaxe, Waypoints, Factory, ChevronDown } from "lucide-react";
 import { cn, fmtNum, fmtPct } from "@/lib/utils";
 import { shipCategory, formatEta, CORRIDORS } from "@/lib/ais";
 import { fetchRoute, planeCategory } from "@/lib/planes";
@@ -121,6 +121,9 @@ const cssRgb = (name) => {
 
 export default function WorldMap() {
   const [layers, setLayers] = useState(loadLayers);
+  // Layer panel folds away on small screens so it doesn't cover the map.
+  const [panelOpen, setPanelOpen] = useState(() =>
+    typeof window === "undefined" ? true : !window.matchMedia("(max-width: 640px)").matches);
   const [shipStatus, setShipStatus] = useState("off");
   const [planeStatus, setPlaneStatus] = useState("off");
   const [hover, setHover] = useState(null);       // { x, y, label, sub }
@@ -1313,14 +1316,17 @@ export default function WorldMap() {
 
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <button onClick={() => { viewRef.current = { cx: 0.5, cy: 0.42, scale: (wrapRef.current?.clientWidth || 800) * 1.05 }; clampView(); needsDraw.current = true; }}
-          className="chip chip-idle">World</button>
-        {CHOKEPOINTS.map((cp) => (
-          <button key={cp.id} onClick={() => jumpTo(cp)} className="chip chip-idle">{cp.label}</button>
-        ))}
+      <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+        {/* One scrollable row on mobile instead of six wrapped ones. */}
+        <div className="flex gap-2 overflow-x-auto pb-1 -mb-1 sm:flex-wrap sm:overflow-visible sm:pb-0 sm:mb-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <button onClick={() => { viewRef.current = { cx: 0.5, cy: 0.42, scale: (wrapRef.current?.clientWidth || 800) * 1.05 }; clampView(); needsDraw.current = true; }}
+            className="chip chip-idle shrink-0">World</button>
+          {CHOKEPOINTS.map((cp) => (
+            <button key={cp.id} onClick={() => jumpTo(cp)} className="chip chip-idle shrink-0">{cp.label}</button>
+          ))}
+        </div>
         <span title={`ships: ${shipStatus} · planes: ${planeStatus}`}
-          className={cn("ml-auto inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-semibold tracking-wide max-w-[300px] truncate",
+          className={cn("self-start sm:self-auto sm:ml-auto inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-semibold tracking-wide max-w-full sm:max-w-[300px] truncate shrink-0",
             shipStatus === "live" || planeStatus === "live" ? "border-up/40 bg-up/10 text-up uppercase" : "border-line bg-bg text-dim")}>
           <Radio className="w-3 h-3 shrink-0" />
           {layers.ships ? `ships ${shipStatus}` : ""}{layers.ships && layers.planes ? " · " : ""}{layers.planes ? `planes ${planeStatus}` : ""}
@@ -1333,12 +1339,21 @@ export default function WorldMap() {
           style={{ height: "min(68vh, 720px)" }}>
           <canvas ref={canvasRef} className="block w-full h-full" />
 
-          {/* Layer panel (worldmonitor-style, our design language) */}
-          <div data-mapui className="absolute top-3 left-3 rounded-xl border border-line bg-bg/85 backdrop-blur px-3 py-2.5 z-10 w-52 max-h-[calc(100%-1.5rem)] overflow-y-auto overscroll-contain">
-            <p className="text-[10px] uppercase tracking-widest text-dim mb-1.5 flex items-center gap-1.5">
+          {/* Layer panel (worldmonitor-style, our design language) — folds away on mobile */}
+          <div data-mapui className="absolute top-3 left-3 z-10 w-52 max-w-[calc(100vw-1.5rem)] rounded-xl border border-line bg-bg/85 backdrop-blur flex flex-col max-h-[calc(100%-1.5rem)]">
+            <button onClick={() => setPanelOpen((o) => !o)}
+              className="flex items-center gap-1.5 px-3 py-2 text-[10px] uppercase tracking-widest text-dim shrink-0">
               <Layers className="w-3 h-3" /> Layers
-              <button onClick={allLayers} className="ml-auto text-[9px] normal-case tracking-normal text-accent hover:underline">all on</button>
-            </p>
+              <span className="ml-auto flex items-center gap-2">
+                {panelOpen && (
+                  <span role="button" tabIndex={0} onClick={(e) => { e.stopPropagation(); allLayers(); }}
+                    className="text-[9px] normal-case tracking-normal text-accent hover:underline cursor-pointer">all on</span>
+                )}
+                <ChevronDown className={cn("w-3.5 h-3.5 transition-transform", panelOpen ? "" : "-rotate-90")} />
+              </span>
+            </button>
+            {panelOpen && (
+            <div className="px-3 pb-2.5 overflow-y-auto overscroll-contain">
             {LAYER_DEFS.map((ld) => (
               <div key={ld.id}>
               <label className="group flex items-center gap-2 py-1 cursor-pointer select-none">
@@ -1394,6 +1409,8 @@ export default function WorldMap() {
               </div>
             ))}
             <p className="text-[9px] text-dim/70 leading-snug mt-1">Ships, planes and fires are global snapshots pushed by our 24/7 agent. Yield stress: <span className="text-down">red = inverted 10Y−2Y curve</span> (our London bond data); <span className="text-accent">amber</span> = instability signals. Chokepoints label live vessel counts + anchored share.</p>
+            </div>
+            )}
           </div>
 
           {/* Hover tooltip: object or country name */}
@@ -1410,7 +1427,7 @@ export default function WorldMap() {
             </div>
           )}
           {layers.instab && instabTop.length > 0 && (
-            <div data-mapui className="absolute bottom-8 right-3 w-60 rounded-xl border border-line bg-bg/85 backdrop-blur px-3 py-2.5 z-10">
+            <div data-mapui className="absolute bottom-8 right-3 w-60 max-w-[calc(100vw-1.5rem)] rounded-xl border border-line bg-bg/85 backdrop-blur px-3 py-2.5 z-10 hidden sm:block">
               <p className="text-[10px] uppercase tracking-widest text-dim mb-1.5 flex items-center gap-1.5">
                 <AlertTriangle className="w-3 h-3" /> Instability signals
               </p>
