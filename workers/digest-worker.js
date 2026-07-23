@@ -404,8 +404,14 @@ async function runDigest(env) {
       }
 
       // Confirmed: build the personalized digest.
-      const { sections } = selectForPrefs(allItems, rec.prefs);
-      if (sections.length === 0) { skippedEmpty++; continue; } // nothing matched today
+      let { sections } = selectForPrefs(allItems, rec.prefs);
+      // Never go silent on a confirmed subscriber: if a symbol-only prefs set
+      // matched nothing today, fall back to general market news so they still
+      // get the daily snapshot instead of an unexplained empty inbox.
+      if (sections.length === 0) {
+        sections = selectForPrefs(allItems, { ...rec.prefs, categories: ['general'] }).sections;
+      }
+      if (sections.length === 0) { skippedEmpty++; continue; } // feed truly empty (e.g. news down)
       await sendMail(env, rec.email, buildEmail(sections, snapshot, now, rec.email, rec.confirmToken));
       sent++;
       await sleep(SEND_DELAY_MS);
