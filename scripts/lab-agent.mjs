@@ -366,6 +366,23 @@ for (const s of published) {
       } catch { /* thin data → keep base size */ }
     }
 
+    // Regime ROTATION (phase-6 upgrade): scale the position by how THIS
+    // strategy has actually performed in the CURRENT regime, measured on its
+    // own live paper history (per-regime P&L ledger below). De-risk only —
+    // never sizes above the base. Needs >=24 samples (~12h in that regime)
+    // before it acts, so day-one noise can't steer capital.
+    let rotInfo = null;
+    if (process.env.LAB_REGIME_ROTATION !== "0" && regime && ps.regimePerf?.[regime]?.n >= 24) {
+      const b = ps.regimePerf[regime];
+      const mean = b.sum / b.n; // normalized equity delta per 30-min sample
+      const w = mean > 0 ? 1 : mean > -0.0005 ? 0.6 : 0.3;
+      if (w < 1) {
+        effPositionPct = Math.max(1, Math.round(effPositionPct * w));
+        console.log(`  ↓ rotation: ${s.name} sized ×${w} — losing in ${regime} regime (${b.n} samples)`);
+      }
+      rotInfo = { regime, samples: b.n, weight: w };
+    }
+
     const posBefore = ps.position;
     const trade = applyTarget(ps, target, price, s.feeBps, effPositionPct);
     if (ps.position !== "flat" && ps.position !== posBefore) {
@@ -377,6 +394,17 @@ for (const s of published) {
       ps.tradeTotal = (ps.tradeTotal || 0) + 1;
       console.log(`${s.name}: ${trade.side} closed ${trade.pnlPct}%`);
     }
+    // Per-regime P&L ledger: attribute the equity change since the last run
+    // to the regime that prevailed during it — this is what rotation reads.
+    if (ps.lastMark != null && ps.lastRegime) {
+      const rp = (ps.regimePerf = ps.regimePerf || {});
+      const b = (rp[ps.lastRegime] = rp[ps.lastRegime] || { sum: 0, n: 0 });
+      b.sum += (ps.markEquity - ps.lastMark) / START_EQUITY;
+      b.n++;
+    }
+    ps.lastMark = ps.markEquity;
+    ps.lastRegime = regime;
+
     // Per-strategy equity history feeds the incubation watchdog (≈48 samples/
     // day at the 30-min cadence; 1500 ≈ a month of context).
     if (!ps.incubStart) ps.incubStart = Date.now();
@@ -413,7 +441,7 @@ for (const s of published) {
 
     summaries.push({
       id: s.id, name: s.name, symbol: s.symbol, interval: s.interval,
-      profile: pid, regime, volTarget: volInfo,
+      profile: pid, regime, volTarget: volInfo, rotation: rotInfo,
       position: ps.position, equity: ps.markEquity,
       returnPct: +(((ps.markEquity / START_EQUITY) - 1) * 100).toFixed(2),
       tradeCount: (ps.trades || []).length,

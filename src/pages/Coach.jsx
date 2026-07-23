@@ -254,6 +254,11 @@ function LabStatus() {
                                   vol ×{s.volTarget.weight} · {s.volTarget.sizedPct}%
                                 </span>
                               )}
+                              {s.rotation && s.rotation.weight < 1 && (
+                                <span className="text-warn" title={`Regime rotation: losing in the current ${s.rotation.regime} regime on its own live history (${s.rotation.samples} samples) — de-risked`}>
+                                  rot ×{s.rotation.weight}
+                                </span>
+                              )}
                             </div>
                           )}
                         </td>
