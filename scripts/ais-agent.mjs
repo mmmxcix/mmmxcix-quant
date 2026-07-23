@@ -13,7 +13,7 @@
 const KEY = process.env.AISSTREAM_KEY;
 const TOKEN = process.env.LAB_TOKEN;
 const SITE = process.env.LAB_SITE || "https://quant.mmmxcix.com";
-const PUSH_MS = 45_000;
+// (ships now ride the combined world push every 3 min — see WORLD_EVERY_MS)
 const STALE_MS = 12 * 60_000;
 const MAX_SHIPS = 30_000;
 
@@ -74,7 +74,9 @@ function connect() {
 }
 connect();
 
-async function push() {
+// Snapshot the current fleet as compact rows (does NOT write — the combined
+// world push does that so ships/planes/jamming cost ONE KV write per cycle).
+function buildShipRows() {
   const now = Date.now();
   for (const [k, v] of vessels) if (now - v.t > STALE_MS) vessels.delete(k);
   const rows = [];
@@ -87,22 +89,8 @@ async function push() {
       v.type ?? 0, v.name || "", v.dest || "",
     ]);
   }
-  rows.sort(() => 0); // stable; cap below keeps the map bounded
-  const ships = rows.slice(0, MAX_SHIPS);
-  try {
-    const res = await fetch(`${SITE}/api/ships`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ token: TOKEN, ships }),
-    });
-    const out = await res.json().catch(() => ({}));
-    console.log(`[${new Date().toISOString()}] pushed ${ships.length} vessels (${msgCount} msgs since last) → ${res.status} ${out.ok ? "ok" : JSON.stringify(out).slice(0, 60)}`);
-  } catch (e) {
-    console.error(`push failed: ${e.message}`);
-  }
-  msgCount = 0;
+  return rows.slice(0, MAX_SHIPS);
 }
-setInterval(push, PUSH_MS);
 
 // ── global AIR-TRAFFIC sweep (same agent, same pattern) ─────────────────────
 // Cloudflare egress gets rate-limited by the community ADS-B APIs; a home IP
@@ -120,6 +108,8 @@ const PLANE_TILES = [
 ];
 const PLANES_EVERY_MS = 90_000;
 let planeSweepRunning = false;
+let lastPlanes = [];   // latest sweep result — written by the combined world push
+let lastJamming = [];
 
 async function fetchTile(lat, lon) {
   for (const base of ["https://api.adsb.lol", "https://api.airplanes.live"]) {
@@ -174,9 +164,7 @@ async function sweepPlanes() {
       }
       await new Promise((r) => setTimeout(r, 400)); // fair-use pacing
     }
-    const planes = [...byHex.values()];
-    const out = await pushJson("/api/planes", { planes }, "planes");
-    console.log(`[${new Date().toISOString()}] planes: pushed ${planes.length} aircraft → 200 ${out.ok ? "ok" : ""}`);
+    lastPlanes = [...byHex.values()];
     // Report only cells with enough aircraft AND a meaningful bad share.
     const jamming = [];
     for (const [key, c] of jam) {
@@ -186,10 +174,8 @@ async function sweepPlanes() {
       const [la, lo] = key.split(",").map(Number);
       jamming.push([la + 0.5, lo + 0.5, +frac.toFixed(2), c.total]);
     }
-    try {
-      await pushJson("/api/jamming", { jamming }, "jamming");
-      console.log(`[${new Date().toISOString()}] jamming: pushed ${jamming.length} suspect cells → ok`);
-    } catch (e) { console.error(`jamming push failed: ${e.message}`); }
+    lastJamming = jamming;
+    console.log(`[${new Date().toISOString()}] plane sweep: ${lastPlanes.length} aircraft, ${jamming.length} jamming cells (cached for world push)`);
   } catch (e) {
     console.error(`plane sweep failed: ${e.message}`);
   } finally {
@@ -199,11 +185,30 @@ async function sweepPlanes() {
 setInterval(sweepPlanes, PLANES_EVERY_MS);
 sweepPlanes();
 
+// ── Combined WORLD push (ships + planes + jamming in ONE KV write) ──────────
+// Free-plan KV allows 1000 writes/day. Three separate keys every 45–90s blew
+// past that; one combined key every 3 min is ~480 writes/day and keeps the map
+// effectively live. Gathering stays continuous (aisstream buffer + 90s plane
+// sweep); only the WRITE is throttled and bundled.
+const WORLD_EVERY_MS = 3 * 60_000;
+async function pushWorld() {
+  const ships = buildShipRows();
+  try {
+    const out = await pushJson("/api/world", { ships, planes: lastPlanes, jamming: lastJamming }, "world");
+    console.log(`[${new Date().toISOString()}] world: pushed ${out.ships} ships · ${out.planes} planes · ${out.jamming} jamming (${msgCount} AIS msgs) → ok`);
+  } catch (e) {
+    console.error(`world push failed: ${e.message}`);
+  }
+  msgCount = 0;
+}
+setInterval(pushWorld, WORLD_EVERY_MS);
+setTimeout(pushWorld, 20_000); // first push once the aisstream buffer has filled
+
 // ── NASA FIRMS fire sweep (24h global VIIRS, every 30 min) ──────────────────
 // The MAP_KEY lives only in the PC's env (never in files/commits/client).
 // FIRMS itself refreshes ~every 3h, so 30 min polling is already generous.
 const FIRMS_KEY = process.env.FIRMS_MAP_KEY;
-const FIRES_EVERY_MS = 30 * 60_000;
+const FIRES_EVERY_MS = 60 * 60_000; // FIRMS refreshes ~3h; hourly is plenty and saves KV writes
 let lastFires = null;
 let firesPushTries = 0;
 
@@ -352,7 +357,7 @@ setInterval(sweepConflicts, CONFLICTS_EVERY_MS);
 setTimeout(sweepConflicts, 30_000);
 
 // ── GDACS natural hazards (floods/droughts/cyclones/wildfires), every 30 min ─
-const DISASTERS_EVERY_MS = 30 * 60_000;
+const DISASTERS_EVERY_MS = 60 * 60_000; // GDACS updates slowly; hourly saves KV writes
 const GDACS_TYPES = { FL: "FL", DR: "DR", TC: "TC", WF: "WF" }; // drop EQ (USGS covers quakes)
 const ALERT = { Green: 0, Orange: 1, Red: 2 };
 async function sweepDisasters() {

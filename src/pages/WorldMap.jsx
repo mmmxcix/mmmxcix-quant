@@ -336,7 +336,7 @@ export default function WorldMap() {
     let alive = true;
     const load = async () => {
       try {
-        const r = await fetch("/api/ships");
+        const r = await fetch("/api/world");
         if (r.status === 404) { if (alive) setShipStatus("fleet agent warming up…"); return; }
         if (!r.ok) throw new Error(`snapshot HTTP ${r.status}`);
         const j = await r.json();
@@ -372,7 +372,7 @@ export default function WorldMap() {
     let alive = true;
     const load = async () => {
       try {
-        const r = await fetch("/api/planes");
+        const r = await fetch("/api/world");
         if (r.status === 404) { if (alive) setPlaneStatus("plane sweep warming up…"); return; }
         if (!r.ok) throw new Error(`snapshot HTTP ${r.status}`);
         const j = await r.json();
@@ -555,7 +555,7 @@ export default function WorldMap() {
     let alive = true;
     const load = async () => {
       try {
-        const r = await fetch("/api/jamming");
+        const r = await fetch("/api/world");
         if (!r.ok) return;
         const j = await r.json();
         if (!alive) return;
