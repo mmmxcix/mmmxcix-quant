@@ -30,6 +30,7 @@ import { harvestAll, fullTextOf, topicsOf, RELEVANCE, JUNK } from "./sources.mjs
 import { loadUniverse } from "./marketdata.mjs";
 import { UNIVERSE, MENTIONABLE, byId, costFor, effectiveTrials, describeMarkets } from "../src/lib/markets.js";
 import { initPy, compilePyStrategy, pyCompileCheck } from "./pyRunnerNode.mjs";
+import { mineAnomalies } from "./mining.mjs";
 
 // Language Cortex writes AND validates in. Python (default) means the model emits
 // a vectorised `signals(df)`, and the ENTIRE gauntlet below runs that Python
@@ -837,6 +838,66 @@ if (improvePool.length && datasets.length && !(UNTIL_HIT && newCandidates.length
 }
 save(st);
 
+// ── always-on DATA-MINING phase (the second alpha channel) ──────────────────
+// Papers are literature-driven; this channel scans OUR OWN market data for
+// statistically robust anomalies (weekday / lag-1 autocorr / turn-of-month,
+// discovered on the train 70% only) and sends the hits through the exact same
+// gauntlet. Honest accounting: every NEW (market × family) scan is selection
+// pressure and gets charged to the DSR trial window, and each gauntleted hit
+// counts as an attempt like any paper strategy.
+let minedThisRun = 0;
+const MINE_PER_RUN = Math.max(0, +(process.env.LAB_MINE_PER_RUN ?? 1));
+if (ALWAYS_ON && datasets.length && MINE_PER_RUN > 0 && !(UNTIL_HIT && newCandidates.length)) {
+  st.minedKeys = st.minedKeys || [];
+  st.scannedKeys = st.scannedKeys || [];
+  const { hits, newScans, scanKeys } = mineAnomalies(datasets, new Set(st.minedKeys), new Set(st.scannedKeys));
+  if (newScans > 0) {
+    // Charge the scan breadth ONCE per new combo — scanning 40 combos and
+    // keeping the best is multiple testing, and the DSR must know.
+    for (let i = 0; i < newScans; i++) st.attemptLog = [...(st.attemptLog || []), Date.now()].slice(-5000);
+    st.scannedKeys = [...new Set([...st.scannedKeys, ...scanKeys])].slice(-2000);
+    console.log(`mining: charged ${newScans} new scan combos to the trial window`);
+  }
+  if (hits.length) console.log(`mining: ${hits.length} anomaly hit(s) above the pre-gauntlet hurdle`);
+  for (const hit of hits) {
+    if (minedThisRun >= MINE_PER_RUN) break;
+    st.minedKeys = [...st.minedKeys, hit.key].slice(-500); // mined once, pass or fail
+    try {
+      compileCheckFor(hit.code, "js");
+      st.attempts++;
+      st.attemptLog = [...(st.attemptLog || []), Date.now()].slice(-5000);
+      const verdict = gauntlet(hit.code, datasets, windowTrials(st), "js");
+      minedThisRun++;
+      if (verdict.pass) {
+        const cand = {
+          id: `rm_${Date.now().toString(36)}`,
+          name: hit.name.slice(0, 70),
+          paper: null, source: "data-mining", kind: "mined",
+          minedStat: hit.stat, topics: ["anomaly", "data-mining"],
+          code: hit.code, language: "js",
+          thesis: parseThesis(hit.code),
+          byMarket: verdict.byMarket, markets: verdict.markets,
+          bestMarket: verdict.bestMarket, marketsTested: verdict.marketsTested,
+          trialsUsed: verdict.trials, dsr: verdict.dsr,
+          profiles: verdict.qualified, trialsAtPass: st.attempts, foundAt: Date.now(),
+        };
+        console.log(`✓ MINED → CANDIDATE: ${cand.name} (DSR ${cand.dsr}% on ${cand.bestMarket}) · ${hit.stat}`);
+        cand.committee = await committeeReview(hit.code, cand);
+        st.candidates = [cand, ...st.candidates].slice(0, 30);
+        newCandidates.push(cand);
+        queuePromotions(cand, verdict);
+      } else {
+        st.graveyard = [{ title: hit.name.slice(0, 70), reason: verdict.reason, source: "data-mining", topics: ["anomaly"], code: hit.code, language: "js", improveTries: 0, at: Date.now() }, ...st.graveyard].slice(0, 200);
+        console.log(`✗ mined → graveyard: ${hit.name.slice(0, 50)} — ${verdict.reason}`);
+      }
+    } catch (e) {
+      console.log(`✗ mined candidate broken (${String(e.message || "").slice(0, 50)}) — skipped`);
+    }
+  }
+  st.mined = (st.mined || 0) + minedThisRun;
+  save(st);
+}
+
 // Read the current lab state ONCE — used both to gate promotion on portfolio
 // health (RiskGate) and to preserve paper state when we merge our summary in.
 const cur = await (await fetch(`${SITE}/api/lab`, { headers: { "x-lab-token": TOKEN } })).json().catch(() => ({}));
@@ -904,6 +965,7 @@ const state = { ...(cur?.state || {}), research: {
   candidates: st.candidates.length,
   autoPromoted: st.autoPromoted || 0,
   improved: st.improved || 0,
+  mined: st.mined || 0,
   alwaysOn: ALWAYS_ON,
   sources: brainSources(st),
   // What each source actually yielded this run — makes a quietly dead feed
