@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Layers, X, Ship, Plane, Activity, Anchor, Landmark, Radio, Cable, TrendingDown, Newspaper, Flame, AlertTriangle, Swords, CloudRain, Zap, Satellite, Building2 } from "lucide-react";
+import { Layers, X, Ship, Plane, Activity, Anchor, Landmark, Radio, Cable, TrendingDown, Newspaper, Flame, AlertTriangle, Swords, CloudRain, Zap, Satellite, Building2, Pickaxe, Waypoints } from "lucide-react";
 import { cn, fmtNum, fmtPct } from "@/lib/utils";
 import { shipCategory, formatEta, CORRIDORS } from "@/lib/ais";
 import { fetchRoute, planeCategory } from "@/lib/planes";
@@ -48,13 +48,26 @@ const LAYER_DEFS = [
   { id: "conflicts", label: "Conflict events", icon: Swords },
   { id: "disasters", label: "Disasters (GDACS)", icon: CloudRain },
   { id: "power", label: "Power infrastructure", icon: Zap },
+  { id: "pipelines", label: "Oil/NGL pipelines", icon: Waypoints },
+  { id: "mines", label: "Mines (producing)", icon: Pickaxe },
   { id: "jamming", label: "GPS interference", icon: Satellite },
   { id: "projects", label: "World Bank projects", icon: Building2 },
   { id: "instab", label: "Instability signals", icon: AlertTriangle },
 ];
 
 const LS_LAYERS = "quant_map_layers_v3"; // v3: cables + yield stress
-const LAYER_DEFAULTS = { ships: true, planes: true, quakes: true, chokepoints: true, cables: true, yields: true, news: true, fires: true, conflicts: true, disasters: true, power: false, jamming: false, projects: false, instab: true };
+const LAYER_DEFAULTS = { ships: true, planes: true, quakes: true, chokepoints: true, cables: true, yields: true, news: true, fires: true, conflicts: true, disasters: true, power: false, pipelines: false, mines: false, jamming: false, projects: false, instab: true };
+
+// Mine commodity code -> [viz color, label]
+const MINE_TYPES = {
+  a: ["amber", "Gold"], s: ["dim", "Silver"], c: ["pink", "Copper"], i: ["down", "Iron"],
+  k: ["dim", "Coal"], z: ["purple", "Zinc"], l: ["purple", "Lead"], u: ["up", "Uranium"],
+  n: ["teal", "Nickel"], t: ["blue", "Tin"], m: ["pink", "Manganese"], w: ["blue", "Tungsten"],
+  y: ["teal", "Molybdenum"], o: ["purple", "Cobalt"], p: ["dim", "Platinum"], r: ["pink", "Chromium"],
+  b: ["blue", "Bauxite"], g: ["dim", "Sand/Stone"], e: ["purple", "Gemstone"], x: ["up", "Rare earth/Li"],
+  h: ["amber", "Phosphate/S"], d: ["dim", "Other"],
+};
+const PIPE_TYPES = { o: ["pink", "Oil"], n: ["amber", "NGL"] };
 
 // GDACS hazard type -> [viz color, label, single-char glyph]
 const DISASTER_TYPES = {
@@ -129,6 +142,8 @@ export default function WorldMap() {
   const conflictsRef = useRef([]);      // UCDP events {lat,lon,best,type,date,country,a,b,u,v}
   const disastersRef = useRef([]);      // GDACS {lat,lon,type,alert,name,country,date,severity,u,v}
   const powerRef = useRef([]);          // power plants {lat,lon,fuel,mw,u,v}
+  const pipesRef = useRef(null);        // projected pipeline polylines (lazy)
+  const minesRef = useRef([]);          // producing mines {lat,lon,commod,name,u,v}
   const jammingRef = useRef([]);        // GPS-interference cells {lat,lon,frac,total,u,v}
   const projectsRef = useRef([]);       // WB per-country {country,count,usd,names,u,v}
   const centroidRef = useRef(new Map()); // country-name(lower) -> {u,v} for project pins
@@ -461,6 +476,33 @@ export default function WorldMap() {
     return () => { alive = false; };
   }, [layers.power]);
 
+  /* ── Pipelines (vendored GEM oil/NGL routes) ─────────────────────────── */
+  useEffect(() => {
+    if (!layers.pipelines || pipesRef.current) { needsDraw.current = true; return; }
+    let alive = true;
+    fetch("/pipelines.json").then((r) => r.json()).then((rows) => {
+      if (!alive) return;
+      pipesRef.current = rows.map((c) => ({
+        n: c.n, k: c.k,
+        p: c.p.map((line) => line.map(([lon, lat]) => [mercX(lon), mercY(lat)])),
+      }));
+      needsDraw.current = true;
+    }).catch(() => { /* layer stays empty */ });
+    return () => { alive = false; };
+  }, [layers.pipelines]);
+
+  /* ── Mines (vendored USGS MRDS producers) ────────────────────────────── */
+  useEffect(() => {
+    if (!layers.mines || minesRef.current.length) { needsDraw.current = true; return; }
+    let alive = true;
+    fetch("/mines.json").then((r) => r.json()).then((rows) => {
+      if (!alive) return;
+      minesRef.current = rows.map(([lat, lon, commod, name]) => ({ lat, lon, commod, name, u: mercX(lon), v: mercY(lat) }));
+      needsDraw.current = true;
+    }).catch(() => { /* layer stays empty */ });
+    return () => { alive = false; };
+  }, [layers.mines]);
+
   /* ── GPS interference (derived from our plane sweep) ─────────────────── */
   useEffect(() => {
     if (!layers.jamming) { jammingRef.current = []; needsDraw.current = true; return; }
@@ -716,6 +758,24 @@ export default function WorldMap() {
           ctx.stroke();
         }
       }
+
+      // Oil / NGL pipelines — pink (oil) and amber (NGL) routes.
+      if (L.pipelines && pipesRef.current) {
+        ctx.lineWidth = 0.9;
+        ctx.globalAlpha = 0.5;
+        for (const pipe of pipesRef.current) {
+          ctx.strokeStyle = vizColor(pipe.k === "n" ? "amber" : "pink");
+          ctx.beginPath();
+          for (const line of pipe.p) {
+            for (let i = 0; i < line.length; i++) {
+              const [u, v] = line[i];
+              if (i === 0 || Math.abs(u - line[i - 1][0]) > 0.5) ctx.moveTo(X(u), Y(v));
+              else ctx.lineTo(X(u), Y(v));
+            }
+          }
+          ctx.stroke();
+        }
+      }
       } // end world copies
       kOff = 0;
       ctx.globalAlpha = 1;
@@ -744,6 +804,23 @@ export default function WorldMap() {
           ctx.globalAlpha = 0.7;
           const r = pp.mw >= 1000 ? 2.4 : 1.4;
           ctx.fillRect(px - r, py - r, r * 2, r * 2);
+        }
+        ctx.globalAlpha = 1;
+      }
+
+      // Mines: small commodity-colored diamonds.
+      if (L.mines) {
+        for (const m of minesRef.current) {
+          const px = XP(m.u), py = Y(m.v);
+          if (px < -4 || py < -4 || px > w + 4 || py > h + 4) continue;
+          const [vk] = MINE_TYPES[m.commod] || ["dim"];
+          ctx.fillStyle = vk === "down" ? cssRgb("--c-down") : vk === "up" ? cssRgb("--c-up") : vk === "dim" ? cssRgb("--c-dim") : vizColor(vk);
+          ctx.globalAlpha = 0.7;
+          ctx.save();
+          ctx.translate(px, py);
+          ctx.rotate(Math.PI / 4);
+          ctx.fillRect(-1.5, -1.5, 3, 3);
+          ctx.restore();
         }
         ctx.globalAlpha = 1;
       }
@@ -994,6 +1071,11 @@ export default function WorldMap() {
         const d = (x - px) ** 2 + (y - py) ** 2;
         if (d < bd) { bd = d; best = { kind: "project", x, y, data: pr }; }
       }
+      if (L.mines) for (const m of minesRef.current) {
+        const [x, y] = P(m.lon, m.lat);
+        const d = (x - px) ** 2 + (y - py) ** 2;
+        if (d < bd) { bd = d; best = { kind: "mine", x, y, data: m }; }
+      }
       if (L.fires) for (const f of firesRef.current) {
         const [x, y] = P(f.lon, f.lat);
         const d = (x - px) ** 2 + (y - py) ** 2;
@@ -1025,6 +1107,7 @@ export default function WorldMap() {
             : obj.kind === "conflict" ? `${d.country} · ${d.best} death${d.best === 1 ? "" : "s"}`
             : obj.kind === "disaster" ? ((DISASTER_TYPES[d.type] || [])[1] || "Hazard") + ` · ${d.country}`
             : obj.kind === "project" ? `${d.country} · ${d.count} WB project${d.count === 1 ? "" : "s"}`
+            : obj.kind === "mine" ? (d.name || "Mine")
             : `M${d.mag?.toFixed(1)}`,
           sub: obj.kind === "ship" ? `${(d.sog ?? 0).toFixed(1)} kn${d.destination ? ` → ${d.destination}` : ""}`
             : obj.kind === "plane" ? `${d.type || ""} ${d.onGround ? "ground" : fmtNum(d.alt, 0) + " ft"}`
@@ -1033,6 +1116,7 @@ export default function WorldMap() {
             : obj.kind === "conflict" ? `${(CONFLICT_TYPES[d.type] || [])[1] || "violence"} · ${d.date}`
             : obj.kind === "disaster" ? `${["green","orange","red"][d.alert] || ""} alert · ${d.date}`
             : obj.kind === "project" ? `$${(d.usd / 1e9).toFixed(1)}B committed`
+            : obj.kind === "mine" ? ((MINE_TYPES[d.commod] || [])[1] || "mineral") + " · producing"
             : d.place,
         });
         return;
@@ -1179,6 +1263,8 @@ export default function WorldMap() {
                     : ld.id === "conflicts" ? (conflictsRef.current.length ? fmtNum(conflictsRef.current.length, 0) : "")
                     : ld.id === "disasters" ? (disastersRef.current.length || "")
                     : ld.id === "power" ? (powerRef.current.length ? fmtNum(powerRef.current.length, 0) : "")
+                    : ld.id === "pipelines" ? (pipesRef.current ? pipesRef.current.length : "")
+                    : ld.id === "mines" ? (minesRef.current.length ? fmtNum(minesRef.current.length, 0) : "")
                     : ld.id === "jamming" ? (jammingRef.current.length || "")
                     : ld.id === "projects" ? (projectsRef.current.length || "")
                     : ld.id === "instab" ? (instabTop.length || "") : ""}
@@ -1261,6 +1347,7 @@ export default function WorldMap() {
                   : sel.kind === "conflict" ? `${sel.data.country} — conflict event`
                   : sel.kind === "disaster" ? ((DISASTER_TYPES[sel.data.type] || [])[1] || "Hazard") + ` — ${sel.data.country}`
                   : sel.kind === "project" ? `${sel.data.country} — World Bank`
+                  : sel.kind === "mine" ? (sel.data.name || "Mine")
                   : `M${sel.data.mag?.toFixed(1)} earthquake`}
               </p>
               <button onClick={() => { setSelected(null); needsDraw.current = true; }} className="text-dim hover:text-text shrink-0" aria-label="Close">
@@ -1350,6 +1437,16 @@ export default function WorldMap() {
               </div>
             )}
 
+            {sel.kind === "mine" && (
+              <div className="text-xs space-y-1.5">
+                <p className="text-dim capitalize">{(MINE_TYPES[sel.data.commod] || [])[1] || "mineral"} · producing</p>
+                <div className="grid grid-cols-2 gap-x-3 gap-y-1 font-mono pt-1 border-t border-line/60">
+                  <span className="text-dim">Position</span><span className="text-right">{sel.data.lat.toFixed(2)}, {sel.data.lon.toFixed(2)}</span>
+                </div>
+                <p className="text-[10px] text-dim/70">USGS MRDS (Mineral Resources Data System, public domain). Coverage is US-dense.</p>
+              </div>
+            )}
+
             {sel.kind === "disaster" && (
               <div className="text-xs space-y-1.5">
                 <p className="leading-snug">{sel.data.name}</p>
@@ -1419,7 +1516,8 @@ export default function WorldMap() {
         the global AIS fleet and worldwide air traffic (both pushed by our 24/7 agent),
         NASA FIRMS fires, GDACS disasters (floods/droughts/cyclones/wildfires),
         UCDP conflict events (~6 months, preliminary), USGS earthquakes (24h, M2.5+),
-        power infrastructure, GPS-interference cells (derived from our own ADS-B sweep),
+        power infrastructure, oil/NGL pipelines and producing mines,
+        GPS-interference cells (derived from our own ADS-B sweep),
         World Bank projects, submarine cables, news pins, chokepoints, and per-country
         instability signals. Ship/plane categories are filterable; hover a layer for
         "only" to view it solo. Click anything for
