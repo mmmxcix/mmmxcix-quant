@@ -172,6 +172,31 @@ async function openAlex(max) {
   });
 }
 
+// ── 2b. SSRN (via OpenAlex) ─────────────────────────────────────────────────
+// "SSRN should become the natural starting point for every single trading
+// strategy" — the reel is right: SSRN is where finance research lands first,
+// often years before a journal. SSRN has no public API of its own, but
+// OpenAlex fully indexes the SSRN Electronic Journal (S4210172589, 1.6M
+// works) — so we harvest it through the same API with a source filter and
+// let the usual RELEVANCE/JUNK screens do the topical filtering.
+async function ssrn(max) {
+  const since = new Date(Date.now() - 730 * 864e5).toISOString().slice(0, 10);
+  const filter = `primary_location.source.id:S4210172589,title_and_abstract.search:trading strategy,from_publication_date:${since}`;
+  const data = await getJson(
+    `https://api.openalex.org/works?filter=${filter.replace(/ /g, "%20")}&per-page=${max}&sort=publication_date:desc&mailto=${MAILTO}`
+  );
+  return (data?.results || []).flatMap((w) => {
+    const title = clean(w.title);
+    if (!title) return [];
+    const doi = w.doi ? String(w.doi).replace(/^https?:\/\/doi\.org\//, "") : "";
+    return [{
+      id: w.id, title, abstract: reconstructAbstract(w.abstract_inverted_index),
+      published: w.publication_date || "", link: doi ? `https://doi.org/${doi}` : w.id,
+      source: "SSRN", kind: "paper",
+    }];
+  });
+}
+
 // ── 3. Crossref ─────────────────────────────────────────────────────────────
 // 150M+ DOIs. Indexes journals and working papers (incl. much of SSRN) that
 // OpenAlex ranks differently, so it genuinely widens the pool rather than
@@ -435,6 +460,7 @@ export async function fullTextOf(item, maxChars = 14000) {
 const SOURCES = [
   { name: "arXiv", fn: arxiv, weight: 1.5 },
   { name: "OpenAlex", fn: openAlex, weight: 1.0 },
+  { name: "SSRN", fn: ssrn, weight: 1.1 }, // finance-first venue — slight preference
   { name: "Crossref", fn: crossref, weight: 1.0 },
   { name: "blogs", fn: blogs, weight: 1.0 },
   { name: "Zenodo", fn: zenodo, weight: 0.8 },
