@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Layers, X, Ship, Plane, Activity, Anchor, Landmark, Radio, Cable, TrendingDown, Newspaper, Flame, AlertTriangle, Swords } from "lucide-react";
+import { Layers, X, Ship, Plane, Activity, Anchor, Landmark, Radio, Cable, TrendingDown, Newspaper, Flame, AlertTriangle, Swords, CloudRain, Zap, Satellite, Building2 } from "lucide-react";
 import { cn, fmtNum, fmtPct } from "@/lib/utils";
 import { shipCategory, formatEta, CORRIDORS } from "@/lib/ais";
 import { fetchRoute, planeCategory } from "@/lib/planes";
@@ -46,11 +46,27 @@ const LAYER_DEFS = [
   { id: "news", label: "News pins", icon: Newspaper },
   { id: "fires", label: "Fires (24h)", icon: Flame },
   { id: "conflicts", label: "Conflict events", icon: Swords },
+  { id: "disasters", label: "Disasters (GDACS)", icon: CloudRain },
+  { id: "power", label: "Power infrastructure", icon: Zap },
+  { id: "jamming", label: "GPS interference", icon: Satellite },
+  { id: "projects", label: "World Bank projects", icon: Building2 },
   { id: "instab", label: "Instability signals", icon: AlertTriangle },
 ];
 
 const LS_LAYERS = "quant_map_layers_v3"; // v3: cables + yield stress
-const LAYER_DEFAULTS = { ships: true, planes: true, quakes: true, chokepoints: true, cables: true, yields: true, news: true, fires: true, conflicts: true, instab: true };
+const LAYER_DEFAULTS = { ships: true, planes: true, quakes: true, chokepoints: true, cables: true, yields: true, news: true, fires: true, conflicts: true, disasters: true, power: false, jamming: false, projects: false, instab: true };
+
+// GDACS hazard type -> [viz color, label, single-char glyph]
+const DISASTER_TYPES = {
+  FL: ["blue", "Flood", "≈"], DR: ["amber", "Drought", "☀"],
+  TC: ["purple", "Cyclone", "◍"], WF: ["down", "Wildfire", "▲"],
+};
+// Power-plant fuel code -> [viz color, label]
+const FUEL_TYPES = {
+  c: ["down", "Coal"], g: ["amber", "Gas"], o: ["pink", "Oil"], n: ["purple", "Nuclear"],
+  h: ["blue", "Hydro"], w: ["teal", "Wind"], s: ["amber", "Solar"], b: ["up", "Biomass"],
+  t: ["pink", "Geothermal"], x: ["dim", "Waste"], d: ["teal", "Tidal"], e: ["dim", "Storage"], z: ["dim", "Other"],
+};
 
 // Sub-category filters (ships/planes) — "only cargo", "only tankers", etc.
 const LS_FILTERS = "quant_map_filters_v1";
@@ -111,6 +127,11 @@ export default function WorldMap() {
   const newsRef = useRef([]);           // geolocated news pins
   const firesRef = useRef([]);          // FIRMS detections {lat,lon,frp,u,v}
   const conflictsRef = useRef([]);      // UCDP events {lat,lon,best,type,date,country,a,b,u,v}
+  const disastersRef = useRef([]);      // GDACS {lat,lon,type,alert,name,country,date,severity,u,v}
+  const powerRef = useRef([]);          // power plants {lat,lon,fuel,mw,u,v}
+  const jammingRef = useRef([]);        // GPS-interference cells {lat,lon,frac,total,u,v}
+  const projectsRef = useRef([]);       // WB per-country {country,count,usd,names,u,v}
+  const centroidRef = useRef(new Map()); // country-name(lower) -> {u,v} for project pins
   const instabRef = useRef({ byId: new Map(), top: [] });
   const countryBoxesRef = useRef([]);   // per-polygon bounding boxes, small-first
   const pinNameCacheRef = useRef(new Map()); // country name -> COUNTRY_PINS entry
@@ -166,6 +187,10 @@ export default function WorldMap() {
         if (u2 > -9) { boxes.push([u1, v1, u2, v2]); area += (u2 - u1) * (v2 - v1); }
       }
       out.push({ id: c.id, name: c.name, boxes, area });
+      // Centroid = center of the country's largest polygon box (for project pins).
+      let big = null, bigA = -1;
+      for (const b of boxes) { const a = (b[2] - b[0]) * (b[3] - b[1]); if (a > bigA) { bigA = a; big = b; } }
+      if (big) centroidRef.current.set(c.name.toLowerCase(), { u: (big[0] + big[2]) / 2, v: (big[1] + big[3]) / 2 });
     }
     out.sort((a, b) => a.area - b.area);
     countryBoxesRef.current = out;
@@ -404,6 +429,81 @@ export default function WorldMap() {
     return () => { alive = false; clearInterval(id); };
   }, [layers.conflicts]);
 
+  /* ── Disasters (GDACS floods/droughts/cyclones/wildfires) ────────────── */
+  useEffect(() => {
+    if (!layers.disasters) { disastersRef.current = []; needsDraw.current = true; return; }
+    let alive = true;
+    const load = async () => {
+      try {
+        const r = await fetch("/api/disasters");
+        if (!r.ok) return;
+        const j = await r.json();
+        if (!alive) return;
+        disastersRef.current = (j.disasters || []).map(([lat, lon, type, alert, name, country, date, severity]) =>
+          ({ lat, lon, type, alert, name, country, date, severity, u: mercX(lon), v: mercY(lat) }));
+        needsDraw.current = true;
+      } catch { /* keep last */ }
+    };
+    load();
+    const id = setInterval(load, 15 * 60_000);
+    return () => { alive = false; clearInterval(id); };
+  }, [layers.disasters]);
+
+  /* ── Power infrastructure (vendored WRI plants >= 50 MW) ─────────────── */
+  useEffect(() => {
+    if (!layers.power || powerRef.current.length) { needsDraw.current = true; return; }
+    let alive = true;
+    fetch("/powerplants.json").then((r) => r.json()).then((rows) => {
+      if (!alive) return;
+      powerRef.current = rows.map(([lat, lon, fuel, mw]) => ({ lat, lon, fuel, mw, u: mercX(lon), v: mercY(lat) }));
+      needsDraw.current = true;
+    }).catch(() => { /* layer stays empty */ });
+    return () => { alive = false; };
+  }, [layers.power]);
+
+  /* ── GPS interference (derived from our plane sweep) ─────────────────── */
+  useEffect(() => {
+    if (!layers.jamming) { jammingRef.current = []; needsDraw.current = true; return; }
+    let alive = true;
+    const load = async () => {
+      try {
+        const r = await fetch("/api/jamming");
+        if (!r.ok) return;
+        const j = await r.json();
+        if (!alive) return;
+        jammingRef.current = (j.jamming || []).map(([lat, lon, frac, total]) =>
+          ({ lat, lon, frac, total, u: mercX(lon), v: mercY(lat) }));
+        needsDraw.current = true;
+      } catch { /* keep last */ }
+    };
+    load();
+    const id = setInterval(load, 2 * 60_000);
+    return () => { alive = false; clearInterval(id); };
+  }, [layers.jamming]);
+
+  /* ── World Bank projects (per country, pinned at centroid) ───────────── */
+  useEffect(() => {
+    if (!layers.projects) { projectsRef.current = []; needsDraw.current = true; return; }
+    let alive = true;
+    const load = async () => {
+      try {
+        const r = await fetch("/api/projects");
+        if (!r.ok) return;
+        const j = await r.json();
+        if (!alive) return;
+        projectsRef.current = (j.projects || []).map(([country, count, usd, names]) => {
+          const cen = centroidRef.current.get(String(country).toLowerCase());
+          return cen ? { country, count, usd, names, u: cen.u, v: cen.v,
+            lat: invMercLat(cen.v), lon: invMercLon(cen.u) } : null;
+        }).filter(Boolean);
+        needsDraw.current = true;
+      } catch { /* keep last */ }
+    };
+    load();
+    const id = setInterval(load, 30 * 60_000);
+    return () => { alive = false; clearInterval(id); };
+  }, [layers.projects]);
+
   /* ── Quakes layer (USGS, direct — they send CORS) ────────────────────── */
   useEffect(() => {
     if (!layers.quakes) { quakesRef.current = []; needsDraw.current = true; return; }
@@ -480,6 +580,11 @@ export default function WorldMap() {
           const c = hit(ev.u, ev.v);
           if (c) { const e = hits.get(c.id) || { q: 0, f: 0 }; e.k = (e.k || 0) + ev.best; hits.set(c.id, e); }
         }
+        for (const dz of disastersRef.current) {
+          if (!dz.alert) continue; // only orange/red hazards move the needle
+          const c = hit(dz.u, dz.v);
+          if (c) { const e = hits.get(c.id) || { q: 0, f: 0 }; e.h = (e.h || 0) + dz.alert; hits.set(c.id, e); }
+        }
         const newsBy = new Map(newsRef.current.map((p) => [p.code, p.items.length]));
         const pinCache = pinNameCacheRef.current;
         const out = [];
@@ -496,8 +601,9 @@ export default function WorldMap() {
           const fPts = Math.min(15, Math.round(Math.sqrt(e.f) * 1.6));
           // Conflict fatalities (UCDP, ~6 months) — the strongest signal we have.
           const kPts = Math.min(35, Math.round(Math.sqrt(e.k || 0) * 1.4));
-          const score = Math.min(100, inv + newsPts + qPts + fPts + kPts);
-          if (score > 0) out.push({ id: c.id, name: c.name, score, inv, newsPts, qPts, fPts, kPts });
+          const hPts = Math.min(15, (e.h || 0) * 5);
+          const score = Math.min(100, inv + newsPts + qPts + fPts + kPts + hPts);
+          if (score > 0) out.push({ id: c.id, name: c.name, score, inv, newsPts, qPts, fPts, kPts, hPts });
         }
         out.sort((a, b) => b.score - a.score);
         instabRef.current = { byId: new Map(out.map((o) => [o.id, o])), top: out.slice(0, 8) };
@@ -613,6 +719,34 @@ export default function WorldMap() {
       } // end world copies
       kOff = 0;
       ctx.globalAlpha = 1;
+
+      // GPS-interference heat cells (under traffic): amber squares by bad-fraction.
+      if (L.jamming) {
+        const jc = vizColor("amber");
+        for (const cell of jammingRef.current) {
+          const px = XP(cell.u), py = Y(cell.v);
+          if (px < -20 || py < -20 || px > w + 20 || py > h + 20) continue;
+          const sz = Math.max(6, scale / 90);
+          ctx.fillStyle = jc;
+          ctx.globalAlpha = 0.12 + cell.frac * 0.4;
+          ctx.fillRect(px - sz / 2, py - sz / 2, sz, sz);
+        }
+        ctx.globalAlpha = 1;
+      }
+
+      // Power infrastructure: small fuel-colored squares (dense — draw thin).
+      if (L.power) {
+        for (const pp of powerRef.current) {
+          const px = XP(pp.u), py = Y(pp.v);
+          if (px < -4 || py < -4 || px > w + 4 || py > h + 4) continue;
+          const [vk] = FUEL_TYPES[pp.fuel] || ["dim"];
+          ctx.fillStyle = vk === "down" ? cssRgb("--c-down") : vk === "up" ? cssRgb("--c-up") : vk === "dim" ? cssRgb("--c-dim") : vizColor(vk);
+          ctx.globalAlpha = 0.7;
+          const r = pp.mw >= 1000 ? 2.4 : 1.4;
+          ctx.fillRect(px - r, py - r, r * 2, r * 2);
+        }
+        ctx.globalAlpha = 1;
+      }
 
       // Fires (NASA FIRMS VIIRS 24h): heat dots, hotter = redder + bigger.
       if (L.fires && firesRef.current.length) {
@@ -730,6 +864,46 @@ export default function WorldMap() {
         ctx.globalAlpha = 1;
       }
 
+      // Disasters (GDACS): glyph markers, alert-colored ring.
+      if (L.disasters && disastersRef.current.length) {
+        ctx.font = "11px ui-monospace, monospace";
+        ctx.textAlign = "center";
+        for (const dz of disastersRef.current) {
+          const px = XP(dz.u), py = Y(dz.v);
+          if (px < -12 || py < -12 || px > w + 12 || py > h + 12) continue;
+          const [vk, , glyph] = DISASTER_TYPES[dz.type] || ["dim", "", "?"];
+          const col = vk === "down" ? cssRgb("--c-down") : vk === "blue" ? vizColor("blue") : vizColor(vk);
+          if (dz.alert >= 1) { // orange/red get a halo
+            ctx.fillStyle = dz.alert >= 2 ? cssRgb("--c-down") : vizColor("amber");
+            ctx.globalAlpha = 0.28;
+            ctx.beginPath(); ctx.arc(px, py, 8, 0, Math.PI * 2); ctx.fill();
+          }
+          ctx.globalAlpha = 0.95;
+          ctx.fillStyle = col;
+          ctx.fillText(glyph, px, py + 4);
+        }
+        ctx.textAlign = "start";
+        ctx.globalAlpha = 1;
+      }
+
+      // World Bank projects: hollow rings at country centroids, sized by count.
+      if (L.projects && projectsRef.current.length) {
+        const pc = vizColor("teal");
+        ctx.strokeStyle = pc;
+        for (const pr of projectsRef.current) {
+          const px = XP(pr.u), py = Y(pr.v);
+          if (px < -14 || py < -14 || px > w + 14 || py > h + 14) continue;
+          const rr = Math.min(11, 4 + Math.sqrt(pr.count) * 1.4);
+          ctx.globalAlpha = 0.85;
+          ctx.lineWidth = 1.6;
+          ctx.beginPath(); ctx.arc(px, py, rr, 0, Math.PI * 2); ctx.stroke();
+          ctx.globalAlpha = 0.12;
+          ctx.fillStyle = pc;
+          ctx.beginPath(); ctx.arc(px, py, rr, 0, Math.PI * 2); ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+      }
+
       // News pins — accent dots sized by headline count.
       if (L.news && newsRef.current.length) {
         const nCol = accent;
@@ -810,6 +984,16 @@ export default function WorldMap() {
         const d = (x - px) ** 2 + (y - py) ** 2;
         if (d < bd) { bd = d; best = { kind: "conflict", x, y, data: ev }; }
       }
+      if (L.disasters) for (const dz of disastersRef.current) {
+        const [x, y] = P(dz.lon, dz.lat);
+        const d = (x - px) ** 2 + (y - py) ** 2;
+        if (d < bd) { bd = d; best = { kind: "disaster", x, y, data: dz }; }
+      }
+      if (L.projects) for (const pr of projectsRef.current) {
+        const [x, y] = P(pr.lon, pr.lat);
+        const d = (x - px) ** 2 + (y - py) ** 2;
+        if (d < bd) { bd = d; best = { kind: "project", x, y, data: pr }; }
+      }
       if (L.fires) for (const f of firesRef.current) {
         const [x, y] = P(f.lon, f.lat);
         const d = (x - px) ** 2 + (y - py) ** 2;
@@ -839,12 +1023,16 @@ export default function WorldMap() {
             : obj.kind === "news" ? `${d.name} · ${d.items.length} headline${d.items.length > 1 ? "s" : ""}`
             : obj.kind === "fire" ? `Fire · ${d.frp} MW`
             : obj.kind === "conflict" ? `${d.country} · ${d.best} death${d.best === 1 ? "" : "s"}`
+            : obj.kind === "disaster" ? ((DISASTER_TYPES[d.type] || [])[1] || "Hazard") + ` · ${d.country}`
+            : obj.kind === "project" ? `${d.country} · ${d.count} WB project${d.count === 1 ? "" : "s"}`
             : `M${d.mag?.toFixed(1)}`,
           sub: obj.kind === "ship" ? `${(d.sog ?? 0).toFixed(1)} kn${d.destination ? ` → ${d.destination}` : ""}`
             : obj.kind === "plane" ? `${d.type || ""} ${d.onGround ? "ground" : fmtNum(d.alt, 0) + " ft"}`
             : obj.kind === "news" ? (d.items[0]?.title || "").slice(0, 60)
             : obj.kind === "fire" ? "VIIRS thermal anomaly · NASA FIRMS"
             : obj.kind === "conflict" ? `${(CONFLICT_TYPES[d.type] || [])[1] || "violence"} · ${d.date}`
+            : obj.kind === "disaster" ? `${["green","orange","red"][d.alert] || ""} alert · ${d.date}`
+            : obj.kind === "project" ? `$${(d.usd / 1e9).toFixed(1)}B committed`
             : d.place,
         });
         return;
@@ -989,6 +1177,10 @@ export default function WorldMap() {
                     : ld.id === "news" ? (newsRef.current.length || "")
                     : ld.id === "fires" ? (counts.fires ? fmtNum(counts.fires, 0) : "")
                     : ld.id === "conflicts" ? (conflictsRef.current.length ? fmtNum(conflictsRef.current.length, 0) : "")
+                    : ld.id === "disasters" ? (disastersRef.current.length || "")
+                    : ld.id === "power" ? (powerRef.current.length ? fmtNum(powerRef.current.length, 0) : "")
+                    : ld.id === "jamming" ? (jammingRef.current.length || "")
+                    : ld.id === "projects" ? (projectsRef.current.length || "")
                     : ld.id === "instab" ? (instabTop.length || "") : ""}
                 </span>
               </label>
@@ -1067,6 +1259,8 @@ export default function WorldMap() {
                   : sel.kind === "news" ? `${sel.data.name} — news`
                   : sel.kind === "fire" ? "Fire detection"
                   : sel.kind === "conflict" ? `${sel.data.country} — conflict event`
+                  : sel.kind === "disaster" ? ((DISASTER_TYPES[sel.data.type] || [])[1] || "Hazard") + ` — ${sel.data.country}`
+                  : sel.kind === "project" ? `${sel.data.country} — World Bank`
                   : `M${sel.data.mag?.toFixed(1)} earthquake`}
               </p>
               <button onClick={() => { setSelected(null); needsDraw.current = true; }} className="text-dim hover:text-text shrink-0" aria-label="Close">
@@ -1100,7 +1294,7 @@ export default function WorldMap() {
                     <p className="text-dim pt-1.5 border-t border-line/60">
                       Instability <span className="text-text font-semibold">{sc.score}</span>/100
                       {sc.inv ? ` · curve +${sc.inv}` : ""}{sc.newsPts ? ` · news +${sc.newsPts}` : ""}
-                      {sc.kPts ? ` · conflict +${sc.kPts}` : ""}{sc.qPts ? ` · quakes +${sc.qPts}` : ""}{sc.fPts ? ` · fires +${sc.fPts}` : ""}
+                      {sc.kPts ? ` · conflict +${sc.kPts}` : ""}{sc.hPts ? ` · hazards +${sc.hPts}` : ""}{sc.qPts ? ` · quakes +${sc.qPts}` : ""}{sc.fPts ? ` · fires +${sc.fPts}` : ""}
                     </p>
                   ) : null;
                 })()}
@@ -1156,6 +1350,33 @@ export default function WorldMap() {
               </div>
             )}
 
+            {sel.kind === "disaster" && (
+              <div className="text-xs space-y-1.5">
+                <p className="leading-snug">{sel.data.name}</p>
+                <div className="grid grid-cols-2 gap-x-3 gap-y-1 font-mono pt-1 border-t border-line/60">
+                  <span className="text-dim">Alert</span><span className={cn("text-right capitalize", sel.data.alert >= 2 ? "text-down" : sel.data.alert === 1 ? "text-amber" : "")}>{["green","orange","red"][sel.data.alert] || "green"}</span>
+                  <span className="text-dim">Since</span><span className="text-right">{sel.data.date}</span>
+                  {sel.data.severity ? (<><span className="text-dim">Severity</span><span className="text-right">{sel.data.severity}</span></>) : null}
+                </div>
+                <p className="text-dim">Source: GDACS (Global Disaster Alert &amp; Coordination System, UN/EC).</p>
+              </div>
+            )}
+
+            {sel.kind === "project" && (
+              <div className="text-xs space-y-1.5">
+                <div className="grid grid-cols-2 gap-x-3 gap-y-1 font-mono">
+                  <span className="text-dim">Active projects</span><span className="text-right">{sel.data.count}</span>
+                  <span className="text-dim">Total committed</span><span className="text-right">${(sel.data.usd / 1e9).toFixed(2)}B</span>
+                </div>
+                {sel.data.names?.length ? (
+                  <ul className="space-y-1 pt-1 border-t border-line/60 max-h-40 overflow-y-auto">
+                    {sel.data.names.map((n, i) => <li key={i} className="leading-snug text-dim">{n}</li>)}
+                  </ul>
+                ) : null}
+                <p className="text-[10px] text-dim/70">Pinned at country centroid (WB API gives no per-project coords). Source: World Bank.</p>
+              </div>
+            )}
+
             {sel.kind === "fire" && (
               <div className="text-xs space-y-1.5">
                 <div className="grid grid-cols-2 gap-x-3 gap-y-1 font-mono">
@@ -1196,8 +1417,10 @@ export default function WorldMap() {
       <p className="text-xs text-dim leading-relaxed">
         One map, all layers: real country borders (detailed 50m outlines load in the background),
         the global AIS fleet and worldwide air traffic (both pushed by our 24/7 agent),
-        NASA FIRMS fires, UCDP conflict events (~6 months, preliminary), USGS earthquakes
-        (24h, M2.5+), submarine cables, news pins, the trade chokepoints, and per-country
+        NASA FIRMS fires, GDACS disasters (floods/droughts/cyclones/wildfires),
+        UCDP conflict events (~6 months, preliminary), USGS earthquakes (24h, M2.5+),
+        power infrastructure, GPS-interference cells (derived from our own ADS-B sweep),
+        World Bank projects, submarine cables, news pins, chokepoints, and per-country
         instability signals. Ship/plane categories are filterable; hover a layer for
         "only" to view it solo. Click anything for
         details — countries show our London bond-yield data where covered.
