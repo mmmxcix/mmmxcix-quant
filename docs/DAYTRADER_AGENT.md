@@ -93,10 +93,35 @@ places orders). It learns from its own outcomes like Hermes.
 - **Phase 3 — notify-only live.** Resend/Telegram trade cards — only after the
   paper track record is credible.
 
-## Open choices (pick before Phase 0)
-1. **Watchlist scope** — crypto majors + a handful of liquid ETFs/stocks (SPY,
-   QQQ, oil/defense/energy names the alt-data can move)? Start narrow.
-2. **Cadence** — 5 min (more responsive, more LLM cost) vs 15 min.
-3. **Name** — Argus, or your pick.
-4. **Notification channel** for live (later) — Resend email (default) and/or
+## Refinements (Jul 25 discussion) — confirmed direction
+- **Name:** Argus. ✔
+- **Universe = what retail day-traders actually trade:** forex majors (24/5,
+  session-aware), the well-known indices/ETFs (SPY, QQQ, DAX…), popular stocks
+  (AAPL, NVDA, TSLA…), crypto majors (24/7). Scanners are cheap math, so a broad
+  40–60 instrument list is fine; the LLM stays selective.
+- **Dynamic news-driven tickers:** on *extreme* news about a specific
+  company/asset (blowout earnings, hot product, factory fire, etc.), Argus
+  resolves the **affected instrument** and evaluates it directly — even if it
+  wasn't on the base watchlist. This is the differentiator (news → ticker →
+  trade), and it wires the alt-data/news channel straight into instrument
+  selection.
+- **Multi-timeframe:** scan several candle types together (5m + 15m + a higher
+  TF like 1h/daily for bias), not one. Confluence: higher TF = trend/bias,
+  15m = structure, 5m = entry timing.
+- **Adaptive watch-mode:** base loop 15 min, BUT when a sub-15m setup is
+  *forming but not yet a clean entry*, Argus parks it in a `forming` watch-state
+  and polls it faster (~1–3 min) until it either **triggers** (enter) or
+  **invalidates / times out** (drop). A small state machine per candidate setup.
+
+## Open design questions (discuss before Phase 0)
+1. **News-play stance** — trade the *continuation* (enter on pullback/confirm;
+   realistic given our feed isn't tick-fast) vs the *overreaction fade*. Recommend:
+   let Argus decide per-setup, defaulting to continuation-on-confirmation.
+2. **Timeframe set** — confirm {1h bias · 15m structure · 5m entry (+1m in
+   watch-mode)}.
+3. **Risk model** — stop-defined fractional sizing (e.g. 0.5–1% equity at risk
+   per trade), max concurrent positions, daily-loss circuit breaker.
+4. **Fill realism** — model per-asset-class costs (forex spread, crypto fee,
+   equity slippage) in paper fills.
+5. **Notification channel** for live (Phase 3) — Resend email (default) ±
    Telegram.
