@@ -360,7 +360,8 @@ export default function WorldMap() {
         const r = await fetch("/api/world");
         if (r.status === 404) { if (alive) setShipStatus("fleet agent warming up…"); return; }
         if (!r.ok) throw new Error(`snapshot HTTP ${r.status}`);
-        const j = await r.json();
+        let j;
+        try { j = await r.json(); } catch { if (alive) setShipStatus("data unavailable"); return; }
         if (!alive) return;
         const store = vesselsRef.current;
         store.clear();
@@ -396,7 +397,8 @@ export default function WorldMap() {
         const r = await fetch("/api/world");
         if (r.status === 404) { if (alive) setPlaneStatus("plane sweep warming up…"); return; }
         if (!r.ok) throw new Error(`snapshot HTTP ${r.status}`);
-        const j = await r.json();
+        let j;
+        try { j = await r.json(); } catch { if (alive) setPlaneStatus("data unavailable"); return; }
         if (!alive) return;
         planesRef.current = (j.planes || []).map((row) => {
           const [hex, lat, lon, alt, gs, track, category, callsign, type] = row;
