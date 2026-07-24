@@ -5,8 +5,8 @@
       <stop offset="1" stop-color="#14181f"/>
     </linearGradient>
     <linearGradient id="line" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0" stop-color="#2dd4bf"/>
-      <stop offset="1" stop-color="#60a5fa"/>
+      <stop offset="0" stop-color="#0b6e47"/>
+      <stop offset="1" stop-color="#4ade80"/>
     </linearGradient>
   </defs>
   <rect width="1200" height="630" fill="url(#bg)"/>
@@ -18,7 +18,7 @@
   <!-- an equity-curve motif -->
   <polyline fill="none" stroke="url(#line)" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"
     points="80,470 180,440 260,455 360,380 440,400 540,300 640,330 740,240 840,270 960,180 1060,150 1120,120" opacity="0.9"/>
-  <circle cx="1120" cy="120" r="7" fill="#2dd4bf"/>
+  <circle cx="1120" cy="120" r="7" fill="#4ade80"/>
   <text x="80" y="150" fill="#9aa4b2" font-size="26" letter-spacing="8" font-weight="600">MMMXCIX QUANT</text>
   <text x="78" y="250" fill="#f4f6fb" font-size="76" font-weight="800">Quant tools, honestly.</text>
   <text x="80" y="330" fill="#c6cdd8" font-size="34" font-weight="500">Backtesting · in-browser ML · pairs &amp; HRP · live world map</text>
