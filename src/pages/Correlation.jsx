@@ -5,6 +5,8 @@ import {
   DEFAULT_BASKET, detectMarket, fetchBasketReturns, correlationMatrix,
   seriationOrder, matrixInsights,
 } from "@/lib/correlation";
+import { fetchCandles } from "@/lib/data";
+import { analyzePair } from "@/lib/pairs";
 import Skeleton from "@/components/Skeleton";
 
 // Cross-asset correlation matrix — stocks, ETFs, crypto and FX in one grid.
@@ -37,6 +39,28 @@ const cellStyle = (r) => {
   return { backgroundColor: `color-mix(in srgb, ${tone} ${pct}%, transparent)` };
 };
 
+// Spread sparkline with the OU mean (μ) and ±2σ entry bands.
+function SpreadSpark({ spread, mu, sigma, label }) {
+  const W = 320, H = 88, pad = 4;
+  const n = spread.length;
+  if (!n) return null;
+  const lo = Math.min(mu - 2.6 * sigma, ...spread);
+  const hi = Math.max(mu + 2.6 * sigma, ...spread);
+  const span = hi - lo || 1;
+  const x = (i) => pad + (i / (n - 1)) * (W - 2 * pad);
+  const y = (v) => pad + (1 - (v - lo) / span) * (H - 2 * pad);
+  const path = spread.map((v, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join("");
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-24" preserveAspectRatio="none">
+      <line x1={pad} x2={W - pad} y1={y(mu)} y2={y(mu)} stroke="var(--c-dim)" strokeWidth="0.6" opacity="0.6" />
+      <line x1={pad} x2={W - pad} y1={y(mu + 2 * sigma)} y2={y(mu + 2 * sigma)} stroke="var(--viz-pink)" strokeWidth="0.6" strokeDasharray="3 3" opacity="0.7" />
+      <line x1={pad} x2={W - pad} y1={y(mu - 2 * sigma)} y2={y(mu - 2 * sigma)} stroke="var(--viz-teal)" strokeWidth="0.6" strokeDasharray="3 3" opacity="0.7" />
+      <path d={path} fill="none" stroke="var(--c-accent)" strokeWidth="1" vectorEffect="non-scaling-stroke" />
+      <title>{label}: spread with μ and ±2σ bands</title>
+    </svg>
+  );
+}
+
 export default function Correlation() {
   const [basket, setBasket] = useState(loadBasket);
   const [range, setRange] = useState(() => localStorage.getItem(LS_RANGE) || "1y");
@@ -63,6 +87,43 @@ export default function Correlation() {
     const order = clustered ? seriationOrder(m) : m.symbols.map((_, i) => i);
     return { ...m, order, insights: matrixInsights(m) };
   }, [data, clustered]);
+
+  // ── Pairs mean-reversion (OU / Kalman) ────────────────────────────────────
+  const [pairA, setPairA] = useState("");
+  const [pairB, setPairB] = useState("");
+  const [pair, setPair] = useState(null);      // { ...analyzePair, a, b } | { error }
+  const [pairBusy, setPairBusy] = useState(false);
+  useEffect(() => {
+    // Default the two pickers to the least-correlated pair (the best hedge).
+    if (computed?.insights?.lo && !pairA && !pairB) {
+      setPairA(computed.insights.lo.a); setPairB(computed.insights.lo.b);
+    }
+  }, [computed, pairA, pairB]);
+
+  const analyze = async () => {
+    if (pairBusy || !pairA || !pairB || pairA === pairB) return;
+    setPairBusy(true); setPair(null);
+    try {
+      const [ca, cb] = await Promise.all([
+        fetchCandles({ market: detectMarket(pairA), symbol: pairA, interval: "1d", range: "2y" }),
+        fetchCandles({ market: detectMarket(pairB), symbol: pairB, interval: "1d", range: "2y" }),
+      ]);
+      // Align on shared timestamps so weekends/holidays don't misalign the pair.
+      const mapB = new Map(cb.map((c) => [c.time, c.close]));
+      const A = [], B = [];
+      for (const c of ca) {
+        const b = mapB.get(c.time);
+        if (b > 0 && c.close > 0) { A.push(c.close); B.push(b); }
+      }
+      if (A.length < 60) { setPair({ error: "Not enough overlapping history for this pair." }); return; }
+      const res = analyzePair(A, B);
+      setPair(res ? { ...res, a: pairA, b: pairB } : { error: "Analysis failed." });
+    } catch (e) {
+      setPair({ error: String(e.message || e).slice(0, 120) });
+    } finally {
+      setPairBusy(false);
+    }
+  };
 
   const addSymbol = () => {
     const sym = input.trim().toUpperCase();
@@ -208,6 +269,48 @@ export default function Correlation() {
                 <p className="text-sm font-mono">{computed.insights.diversifier.sym}
                   <span className="text-text font-semibold ml-2">⌀ |r| {computed.insights.diversifier.avg.toFixed(2)}</span></p>
                 <p className="text-[11px] text-dim mt-1">Moves most independently of the rest.</p>
+              </div>
+            )}
+          </div>
+
+          {/* Pairs mean-reversion (OU / Kalman) */}
+          <div className="rounded-xl border border-line lg-glass p-4 mt-4">
+            <div className="flex flex-wrap items-center gap-2 mb-1">
+              <p className="text-xs text-dim uppercase tracking-widest mr-auto">Pairs mean-reversion · OU / Kalman</p>
+              <select value={pairA} onChange={(e) => setPairA(e.target.value)}
+                className="rounded-lg border border-line bg-bg px-2 py-1 text-xs font-mono">
+                {computed.symbols.map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
+              <span className="text-dim text-xs">vs</span>
+              <select value={pairB} onChange={(e) => setPairB(e.target.value)}
+                className="rounded-lg border border-line bg-bg px-2 py-1 text-xs font-mono">
+                {computed.symbols.map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
+              <button onClick={analyze} disabled={pairBusy || pairA === pairB}
+                className="chip chip-idle flex items-center gap-1.5 !text-[11px] disabled:opacity-50">
+                {pairBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : null}{pairBusy ? "Analyzing…" : "Analyze"}
+              </button>
+            </div>
+            <p className="text-[11px] text-dim mb-3 leading-relaxed">
+              Fits a hedge ratio (OLS, with a Kalman drift check) and an Ornstein-Uhlenbeck model of
+              the spread. Half-life = bars to close half the gap; a pair is only tradeable if the
+              spread actually mean-reverts. 2y daily. Educational, not advice.
+            </p>
+            {pair?.error && <p className="text-xs text-down">{pair.error}</p>}
+            {pair && !pair.error && (
+              <div className="grid md:grid-cols-[auto_1fr] gap-4 items-center">
+                <div className="grid grid-cols-2 gap-x-5 gap-y-1.5 text-xs font-mono">
+                  <span className="text-dim">Hedge ratio β</span><span className="text-right">{pair.beta.toFixed(3)}</span>
+                  <span className="text-dim">Half-life</span><span className="text-right">{Number.isFinite(pair.halfLife) ? `${pair.halfLife.toFixed(0)} bars` : "∞"}</span>
+                  <span className="text-dim">Spread z-score</span><span className={cn("text-right", Math.abs(pair.z) >= 2 ? "text-accent font-semibold" : "")}>{pair.z >= 0 ? "+" : ""}{pair.z.toFixed(2)}σ</span>
+                  <span className="text-dim">Signal</span>
+                  <span className={cn("text-right font-semibold", pair.signal === "long spread" ? "text-up" : pair.signal === "short spread" ? "text-down" : "text-dim")}>
+                    {pair.signal}
+                  </span>
+                  <span className="text-dim">Tradeable</span>
+                  <span className={cn("text-right", pair.tradeable ? "text-up" : "text-dim")}>{pair.tradeable ? "yes" : "no — weak reversion"}</span>
+                </div>
+                <SpreadSpark spread={pair.spread} mu={pair.mu} sigma={pair.sigmaEq} label={`${pair.a} − ${pair.beta.toFixed(2)}·${pair.b}`} />
               </div>
             )}
           </div>
