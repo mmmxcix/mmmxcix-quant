@@ -64,6 +64,32 @@ function RankCurve({ curve, height = 220 }) {
 
 const NAME_OF = Object.fromEntries(STOCK_UNIVERSE.map((e) => [e[0], e[1]]));
 
+// Mean realized return by predicted decile (Alphalens-style). A clean rising
+// staircase means the ranking genuinely orders future returns; a jagged mess
+// means it doesn't. Bars are % per month, green up / red down, zero centered.
+function DecileBars({ deciles }) {
+  const pct = deciles.map((d) => d * 100);
+  const max = Math.max(0.01, ...pct.map(Math.abs));
+  return (
+    <div className="flex items-end gap-1 h-28" aria-hidden="true">
+      {pct.map((v, i) => {
+        const h = (Math.abs(v) / max) * 46; // % of half-height
+        return (
+          <div key={i} className="flex-1 flex flex-col items-center justify-center h-full" title={`decile ${i + 1}: ${v.toFixed(2)}%/mo`}>
+            <div className="w-full flex-1 flex items-end justify-center">
+              {v >= 0 && <div className="w-full rounded-t-sm" style={{ height: `${h}%`, background: "var(--viz-teal)" }} />}
+            </div>
+            <div className="w-full h-px bg-line" />
+            <div className="w-full flex-1 flex items-start justify-center">
+              {v < 0 && <div className="w-full rounded-b-sm" style={{ height: `${h}%`, background: "var(--viz-pink)" }} />}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function MLRanking() {
   const [status, setStatus] = useState(null);
   const [error, setError] = useState(null);
@@ -173,6 +199,24 @@ export default function MLRanking() {
               (frictionless) · <span style={{ color: "var(--viz-blue)" }}>■</span> whole universe equal-weight
             </p>
           </div>
+
+          {out.deciles && (
+            <div className="rounded-xl border border-line lg-glass p-4">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-sm font-semibold">Mean return by predicted decile</p>
+                <p className="text-[11px] font-mono text-dim">monotonicity {out.decileMono >= 0 ? "+" : ""}{out.decileMono.toFixed(2)}</p>
+              </div>
+              <DecileBars deciles={out.deciles} />
+              <div className="flex justify-between text-[10px] text-dim mt-1">
+                <span>bottom decile (lowest predicted)</span><span>top decile (highest predicted)</span>
+              </div>
+              <p className="text-[11px] text-dim mt-2 leading-relaxed">
+                {out.decileMono > 0.6
+                  ? "A rising staircase left→right — the model orders next-month returns monotonically. That's the signature of a real ranking edge (Alphalens' quantile test, out-of-sample)."
+                  : "No clean staircase — the deciles don't order future returns monotonically, so the ranking edge is weak on this window. The honest, common result for a single factor set."}
+              </p>
+            </div>
+          )}
 
           <div className="grid md:grid-cols-2 gap-4">
             <div className="rounded-xl border border-line lg-glass p-4">

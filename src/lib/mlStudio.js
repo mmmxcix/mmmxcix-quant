@@ -194,6 +194,7 @@ def run_ranking(rows_json):
     model.fit(np.array([r["feats"] for r in train]), np.array([r["fwd"] for r in train]))
 
     ics, top_r, bot_r, uni_r, curve_m = [], [], [], [], []
+    decile_acc = [[] for _ in range(10)]  # mean fwd return per predicted decile
     for m in test_months:
         sub = [r for r in rows if r["month"] == m and r["fwd"] is not None]
         if len(sub) < 10:
@@ -207,6 +208,14 @@ def run_ranking(rows_json):
         top_r.append(float(y[order[:k]].mean()))
         bot_r.append(float(y[order[-k:]].mean()))
         uni_r.append(float(y.mean()))
+        # Decile buckets: split by ASCENDING predicted score, mean realized
+        # return in each. A monotone-rising staircase = a genuine ranking edge
+        # (Alphalens' mean-return-by-quantile, done honestly out-of-sample).
+        groups = np.array_split(np.argsort(p), 10)
+        for di in range(10):
+            g = groups[di]
+            if len(g):
+                decile_acc[di].append(float(y[g].mean()))
         curve_m.append(m)
 
     ics_a = np.array(ics)
@@ -214,6 +223,10 @@ def run_ranking(rows_json):
     sd = ics_a.std(ddof=1) if len(ics_a) > 2 else 0.0
     ic_t = float(ic_mean / (sd / np.sqrt(len(ics_a)))) if sd > 0 else 0.0
     spread = float(np.mean(np.array(top_r) - np.array(bot_r))) if top_r else 0.0
+    deciles = [float(np.mean(v)) if v else 0.0 for v in decile_acc]
+    # Monotonicity: Spearman of decile index vs its mean return (1 = perfect staircase).
+    dnz = [(i, d) for i, d in enumerate(deciles) if any(decile_acc[i])]
+    decile_mono = _spearman(np.array([i for i, _ in dnz]), np.array([d for _, d in dnz])) if len(dnz) >= 3 else 0.0
 
     live_month = max(r["month"] for r in rows)
     live = [r for r in rows if r["month"] == live_month and r["fwd"] is None]
@@ -230,6 +243,7 @@ def run_ranking(rows_json):
                   "top": np.cumprod(1 + np.array(top_r)).tolist() if top_r else [],
                   "uni": np.cumprod(1 + np.array(uni_r)).tolist() if uni_r else []},
         "importances": model.feature_importances_.tolist(),
+        "deciles": deciles, "decileMono": decile_mono,
         "picks": picks, "liveMonth": live_month,
     })
 `;
