@@ -10,6 +10,8 @@
 // happens via GET ?email=&token= (the worker emails that link). This keeps the
 // list GDPR/UWG-compliant (proof of consent, no mailing without opt-in).
 
+import { rateLimit, clientIp } from '../_lib/ratelimit.mjs';
+
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const VALID_CATEGORIES = new Set(['general', 'watchlist', 'portfolio']);
 const VALID_SOURCES = new Set(['CNBC', 'Yahoo Finance', 'CoinDesk', 'MarketWatch', 'Investing.com', 'Cointelegraph']);
@@ -158,10 +160,23 @@ export async function onRequest(context) {
     }
 
     if (method === 'POST') {
+      const postUrl = new URL(request.url);
+
+      // Throttle real subscribe/update POSTs (not the token'd one-click unsub):
+      // 5/min per IP is plenty for a human and blocks confirmation-email spam.
+      if (postUrl.searchParams.get('action') !== 'unsub') {
+        const rl = rateLimit(`sub:${clientIp(request)}`, 5, 60_000);
+        if (!rl.ok) {
+          return new Response(JSON.stringify({ error: 'rate_limited' }), {
+            status: 429,
+            headers: { 'content-type': 'application/json', 'retry-after': String(rl.retryAfter), ...CORS_HEADERS },
+          });
+        }
+      }
+
       // RFC 8058 one-click unsubscribe (List-Unsubscribe-Post): mail clients
       // POST to the unsubscribe URL with no meaningful body — handle it before
       // any JSON parsing.
-      const postUrl = new URL(request.url);
       if (postUrl.searchParams.get('action') === 'unsub') {
         const email = normalizeEmail(postUrl.searchParams.get('email'));
         const token = postUrl.searchParams.get('token') || '';
