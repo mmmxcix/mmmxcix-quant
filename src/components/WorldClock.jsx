@@ -161,14 +161,14 @@ export default function WorldClock() {
                     <div className="h-full bg-up/60" style={{ width: `${Math.round(status.sessionProgress * 100)}%` }} />
                   </div>
                 )}
-                <p className="text-[10px] text-dim/70 font-mono mt-1 truncate">{market.hoursLabel} local</p>
+                <p className="text-[10px] text-dim font-mono mt-1 truncate">{market.hoursLabel} local</p>
               </div>
             </div>
           );
         })}
       </div>
 
-      <p className="text-[10px] text-dim/70 mt-3">
+      <p className="text-[10px] text-dim mt-3">
         Times come from your device clock via each exchange's real time zone (daylight saving handled automatically).
         Regular sessions only — exchange holidays and half days are not tracked.
       </p>

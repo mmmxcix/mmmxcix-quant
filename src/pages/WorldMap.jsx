@@ -1365,7 +1365,7 @@ export default function WorldMap() {
           {/* Layer panel (worldmonitor-style, our design language) — folds away on mobile */}
           <div data-mapui className="absolute top-3 left-3 z-10 w-52 max-w-[calc(100vw-1.5rem)] rounded-xl border border-line bg-bg/85 backdrop-blur flex flex-col max-h-[calc(100%-1.5rem)]">
             <button onClick={() => setPanelOpen((o) => !o)}
-              className="flex items-center gap-1.5 px-3 py-2 text-[10px] uppercase tracking-widest text-dim shrink-0">
+              className="flex items-center gap-1.5 px-3 py-2 text-[10px] font-medium text-dim shrink-0">
               <Layers className="w-3 h-3" /> Layers
               <span className="ml-auto flex items-center gap-2">
                 {panelOpen && (
@@ -1410,7 +1410,7 @@ export default function WorldMap() {
                   {SHIP_CATS.map((cat) => (
                     <button key={cat} onClick={() => toggleCat("ship", cat)}
                       className={cn("inline-flex items-center gap-1 rounded-full border px-1.5 py-px text-[9px] capitalize transition-colors",
-                        filters.ship[cat] ? "border-line text-text" : "border-line/40 text-dim/70 line-through")}>
+                        filters.ship[cat] ? "border-line text-text" : "border-line/40 text-dim line-through")}>
                       <span className="w-1.5 h-1.5 rounded-full" style={{ background: SHIP_VIZ[cat] ? vizColor(SHIP_VIZ[cat]) : "var(--tw-prose-body, #888)" }} />
                       {cat}
                     </button>
@@ -1422,7 +1422,7 @@ export default function WorldMap() {
                   {PLANE_CATS.map((cat) => (
                     <button key={cat} onClick={() => toggleCat("plane", cat)}
                       className={cn("inline-flex items-center gap-1 rounded-full border px-1.5 py-px text-[9px] capitalize transition-colors",
-                        filters.plane[cat] ? "border-line text-text" : "border-line/40 text-dim/70 line-through")}>
+                        filters.plane[cat] ? "border-line text-text" : "border-line/40 text-dim line-through")}>
                       <span className="w-1.5 h-1.5 rounded-full" style={{ background: PLANE_VIZ[cat] ? vizColor(PLANE_VIZ[cat]) : "#888" }} />
                       {cat}
                     </button>
@@ -1431,7 +1431,7 @@ export default function WorldMap() {
               )}
               </div>
             ))}
-            <p className="text-[9px] text-dim/70 leading-snug mt-1">Ships, planes and fires are global snapshots pushed by our 24/7 agent. Yield stress: <span className="text-down">red = inverted 10Y−2Y curve</span> (our London bond data); <span className="text-accent">amber</span> = instability signals. Chokepoints label live vessel counts + anchored share.</p>
+            <p className="text-[9px] text-dim leading-snug mt-1">Ships, planes and fires are global snapshots pushed by our 24/7 agent. Yield stress: <span className="text-down">red = inverted 10Y−2Y curve</span> (our London bond data); <span className="text-accent">amber</span> = instability signals. Chokepoints label live vessel counts + anchored share.</p>
             </div>
             )}
           </div>
@@ -1451,7 +1451,7 @@ export default function WorldMap() {
           )}
           {layers.instab && instabTop.length > 0 && (
             <div data-mapui className="absolute bottom-8 right-3 w-60 max-w-[calc(100vw-1.5rem)] rounded-xl border border-line bg-bg/85 backdrop-blur px-3 py-2.5 z-10 hidden sm:block">
-              <p className="text-[10px] uppercase tracking-widest text-dim mb-1.5 flex items-center gap-1.5">
+              <p className="text-[10px] font-medium text-dim mb-1.5 flex items-center gap-1.5">
                 <AlertTriangle className="w-3 h-3" /> Instability signals
               </p>
               {instabTop.map((c) => (
@@ -1463,7 +1463,7 @@ export default function WorldMap() {
                   <span className="text-[10px] font-mono text-dim w-6 text-right shrink-0">{c.score}</span>
                 </div>
               ))}
-              <p className="text-[9px] text-dim/70 leading-snug mt-1">Mix of our own layers: UCDP conflict deaths · inverted curve · news attention · M5.5+ quakes · fire density. A signal mix, not a forecast.</p>
+              <p className="text-[9px] text-dim leading-snug mt-1">Mix of our own layers: UCDP conflict deaths · inverted curve · news attention · M5.5+ quakes · fire density. A signal mix, not a forecast.</p>
             </div>
           )}
           <p className="absolute bottom-2 right-3 text-[10px] text-dim pointer-events-none">
@@ -1527,7 +1527,7 @@ export default function WorldMap() {
                 {(() => {
                   const intel = gatherCountryIntel(sel.name, conflictsRef.current, disastersRef.current, newsRef.current);
                   const hasAny = intel.conflictCount || intel.haz.length || intel.headlines.length;
-                  if (!hasAny) return <p className="text-dim/70 pt-1.5 border-t border-line/60">No active conflicts, hazards or matched news for this country right now.</p>;
+                  if (!hasAny) return <p className="text-dim pt-1.5 border-t border-line/60">No active conflicts, hazards or matched news for this country right now.</p>;
                   return (
                     <div className="pt-1.5 border-t border-line/60 space-y-2 max-h-64 overflow-y-auto">
                       {intel.conflictCount > 0 && (
@@ -1555,7 +1555,7 @@ export default function WorldMap() {
                           <p className="flex items-center gap-1.5"><Newspaper className="w-3.5 h-3.5 text-accent" /> In the news</p>
                           {intel.headlines.map((it, i) => (
                             <a key={i} href={it.link} target="_blank" rel="noreferrer" className="block leading-snug pl-5 hover:text-accent transition-colors">
-                              {it.title}<span className="block text-[10px] text-dim/70">{it.source}</span>
+                              {it.title}<span className="block text-[10px] text-dim">{it.source}</span>
                             </a>
                           ))}
                         </div>
@@ -1573,7 +1573,7 @@ export default function WorldMap() {
                   <span className="text-dim">Altitude</span><span className="text-right">{fmtNum(sel.data.alt, 0)} km</span>
                   <span className="text-dim">Sub-point</span><span className="text-right">{sel.data.lat.toFixed(1)}, {sel.data.lon.toFixed(1)}</span>
                 </div>
-                <p className="text-[10px] text-dim/70">Live SGP4 from CelesTrak TLEs. Position is the ground track, not the orbit.</p>
+                <p className="text-[10px] text-dim">Live SGP4 from CelesTrak TLEs. Position is the ground track, not the orbit.</p>
               </div>
             )}
 
@@ -1622,7 +1622,7 @@ export default function WorldMap() {
                     <span className="block text-[10px] text-dim mt-0.5">{it.source}</span>
                   </a>
                 ))}
-                <p className="text-[10px] text-dim/70 pt-1">Headline keyword matching — first country named wins. Not NLP.</p>
+                <p className="text-[10px] text-dim pt-1">Headline keyword matching — first country named wins. Not NLP.</p>
               </div>
             )}
 
@@ -1632,7 +1632,7 @@ export default function WorldMap() {
                 <div className="grid grid-cols-2 gap-x-3 gap-y-1 font-mono pt-1 border-t border-line/60">
                   <span className="text-dim">Position</span><span className="text-right">{sel.data.lat.toFixed(2)}, {sel.data.lon.toFixed(2)}</span>
                 </div>
-                <p className="text-[10px] text-dim/70">OpenStreetMap (man_made=offshore_platform), ODbL.</p>
+                <p className="text-[10px] text-dim">OpenStreetMap (man_made=offshore_platform), ODbL.</p>
               </div>
             )}
 
@@ -1642,7 +1642,7 @@ export default function WorldMap() {
                 <div className="grid grid-cols-2 gap-x-3 gap-y-1 font-mono pt-1 border-t border-line/60">
                   <span className="text-dim">Position</span><span className="text-right">{sel.data.lat.toFixed(2)}, {sel.data.lon.toFixed(2)}</span>
                 </div>
-                <p className="text-[10px] text-dim/70">USGS MRDS (Mineral Resources Data System, public domain). Coverage is US-dense.</p>
+                <p className="text-[10px] text-dim">USGS MRDS (Mineral Resources Data System, public domain). Coverage is US-dense.</p>
               </div>
             )}
 
@@ -1669,7 +1669,7 @@ export default function WorldMap() {
                     {sel.data.names.map((n, i) => <li key={i} className="leading-snug text-dim">{n}</li>)}
                   </ul>
                 ) : null}
-                <p className="text-[10px] text-dim/70">Pinned at country centroid (WB API gives no per-project coords). Source: World Bank.</p>
+                <p className="text-[10px] text-dim">Pinned at country centroid (WB API gives no per-project coords). Source: World Bank.</p>
               </div>
             )}
 

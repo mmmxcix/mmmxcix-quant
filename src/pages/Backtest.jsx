@@ -255,7 +255,7 @@ export default function Backtest() {
         {/* ── Settings column ─────────────────────────────────────────── */}
         <div className="space-y-4">
           <div className="rounded-xl border border-line lg-glass p-4 space-y-3">
-            <p className="text-xs text-dim uppercase tracking-widest">Data</p>
+            <p className="text-xs text-dim font-medium">Data</p>
             <div className="flex gap-1">
               {MARKETS.map((mk) => (
                 <button key={mk.id} onClick={() => switchMarket(mk.id)}
@@ -344,7 +344,7 @@ export default function Backtest() {
 
           <div className="rounded-xl border border-line lg-glass p-4 space-y-3">
             <div className="flex items-center justify-between">
-              <p className="text-xs text-dim uppercase tracking-widest">Strategy</p>
+              <p className="text-xs text-dim font-medium">Strategy</p>
               <div className="flex gap-1">
                 <button onClick={() => setMode("builder")}
                   className={cn("chip", mode === "builder" ? "chip-active" : "chip-idle")}>Builder</button>
@@ -559,7 +559,7 @@ export default function Backtest() {
 
               {result.trades.length >= 10 && (
                 <div className="rounded-xl border border-line lg-glass p-4">
-                  <p className="text-xs text-dim uppercase tracking-widest pb-3">
+                  <p className="text-xs text-dim font-medium pb-3">
                     Monte Carlo — is this result skill or ordering luck?
                   </p>
                   <MonteCarloPanel

@@ -293,8 +293,8 @@ export default function BrainVault() {
             <div className="absolute top-3 left-3 flex flex-col gap-1 text-[11px] text-dim">
               <span className="flex items-center gap-1.5"><i className="w-2 h-2 rounded-full inline-block" style={{ background: COLORS.candidate }} /> survivor (candidate)</span>
               <span className="flex items-center gap-1.5"><i className="w-2 h-2 rounded-full inline-block opacity-60" style={{ background: COLORS.graveyard }} /> buried</span>
-              <span className="text-dim/60">edge = shared research topic</span>
-              <span className="text-dim/60">scroll = zoom · drag bg = pan · drag node = move it</span>
+              <span className="text-dim">edge = shared research topic</span>
+              <span className="text-dim">scroll = zoom · drag bg = pan · drag node = move it</span>
             </div>
             {/* view controls */}
             <button
@@ -321,13 +321,13 @@ export default function BrainVault() {
                 </div>
                 <div className="text-dim space-y-0.5">
                   <p>{hover.n.source} · {hover.n.outcome === "candidate" ? `DSR ${hover.n.dsr}%` : (hover.n.reason || "buried")}</p>
-                  {hover.n.topics?.length > 0 && <p className="text-dim/70">{hover.n.topics.join(" · ")}</p>}
+                  {hover.n.topics?.length > 0 && <p className="text-dim">{hover.n.topics.join(" · ")}</p>}
                 </div>
               </div>
             )}
           </div>
 
-          <p className="text-[11px] text-dim/70 leading-relaxed">
+          <p className="text-[11px] text-dim leading-relaxed">
             Every paper the agent reads — from arXiv and OpenAlex — lands here. Survivors (green) cleared the full
             validation gauntlet; buried nodes (red) failed and are kept as a record. Hover a node for its source,
             verdict and topics — every paper the research agent has read, built from our own honest data.

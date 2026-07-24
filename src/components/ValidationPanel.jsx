@@ -19,7 +19,7 @@ function Verdict({ v }) {
 function Card({ icon: Icon, title, children }) {
   return (
     <div className="rounded-lg border border-line bg-bg/30 p-3">
-      <p className="flex items-center gap-1.5 text-[10px] text-dim uppercase tracking-widest mb-2">
+      <p className="flex items-center gap-1.5 text-[10px] text-dim font-medium mb-2">
         <Icon className="w-3.5 h-3.5 text-accent" /> {title}
       </p>
       {children}
@@ -85,7 +85,7 @@ export default function ValidationPanel({ mode, strategy, code, compile, candles
 
   return (
     <div className="rounded-xl border border-line lg-glass p-4">
-      <p className="text-xs text-dim uppercase tracking-widest pb-3">
+      <p className="text-xs text-dim font-medium pb-3">
         Validation pipeline — the tests a strategy must survive before you trust it
       </p>
       <div className="grid lg:grid-cols-3 gap-3">

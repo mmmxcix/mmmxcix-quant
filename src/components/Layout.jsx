@@ -142,7 +142,7 @@ function NavItems({ onNavigate }) {
       )}
       {groups.map((group, gi) => (
         <div key={group.label}>
-          <p className={cn("px-3 text-[9px] font-semibold uppercase tracking-[0.2em] text-dim/60", gi === 0 ? "mb-1" : "mt-4 mb-1")}>
+          <p className={cn("px-3 text-[9px] font-semibold uppercase tracking-[0.2em] text-dim", gi === 0 ? "mb-1" : "mt-4 mb-1")}>
             {group.label}
           </p>
           {group.items.map(({ to, label, icon: Icon, end }) => (
@@ -204,7 +204,7 @@ function SessionBox() {
 }
 
 function LegalLinks({ small }) {
-  const c = small ? "text-[10px] text-dim/60 hover:text-dim" : "text-xs text-dim hover:text-text";
+  const c = small ? "text-[10px] text-dim hover:text-dim" : "text-xs text-dim hover:text-text";
   return (
     <div className="flex flex-wrap gap-x-3 gap-y-1">
       <Link to="/impressum" className={cn("transition-colors", c)}>Legal Notice</Link>
@@ -244,7 +244,7 @@ export default function Layout({ children }) {
         >
           <Search className="h-3.5 w-3.5" />
           <span>Jump to…</span>
-          <kbd className="ml-auto font-mono text-[10px] text-dim/70">{KBD_HINT}</kbd>
+          <kbd className="ml-auto font-mono text-[10px] text-dim">{KBD_HINT}</kbd>
         </button>
         <nav className="flex flex-col gap-1 overflow-y-auto pr-1 -mr-1">
           <NavItems />
@@ -252,7 +252,7 @@ export default function Layout({ children }) {
         <div className="mt-auto px-3 pb-2 space-y-2">
           <SessionBox />
           <ThemeToggle className="w-8 h-8" />
-          <p className="text-[10px] text-dim/60 leading-relaxed">
+          <p className="text-[10px] text-dim leading-relaxed">
             Not investment advice. Backtests are hypothetical — past performance guarantees nothing.
           </p>
           <LegalLinks small />
@@ -317,7 +317,7 @@ export default function Layout({ children }) {
       {/* Mobile footer */}
       <footer className="md:hidden border-t border-line px-4 py-4 mt-4">
         <LegalLinks />
-        <p className="mt-2 text-[10px] text-dim/60">Not investment advice.</p>
+        <p className="mt-2 text-[10px] text-dim">Not investment advice.</p>
       </footer>
     </div>
   );

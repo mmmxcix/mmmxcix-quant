@@ -13,7 +13,7 @@ export default function Heatmap({ labels, matrix, title }) {
 
   return (
     <div className="min-w-0">
-      {title && <p className="text-xs text-dim uppercase tracking-widest mb-2">{title}</p>}
+      {title && <p className="text-xs text-dim font-medium mb-2">{title}</p>}
       <div className="overflow-x-auto">
         <svg
           width="100%"

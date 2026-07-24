@@ -259,7 +259,7 @@ function Section({ s, open, onToggle }) {
         <div className="px-4 pb-4 space-y-3 border-t border-line/50 pt-3">
           <p className="text-sm text-dim leading-relaxed">{s.what}</p>
           <div>
-            <p className="text-[11px] text-dim uppercase tracking-widest mb-1.5">Features</p>
+            <p className="text-[11px] text-dim font-medium mb-1.5">Features</p>
             <ul className="list-disc pl-5 space-y-1 text-sm text-dim">
               {s.features.map((f, i) => <li key={i}>{f}</li>)}
             </ul>

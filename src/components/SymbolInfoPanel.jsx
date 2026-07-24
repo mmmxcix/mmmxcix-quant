@@ -153,7 +153,7 @@ export default function SymbolInfoPanel({ market, symbol }) {
         </>
       )}
 
-      <p className="text-[10px] text-dim/70">Data: Yahoo Finance via this site's proxy · descriptions for crypto are curated · not investment advice.</p>
+      <p className="text-[10px] text-dim">Data: Yahoo Finance via this site's proxy · descriptions for crypto are curated · not investment advice.</p>
     </div>
   );
 }

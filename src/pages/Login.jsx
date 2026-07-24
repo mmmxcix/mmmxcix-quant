@@ -95,7 +95,7 @@ export function AuthShell({ title, children }) {
         </div>
         <h1 className="text-xl font-semibold mb-4">{title}</h1>
         {children}
-        <p className="mt-5 text-[10px] text-dim/60 leading-relaxed">
+        <p className="mt-5 text-[10px] text-dim leading-relaxed">
           Not investment advice. Backtests are hypothetical — past performance guarantees nothing.
         </p>
       </div>

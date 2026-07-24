@@ -356,7 +356,7 @@ export default function Portfolio() {
       {openPositions.length >= 2 && (
         <div className="rounded-xl border border-line lg-glass p-4 mb-6">
           <div className="flex items-center justify-between gap-2 mb-1">
-            <p className="text-xs text-dim uppercase tracking-widest">Suggested allocation · HRP</p>
+            <p className="text-xs text-dim font-medium">Suggested allocation · HRP</p>
             <button onClick={computeHrp} disabled={!!hrpStatus}
               className="chip chip-idle flex items-center gap-1.5 !text-[11px] disabled:opacity-50">
               {hrpStatus ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
@@ -401,7 +401,7 @@ export default function Portfolio() {
       {/* Add form */}
       <div className="rounded-xl border border-line lg-glass p-4 mb-6">
         <div className="flex items-center justify-between mb-3">
-          <p className="text-xs text-dim uppercase tracking-widest">Add position</p>
+          <p className="text-xs text-dim font-medium">Add position</p>
           {canIbkr && (
             <button
               type="button"
@@ -536,7 +536,7 @@ export default function Portfolio() {
                           </span>
                         )}
                         <span className="text-dim ml-2 hidden md:inline">{r.name}</span>
-                        <span className="block text-[10px] text-dim/70 mt-0.5">
+                        <span className="block text-[10px] text-dim mt-0.5">
                           bought {fmtDate(r.buyDate ?? r.addedAt)}
                         </span>
                       </td>

@@ -10,7 +10,7 @@ export default function LegalLayout({ title, updated, children }) {
           <Link to="/" className="text-sm font-bold tracking-[0.25em] uppercase text-text hover:text-accent transition-colors">
             MMMXCIX <span className="text-dim">Quant</span>
           </Link>
-          <Link to="/" className="text-xs tracking-widest uppercase text-dim hover:text-text transition-colors">
+          <Link to="/" className="text-xs font-medium text-dim hover:text-text transition-colors">
             To the app →
           </Link>
         </div>

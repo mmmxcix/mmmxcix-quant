@@ -87,7 +87,7 @@ export default function EventLab() {
         {/* controls */}
         <div className="space-y-4">
           <div className="rounded-xl border border-line lg-glass p-4 space-y-3">
-            <p className="text-xs text-dim uppercase tracking-widest">Event study</p>
+            <p className="text-xs text-dim font-medium">Event study</p>
             <SymbolSearch market="stock" value={symbol} onSelect={(v) => setSymbol(v.toUpperCase())}
               placeholder="e.g. AAPL" className="w-full" />
             <div>
@@ -111,7 +111,7 @@ export default function EventLab() {
               <input type="number" min="0.5" max="49" step="0.5" value={premium}
                 onChange={(e) => setPremium(e.target.value)}
                 className="input-base w-28 mt-1 font-mono block" />
-              <span className="block text-[10px] text-dim/70 mt-1">
+              <span className="block text-[10px] text-dim mt-1">
                 Check the real option chain for the expiry after your event — typical single-name
                 earnings straddles run 3–7%.
               </span>

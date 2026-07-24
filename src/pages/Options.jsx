@@ -175,7 +175,7 @@ export default function Options() {
         {/* Position builder */}
         <div className="rounded-xl border border-line lg-glass p-4">
           <div className="flex items-center justify-between mb-3">
-            <p className="text-xs text-dim uppercase tracking-widest">Position builder</p>
+            <p className="text-xs text-dim font-medium">Position builder</p>
             {legs.length > 0 && (
               <button onClick={() => setLegs([])} className="text-dim hover:text-down transition-colors" title="Clear all">
                 <Trash2 className="w-4 h-4" />
@@ -185,7 +185,7 @@ export default function Options() {
 
           {/* Strategy presets */}
           <div className="mb-3">
-            <p className="text-[10px] text-dim uppercase tracking-widest mb-1.5">Presets</p>
+            <p className="text-[10px] text-dim font-medium mb-1.5">Presets</p>
             <div className="flex flex-wrap gap-1">
               {STRATEGY_PRESETS.map((p) => (
                 <button key={p.id} onClick={() => applyPreset(p)} disabled={!chain}
@@ -238,7 +238,7 @@ export default function Options() {
 
               {payoffSeries && (
                 <div>
-                  <p className="text-[10px] text-dim uppercase tracking-widest mb-1">P/L at expiry</p>
+                  <p className="text-[10px] text-dim font-medium mb-1">P/L at expiry</p>
                   <XYLineChart
                     series={payoffSeries}
                     height={220}
@@ -258,7 +258,7 @@ export default function Options() {
       {/* Volatility smile */}
       {smileSeries && (
         <div className="rounded-xl border border-line lg-glass p-4 mt-4">
-          <p className="text-xs text-dim uppercase tracking-widest mb-1">
+          <p className="text-xs text-dim font-medium mb-1">
             Volatility smile — implied volatility across strikes ({side})
           </p>
           <XYLineChart
@@ -280,7 +280,7 @@ export default function Options() {
       {/* Term structure */}
       <div className="rounded-xl border border-line lg-glass p-4 mt-4">
         <div className="flex items-center justify-between mb-1">
-          <p className="text-xs text-dim uppercase tracking-widest">Volatility term structure — ATM IV by expiry</p>
+          <p className="text-xs text-dim font-medium">Volatility term structure — ATM IV by expiry</p>
           {!term && (
             <button onClick={loadTerm} disabled={termLoading} className="chip chip-idle text-[11px]">
               {termLoading ? "Loading…" : "Load"}

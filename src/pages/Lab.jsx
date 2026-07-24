@@ -61,7 +61,7 @@ export default function Lab() {
         {/* ── Edge definition ─────────────────────────────────────────── */}
         <div className="space-y-4">
           <div className="rounded-xl border border-line lg-glass p-4 space-y-3">
-            <p className="text-xs text-dim uppercase tracking-widest">Your edge</p>
+            <p className="text-xs text-dim font-medium">Your edge</p>
             <Field label="Win rate" value={winRate} onChange={setWinRate} min={5} max={95} suffix="%" />
             <div className="grid grid-cols-2 gap-2">
               <Field label="Avg win" value={avgWinR} onChange={setAvgWinR} min={0.1} max={20} step={0.1} suffix="R" />
@@ -85,7 +85,7 @@ export default function Lab() {
 
           {/* Presets */}
           <div className="rounded-xl border border-line lg-glass p-4 space-y-2">
-            <p className="text-xs text-dim uppercase tracking-widest">Presets</p>
+            <p className="text-xs text-dim font-medium">Presets</p>
             {[
               { name: "Realistic intraday edge", note: "45% · 1.3R/1R · 1% risk", v: [45, 1.3, 1.0, 1.0] },
               { name: "High win rate, bad R", note: "85% · 0.3R/1.5R — looks great, isn't", v: [85, 0.3, 1.5, 1.0] },
@@ -102,7 +102,7 @@ export default function Lab() {
           </div>
 
           <div className="rounded-xl border border-line lg-glass p-4">
-            <p className="flex items-center gap-1.5 text-xs text-dim uppercase tracking-widest mb-2">
+            <p className="flex items-center gap-1.5 text-xs text-dim font-medium mb-2">
               <GraduationCap className="w-4 h-4" /> Learn the method
             </p>
             <div className="flex flex-col gap-1.5">
@@ -121,7 +121,7 @@ export default function Lab() {
 
         {/* ── Simulation ──────────────────────────────────────────────── */}
         <div className="rounded-xl border border-line lg-glass p-4">
-          <p className="flex items-center gap-1.5 text-xs text-dim uppercase tracking-widest mb-3">
+          <p className="flex items-center gap-1.5 text-xs text-dim font-medium mb-3">
             <Sigma className="w-4 h-4" /> Monte Carlo — 1000 alternate histories of this edge
           </p>
           <MonteCarloPanel
