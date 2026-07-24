@@ -153,7 +153,7 @@ export default function Academy() {
                         {d ? <Check className="w-4 h-4 text-up shrink-0" /> : <Circle className="w-4 h-4 text-dim/40 shrink-0" />}
                         <span className={cn("flex-1 text-sm", d ? "text-dim" : "text-text")}>{l.title}</span>
                         <span className="flex items-center gap-1 text-[11px] text-dim shrink-0"><Clock className="w-3 h-3" /> {l.minutes}m</span>
-                        <ChevronRight className="w-4 h-4 text-dim/50 shrink-0" />
+                        <ChevronRight className="w-4 h-4 text-dim/70 shrink-0" />
                       </button>
                     );
                   })}

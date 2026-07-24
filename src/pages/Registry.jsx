@@ -206,7 +206,7 @@ function Card({ e }) {
                 {strategyToCode(e, "python") && strategyToCode(e, "python") !== strategyToCode(e) && (
                   <CopyButton text={strategyToCode(e, "python")} label="PY" />
                 )}
-          <button onClick={() => removeEntry(e.id)} title="Delete" className="text-dim/50 hover:text-down transition-colors">
+          <button onClick={() => removeEntry(e.id)} title="Delete" className="text-dim/70 hover:text-down transition-colors">
             <Trash2 className="w-3.5 h-3.5" />
           </button>
         </div>
@@ -327,7 +327,7 @@ function PublishToAgent({ entries }) {
       </p>
       <button onClick={publish} disabled={busy || paper.length === 0}
         className={cn("flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm transition-colors",
-          paper.length === 0 ? "border-line text-dim/50" : "border-blue-400/40 text-blue-400 hover:bg-blue-400/10")}>
+          paper.length === 0 ? "border-line text-dim/70" : "border-blue-400/40 text-blue-400 hover:bg-blue-400/10")}>
         {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
         Publish to agent
       </button>

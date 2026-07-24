@@ -232,7 +232,7 @@ export default function Correlation() {
                           style={cellStyle(oi === oj ? null : r)}
                           className={cn(
                             "w-11 h-9 text-center align-middle text-[10px] font-mono rounded transition-opacity",
-                            oi === oj ? "text-dim/50 bg-bg/40" : "text-text",
+                            oi === oj ? "text-dim/70 bg-bg/40" : "text-text",
                             dim && "opacity-30"
                           )}>
                           {oi === oj ? "—" : r === null ? "·" : r.toFixed(2)}

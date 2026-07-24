@@ -29,7 +29,7 @@ function fmtDur(sec) {
 function VoteIcon({ vote }) {
   if (vote > 0) return <TrendingUp className="w-3.5 h-3.5 text-up shrink-0" />;
   if (vote < 0) return <TrendingDown className="w-3.5 h-3.5 text-down shrink-0" />;
-  return <MinusCircle className="w-3.5 h-3.5 text-dim/50 shrink-0" />;
+  return <MinusCircle className="w-3.5 h-3.5 text-dim/70 shrink-0" />;
 }
 
 function VerdictChip({ verdict, score }) {

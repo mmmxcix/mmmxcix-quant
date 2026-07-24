@@ -1410,7 +1410,7 @@ export default function WorldMap() {
                   {SHIP_CATS.map((cat) => (
                     <button key={cat} onClick={() => toggleCat("ship", cat)}
                       className={cn("inline-flex items-center gap-1 rounded-full border px-1.5 py-px text-[9px] capitalize transition-colors",
-                        filters.ship[cat] ? "border-line text-text" : "border-line/40 text-dim/50 line-through")}>
+                        filters.ship[cat] ? "border-line text-text" : "border-line/40 text-dim/70 line-through")}>
                       <span className="w-1.5 h-1.5 rounded-full" style={{ background: SHIP_VIZ[cat] ? vizColor(SHIP_VIZ[cat]) : "var(--tw-prose-body, #888)" }} />
                       {cat}
                     </button>
@@ -1422,7 +1422,7 @@ export default function WorldMap() {
                   {PLANE_CATS.map((cat) => (
                     <button key={cat} onClick={() => toggleCat("plane", cat)}
                       className={cn("inline-flex items-center gap-1 rounded-full border px-1.5 py-px text-[9px] capitalize transition-colors",
-                        filters.plane[cat] ? "border-line text-text" : "border-line/40 text-dim/50 line-through")}>
+                        filters.plane[cat] ? "border-line text-text" : "border-line/40 text-dim/70 line-through")}>
                       <span className="w-1.5 h-1.5 rounded-full" style={{ background: PLANE_VIZ[cat] ? vizColor(PLANE_VIZ[cat]) : "#888" }} />
                       {cat}
                     </button>
