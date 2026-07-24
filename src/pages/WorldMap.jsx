@@ -119,6 +119,27 @@ const cssRgb = (name) => {
   return v ? `rgb(${v.replaceAll(" ", ",")})` : "#888";
 };
 
+// Aggregate everything we already hold client-side about a clicked country —
+// its conflict events, active hazards and matched news — for the detail panel
+// (worldmonitor-style). Country-name matching is deliberately conservative:
+// normalized start-with either way (so "United States" ↔ "United States of
+// America" match, but "Sudan" and "South Sudan" stay separate).
+const normName = (s) => String(s || "").toLowerCase().replace(/[^a-z]/g, "");
+const nameMatch = (a, b) => {
+  const na = normName(a), nb = normName(b);
+  return na.length >= 4 && nb.length >= 4 && (na.startsWith(nb) || nb.startsWith(na));
+};
+function gatherCountryIntel(name, conflicts, disasters, news) {
+  const cEvents = conflicts.filter((e) => nameMatch(name, e.country));
+  const deaths = cEvents.reduce((s, e) => s + (e.best || 0), 0);
+  const recent = [...cEvents].sort((a, b) => (b.date || "").localeCompare(a.date || "")).slice(0, 3);
+  const haz = disasters.filter((d) => nameMatch(name, d.country)).sort((a, b) => b.alert - a.alert).slice(0, 4);
+  const pin = COUNTRY_PINS.find((p) => p.re.test(name));
+  const newsPin = pin ? news.find((n) => n.code === pin.code) : null;
+  const headlines = newsPin ? newsPin.items.slice(0, 5) : [];
+  return { conflictCount: cEvents.length, deaths, recent, haz, headlines };
+}
+
 export default function WorldMap() {
   const [layers, setLayers] = useState(loadLayers);
   // Layer panel folds away on small screens so it doesn't cover the map.
@@ -1500,6 +1521,45 @@ export default function WorldMap() {
                       {sc.kPts ? ` · conflict +${sc.kPts}` : ""}{sc.hPts ? ` · hazards +${sc.hPts}` : ""}{sc.qPts ? ` · quakes +${sc.qPts}` : ""}{sc.fPts ? ` · fires +${sc.fPts}` : ""}
                     </p>
                   ) : null;
+                })()}
+                {(() => {
+                  const intel = gatherCountryIntel(sel.name, conflictsRef.current, disastersRef.current, newsRef.current);
+                  const hasAny = intel.conflictCount || intel.haz.length || intel.headlines.length;
+                  if (!hasAny) return <p className="text-dim/70 pt-1.5 border-t border-line/60">No active conflicts, hazards or matched news for this country right now.</p>;
+                  return (
+                    <div className="pt-1.5 border-t border-line/60 space-y-2 max-h-64 overflow-y-auto">
+                      {intel.conflictCount > 0 && (
+                        <div>
+                          <p className="flex items-center gap-1.5"><Swords className="w-3.5 h-3.5 text-down" />
+                            <span className="text-text font-semibold">{intel.conflictCount}</span> conflict event{intel.conflictCount === 1 ? "" : "s"} ·{" "}
+                            <span className="text-down font-semibold">{intel.deaths}</span> fatalities <span className="text-dim">(UCDP, ~6mo)</span></p>
+                          {intel.recent.map((e, i) => (
+                            <p key={i} className="text-dim leading-snug pl-5 truncate">{e.date} · {e.a}{e.b ? ` vs ${e.b}` : ""} <span className="text-down">({e.best})</span></p>
+                          ))}
+                        </div>
+                      )}
+                      {intel.haz.length > 0 && (
+                        <div>
+                          <p className="flex items-center gap-1.5"><CloudRain className="w-3.5 h-3.5 text-accent" /> Active hazards</p>
+                          {intel.haz.map((d, i) => (
+                            <p key={i} className={cn("leading-snug pl-5 truncate", d.alert >= 2 ? "text-down" : d.alert === 1 ? "text-amber" : "text-dim")}>
+                              {(DISASTER_TYPES[d.type] || [])[1] || "Hazard"} · {d.name}
+                            </p>
+                          ))}
+                        </div>
+                      )}
+                      {intel.headlines.length > 0 && (
+                        <div>
+                          <p className="flex items-center gap-1.5"><Newspaper className="w-3.5 h-3.5 text-accent" /> In the news</p>
+                          {intel.headlines.map((it, i) => (
+                            <a key={i} href={it.link} target="_blank" rel="noreferrer" className="block leading-snug pl-5 hover:text-accent transition-colors">
+                              {it.title}<span className="block text-[10px] text-dim/70">{it.source}</span>
+                            </a>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
                 })()}
               </div>
             )}
