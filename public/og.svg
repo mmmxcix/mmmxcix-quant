@@ -1,27 +1,37 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif">
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#0b0d12"/>
-      <stop offset="1" stop-color="#14181f"/>
-    </linearGradient>
-    <linearGradient id="line" x1="0" y1="0" x2="1" y2="0">
+    <!-- the app's light dither: a fine dot grid over the near-white surface -->
+    <pattern id="dither" width="9" height="9" patternUnits="userSpaceOnUse">
+      <circle cx="1" cy="1" r="1" fill="#0c0c0f" fill-opacity="0.05"/>
+    </pattern>
+    <linearGradient id="line" x1="0" y1="1" x2="1" y2="0">
       <stop offset="0" stop-color="#0b6e47"/>
+      <stop offset="0.55" stop-color="#16a34a"/>
       <stop offset="1" stop-color="#4ade80"/>
     </linearGradient>
+    <linearGradient id="fill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#16a34a" stop-opacity="0.14"/>
+      <stop offset="1" stop-color="#16a34a" stop-opacity="0"/>
+    </linearGradient>
   </defs>
-  <rect width="1200" height="630" fill="url(#bg)"/>
-  <!-- faint grid -->
-  <g stroke="#ffffff" stroke-opacity="0.04">
-    <path d="M0 158H1200M0 316H1200M0 474H1200"/>
-    <path d="M240 0V630M480 0V630M720 0V630M960 0V630"/>
-  </g>
-  <!-- an equity-curve motif -->
+
+  <!-- light surface + dither texture -->
+  <rect width="1200" height="630" fill="#fafafb"/>
+  <rect width="1200" height="630" fill="url(#dither)"/>
+  <!-- hairline frame, like the app's card borders -->
+  <rect x="0.5" y="0.5" width="1199" height="629" fill="none" stroke="#e4e4e7"/>
+
+  <!-- TEXT ZONE (top) — high-contrast graphite ink, nothing crosses it -->
+  <text x="90" y="118" fill="#585860" font-size="24" letter-spacing="8" font-weight="600">MMMXCIX QUANT</text>
+  <text x="88" y="214" fill="#0c0c0f" font-size="76" font-weight="800" letter-spacing="-1">Quant tools, honestly.</text>
+  <text x="90" y="286" fill="#3a3a44" font-size="31" font-weight="500">Backtesting · in-browser ML · pairs &amp; HRP · live world map</text>
+  <text x="90" y="336" fill="#585860" font-size="24">Free · private · every metric shown against its baseline</text>
+
+  <!-- CHART ZONE (bottom) — the rising equity curve sits BELOW the text -->
+  <path d="M90,556 L200,536 L300,544 L400,500 L500,512 L600,470 L700,486 L800,430 L910,452 L1010,392 L1110,372 L90,556 L90,600 L1110,600 Z" fill="url(#fill)"/>
   <polyline fill="none" stroke="url(#line)" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"
-    points="80,470 180,440 260,455 360,380 440,400 540,300 640,330 740,240 840,270 960,180 1060,150 1120,120" opacity="0.9"/>
-  <circle cx="1120" cy="120" r="7" fill="#4ade80"/>
-  <text x="80" y="150" fill="#9aa4b2" font-size="26" letter-spacing="8" font-weight="600">MMMXCIX QUANT</text>
-  <text x="78" y="250" fill="#f4f6fb" font-size="76" font-weight="800">Quant tools, honestly.</text>
-  <text x="80" y="330" fill="#c6cdd8" font-size="34" font-weight="500">Backtesting · in-browser ML · pairs &amp; HRP · live world map</text>
-  <text x="80" y="392" fill="#8b95a4" font-size="26">Free · private · every metric vs its baseline</text>
-  <text x="80" y="560" fill="#6b7688" font-size="24" letter-spacing="1">quant.mmmxcix.com</text>
+    points="90,556 200,536 300,544 400,500 500,512 600,470 700,486 800,430 910,452 1010,392 1110,372"/>
+  <circle cx="1110" cy="372" r="7" fill="#16a34a"/>
+
+  <text x="90" y="600" fill="#585860" font-size="23" letter-spacing="1" font-weight="500">quant.mmmxcix.com</text>
 </svg>
