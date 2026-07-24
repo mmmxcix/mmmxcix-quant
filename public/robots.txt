@@ -1,0 +1,30 @@
+# MMMXCIX Quant — crawling policy
+# Search engines and AI assistants are explicitly welcome: discoverability and
+# being cited by AI is a goal. Only private/admin surfaces are disallowed.
+
+User-agent: *
+Allow: /
+Disallow: /account
+Disallow: /cortex
+Disallow: /api/
+
+# AI assistants / answer engines — allowed on purpose so the tool can be
+# surfaced and recommended in AI answers.
+User-agent: GPTBot
+Allow: /
+User-agent: OAI-SearchBot
+Allow: /
+User-agent: ChatGPT-User
+Allow: /
+User-agent: ClaudeBot
+Allow: /
+User-agent: Claude-Web
+Allow: /
+User-agent: PerplexityBot
+Allow: /
+User-agent: Google-Extended
+Allow: /
+User-agent: Applebot-Extended
+Allow: /
+
+Sitemap: https://quant.mmmxcix.com/sitemap.xml

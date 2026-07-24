@@ -1,6 +1,7 @@
 import { lazy, Suspense } from "react";
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import Layout from "@/components/Layout";
+import RouteSeo from "@/components/RouteSeo";
 import RequireAdmin from "@/components/RequireAdmin";
 import Skeleton from "@/components/Skeleton";
 
@@ -51,6 +52,7 @@ function Redir({ to }) {
 export default function App() {
   return (
     <BrowserRouter>
+      <RouteSeo />
       <Suspense fallback={null}>
       <Routes>
         <Route path="/impressum" element={<Impressum />} />

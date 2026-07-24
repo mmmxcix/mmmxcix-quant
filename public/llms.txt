@@ -1,0 +1,56 @@
+# MMMXCIX Quant
+
+> A free, browser-based quantitative-trading toolkit: backtesting with honest
+> statistics, live market charts, cross-asset data, a research engine, and a
+> live world-events map. Everything runs client-side — no data leaves the
+> browser — and every metric is shown against its naive baseline, so the tool
+> says plainly when an "edge" is really just noise.
+
+MMMXCIX Quant (quant.mmmxcix.com) is built for retail quants, traders, and
+learners who want professional-grade methods without a Bloomberg terminal. It
+is educational and explicitly not investment advice.
+
+## What it does
+
+- **Backtesting** — test strategies on real history with fees, slippage, and
+  out-of-sample / walk-forward validation. Reports the Deflated Sharpe Ratio to
+  penalise multiple testing, so overfit strategies are flagged, not celebrated.
+- **ML Studio** — in-browser machine learning (scikit-learn via WASM):
+  next-bar forecasting, cross-sectional ranking with rank IC and decile
+  (Alphalens-style) quantile analysis, and triple-barrier labeling with
+  meta-labeling and purged, embargoed walk-forward cross-validation (the López
+  de Prado / Stefan Jansen methods).
+- **Screener & correlation** — scan markets, a cross-asset correlation matrix,
+  and a pairs mean-reversion tool (Kalman/OLS hedge ratio + Ornstein-Uhlenbeck
+  half-life) that rejects non-cointegrated pairs.
+- **Portfolio** — a simulated book with realized P/L plus a Hierarchical Risk
+  Parity (HRP) suggested allocation.
+- **Charts & indicators** — live crypto, stocks, ETFs and FX with drawing tools.
+- **Macro & bond yields** — global yield curves and inversion signals.
+- **World map / monitor** — a live map of ships (AIS), aircraft (ADS-B),
+  satellites (SGP4), earthquakes, NASA FIRMS fires, GDACS disasters, UCDP
+  conflict events, power/pipeline/mine/offshore infrastructure, submarine
+  cables, GPS-interference zones, World Bank projects, and per-country
+  instability signals. Click any country for its conflicts, hazards and news.
+- **News digest** — a personalised daily market-news email (double opt-in).
+- **Learn** — an academy, a strategy guide, and a reference of 30+ quant
+  formulas.
+
+## Design principles
+
+- Honest by default: metrics carry baselines and significance tests; the tool
+  states when a result is indistinguishable from chance.
+- Free and private: computation is client-side; no account is required to use
+  the core tools.
+- Educational only — not financial, investment, legal, or tax advice.
+
+## Key pages
+
+- Charts: https://quant.mmmxcix.com/charts
+- Backtesting: https://quant.mmmxcix.com/backtest/run
+- Screener: https://quant.mmmxcix.com/screener/scan
+- Correlation & pairs: https://quant.mmmxcix.com/screener/correlation
+- World map: https://quant.mmmxcix.com/map
+- Macro / yields: https://quant.mmmxcix.com/macro/yields
+- News: https://quant.mmmxcix.com/news
+- Learn: https://quant.mmmxcix.com/learn/academy
