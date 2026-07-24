@@ -97,7 +97,7 @@ export default function CommandPalette() {
           onChange={(e) => setQ(e.target.value)}
           placeholder="Jump to…  (type a page)"
           aria-label="Search pages"
-          className="w-full border-b border-line bg-transparent px-4 py-3 text-sm text-text outline-none placeholder:text-dim/60"
+          className="w-full border-b border-line bg-transparent px-4 py-3 text-sm text-text outline-none placeholder:text-dim"
         />
         <ul className="max-h-72 overflow-y-auto py-1">
           {results.length === 0 && <li className="px-4 py-3 text-sm text-dim">No matches.</li>}
