@@ -113,15 +113,26 @@ places orders). It learns from its own outcomes like Hermes.
   and polls it faster (~1–3 min) until it either **triggers** (enter) or
   **invalidates / times out** (drop). A small state machine per candidate setup.
 
-## Open design questions (discuss before Phase 0)
-1. **News-play stance** — trade the *continuation* (enter on pullback/confirm;
-   realistic given our feed isn't tick-fast) vs the *overreaction fade*. Recommend:
-   let Argus decide per-setup, defaulting to continuation-on-confirmation.
-2. **Timeframe set** — confirm {1h bias · 15m structure · 5m entry (+1m in
-   watch-mode)}.
-3. **Risk model** — stop-defined fractional sizing (e.g. 0.5–1% equity at risk
-   per trade), max concurrent positions, daily-loss circuit breaker.
-4. **Fill realism** — model per-asset-class costs (forex spread, crypto fee,
-   equity slippage) in paper fills.
-5. **Notification channel** for live (Phase 3) — Resend email (default) ±
-   Telegram.
+## Decided (Jul 25)
+1. **News-play stance** ✔ — default **continuation on confirmation** (we enter
+   the retail/PEAD wave with deliberate delay, never the HFT spike); overreaction
+   **fade** only on an extreme gap. Argus picks per-setup. News timing reality:
+   scheduled (earnings) reprices in seconds then the crowd + PEAD drift runs
+   ~15 min → days; unscheduled shocks amplify over minutes → hours. Our latency
+   is fine because we ride the wave, not the spike.
+2. **Timeframes** ✔ — {1h bias · 15m structure · 5m entry · 1m in watch-mode}.
+3. **Risk = portfolio-heat model** ✔ (all config constants, tunable):
+   - **Total heat cap** = **6%** of paper equity across ALL open positions.
+   - **Base per-trade risk** = **2%**, but `risk = min(2%, remaining_heat)`, so
+     late trades auto-shrink and new setups wait (watch-mode) when heat is full.
+     → per-trade risk scales with how many trades are open (user's ask).
+   - **Stop** is structural / ATR-based (Argus estimates it); the % only sets
+     **position size** = risk-budget ÷ stop-distance. No fixed-% stops.
+   - **Daily-loss breaker** = **−4%** realized → pause new entries till next
+     session. No cap on trade *count*, but the heat cap bounds total risk.
+4. **Fill realism** ✔ — per-asset-class costs (forex spread, crypto fee, equity
+   slippage) in paper fills.
+5. **Live notification channel** (Phase 3, later) — Resend email default ±
+   Telegram. Deferred.
+
+**Architecture is decision-ready → build Phase 0.**
