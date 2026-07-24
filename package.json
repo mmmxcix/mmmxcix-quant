@@ -10,7 +10,8 @@
     "test": "node --test",
     "smoke": "vite build && node scripts/smoke.mjs",
     "shots": "vite build && node scripts/shots.mjs",
-    "check": "node --test && vite build && node scripts/smoke.mjs"
+    "check": "node --test && vite build && node scripts/smoke.mjs",
+    "og": "node scripts/og-png.mjs"
   },
   "dependencies": {
     "better-auth": "^1.6.24",
