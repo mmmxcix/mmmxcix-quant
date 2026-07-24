@@ -178,7 +178,7 @@ export default function MLStudio() {
         {/* controls */}
         <div className="space-y-4">
           <div className="rounded-xl border border-line lg-glass p-4 space-y-3">
-            <p className="text-xs text-dim uppercase tracking-widest">Data</p>
+            <p className="text-xs text-dim font-medium">Data</p>
             <div className="flex gap-1">
               {MARKETS.map((mk) => (
                 <button key={mk.id} onClick={() => { setMarket(mk.id); setSymbol(DEFAULT_SYMBOL[mk.id]); }}
@@ -201,7 +201,7 @@ export default function MLStudio() {
 
           {studioMode === "barrier" ? (
             <div className="rounded-xl border border-line lg-glass p-4 space-y-2">
-              <p className="text-xs text-dim uppercase tracking-widest">Method</p>
+              <p className="text-xs text-dim font-medium">Method</p>
               <p className="text-sm font-semibold">Triple-barrier + meta-labeling</p>
               <p className="text-[11px] text-dim leading-relaxed">
                 Each bar is labeled by which barrier it hits first — a volatility-scaled
@@ -209,14 +209,14 @@ export default function MLStudio() {
                 proposes the side; a second "meta" model learns when to actually take the bet.
                 Scored with purged, embargoed walk-forward folds so overlapping labels can't leak.
               </p>
-              <p className="text-[11px] text-dim/70 leading-relaxed pt-1">
+              <p className="text-[11px] text-dim leading-relaxed pt-1">
                 The López de Prado / Jansen labeling that serious equity ML uses — instead of the
                 fragile "will the next bar be up?".
               </p>
             </div>
           ) : (
           <div className="rounded-xl border border-line lg-glass p-4 space-y-2">
-            <p className="text-xs text-dim uppercase tracking-widest">Model</p>
+            <p className="text-xs text-dim font-medium">Model</p>
             {ML_MODELS.map((m) => (
               <button key={m.id} onClick={() => setModelId(m.id)}
                 className={cn("w-full text-left rounded-lg border px-3 py-2 transition-colors",

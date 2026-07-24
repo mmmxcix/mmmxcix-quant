@@ -116,7 +116,7 @@ export default function IndicatorPane({ candles, type, mainChart, height = 130 }
 
   return (
     <div className="mt-2">
-      <p className="text-[10px] uppercase tracking-widest text-dim mb-1 px-1">
+      <p className="text-[10px] font-medium text-dim mb-1 px-1">
         {type === "rsi" ? "RSI (14)" : "MACD (12, 26, 9)"}
       </p>
       <div ref={containerRef} style={{ height }} className="w-full" />

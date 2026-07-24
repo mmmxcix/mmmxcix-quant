@@ -100,7 +100,7 @@ function AgentCandidates() {
                   );
                 })}
                 {c.marketsTested > (c.markets?.length || 0) && (
-                  <span className="text-[10px] text-dim/60">
+                  <span className="text-[10px] text-dim">
                     of {c.marketsTested} tested · {describeMarkets(c.markets)}
                   </span>
                 )}
@@ -135,7 +135,7 @@ function AgentCandidates() {
                       confidence {c.committee.confidence}%
                     </span>
                   )}
-                  {c.committee.regime && <span className="text-dim/70">regime: {c.committee.regime}</span>}
+                  {c.committee.regime && <span className="text-dim">regime: {c.committee.regime}</span>}
                 </div>
                 {c.committee.bull && <p className="text-dim"><span className="text-up font-semibold">Bull</span> — {c.committee.bull}</p>}
                 {c.committee.bear && <p className="text-dim"><span className="text-down font-semibold">Bear</span> — {c.committee.bear}</p>}
@@ -151,7 +151,7 @@ function AgentCandidates() {
             )}
 
             <div className="flex flex-wrap items-center gap-2 mt-1.5">
-              <span className="text-[10px] text-dim/70">
+              <span className="text-[10px] text-dim">
                 {c.source}{c.kind && c.kind !== "paper" ? ` · ${c.kind}` : ""}
                 {c.readFullText ? " · full text" : " · abstract only"}
               </span>
@@ -206,7 +206,7 @@ function Card({ e }) {
                 {strategyToCode(e, "python") && strategyToCode(e, "python") !== strategyToCode(e) && (
                   <CopyButton text={strategyToCode(e, "python")} label="PY" />
                 )}
-          <button onClick={() => removeEntry(e.id)} title="Delete" className="text-dim/70 hover:text-down transition-colors">
+          <button onClick={() => removeEntry(e.id)} title="Delete" className="text-dim hover:text-down transition-colors">
             <Trash2 className="w-3.5 h-3.5" />
           </button>
         </div>
@@ -327,7 +327,7 @@ function PublishToAgent({ entries }) {
       </p>
       <button onClick={publish} disabled={busy || paper.length === 0}
         className={cn("flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm transition-colors",
-          paper.length === 0 ? "border-line text-dim/70" : "border-blue-400/40 text-blue-400 hover:bg-blue-400/10")}>
+          paper.length === 0 ? "border-line text-dim" : "border-blue-400/40 text-blue-400 hover:bg-blue-400/10")}>
         {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
         Publish to agent
       </button>
@@ -395,7 +395,7 @@ export default function Registry() {
                   <p className="text-[10px] text-dim px-1 mb-2">{STATUS_META[col.id].hint}</p>
                   <div className="space-y-2">
                     {list.length === 0
-                      ? <p className="text-[11px] text-dim/60 px-1 py-4 text-center">empty</p>
+                      ? <p className="text-[11px] text-dim px-1 py-4 text-center">empty</p>
                       : list.map((e) => <Card key={e.id} e={e} />)}
                   </div>
                 </div>

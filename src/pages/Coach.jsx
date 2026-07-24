@@ -133,7 +133,7 @@ function LabStatus() {
           {/* Research loop stats (autonomous paper→strategy pipeline) */}
           {data.research && (
             <div className="mt-3 border-t border-line pt-3">
-              <p className="text-[10px] text-dim uppercase tracking-widest mb-1.5">Research loop</p>
+              <p className="text-[10px] text-dim font-medium mb-1.5">Research loop</p>
               <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs font-mono">
                 <span className="text-dim">papers read <span className="text-text">{data.research.papersRead}</span></span>
                 <span className="text-dim">strategies tried <span className="text-text">{data.research.attempts}</span></span>
@@ -181,7 +181,7 @@ function LabStatus() {
           {/* Daytime re-validation — the half that promotes without you */}
           {data.revalidate && (
             <div className="mt-3 border-t border-line pt-3">
-              <p className="text-[10px] text-dim uppercase tracking-widest mb-1.5">Re-validation (daytime)</p>
+              <p className="text-[10px] text-dim font-medium mb-1.5">Re-validation (daytime)</p>
               <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs font-mono">
                 <span className="text-dim">checked <span className="text-text">{data.revalidate.checked}</span></span>
                 <span className="text-dim">held up <span className="text-up">{data.revalidate.survived}</span></span>
@@ -204,7 +204,7 @@ function LabStatus() {
             <div className="mt-3 border-t border-line pt-3">
               {data.combined && (
                 <div className="flex flex-wrap items-center gap-x-6 gap-y-1 mb-2 text-sm font-mono">
-                  <span className="text-dim text-xs uppercase tracking-widest font-sans">Combined equity</span>
+                  <span className="text-dim text-xs font-medium font-sans">Combined equity</span>
                   <span className="text-text font-semibold">{fmtPrice(data.combined.equity)}</span>
                   <span className={data.combined.returnPct >= 0 ? "text-up" : "text-down"}>
                     {data.combined.returnPct >= 0 ? "+" : ""}{data.combined.returnPct}% <span className="text-dim">all-time</span>
@@ -262,7 +262,7 @@ function LabStatus() {
                                 </span>
                               )}
                               {s.volTarget && (
-                                <span className="text-dim/70" title="GARCH vol-target sizing (how much)">
+                                <span className="text-dim" title="GARCH vol-target sizing (how much)">
                                   vol ×{s.volTarget.weight} · {s.volTarget.sizedPct}%
                                 </span>
                               )}
@@ -494,13 +494,13 @@ export default function Coach() {
                 <div className="flex-1 min-w-0">
                   <p className="font-semibold text-text">
                     {phase.title}
-                    {isCurrent && <span className="ml-2 text-[10px] text-accent uppercase tracking-widest">current</span>}
+                    {isCurrent && <span className="ml-2 text-[10px] text-accent font-medium">current</span>}
                   </p>
                   <p className="text-xs text-dim">{phase.subtitle}</p>
                 </div>
                 <div className="text-right shrink-0">
                   <p className="text-xs font-mono text-dim">{st.reqDone}/{st.reqTotal}</p>
-                  <p className="text-[10px] text-dim/70">{phase.months} · {phase.cost}</p>
+                  <p className="text-[10px] text-dim">{phase.months} · {phase.cost}</p>
                 </div>
               </div>
 
@@ -530,7 +530,7 @@ export default function Coach() {
         })}
       </div>
 
-      <p className="text-[11px] text-dim/70 mt-6 leading-relaxed">
+      <p className="text-[11px] text-dim mt-6 leading-relaxed">
         Principles behind this plan: pay for evaluations only after the simulator gate is green ·
         size for the drawdown limit, not the profit target · count your strategy variants (overfitting meter) ·
         semi-automated with you at the screen until a firm confirms more in writing.

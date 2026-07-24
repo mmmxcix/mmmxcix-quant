@@ -119,7 +119,7 @@ export default function Formulas() {
                   </p>
                   <p className="text-xs text-text/90 leading-relaxed mb-1">{i.says}</p>
                   <p className="text-[11px] text-dim leading-relaxed">
-                    <span className="text-dim/70 uppercase tracking-wide text-[9px] mr-1">here</span>
+                    <span className="text-dim uppercase tracking-wide text-[9px] mr-1">here</span>
                     {i.here}
                     {i.to && (
                       <Link to={i.to} className="inline-flex items-center gap-0.5 text-accent hover:underline ml-1.5">

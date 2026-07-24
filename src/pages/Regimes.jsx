@@ -156,7 +156,7 @@ export default function Regimes() {
                   })}
                 </tbody>
               </table>
-              <p className="text-[11px] text-dim/70 mt-3 leading-relaxed">
+              <p className="text-[11px] text-dim mt-3 leading-relaxed">
                 States are found unsupervised, then sorted by mean return. A healthy fit puts high volatility on the Bear
                 state and long runs on Bull — persistence is what makes a regime tradeable.
               </p>
@@ -166,7 +166,7 @@ export default function Regimes() {
             <section className="rounded-xl border border-line lg-glass p-5 hover-lift">
               <h2 className="font-semibold mb-3">Transition probabilities</h2>
               <TransitionMatrix regimes={regimes} />
-              <p className="text-[11px] text-dim/70 mt-3 leading-relaxed">
+              <p className="text-[11px] text-dim mt-3 leading-relaxed">
                 Row → column = P(next bar’s regime | this bar’s regime). Strong diagonals mean regimes persist;
                 the off-diagonals are the early-warning signal of a regime change.
               </p>
@@ -377,7 +377,7 @@ function LiveVsHindsight({ candles, regimes }) {
       {/* prior × likelihood = posterior, current bar */}
       {b && (
         <div className="mt-4 border-t border-line/60 pt-3">
-          <p className="text-[10px] uppercase tracking-widest text-dim mb-2">Current bar: prior × likelihood = posterior</p>
+          <p className="text-[10px] font-medium text-dim mb-2">Current bar: prior × likelihood = posterior</p>
           <div className="flex flex-wrap items-end gap-4">
             {[["Prior", b.prior, "×"], ["Likelihood", b.likelihood, "="], ["Posterior", b.posterior, null]].map(([name, vals, op]) => (
               <div key={name} className="flex items-end gap-4">
@@ -402,7 +402,7 @@ function LiveVsHindsight({ candles, regimes }) {
         </div>
       )}
 
-      <p className="text-[11px] text-dim/70 mt-3 leading-relaxed">
+      <p className="text-[11px] text-dim mt-3 leading-relaxed">
         Why this matters: regime models look clairvoyant in backtests because smoothing has seen the future.
         The lag and flicker above are what you actually trade on — it's why the paper agent's regime gate
         uses the causal (live) estimate, and why regime signals are filters here, not entries.

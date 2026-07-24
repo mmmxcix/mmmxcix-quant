@@ -132,7 +132,7 @@ export default function Resources() {
   return (
     <div className="space-y-8">
       <div>
-        <div className="text-xs uppercase tracking-widest text-dim">Toolbox</div>
+        <div className="text-xs font-medium text-dim">Toolbox</div>
         <h1 className="text-2xl font-semibold text-text mt-1">Resources</h1>
         <p className="text-sm text-dim mt-2">
           Curated links — everything a quant trader needs.
@@ -145,7 +145,7 @@ export default function Resources() {
           <section key={section.title} className="space-y-3">
             <div className="flex items-center gap-2">
               <Icon size={16} className="text-accent" />
-              <h2 className="text-sm font-semibold uppercase tracking-widest text-dim">
+              <h2 className="text-sm font-semibold font-medium text-dim">
                 {section.title}
               </h2>
             </div>

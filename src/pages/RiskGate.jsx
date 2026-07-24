@@ -90,7 +90,7 @@ export default function RiskGate() {
                   </button>
                 );
               })}
-              <p className="w-full text-[11px] text-dim/70 mt-0.5">{PROFILES[profile]?.blurb}</p>
+              <p className="w-full text-[11px] text-dim mt-0.5">{PROFILES[profile]?.blurb}</p>
             </div>
           )}
 
@@ -181,7 +181,7 @@ export default function RiskGate() {
                 </div>
               ))}
             </div>
-            <p className="text-[11px] text-dim/70 mt-3 leading-relaxed">
+            <p className="text-[11px] text-dim mt-3 leading-relaxed">
               Live-enforced rules gate every entry in real time and fail closed. Monitored rules
               (correlation) are surfaced as portfolio health and checked at promotion. Edit the
               defaults in <code className="text-text">src/lib/riskGate.js</code>, or override per-PC

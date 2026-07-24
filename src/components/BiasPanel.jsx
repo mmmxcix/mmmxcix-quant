@@ -29,7 +29,7 @@ function fmtDur(sec) {
 function VoteIcon({ vote }) {
   if (vote > 0) return <TrendingUp className="w-3.5 h-3.5 text-up shrink-0" />;
   if (vote < 0) return <TrendingDown className="w-3.5 h-3.5 text-down shrink-0" />;
-  return <MinusCircle className="w-3.5 h-3.5 text-dim/70 shrink-0" />;
+  return <MinusCircle className="w-3.5 h-3.5 text-dim shrink-0" />;
 }
 
 function VerdictChip({ verdict, score }) {
@@ -124,7 +124,7 @@ export default function BiasPanel({ market, symbol, interval }) {
               {sel.verdict === "long" ? "Long bias" : sel.verdict === "short" ? "Short bias" : "Neutral"}
             </p>
             <p className="text-xs font-mono text-dim mt-1">score {sel.score > 0 ? "+" : ""}{sel.score} / ±{sel.maxScore}</p>
-            <p className="text-[10px] text-dim uppercase tracking-widest mt-1.5">
+            <p className="text-[10px] text-dim font-medium mt-1.5">
               {selected} timeframe{selected === interval ? " (chart)" : ""}
             </p>
             {sel.verdict === "neutral" && (
@@ -139,7 +139,7 @@ export default function BiasPanel({ market, symbol, interval }) {
 
           {/* Rules for the selected timeframe */}
           <div className="rounded-lg border border-line bg-bg/30 p-3">
-            <p className="text-[10px] text-dim uppercase tracking-widest mb-2">
+            <p className="text-[10px] text-dim font-medium mb-2">
               The rules (fixed if-then, each ±1)
             </p>
             <div className="grid sm:grid-cols-2 gap-x-4 gap-y-1.5">
@@ -157,7 +157,7 @@ export default function BiasPanel({ market, symbol, interval }) {
 
           {/* Plan + horizon for the selected timeframe */}
           <div className="rounded-lg border border-line bg-bg/30 p-3">
-            <p className="text-[10px] text-dim uppercase tracking-widest mb-2">
+            <p className="text-[10px] text-dim font-medium mb-2">
               Suggested levels — {selected} structure
             </p>
             {sel.plan ? (
@@ -215,7 +215,7 @@ export default function BiasPanel({ market, symbol, interval }) {
 
       {/* Compact multi-timeframe cross-check (click a chip to inspect it above) */}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border border-line bg-bg/30 px-3 py-2 mt-3">
-        <span className="text-[10px] text-dim uppercase tracking-widest">Cross-check</span>
+        <span className="text-[10px] text-dim font-medium">Cross-check</span>
         {tfs.map((tf) => {
           const r = results[tf];
           return (

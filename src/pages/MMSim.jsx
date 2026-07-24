@@ -18,7 +18,7 @@ const PANELS = [
 function Panel({ title, children, height = 110 }) {
   return (
     <div>
-      <p className="text-[10px] uppercase tracking-widest text-dim mb-1">{title}</p>
+      <p className="text-[10px] font-medium text-dim mb-1">{title}</p>
       <div className="rounded-lg border border-line/60 bg-bg/30 overflow-hidden">{children}</div>
       <div style={{ height: 0 }} />
     </div>
@@ -71,7 +71,7 @@ export default function MMSim() {
         {/* controls */}
         <div className="space-y-4">
           <div className="rounded-xl border border-line lg-glass p-4 space-y-4">
-            <p className="text-xs text-dim uppercase tracking-widest">Avellaneda-Stoikov</p>
+            <p className="text-xs text-dim font-medium">Avellaneda-Stoikov</p>
             <label className="block text-xs text-dim">
               <div className="flex justify-between mb-1">
                 <span>Risk aversion γ — <em>the</em> knob</span>
@@ -80,7 +80,7 @@ export default function MMSim() {
               <input type="range" min={-2} max={0} step={0.02} value={Math.log10(gamma)}
                 onChange={(e) => setGamma(+(10 ** +e.target.value).toFixed(3))}
                 className="w-full accent-current" />
-              <div className="flex justify-between text-[10px] text-dim/70 mt-0.5">
+              <div className="flex justify-between text-[10px] text-dim mt-0.5">
                 <span>0.01 · earn spread, ride swings</span><span>1.0 · hug flat inventory</span>
               </div>
             </label>
@@ -91,7 +91,7 @@ export default function MMSim() {
               </div>
               <input type="range" min={0.3} max={5} step={0.1} value={k}
                 onChange={(e) => setK(+e.target.value)} className="w-full accent-current" />
-              <p className="text-[10px] text-dim/70 mt-0.5">how fast fills die off as you quote away from the mid</p>
+              <p className="text-[10px] text-dim mt-0.5">how fast fills die off as you quote away from the mid</p>
             </label>
             <label className="block text-xs text-dim">
               <div className="flex justify-between mb-1">
@@ -108,7 +108,7 @@ export default function MMSim() {
 
           {/* metrics */}
           <div className="rounded-xl border border-line lg-glass p-4">
-            <p className="text-xs text-dim uppercase tracking-widest mb-2">This session</p>
+            <p className="text-xs text-dim font-medium mb-2">This session</p>
             <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs font-mono">
               <span className="text-dim">Final P&L</span>
               <span className={cn("text-right font-semibold", s.finalPnl >= 0 ? "text-up" : "text-down")}>{s.finalPnl >= 0 ? "+" : ""}{fmtNum(s.finalPnl, 2)}</span>
@@ -123,7 +123,7 @@ export default function MMSim() {
           <div className="rounded-xl border border-line lg-glass p-4">
             <div className="flex items-center gap-2 mb-2">
               <Scale className="w-4 h-4 text-accent" />
-              <p className="text-xs text-dim uppercase tracking-widest">Same day, two temperaments</p>
+              <p className="text-xs text-dim font-medium">Same day, two temperaments</p>
             </div>
             <table className="w-full text-xs font-mono">
               <tbody>

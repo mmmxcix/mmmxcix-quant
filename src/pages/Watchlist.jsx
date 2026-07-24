@@ -105,7 +105,7 @@ export default function Watchlist() {
 
       {/* Add row */}
       <div className="rounded-xl border border-line lg-glass p-4 mb-6">
-        <p className="text-xs text-dim uppercase tracking-widest mb-3">Add symbol</p>
+        <p className="text-xs text-dim font-medium mb-3">Add symbol</p>
         <div className="flex flex-wrap items-center gap-2">
           <MarketToggle market={market} onChange={setMarket} />
           <SymbolSearch

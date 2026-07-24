@@ -162,7 +162,7 @@ export default function Correlation() {
         {basket.map((sym) => (
           <span key={sym} className="inline-flex items-center gap-1 rounded-lg border border-line bg-bg/40 pl-2 pr-1 py-0.5 text-xs font-mono">
             {sym}
-            <span className="text-[9px] text-dim/70 uppercase">{detectMarket(sym) === "crypto" ? "cx" : ""}</span>
+            <span className="text-[9px] text-dim uppercase">{detectMarket(sym) === "crypto" ? "cx" : ""}</span>
             <button onClick={() => removeSymbol(sym)} disabled={basket.length <= 2}
               aria-label={`Remove ${sym}`}
               className="p-0.5 rounded text-dim hover:text-down disabled:opacity-30">
@@ -232,7 +232,7 @@ export default function Correlation() {
                           style={cellStyle(oi === oj ? null : r)}
                           className={cn(
                             "w-11 h-9 text-center align-middle text-[10px] font-mono rounded transition-opacity",
-                            oi === oj ? "text-dim/70 bg-bg/40" : "text-text",
+                            oi === oj ? "text-dim bg-bg/40" : "text-text",
                             dim && "opacity-30"
                           )}>
                           {oi === oj ? "—" : r === null ? "·" : r.toFixed(2)}
@@ -249,7 +249,7 @@ export default function Correlation() {
           <div className="grid sm:grid-cols-3 gap-3 mt-4">
             {computed.insights.hi && (
               <div className="rounded-xl border border-line lg-glass p-3">
-                <p className="text-[10px] text-dim uppercase tracking-widest mb-1">Most correlated</p>
+                <p className="text-[10px] text-dim font-medium mb-1">Most correlated</p>
                 <p className="text-sm font-mono">{computed.insights.hi.a} × {computed.insights.hi.b}
                   <span className="text-up font-semibold ml-2">{computed.insights.hi.r.toFixed(2)}</span></p>
                 <p className="text-[11px] text-dim mt-1">Holding both ≈ one position, doubled.</p>
@@ -257,7 +257,7 @@ export default function Correlation() {
             )}
             {computed.insights.lo && (
               <div className="rounded-xl border border-line lg-glass p-3">
-                <p className="text-[10px] text-dim uppercase tracking-widest mb-1">Least correlated</p>
+                <p className="text-[10px] text-dim font-medium mb-1">Least correlated</p>
                 <p className="text-sm font-mono">{computed.insights.lo.a} × {computed.insights.lo.b}
                   <span className="text-accent font-semibold ml-2">{computed.insights.lo.r.toFixed(2)}</span></p>
                 <p className="text-[11px] text-dim mt-1">The strongest hedge pair in this basket.</p>
@@ -265,7 +265,7 @@ export default function Correlation() {
             )}
             {computed.insights.diversifier && (
               <div className="rounded-xl border border-line lg-glass p-3">
-                <p className="text-[10px] text-dim uppercase tracking-widest mb-1">Best diversifier</p>
+                <p className="text-[10px] text-dim font-medium mb-1">Best diversifier</p>
                 <p className="text-sm font-mono">{computed.insights.diversifier.sym}
                   <span className="text-text font-semibold ml-2">⌀ |r| {computed.insights.diversifier.avg.toFixed(2)}</span></p>
                 <p className="text-[11px] text-dim mt-1">Moves most independently of the rest.</p>
@@ -276,7 +276,7 @@ export default function Correlation() {
           {/* Pairs mean-reversion (OU / Kalman) */}
           <div className="rounded-xl border border-line lg-glass p-4 mt-4">
             <div className="flex flex-wrap items-center gap-2 mb-1">
-              <p className="text-xs text-dim uppercase tracking-widest mr-auto">Pairs mean-reversion · OU / Kalman</p>
+              <p className="text-xs text-dim font-medium mr-auto">Pairs mean-reversion · OU / Kalman</p>
               <select value={pairA} onChange={(e) => setPairA(e.target.value)}
                 className="rounded-lg border border-line bg-bg px-2 py-1 text-xs font-mono">
                 {computed.symbols.map((s) => <option key={s} value={s}>{s}</option>)}

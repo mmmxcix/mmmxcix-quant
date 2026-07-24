@@ -154,7 +154,7 @@ export default function Surface3D({
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
       />
-      <p className="absolute top-1 right-2 text-[10px] text-dim/60 font-mono pointer-events-none">drag to rotate</p>
+      <p className="absolute top-1 right-2 text-[10px] text-dim font-mono pointer-events-none">drag to rotate</p>
     </div>
   );
 }

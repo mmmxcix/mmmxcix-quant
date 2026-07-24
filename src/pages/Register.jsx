@@ -30,7 +30,7 @@ export default function Register() {
   return (
     <AuthShell title="Create account">
       <form onSubmit={submit} className="space-y-3">
-        <label className="block text-xs text-dim">Name <span className="text-dim/70">(optional)</span>
+        <label className="block text-xs text-dim">Name <span className="text-dim">(optional)</span>
           <input autoComplete="name" value={name} onChange={(e) => setName(e.target.value)}
             className="input-base w-full mt-1" placeholder="Your name" />
         </label>

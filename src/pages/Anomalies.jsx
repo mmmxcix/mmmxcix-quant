@@ -130,11 +130,11 @@ function Explainer({ research, reality }) {
   return (
     <div className="grid sm:grid-cols-2 gap-3">
       <div className="rounded-xl border border-line lg-glass p-4">
-        <p className="text-[10px] text-dim uppercase tracking-widest mb-1.5">The research</p>
+        <p className="text-[10px] text-dim font-medium mb-1.5">The research</p>
         <p className="text-[13px] text-dim leading-relaxed">{research}</p>
       </div>
       <div className="rounded-xl border border-warn/30 bg-warn/5 p-4">
-        <p className="text-[10px] text-warn/90 uppercase tracking-widest mb-1.5">Reality check</p>
+        <p className="text-[10px] text-warn/90 font-medium mb-1.5">Reality check</p>
         <p className="text-[13px] text-dim leading-relaxed">{reality}</p>
       </div>
     </div>
@@ -229,7 +229,7 @@ function BabTab() {
       </div>
 
       <div className="rounded-xl border border-line lg-glass p-4">
-        <p className="text-xs text-dim uppercase tracking-widest mb-2">
+        <p className="text-xs text-dim font-medium mb-2">
           Growth of 100 — monthly rebalance, {meta.nSymbols} stocks, β window 252d
         </p>
         <Legend items={legend} />
@@ -248,7 +248,7 @@ function BabTab() {
 
       <div className="grid lg:grid-cols-[1fr_320px] gap-4 [&>*]:min-w-0">
         <div className="rounded-xl border border-line lg-glass p-4">
-          <p className="text-xs text-dim uppercase tracking-widest mb-1">
+          <p className="text-xs text-dim font-medium mb-1">
             The flat security market line
           </p>
           <p className="text-[11px] text-dim mb-2">
@@ -263,7 +263,7 @@ function BabTab() {
         </div>
         <div className="rounded-xl border border-line lg-glass p-4 space-y-3">
           <div>
-            <p className="text-xs text-dim uppercase tracking-widest mb-1.5">Long today (low β)</p>
+            <p className="text-xs text-dim font-medium mb-1.5">Long today (low β)</p>
             {low.map((s) => (
               <div key={s.symbol} className="flex items-center justify-between text-sm py-0.5">
                 <span className="text-text">{s.symbol} <span className="text-dim text-xs">{s.name}</span></span>
@@ -272,7 +272,7 @@ function BabTab() {
             ))}
           </div>
           <div className="border-t border-line pt-2">
-            <p className="text-xs text-dim uppercase tracking-widest mb-1.5">Short today (high β)</p>
+            <p className="text-xs text-dim font-medium mb-1.5">Short today (high β)</p>
             {high.map((s) => (
               <div key={s.symbol} className="flex items-center justify-between text-sm py-0.5">
                 <span className="text-text">{s.symbol} <span className="text-dim text-xs">{s.name}</span></span>
@@ -312,7 +312,7 @@ function AccrualsTab() {
       </div>
 
       <div className="rounded-xl border border-line lg-glass p-4 overflow-x-auto">
-        <p className="text-xs text-dim uppercase tracking-widest mb-2">
+        <p className="text-xs text-dim font-medium mb-2">
           Ranked by accruals — low (cash-backed) first · latest fiscal year
         </p>
         <table className="w-full text-sm min-w-[640px]">
@@ -334,7 +334,7 @@ function AccrualsTab() {
                 <td className="py-1.5 pr-2">
                   <span className="text-text font-medium">{r.symbol}</span>{" "}
                   <span className="text-dim text-xs">{r.name}</span>
-                  <span className="text-dim/60 text-[10px] font-mono ml-1">FY{r.fiscalYear}</span>
+                  <span className="text-dim text-[10px] font-mono ml-1">FY{r.fiscalYear}</span>
                 </td>
                 <td className="py-1.5 pr-2 text-right font-mono text-dim">{fmtMoney(r.netIncome)}</td>
                 <td className="py-1.5 pr-2 text-right font-mono text-dim">{fmtMoney(r.cfo)}</td>
@@ -348,7 +348,7 @@ function AccrualsTab() {
           </tbody>
         </table>
         {data.missing.length > 0 && (
-          <p className="text-[11px] text-dim/70 mt-2">No usable fundamentals: {data.missing.join(", ")}</p>
+          <p className="text-[11px] text-dim mt-2">No usable fundamentals: {data.missing.join(", ")}</p>
         )}
       </div>
     </div>
@@ -381,7 +381,7 @@ function ShortTab() {
       </div>
 
       <div className="rounded-xl border border-line lg-glass p-4 overflow-x-auto">
-        <p className="text-xs text-dim uppercase tracking-widest mb-2">
+        <p className="text-xs text-dim font-medium mb-2">
           Ranked by short % of float — most shorted first
         </p>
         <table className="w-full text-sm min-w-[640px]">
@@ -419,7 +419,7 @@ function ShortTab() {
           </tbody>
         </table>
         {data.missing.length > 0 && (
-          <p className="text-[11px] text-dim/70 mt-2">No short data: {data.missing.join(", ")}</p>
+          <p className="text-[11px] text-dim mt-2">No short data: {data.missing.join(", ")}</p>
         )}
       </div>
     </div>
@@ -451,7 +451,7 @@ function RegimesTab() {
       </div>
 
       <div className="rounded-xl border border-line lg-glass p-4">
-        <p className="text-xs text-dim uppercase tracking-widest mb-2">
+        <p className="text-xs text-dim font-medium mb-2">
           Rolling 30d average pairwise correlation — shaded = high-correlation regime
         </p>
         <Legend items={[{ label: "Avg pairwise correlation (6 assets)", color: C1 }, { label: "Stress regime", color: DOWN }]} />
@@ -466,7 +466,7 @@ function RegimesTab() {
       </div>
 
       <div className="rounded-xl border border-line lg-glass p-4">
-        <p className="text-xs text-dim uppercase tracking-widest mb-2">
+        <p className="text-xs text-dim font-medium mb-2">
           Rolling 30d annualized volatility — S&P 500 · same stress shading
         </p>
         <Legend items={[{ label: "SPY realized vol (ann.)", color: C2 }, { label: "Stress regime", color: DOWN }]} />
@@ -528,7 +528,7 @@ function DrawdownTab() {
 
       <div className="grid lg:grid-cols-[260px_1fr] gap-4 [&>*]:min-w-0">
         <div className="rounded-xl border border-line lg-glass p-4 space-y-3 h-fit">
-          <p className="text-xs text-dim uppercase tracking-widest">Assumptions</p>
+          <p className="text-xs text-dim font-medium">Assumptions</p>
           <Field label="Annual drift" value={mu} onChange={setMu} min={-50} max={50} suffix="%" />
           <Field label="Annual vol" value={sigma} onChange={setSigma} min={1} max={120} suffix="%" />
           <Field label="Horizon" value={days} onChange={setDays} min={30} max={1260} suffix="days" />
@@ -547,7 +547,7 @@ function DrawdownTab() {
 
         <div className="space-y-4 min-w-0">
           <div className="rounded-xl border border-line lg-glass p-4">
-            <p className="text-xs text-dim uppercase tracking-widest mb-1">
+            <p className="text-xs text-dim font-medium mb-1">
               Drawdown topology — 2,000 paths · height = path density
             </p>
             <p className="text-[11px] text-dim mb-2">
@@ -557,7 +557,7 @@ function DrawdownTab() {
           </div>
 
           <div className="rounded-xl border border-line lg-glass p-4">
-            <p className="text-xs text-dim uppercase tracking-widest mb-2">Drawdown quantiles over time</p>
+            <p className="text-xs text-dim font-medium mb-2">Drawdown quantiles over time</p>
             <Legend items={[{ label: "Median drawdown", color: C1 }, { label: "p95 drawdown", color: DOWN }]} />
             <XYLineChart
               series={[
@@ -572,7 +572,7 @@ function DrawdownTab() {
           </div>
 
           <div className="rounded-xl border border-line lg-glass p-4">
-            <p className="text-xs text-dim uppercase tracking-widest mb-2">Terminal value distribution</p>
+            <p className="text-xs text-dim font-medium mb-2">Terminal value distribution</p>
             <div className="flex items-end gap-px h-24">
               {bins.map((b, i) => (
                 <div
@@ -692,7 +692,7 @@ function GreeksTab() {
 
       <div className="grid lg:grid-cols-[260px_1fr] gap-4 [&>*]:min-w-0">
         <div className="rounded-xl border border-line lg-glass p-4 space-y-3 h-fit">
-          <p className="text-xs text-dim uppercase tracking-widest">Position</p>
+          <p className="text-xs text-dim font-medium">Position</p>
           <div className="flex gap-1.5">
             {["call", "put", "straddle"].map((t) => (
               <button key={t} onClick={() => setType(t)}
@@ -721,7 +721,7 @@ function GreeksTab() {
 
         <div className="rounded-xl border border-line lg-glass p-4 min-w-0">
           <div className="flex items-center justify-between flex-wrap gap-2 mb-1">
-            <p className="text-xs text-dim uppercase tracking-widest">
+            <p className="text-xs text-dim font-medium">
               {active.label} manifold — long {type}, K = {fmtNum(Math.max(1, K || 100), 0)}
             </p>
             <div className="flex gap-1.5">
@@ -806,7 +806,7 @@ export default function Anomalies() {
 
       {active.el}
 
-      <p className="text-[11px] text-dim/60 mt-6 max-w-3xl leading-relaxed">
+      <p className="text-[11px] text-dim mt-6 max-w-3xl leading-relaxed">
         Education, not investment advice. Live modules use delayed Yahoo Finance data over a small
         mega-cap universe with no transaction costs, borrow fees, or slippage — academic factors use
         thousands of stocks and decades of history. Results here demonstrate mechanics, not tradability.

@@ -228,7 +228,7 @@ function PerformanceTab({ active }) {
     <div className="space-y-4">
       <div className="rounded-xl border border-line lg-glass p-4 space-y-3">
         <div className="flex items-center justify-between">
-          <p className="text-xs text-dim uppercase tracking-widest">Symbols (2–6)</p>
+          <p className="text-xs text-dim font-medium">Symbols (2–6)</p>
           <div className="flex gap-1">
             {PERF_RANGES.map((r) => (
               <button
@@ -421,7 +421,7 @@ function DcaTab({ active }) {
   return (
     <div className="space-y-4">
       <div className="rounded-xl border border-line lg-glass p-4 space-y-3">
-        <p className="text-xs text-dim uppercase tracking-widest">Savings plan</p>
+        <p className="text-xs text-dim font-medium">Savings plan</p>
         <div className="flex flex-wrap items-end gap-3">
           <div className="space-y-2">
             <MarketToggle market={market} onChange={switchMarket} />
