@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { NavLink, Link, useLocation } from "react-router-dom";
-import { LayoutDashboard, CandlestickChart, FlaskConical, Newspaper, Compass, Wrench, Activity, Scale, Star, Briefcase, Radar, GraduationCap, Sigma, Menu, X, Target, BookOpenCheck, Telescope, Cpu, Sun, Moon, Monitor, Waypoints, Search, LogIn , Landmark, Globe} from "lucide-react";
+import { LayoutDashboard, CandlestickChart, FlaskConical, Newspaper, Compass, Wrench, Activity, Scale, Star, Briefcase, Radar, GraduationCap, Sigma, Menu, X, Target, BookOpenCheck, Telescope, Cpu, Sun, Moon, Monitor, Waypoints, Search, LogIn , Landmark, Globe, Radio} from "lucide-react";
 import { cn } from "@/lib/utils";
 import DitherBackground from "@/components/DitherBackground";
 import CommandPalette from "@/components/CommandPalette";
@@ -108,7 +108,7 @@ function useDevNav() {
 }
 
 const DEV_ITEMS = {
-  Strategy: [{ to: "/cortex", label: "Cortex", icon: Cpu }],
+  Strategy: [{ to: "/cortex", label: "Cortex", icon: Cpu }, { to: "/argus", label: "Argus", icon: Radio }],
   Learn: [{ to: "/coach", label: "Coach", icon: Target }],
 };
 

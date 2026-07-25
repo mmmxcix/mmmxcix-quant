@@ -29,6 +29,7 @@ const COMMANDS = [
   { label: "Cortex · Paper", to: "/cortex/paper", group: "Cortex" },
   { label: "Cortex · RiskGate", to: "/cortex/riskgate", group: "Cortex" },
   { label: "Cortex · Brain Vault", to: "/cortex/brain", group: "Cortex" },
+  { label: "Argus · Day-trader", to: "/argus", group: "Cortex" },
   { label: "Academy", to: "/learn", group: "Learn" },
   { label: "Formula Reference", to: "/learn/formulas", group: "Learn" },
 ];
