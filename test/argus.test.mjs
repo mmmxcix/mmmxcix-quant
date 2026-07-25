@@ -86,3 +86,30 @@ test("chokepointCongestion counts vessels + anchored in the Hormuz box", () => {
   const cp = chokepointCongestion(ships);
   assert.equal(cp.hormuz.ships, 2); assert.equal(cp.hormuz.anchored, 1);
 });
+
+// ── Phase-1: event-channel LLM thesis parsing ───────────────────────────────
+import { parseTheses } from "../src/lib/argus/llm.js";
+
+test("parseTheses extracts a fenced JSON array, uppercases + clamps", () => {
+  const reply = 'Here you go:\n```json\n[{"symbol":"uso","side":"long","thesis":"Refinery fire tightens gasoline supply","invalidation":"crack spreads roll over","confidence":1.7,"horizon":"2d","evidence":["fire at Gulf Coast refinery"]}]\n```';
+  const t = parseTheses(reply);
+  assert.equal(t.length, 1);
+  assert.equal(t[0].symbol, "USO", "symbol uppercased");
+  assert.equal(t[0].side, "long");
+  assert.equal(t[0].confidence, 1, "confidence clamped to [0,1]");
+  assert.equal(t[0].evidence.length, 1);
+});
+
+test("parseTheses tolerates prose around a bare array and drops malformed items", () => {
+  const reply = 'I think:\n[{"symbol":"NVDA","side":"long","thesis":"x"},{"side":"short"},{"symbol":"SPY","side":"sideways"}]\nThat is all.';
+  const t = parseTheses(reply);
+  assert.equal(t.length, 1, "only the one well-formed thesis survives");
+  assert.equal(t[0].symbol, "NVDA");
+});
+
+test("parseTheses caps at 3 and returns [] on non-JSON / empty", () => {
+  const many = "[" + Array.from({ length: 6 }, (_, i) => `{"symbol":"T${i}","side":"long","thesis":"y"}`).join(",") + "]";
+  assert.equal(parseTheses(many).length, 3, "capped at 3");
+  assert.deepEqual(parseTheses("no trades today, market is quiet"), []);
+  assert.deepEqual(parseTheses(""), []);
+});

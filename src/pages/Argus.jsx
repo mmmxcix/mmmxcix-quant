@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Radio, TrendingUp, TrendingDown, Trophy, AlertTriangle } from "lucide-react";
+import { Radio, TrendingUp, TrendingDown, Trophy, AlertTriangle, Zap, Newspaper } from "lucide-react";
 import { cn, fmtNum } from "@/lib/utils";
 import { ledgerStats } from "@/lib/argus/core";
 import Skeleton from "@/components/Skeleton";
@@ -68,7 +68,7 @@ export default function Argus() {
               <Radio className="w-3 h-3" />{live ? "live" : "offline"}
             </span>
           </h1>
-          <p className="text-sm text-dim">24/7 day-trading agent · technical channel (Phase 0) · <span className="text-dim">paper only — educational, not advice</span></p>
+          <p className="text-sm text-dim">24/7 day-trading agent · technical + event channel · <span className="text-dim">paper only — educational, not advice</span></p>
         </div>
         {state?.halted && (
           <span className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-down/40 bg-down/10 text-down px-2 py-1 text-xs font-semibold">
@@ -113,11 +113,46 @@ export default function Argus() {
                   <span>{t.plannedR?.toFixed(1)}R</span>
                 </div>
                 <p className="text-[11px] text-dim mt-2 leading-snug">{t.reason} · risk {fmtNum(t.riskAmt, 0)}</p>
+                {t.catalyst && (
+                  <div className="mt-2 rounded-lg border border-accent/30 bg-accent/5 px-2.5 py-1.5">
+                    <p className="text-[10px] uppercase tracking-wide text-accent font-semibold flex items-center gap-1 mb-0.5">
+                      <Zap className="w-3 h-3" /> Catalyst{typeof t.confidence === "number" ? ` · ${(t.confidence * 100).toFixed(0)}% conf` : ""}
+                    </p>
+                    <p className="text-[11px] text-text/90 leading-snug">{t.catalyst}</p>
+                    {t.evidence?.length > 0 && (
+                      <ul className="mt-1 space-y-0.5">
+                        {t.evidence.slice(0, 3).map((e, i) => <li key={i} className="text-[10px] text-dim leading-snug">· {e}</li>)}
+                      </ul>
+                    )}
+                  </div>
+                )}
               </div>
             ))}
           </div>
         )}
       </div>
+
+      {/* event watch — alt-data biases the LLM channel is tracking, awaiting a technical trigger */}
+      {state?.events?.length > 0 && (
+        <div>
+          <p className="text-xs text-dim font-medium mb-2 flex items-center gap-1.5">
+            <Newspaper className="w-3.5 h-3.5" /> Event watch — alt-data biases awaiting a technical trigger
+          </p>
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
+            {state.events.map((e) => (
+              <div key={e.symbol} className="rounded-xl border border-line lg-glass p-3">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="font-mono font-semibold text-sm">{e.symbol}</span>
+                  <SideTag side={e.side} />
+                  {typeof e.confidence === "number" && <span className="text-[10px] text-dim">{(e.confidence * 100).toFixed(0)}%</span>}
+                  <span className="ml-auto text-[10px] text-dim">{ago(e.at)} ago</span>
+                </div>
+                <p className="text-[11px] text-dim leading-snug">{e.thesis}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ledger */}
       {ledger.length > 0 && (
@@ -152,9 +187,11 @@ export default function Argus() {
 
       <p className="text-xs text-dim leading-relaxed">
         Argus scans several timeframes for technical setups, sizes each trade under a portfolio-heat
-        risk model (max 6% total at risk, ~2% per trade, stop-defined), and paper-trades them. Every
-        R-multiple and the win rate are shown honestly. This is Phase 0 — the alt-data/news brain and
-        the notify-only live mode come later. Educational tool, not investment advice.
+        risk model (max 6% total at risk, ~2% per trade, stop-defined), and paper-trades them. An
+        event channel reads the live alt-data briefing — news, conflicts, disasters and shipping
+        chokepoints — and proposes directional biases; a trade only opens when price confirms the
+        catalyst, never on the spike itself. Every R-multiple and the win rate are shown honestly.
+        Notify-only live mode comes later. Educational tool, not investment advice.
       </p>
     </div>
   );

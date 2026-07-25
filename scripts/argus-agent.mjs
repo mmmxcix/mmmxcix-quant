@@ -7,6 +7,8 @@
 import { loadMarket } from "./marketdata.mjs";
 import { openThesis, evaluateExit } from "../src/lib/argus/core.js";
 import { scan } from "../src/lib/argus/scanners.js";
+import { buildBrief, diffBrief, renderBrief } from "../src/lib/argus/brief.js";
+import { callArgusLLM } from "../src/lib/argus/llm.js";
 
 const SITE = process.env.LAB_SITE || "https://quant.mmmxcix.com";
 const TOKEN = process.env.LAB_TOKEN;
@@ -16,6 +18,12 @@ const HEAT_CAP = +(process.env.LAB_ARGUS_HEAT || 0.06);
 const BASE_RISK = +(process.env.LAB_ARGUS_RISK || 0.02);
 const DAILY_STOP = +(process.env.LAB_ARGUS_DAILY_STOP || 0.04);
 const EQUITY0 = +(process.env.LAB_ARGUS_EQUITY || 10000);
+// Phase-1 event channel: LLM reads the alt-data briefing and proposes directional
+// biases. Best-effort (free LLM pool is flaky) and opt-out via LAB_ARGUS_LLM=0.
+const LLM_ON = process.env.LAB_ARGUS_LLM !== "0";
+const EVENT_TTL = +(process.env.LAB_ARGUS_EVENT_TTL_MIN || 240) * 60_000; // biases expire (4h)
+// News-reachable tickers Argus may trade if a catalyst clearly names them.
+const EVENT_TICKERS = ["USO", "XLE", "ITA", "GLD", "UNG", "XOP", "SLV", "TLT", "UUP"];
 
 // Phase-0 universe: instruments with solid free intraday data (crypto = Binance,
 // stocks/ETFs = Yahoo). Forex intraday is added once a data source is wired.
@@ -36,10 +44,49 @@ let closedToday = [];
 let dayStamp = new Date().getUTCDate();
 let equityDayStart = EQUITY0;
 let cycleRunning = false;
+let eventBias = new Map(); // symbol -> { side, thesis, confidence, evidence, horizon, at, model }
+let prevBrief = null;
 
 const openRisk = () => open.reduce((a, t) => a + t.riskAmt, 0);
+const isCore = (sym) => UNIVERSE.some((u) => u.symbol === sym);
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** Descriptor for an arbitrary ticker the event channel names (crypto vs stock). */
+function instFor(symbol) {
+  const s = symbol.toUpperCase();
+  return /USDT$/.test(s) ? { id: s, asset: "crypto", symbol: s } : { id: s, asset: "stock", symbol: s };
+}
+
+/** Base universe + any event-named tickers currently carrying a fresh bias. */
+function activeUniverse() {
+  const extra = [...eventBias.keys()].filter((s) => !isCore(s)).map(instFor);
+  return [...UNIVERSE, ...extra];
+}
+
+/** Event channel: read the alt-data briefing, ask the LLM for directional biases.
+ *  Best-effort — a flaky free LLM pool just means no new biases this cycle. */
+async function runEventChannel() {
+  if (!LLM_ON) return;
+  try {
+    const get = async (p) => { try { const r = await fetch(SITE + p); return r.ok ? await r.json() : null; } catch { return null; } };
+    const [world, conflicts, disasters, news] = await Promise.all([get("/api/world"), get("/api/conflicts"), get("/api/disasters"), get("/api/news")]);
+    const brief = buildBrief({ world, conflicts: conflicts?.conflicts, disasters: disasters?.disasters, news });
+    brief.deltas = diffBrief(prevBrief, brief);
+    prevBrief = brief;
+    const ctx = { universe: [...UNIVERSE.map((u) => u.symbol), ...EVENT_TICKERS], open: open.map((o) => o.symbol) };
+    const out = await callArgusLLM(renderBrief(brief), ctx);
+    const now = Date.now();
+    for (const [k, v] of eventBias) if (now - v.at > EVENT_TTL) eventBias.delete(k); // prune stale
+    if (!out.ok) { console.log(`[${new Date().toISOString()}] event: llm unavailable (${out.error})`); return; }
+    for (const t of out.theses) {
+      if (!/^[A-Z]{1,6}(USDT)?$/.test(t.symbol)) continue; // sane ticker only
+      if (!isCore(t.symbol) && !EVENT_TICKERS.includes(t.symbol)) continue; // don't invent instruments
+      eventBias.set(t.symbol, { side: t.side, thesis: t.thesis, confidence: t.confidence, evidence: t.evidence, horizon: t.horizon, at: now, model: out.model });
+    }
+    if (out.theses.length) console.log(`[${new Date().toISOString()}] event: ${out.theses.length} bias via ${out.model} — ${out.theses.map((t) => `${t.symbol} ${t.side}`).join(", ")}`);
+  } catch (e) { console.log(`[${new Date().toISOString()}] event failed: ${e.message}`); }
+}
 
 async function loadTF(inst) {
   if (inst.asset === "crypto") {
@@ -74,14 +121,25 @@ function manageExits(inst, last5, ledgerAdd) {
 function tryOpen(inst, setup, halted) {
   if (halted) return;
   if (open.some((o) => o.symbol === inst.symbol)) return; // one position per instrument
+  const bias = eventBias.get(inst.symbol);
+  // Event-only tickers (added purely because news named them) trade only with a
+  // matching-direction catalyst — price alone isn't enough to justify them.
+  if (!isCore(inst.symbol) && (!bias || bias.side !== setup.side)) return;
   const th = openThesis(
     { ...setup, symbol: inst.symbol, market: inst.asset },
     { equity, openRisk: openRisk(), asset: inst.asset, heatCap: HEAT_CAP, baseRiskPct: BASE_RISK },
   );
   if (th) {
+    if (bias && bias.side === th.side) { // enrich a confirmed setup with its catalyst
+      th.catalyst = bias.thesis;
+      th.confidence = bias.confidence;
+      th.horizon = bias.horizon;
+      if (bias.evidence?.length) th.evidence = [...new Set([...(th.evidence || []), ...bias.evidence])].slice(0, 6);
+      th.reason = `⚡ ${th.reason}`;
+    }
     open.push(th);
     forming = forming.filter((f) => f.symbol !== inst.symbol);
-    console.log(`[${new Date().toISOString()}] OPEN ${th.symbol} ${th.side} ${th.kind} @${th.entry.toFixed(4)} stop ${th.stop.toFixed(4)} tgt ${th.target.toFixed(4)} risk ${th.riskAmt.toFixed(0)} — ${th.reason}`);
+    console.log(`[${new Date().toISOString()}] OPEN ${th.symbol} ${th.side} ${th.kind}${th.catalyst ? " [event]" : ""} @${th.entry.toFixed(4)} stop ${th.stop.toFixed(4)} tgt ${th.target.toFixed(4)} risk ${th.riskAmt.toFixed(0)} — ${th.reason}`);
   } else {
     // no heat room → park as forming so it's re-checked on the fast loop
     if (!forming.some((f) => f.symbol === inst.symbol)) forming.push({ symbol: inst.symbol, asset: inst.asset, side: setup.side, kind: setup.kind, reason: "waiting for heat: " + setup.reason });
@@ -102,9 +160,14 @@ async function cycle(fullScan) {
     const dailyPnl = closedToday.reduce((a, c) => a + c.pnl, 0);
     const halted = dailyPnl <= -DAILY_STOP * equityDayStart;
 
+    // Full scans consult the event channel first, so news-driven biases are live
+    // before the technical scan runs (and can expand the universe).
+    if (fullScan) await runEventChannel();
+
     // On the fast loop, only touch instruments with an open thesis or a forming setup.
+    const uni = activeUniverse();
     const active = new Set([...open.map((o) => o.symbol), ...forming.map((f) => f.symbol)]);
-    const insts = fullScan ? UNIVERSE : UNIVERSE.filter((i) => active.has(i.symbol));
+    const insts = fullScan ? uni : uni.filter((i) => active.has(i.symbol));
 
     for (const inst of insts) {
       let tf;
@@ -120,9 +183,8 @@ async function cycle(fullScan) {
       if (inst.asset !== "crypto") await sleep(400); // be gentle on Yahoo
     }
 
-    const bias = {}; // brief; per-instrument bias could be added later
     await persist(ledgerAdd, { halted, dailyPnl });
-    if (fullScan) console.log(`[${new Date().toISOString()}] scan: ${open.length} open · ${forming.length} forming · eq ${equity.toFixed(0)} · heat ${(openRisk() / equity * 100).toFixed(1)}%${halted ? " · DAILY-HALT" : ""}`);
+    if (fullScan) console.log(`[${new Date().toISOString()}] scan: ${open.length} open · ${forming.length} forming · ${eventBias.size} event-bias · eq ${equity.toFixed(0)} · heat ${(openRisk() / equity * 100).toFixed(1)}%${halted ? " · DAILY-HALT" : ""}`);
   } catch (e) {
     console.error(`cycle failed: ${e.message}`);
   } finally {
@@ -131,9 +193,13 @@ async function cycle(fullScan) {
 }
 
 async function persist(ledgerAdd, extra) {
+  const events = [...eventBias.entries()]
+    .sort((a, b) => b[1].at - a[1].at)
+    .slice(0, 12)
+    .map(([symbol, v]) => ({ symbol, side: v.side, thesis: v.thesis, confidence: v.confidence, horizon: v.horizon, at: v.at, model: v.model }));
   const body = {
     token: TOKEN,
-    state: { equity, open: open.length, forming: forming.length, heatPct: openRisk() / equity, dayPnl: extra.dailyPnl, halted: extra.halted, universe: UNIVERSE.length },
+    state: { equity, open: open.length, forming: forming.length, heatPct: openRisk() / equity, dayPnl: extra.dailyPnl, halted: extra.halted, universe: activeUniverse().length, events },
     theses: open,
     ledgerAdd,
   };
@@ -150,8 +216,11 @@ async function hydrate() {
     const j = await r.json();
     if (j.state?.equity) equity = j.state.equity;
     if (Array.isArray(j.theses)) open = j.theses;
+    for (const e of j.state?.events || []) { // restore fresh event biases across restarts
+      if (Date.now() - (e.at || 0) < EVENT_TTL) eventBias.set(e.symbol, { side: e.side, thesis: e.thesis, confidence: e.confidence, evidence: [], horizon: e.horizon, at: e.at, model: e.model });
+    }
     equityDayStart = equity;
-    console.log(`hydrated: eq ${equity.toFixed(0)}, ${open.length} open theses`);
+    console.log(`hydrated: eq ${equity.toFixed(0)}, ${open.length} open theses, ${eventBias.size} event-bias`);
   } catch { /* fresh start */ }
 }
 
@@ -159,4 +228,4 @@ await hydrate();
 setInterval(() => cycle(true), 15 * 60_000);
 setInterval(() => cycle(false), 2 * 60_000);
 cycle(true);
-console.log(`Argus running — universe ${UNIVERSE.length} · heat ${HEAT_CAP * 100}% cap / ${BASE_RISK * 100}% base · daily stop ${DAILY_STOP * 100}% · paper eq ${EQUITY0}`);
+console.log(`Argus running — universe ${UNIVERSE.length} core (+${EVENT_TICKERS.length} event) · event-channel ${LLM_ON ? "on" : "off"} · heat ${HEAT_CAP * 100}% cap / ${BASE_RISK * 100}% base · daily stop ${DAILY_STOP * 100}% · paper eq ${EQUITY0}`);
