@@ -39,15 +39,22 @@ let cycleRunning = false;
 
 const openRisk = () => open.reduce((a, t) => a + t.riskAmt, 0);
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
 async function loadTF(inst) {
-  const opts = inst.asset === "crypto"
-    ? { bars: 1000 }
-    : { range5: "1mo", range15: "3mo", range1h: "6mo" };
-  const [c5, c15, c1h] = await Promise.all([
-    loadMarket({ ...inst, interval: "5m", bars: 1000, range: opts.range5 }),
-    loadMarket({ ...inst, interval: "15m", bars: 1000, range: opts.range15 }),
-    loadMarket({ ...inst, interval: "1h", bars: 1000, range: opts.range1h }),
-  ]);
+  if (inst.asset === "crypto") {
+    // Binance is happy with parallel bursts.
+    const [c5, c15, c1h] = await Promise.all([
+      loadMarket({ ...inst, interval: "5m", bars: 1000 }),
+      loadMarket({ ...inst, interval: "15m", bars: 1000 }),
+      loadMarket({ ...inst, interval: "1h", bars: 1000 }),
+    ]);
+    return { c5: c5?.candles, c15: c15?.candles, c1h: c1h?.candles };
+  }
+  // Yahoo throttles parallel bursts from one IP → fetch stock TFs sequentially.
+  const c5 = await loadMarket({ ...inst, interval: "5m", range: "1mo" }); await sleep(250);
+  const c15 = await loadMarket({ ...inst, interval: "15m", range: "3mo" }); await sleep(250);
+  const c1h = await loadMarket({ ...inst, interval: "1h", range: "6mo" });
   return { c5: c5?.candles, c15: c15?.candles, c1h: c1h?.candles };
 }
 
@@ -106,8 +113,11 @@ async function cycle(fullScan) {
       manageExits(inst, tf.c5[tf.c5.length - 1], ledgerAdd);
       // Scan for new / re-check forming: both use the same scan; the fast loop
       // catches a forming setup the moment it triggers ("watch until entry").
-      const { triggered } = scan(tf);
-      for (const s of triggered) tryOpen(inst, s, halted);
+      if (tf.c15 && tf.c1h) {
+        const { triggered } = scan(tf);
+        for (const s of triggered) tryOpen(inst, s, halted);
+      }
+      if (inst.asset !== "crypto") await sleep(400); // be gentle on Yahoo
     }
 
     const bias = {}; // brief; per-instrument bias could be added later
