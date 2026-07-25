@@ -56,7 +56,7 @@ export default function Argus() {
 
   const { state, theses = [], ledger = [] } = data;
   const stats = ledgerStats(ledger);
-  const live = state && Date.now() - state.at < 6 * 60_000;
+  const live = state && Date.now() - state.at < 20 * 60_000; // agent heartbeats each ~15-min full scan
 
   return (
     <div className="space-y-5">

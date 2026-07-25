@@ -46,6 +46,7 @@ let equityDayStart = EQUITY0;
 let cycleRunning = false;
 let eventBias = new Map(); // symbol -> { side, thesis, confidence, evidence, horizon, at, model }
 let prevBrief = null;
+let lastPersistSig = ""; // skip redundant KV writes on the fast loop (write budget)
 
 const openRisk = () => open.reduce((a, t) => a + t.riskAmt, 0);
 const isCore = (sym) => UNIVERSE.some((u) => u.symbol === sym);
@@ -183,7 +184,14 @@ async function cycle(fullScan) {
       if (inst.asset !== "crypto") await sleep(400); // be gentle on Yahoo
     }
 
-    await persist(ledgerAdd, { halted, dailyPnl });
+    // Only write to KV when something changed or on a full scan (which doubles as
+    // the ~15-min heartbeat). The 2-min watch loop otherwise stays silent — this
+    // keeps us inside the free KV daily write budget.
+    const sig = JSON.stringify([open.map((o) => o.id).sort(), forming.map((f) => f.symbol).sort(), [...eventBias.keys()].sort(), halted]);
+    if (fullScan || ledgerAdd.length || sig !== lastPersistSig) {
+      await persist(ledgerAdd, { halted, dailyPnl });
+      lastPersistSig = sig;
+    }
     if (fullScan) console.log(`[${new Date().toISOString()}] scan: ${open.length} open · ${forming.length} forming · ${eventBias.size} event-bias · eq ${equity.toFixed(0)} · heat ${(openRisk() / equity * 100).toFixed(1)}%${halted ? " · DAILY-HALT" : ""}`);
   } catch (e) {
     console.error(`cycle failed: ${e.message}`);

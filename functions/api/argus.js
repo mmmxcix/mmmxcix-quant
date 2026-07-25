@@ -42,15 +42,22 @@ export async function onRequest({ request, env }) {
     try { body = await request.json(); } catch { return json({ error: "bad_json" }, 400); }
     if (!env.DEV_ACCESS_TOKEN || !safeEqual(body.token || "", env.DEV_ACCESS_TOKEN)) return json({ error: "unauthorized" }, 401);
 
-    if (body.state) await kv.put("argus:state", JSON.stringify({ ...body.state, at: Date.now() }));
-    if (Array.isArray(body.theses)) await kv.put("argus:theses", JSON.stringify(body.theses.slice(0, 200)));
-    if (Array.isArray(body.ledgerAdd) && body.ledgerAdd.length) {
-      let existing = [];
-      try { existing = JSON.parse((await kv.get("argus:ledger")) || "[]"); } catch { /* fresh */ }
-      const byId = new Map(existing.map((c) => [c.id, c]));
-      for (const c of body.ledgerAdd) byId.set(c.id, c);
-      const merged = [...byId.values()].sort((a, b) => (b.exitAt || 0) - (a.exitAt || 0)).slice(0, LEDGER_CAP);
-      await kv.put("argus:ledger", JSON.stringify(merged));
+    // KV writes can be rejected once the daily write budget is exhausted (free
+    // plan). Surface that as a clean 503 rather than an uncaught 1101 — the agent
+    // logs it and retries next cycle; reads keep serving the last good state.
+    try {
+      if (body.state) await kv.put("argus:state", JSON.stringify({ ...body.state, at: Date.now() }));
+      if (Array.isArray(body.theses)) await kv.put("argus:theses", JSON.stringify(body.theses.slice(0, 200)));
+      if (Array.isArray(body.ledgerAdd) && body.ledgerAdd.length) {
+        let existing = [];
+        try { existing = JSON.parse((await kv.get("argus:ledger")) || "[]"); } catch { /* fresh */ }
+        const byId = new Map(existing.map((c) => [c.id, c]));
+        for (const c of body.ledgerAdd) byId.set(c.id, c);
+        const merged = [...byId.values()].sort((a, b) => (b.exitAt || 0) - (a.exitAt || 0)).slice(0, LEDGER_CAP);
+        await kv.put("argus:ledger", JSON.stringify(merged));
+      }
+    } catch (e) {
+      return json({ error: "kv_write_failed", detail: String(e?.message || e) }, 503);
     }
     return json({ ok: true });
   }
