@@ -64,3 +64,25 @@ test("scan gates trend setups by higher-timeframe bias", () => {
   assert.equal(out.bias, "up");
   assert.ok(out.triggered.some((t) => t.side === "long"), "long breakout allowed in uptrend");
 });
+
+// ── Phase-1 foundation: alt-data briefing ───────────────────────────────────
+import { decodeEntities, diffBrief, chokepointCongestion, summarizeConflicts } from "../src/lib/argus/brief.js";
+
+test("decodeEntities cleans RSS headline entities", () => {
+  assert.equal(decodeEntities("Tesla&#x2019;s Q2 &amp; the &#8212; drop"), "Tesla’s Q2 & the — drop");
+});
+
+test("diffBrief surfaces new headlines, hazards, conflict escalation", () => {
+  const prev = { headlines: [{ title: "old" }], disasters: [{ name: "H1" }], conflicts: [{ country: "X", deaths: 100 }], chokepoints: {} };
+  const cur = { headlines: [{ title: "old" }, { title: "NEW", source: "S" }], disasters: [{ name: "H1" }, { alert: "red", type: "flood", country: "Y", name: "H2" }], conflicts: [{ country: "X", deaths: 150 }], chokepoints: {} };
+  const d = diffBrief(prev, cur);
+  assert.ok(d.some((x) => x.kind === "news" && x.text.includes("NEW")), "new headline");
+  assert.ok(d.some((x) => x.kind === "hazard" && x.text.includes("H2")), "new hazard");
+  assert.ok(d.some((x) => x.kind === "conflict" && x.text.includes("X")), "conflict escalation +50");
+});
+
+test("chokepointCongestion counts vessels + anchored in the Hormuz box", () => {
+  const ships = [[1, 26.0, 56.5, 0.2], [2, 26.5, 57.0, 8], [3, 0, 0, 5]]; // 2 in Hormuz, 1 anchored
+  const cp = chokepointCongestion(ships);
+  assert.equal(cp.hormuz.ships, 2); assert.equal(cp.hormuz.anchored, 1);
+});
