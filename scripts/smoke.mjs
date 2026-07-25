@@ -13,7 +13,7 @@ import puppeteer from "puppeteer-core";
 const CHROME = process.env.CHROME_PATH || "C:/Program Files/Google/Chrome/Application/chrome.exe";
 const PORT = 4199;
 const ROUTES = [
-  "/", "/charts", "/news", "/tools", "/regimes", "/map",
+  "/", "/charts", "/news", "/tools", "/regimes", "/argus", "/map",
   "/backtest/run", "/backtest/compare", "/backtest/ml", "/backtest/events", "/backtest/mm",
   "/screener/scan", "/screener/anomalies", "/screener/correlation",
   "/portfolio/holdings", "/portfolio/options",

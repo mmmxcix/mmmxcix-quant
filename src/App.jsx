@@ -16,6 +16,7 @@ const Tools = lazy(() => import("@/pages/Tools"));
 const Regimes = lazy(() => import("@/pages/Regimes"));
 const Coach = lazy(() => import("@/pages/Coach"));
 const Cortex = lazy(() => import("@/pages/Cortex"));
+const Argus = lazy(() => import("@/pages/Argus"));
 const BacktestHub = lazy(() => import("@/pages/hubs").then((m) => ({ default: m.BacktestHub })));
 const PortfolioHub = lazy(() => import("@/pages/hubs").then((m) => ({ default: m.PortfolioHub })));
 const ScreenerHub = lazy(() => import("@/pages/hubs").then((m) => ({ default: m.ScreenerHub })));
@@ -74,6 +75,7 @@ export default function App() {
                 <Route path="/tools" element={<Tools />} />
                 <Route path="/regimes" element={<Regimes />} />
                 <Route path="/coach" element={<Coach />} />
+                <Route path="/argus" element={<Argus />} />
                 <Route path="/account" element={<Account />} />
 
                 {/* Cortex hub (Registry · Paper · RiskGate · Brain Vault) — dev only */}
