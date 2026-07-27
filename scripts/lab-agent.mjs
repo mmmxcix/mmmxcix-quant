@@ -575,6 +575,7 @@ console.log(`paper run complete: ${summaries.length} strategies, combined ${comb
       const child = spawn(process.execPath, [researchPath], {
         detached: true,
         stdio: ["ignore", logFd, logFd],
+        windowsHide: true, // don't pop a console window every cycle (Windows)
         env: process.env, // carries LAB_TOKEN
       });
       child.unref();
