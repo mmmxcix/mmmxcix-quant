@@ -129,18 +129,25 @@ function AgentCandidates() {
                   const row = c.byMarket?.[mid] || {};
                   const mk = byId(mid);
                   const win = windowFor(mk);
-                  const bh = row.bh ?? row.buyHold ?? null; // buy&hold return over the same window
-                  const beats = bh != null && row.ret != null ? row.ret - bh : null;
+                  // The honest bar the gauntlet enforces is RISK-ADJUSTED: a market
+                  // is only promoted if its Sharpe beats buy&hold's (a strategy in
+                  // the market <100% of the time can win on Sharpe with a lower raw
+                  // return). Show both; the ↑B&H badge is the Sharpe verdict.
+                  const bhRet = row.bhRet ?? null;
+                  const beatsSharpe = row.sharpe != null && row.bhSharpe != null ? row.sharpe - row.bhSharpe : null;
                   return (
                     <button key={mid} type="button" onClick={() => openInBacktest(c, mid)}
                       title={`Open in Backtester — ${mk?.symbol} ${mk?.interval} over ${win?.label || "?"}`
-                        + ` · return ${row.ret ?? "?"}%${bh != null ? ` vs buy&hold ${bh}%` : ""} · maxDD ${row.dd ?? "?"}% · PF ${row.pf ?? "?"} · n=${row.n ?? "?"}`}
+                        + ` · return ${row.ret ?? "?"}%${bhRet != null ? ` vs buy&hold ${bhRet}%` : ""}`
+                        + ` · Sharpe ${row.sharpe ?? "?"} vs B&H ${row.bhSharpe ?? "?"} · maxDD ${row.dd ?? "?"}% · PF ${row.pf ?? "?"} · n=${row.n ?? "?"}`}
                       className="group text-[10px] font-mono rounded border border-up/30 bg-up/5 text-up px-1.5 py-0.5 hover:bg-up/15 hover:border-up/50 transition-colors cursor-pointer">
                       {mk?.label || mid}
                       {win && <span className="text-dim/60"> {win.label}</span>}
                       {row.ret != null && <span className="text-dim/90"> {row.ret}%</span>}
-                      {beats != null && (
-                        <span className={beats > 0 ? "text-up" : "text-down"}> {beats > 0 ? "↑" : "↓"}B&amp;H {beats > 0 ? "+" : ""}{beats.toFixed(0)}%</span>
+                      {beatsSharpe != null && (
+                        <span className={beatsSharpe > 0 ? "text-up" : "text-down"} title={`Sharpe ${row.sharpe} vs buy&hold ${row.bhSharpe}`}>
+                          {beatsSharpe > 0 ? " ↑B&amp;H" : " ↓B&amp;H"}
+                        </span>
                       )}
                       {row.dd != null && <span className="text-down/70"> ▽{row.dd}%</span>}
                       <span className="text-dim/40 group-hover:text-accent"> ↗</span>
