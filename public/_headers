@@ -16,3 +16,15 @@
   # harmless for visitors — nothing listens on their localhost:5000 unless they
   # run the gateway themselves).
   Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-eval' https://cdn.jsdelivr.net; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' https://api.binance.com wss://stream.binance.com:9443 wss://stream.aisstream.io https://earthquake.usgs.gov https://generativelanguage.googleapis.com https://cdn.jsdelivr.net https://localhost:5000 https://127.0.0.1:5000; frame-ancestors 'none'; base-uri 'self'; form-action 'self'
+
+# Hashed build assets are content-addressed: the filename changes whenever the
+# bytes change, so they can be cached forever. (Pages' default was
+# max-age=14400 + must-revalidate, which meant a *wrongly* cached response also
+# stuck around for four hours — see public/_redirects for that incident.)
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# index.html must NEVER be cached: it is the map from route → current chunk
+# hashes. A stale copy points at chunks that no longer exist.
+/index.html
+  Cache-Control: no-cache, must-revalidate

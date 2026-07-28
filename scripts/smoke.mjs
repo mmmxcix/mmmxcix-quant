@@ -20,6 +20,9 @@ const ROUTES = [
   "/macro/yields", "/macro/calendar", "/macro/l3",
   "/learn/academy", "/learn/guide", "/learn/resources", "/learn/formulas",
   "/login", "/register",
+  // Admin-gated pages render a lock screen when signed out, but their MODULES still
+  // load — which is exactly where a runtime ReferenceError would hide.
+  "/coach", "/cortex/registry", "/cortex/paper", "/cortex/riskgate", "/cortex/brain",
 ];
 
 const preview = spawn(process.execPath, ["node_modules/vite/bin/vite.js", "preview", "--port", String(PORT)], { stdio: "ignore" });
