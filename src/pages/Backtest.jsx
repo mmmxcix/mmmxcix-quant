@@ -9,11 +9,24 @@ import ValidationPanel from "@/components/ValidationPanel";
 import { fetchCandles, MARKETS, INTERVALS, rangesFor, INTERVAL_SECONDS } from "@/lib/data";
 import OptimizerPanel from "@/components/OptimizerPanel";
 import { fetchLseCandles } from "@/lib/lse";
-import { runBacktest, compileStrategy, DEFAULT_STRATEGY_CODE, ORB_STRATEGY_CODE, BIAS_STRATEGY_CODE, BIAS_TREND_CODE } from "@/lib/backtest";
+import { runBacktest, compileStrategy } from "@/lib/backtest";
 import { runPythonSignals, signalsToFn, PYTHON_TEMPLATE } from "@/lib/pyRunner";
 import { useSession } from "@/lib/authClient";
 import CountUp from "@/components/CountUp";
 import { BUILT_IN_STRATEGIES } from "@/lib/strategies";
+import { strategyToCode } from "@/lib/strategyCode";
+
+// One editor, one source of truth: the language is DETECTED from the code, never
+// picked from a toggle. Pine Script is recognised for export/paste, but it can't
+// run in this engine (TradingView only) — say so instead of failing cryptically.
+export function detectLang(src) {
+  const c = String(src || "");
+  if (/\bdef\s+signals\s*\(/.test(c)) return "python";
+  if (/function\s+strategy\s*\(|=>\s*\{?\s*(?:"long"|"short"|"flat")|ctx\.(candles|indicators|position)/.test(c)) return "js";
+  if (/\/\/@version\s*=|\bta\.\w+|strategy\.(entry|close|exit)\s*\(|\bplot(shape)?\s*\(/.test(c)) return "pine";
+  return "js";
+}
+const LANG_LABEL = { js: "JavaScript", python: "Python", pine: "Pine Script" };
 import { saveEntry } from "@/lib/registry";
 import { cn, fmtNum, fmtPct } from "@/lib/utils";
 
@@ -41,13 +54,19 @@ export default function Backtest() {
   const [customPeriod, setCustomPeriod] = useState(false);
   const [fromDate, setFromDate] = useState("2020-01-01");
   const [toDate, setToDate] = useState(() => new Date().toISOString().slice(0, 10));
-  const [mode, setMode] = useState("builder"); // builder | code
+  // UNIFIED editor: `strategyId` selects a PRESET whose code is loaded into the
+  // single `code` field. Editing the code detaches it from the preset (the preset
+  // dropdown then reads "Custom"), and `lang` is DETECTED, never chosen.
   const [strategyId, setStrategyId] = useState(BUILT_IN_STRATEGIES[0].id);
   const [paramValues, setParamValues] = useState({});
-  const [code, setCode] = useState(DEFAULT_STRATEGY_CODE);
-  const [lang, setLang] = useState("js");        // js | python (code mode)
-  const [pyCode, setPyCode] = useState(PYTHON_TEMPLATE);
+  const [presetDirty, setPresetDirty] = useState(false); // code edited away from the preset
+  const [code, setCode] = useState(() =>
+    strategyToCode({ mode: "builder", strategyId: BUILT_IN_STRATEGIES[0].id, params: {} }, "python") || PYTHON_TEMPLATE);
   const [pyStatus, setPyStatus] = useState(null); // Pyodide loading/progress text
+  const lang = useMemo(() => detectLang(code), [code]);
+  // A clean (unedited) preset still runs through the fast builder implementation;
+  // only edited code goes through the JS/Python compiler.
+  const mode = presetDirty ? "code" : "builder";
   const [capital, setCapital] = useState(10000);
   const [feeBps, setFeeBps] = useState(10);
   const [positionPct, setPositionPct] = useState(100);
@@ -74,9 +93,11 @@ export default function Backtest() {
     if (h.customPeriod) { setCustomPeriod(true); if (h.fromDate) setFromDate(h.fromDate); if (h.toDate) setToDate(h.toDate); }
     if (h.feeBps != null) setFeeBps(h.feeBps);
     if (h.positionPct != null) setPositionPct(h.positionPct);
-    if (h.mode) setMode(h.mode);
-    if (h.lang) setLang(h.lang);
-    if (h.mode === "code" && typeof h.code === "string") { if (h.lang === "python") setPyCode(h.code); else setCode(h.code); }
+    // Code handed over from the Registry goes straight into the one editor; the
+    // language detects itself, so no mode/lang to restore.
+    if (typeof h.code === "string" && h.code.trim()) { setCode(h.code); setPresetDirty(true); }
+    else if (h.strategyId) { setStrategyId(h.strategyId); if (h.params) setParamValues(h.params); }
+    if (h.leverage != null) setLeverage(h.leverage);
     setFromRegistry(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -91,10 +112,26 @@ export default function Backtest() {
   const { data: session } = useSession();
   const isDev = session?.user?.role === "admin";
 
-  const copyCode = async () => {
+  // Copy the strategy in any of the three languages. A clean PRESET can be
+  // translated to all three (JS / Python twins + the Pine exporter). Edited code
+  // is only itself — offering a fake translation would be lying, so we say so.
+  const copyAs = async (target) => {
+    let text = null;
+    if (!presetDirty && strategy) {
+      const entry = { mode: "builder", strategyId, params: effectiveParams, positionPct, feeBps, name: strategy.name };
+      text = strategyToCode(entry, target === "js" ? "js" : target);
+    } else if (target === lang) {
+      text = code;
+    }
+    if (!text || !String(text).trim()) {
+      setError(target === "pine"
+        ? "Pine export is available for the built-in presets — pick one (or reset your edits) to copy it as Pine."
+        : `This edited code is ${LANG_LABEL[lang]}; it can't be auto-translated to ${LANG_LABEL[target]}. Copy it as ${LANG_LABEL[lang]}, or reset to the preset.`);
+      return;
+    }
     try {
-      await navigator.clipboard.writeText(lang === "python" ? pyCode : code);
-      setCopied(true);
+      await navigator.clipboard.writeText(text);
+      setCopied(target);
       setTimeout(() => setCopied(false), 1500);
     } catch { /* clipboard blocked */ }
   };
@@ -117,7 +154,8 @@ export default function Backtest() {
       if (res.status === 503) throw new Error("AI not configured yet (Cloudflare secrets missing).");
       if (res.status === 429) throw new Error("Rate limit reached — please wait a moment.");
       if (!res.ok || !data.code) throw new Error("Generation failed — please try again.");
-      if (lang === "python") setPyCode(data.code); else setCode(data.code);
+      setCode(data.code);          // AI writes straight into the one editor
+      setPresetDirty(true);
     } catch (e) {
       setAiError(e.message);
     } finally {
@@ -129,6 +167,22 @@ export default function Backtest() {
     () => BUILT_IN_STRATEGIES.find((s) => s.id === strategyId),
     [strategyId]
   );
+
+  const effectiveParamsFor = (s, vals) =>
+    Object.fromEntries((s?.params || []).map((p) => [p.key, vals[p.key] ?? p.default]));
+
+  // Load the selected preset (with its current params) into the editor as PYTHON —
+  // the canonical, readable form. Skipped once the user edits the code, so their
+  // work is never overwritten; "Reset to preset" brings the preset back.
+  useEffect(() => {
+    if (presetDirty || !strategy) return;
+    const src =
+      strategyToCode({ mode: "builder", strategyId, params: effectiveParamsFor(strategy, paramValues) }, "python") ||
+      strategyToCode({ mode: "builder", strategyId, params: effectiveParamsFor(strategy, paramValues) }) ||
+      PYTHON_TEMPLATE;
+    setCode(src);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [strategyId, paramValues, presetDirty]);
 
   // Only ranges that actually exist for the chosen interval (e.g. Yahoo has
   // no multi-year hourly data — it would silently degrade to monthly bars and
@@ -156,6 +210,12 @@ export default function Backtest() {
   };
 
   const run = async () => {
+    // Pine Script is an EXPORT target — TradingView runs it, this engine can't.
+    // Say that plainly instead of failing inside the compiler.
+    if (lang === "pine") {
+      setError("That's Pine Script — it runs on TradingView, not in this engine. Paste JavaScript or Python here, or use a preset and copy it as Pine.");
+      return;
+    }
     setRunning(true);
     setError(null);
     try {
@@ -179,9 +239,11 @@ export default function Backtest() {
         : await fetchCandles({ market, symbol: symbol.trim().toUpperCase(), interval, range, from, to });
       let signalFn;
       if (mode === "builder") {
+        // Untouched preset → run the fast native implementation (its Python twin
+        // is verified to trade identically, so the shown code is truthful).
         signalFn = strategy.build(effectiveParams);
       } else if (lang === "python") {
-        const signals = await runPythonSignals(pyCode, candles, setPyStatus);
+        const signals = await runPythonSignals(code, candles, setPyStatus);
         setPyStatus(null);
         signalFn = signalsToFn(signals); // Python signals → same JS fill engine
       } else {
@@ -227,12 +289,13 @@ export default function Backtest() {
   const saveToRegistry = () => {
     if (!result) return;
     saveEntry({
-      name: mode === "builder" ? strategy.name : "Code strategy",
+      name: mode === "builder" ? strategy.name : `${strategy?.name || "Code"} (edited)`,
       market, symbol: symbol.trim().toUpperCase(), interval, range,
       mode,
       strategyId: mode === "builder" ? strategyId : null,
       params: mode === "builder" ? effectiveParams : null,
       code: mode === "code" ? code : null,
+      language: mode === "code" ? lang : null,
       positionPct, feeBps,
       metrics: result.metrics,
       equity: result.equity,
@@ -375,82 +438,81 @@ export default function Backtest() {
           <div className="rounded-xl border border-line lg-glass p-4 space-y-3">
             <div className="flex items-center justify-between">
               <p className="text-xs text-dim font-medium">Strategy</p>
-              <div className="flex gap-1">
-                <button onClick={() => setMode("builder")}
-                  className={cn("chip", mode === "builder" ? "chip-active" : "chip-idle")}>Builder</button>
-                <button onClick={() => setMode("code")}
-                  className={cn("chip", mode === "code" ? "chip-active" : "chip-idle")}>Code</button>
-              </div>
+              <span className={cn("chip !text-[10px] !py-0.5",
+                lang === "pine" ? "chip-idle text-accent" : "chip-idle")}
+                title="Detected automatically from your code — no need to pick a language">
+                {LANG_LABEL[lang]}{lang === "pine" ? " · export only" : ""}
+              </span>
             </div>
 
-            {mode === "builder" ? (
-              <>
-                <select value={strategyId} onChange={(e) => setStrategyId(e.target.value)}
-                  className="input-base w-full">
-                  {BUILT_IN_STRATEGIES.map((s) => (
-                    <option key={s.id} value={s.id}>{s.name}</option>
-                  ))}
-                </select>
-                <p className="text-xs text-dim leading-relaxed">{strategy.description}</p>
-                <div className="grid grid-cols-2 gap-2">
-                  {strategy.params.map((p) => (
-                    <label key={p.key} className="text-xs text-dim">
-                      {p.label}
-                      <input
-                        type="number"
-                        value={paramValues[p.key] ?? p.default}
-                        min={p.min} max={p.max} step={p.step}
-                        onChange={(e) => setParamValues((v) => ({ ...v, [p.key]: +e.target.value }))}
-                        className="input-base w-full mt-1 font-mono"
-                      />
-                    </label>
-                  ))}
-                </div>
-              </>
-            ) : (
-              <>
+            {/* Preset picker — loads the strategy into the editor as Python */}
+            <div className="flex items-center gap-2">
+              <select
+                value={presetDirty ? "" : strategyId}
+                onChange={(e) => { if (e.target.value) { setStrategyId(e.target.value); setParamValues({}); setPresetDirty(false); } }}
+                className="input-base w-full">
+                {presetDirty && <option value="">Custom code (edited)</option>}
+                {BUILT_IN_STRATEGIES.map((s) => (
+                  <option key={s.id} value={s.id}>{s.name}</option>
+                ))}
+              </select>
+              {presetDirty && (
+                <button onClick={() => { setPresetDirty(false); setParamValues({}); }}
+                  title="Discard your edits and reload the preset"
+                  className="chip chip-idle !text-[10px] whitespace-nowrap">Reset</button>
+              )}
+            </div>
+            {!presetDirty && <p className="text-xs text-dim leading-relaxed">{strategy.description}</p>}
+
+            {/* Preset params — editing one re-generates the code below */}
+            {!presetDirty && (
+              <div className="grid grid-cols-2 gap-2">
+                {strategy.params.map((p) => (
+                  <label key={p.key} className="text-xs text-dim">
+                    {p.label}
+                    <input
+                      type="number"
+                      value={paramValues[p.key] ?? p.default}
+                      min={p.min} max={p.max} step={p.step}
+                      onChange={(e) => setParamValues((v) => ({ ...v, [p.key]: +e.target.value }))}
+                      className="input-base w-full mt-1 font-mono"
+                    />
+                  </label>
+                ))}
+              </div>
+            )}
+
+            {/* THE one editor — edit freely; the language is detected */}
+            <>
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-1">
-                    <button onClick={() => setLang("js")}
-                      className={cn("chip !text-[10px] !py-0.5", lang === "js" ? "chip-active" : "chip-idle")}>JS</button>
-                    <button onClick={() => setLang("python")}
-                      className={cn("chip !text-[10px] !py-0.5", lang === "python" ? "chip-active" : "chip-idle")}>Python</button>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    {lang === "js" && (
-                    <select
-                      value=""
-                      onChange={(e) => {
-                        if (e.target.value === "sma") setCode(DEFAULT_STRATEGY_CODE);
-                        else if (e.target.value === "orb") setCode(ORB_STRATEGY_CODE);
-                        else if (e.target.value === "bias") setCode(BIAS_STRATEGY_CODE);
-                        else if (e.target.value === "biastrend") setCode(BIAS_TREND_CODE);
-                      }}
-                      title="Insert an example (replaces the editor)"
-                      className="bg-transparent text-[11px] text-dim hover:text-text transition-colors cursor-pointer outline-none"
-                    >
-                      <option value="">Examples…</option>
-                      <option value="sma">SMA Crossover</option>
-                      <option value="orb">Opening Range Breakout</option>
-                      <option value="bias">Bias Score (raw — loses, educational)</option>
-                      <option value="biastrend">Bias Trend Breakout (researched)</option>
-                    </select>
-                    )}
-                    <button onClick={copyCode} title="Copy code"
-                      className="flex items-center gap-1.5 text-[11px] text-dim hover:text-text transition-colors">
-                      {copied ? <Check className="w-3.5 h-3.5 text-up" /> : <Copy className="w-3.5 h-3.5" />}
-                      {copied ? "Copied!" : "Copy"}
-                    </button>
+                  <p className="text-[11px] text-dim">
+                    {presetDirty ? "Your code" : "Preset code — edit it to make it yours"}
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] text-dim">Copy as</span>
+                    {["python", "js", "pine"].map((target) => (
+                      <button key={target}
+                        onClick={() => copyAs(target)}
+                        title={target === "pine" ? "TradingView Pine Script (presets only)" : `Copy as ${LANG_LABEL[target]}`}
+                        className="text-[11px] text-dim hover:text-accent transition-colors">
+                        {copied === target ? <Check className="w-3.5 h-3.5 text-up inline" /> : (target === "js" ? "JS" : target === "python" ? "PY" : "Pine")}
+                      </button>
+                    ))}
                   </div>
                 </div>
                 <textarea
-                  value={lang === "python" ? pyCode : code}
-                  onChange={(e) => (lang === "python" ? setPyCode(e.target.value) : setCode(e.target.value))}
+                  value={code}
+                  onChange={(e) => { setCode(e.target.value); setPresetDirty(true); }}
                   spellCheck={false}
                   rows={16}
                   className="input-base w-full font-mono text-xs leading-relaxed resize-y"
                 />
-                {lang === "python" ? (
+                {lang === "pine" ? (
+                  <p className="text-[11px] text-accent leading-relaxed">
+                    Pine Script runs on TradingView, not in this engine — paste it into a TradingView chart
+                    to backtest it there. Use JavaScript or Python here.
+                  </p>
+                ) : lang === "python" ? (
                   <p className="text-[11px] text-dim leading-relaxed">
                     Define <code className="text-accent">def signals(df)</code> returning one value per bar:{" "}
                     <code className="text-accent">1</code> long, <code className="text-accent">0</code> flat,{" "}
@@ -498,7 +560,6 @@ export default function Backtest() {
                   </div>
                 )}
               </>
-            )}
           </div>
 
           <button onClick={run} disabled={running} className="btn-accent w-full flex items-center justify-center gap-2">
