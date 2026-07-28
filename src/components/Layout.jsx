@@ -108,8 +108,9 @@ function useDevNav() {
 }
 
 const DEV_ITEMS = {
+  // Coach lives INSIDE the Cortex hub now (a tab), so everything the research
+  // system produces is reachable from one place.
   Strategy: [{ to: "/cortex", label: "Cortex", icon: Cpu }, { to: "/argus", label: "Argus", icon: Radio }],
-  Learn: [{ to: "/coach", label: "Coach", icon: Target }],
 };
 
 function NavItems({ onNavigate }) {

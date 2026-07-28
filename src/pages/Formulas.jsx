@@ -73,7 +73,7 @@ const CATEGORIES = [
       { name: "Kelly criterion", f: "f* = p − (1−p)/b", says: "The bet size that maximises long-run growth.", here: "The Event Lab computes it per event study — and says when it's zero.", to: "/backtest/events", label: "Event Lab" },
       { name: "CAPM", f: "E[Rᵢ] = R_f + βᵢ(E[R_m] − R_f)", says: "Only systematic risk earns a premium.", here: "The benchmark every 'edge' must beat: our buy-&-hold comparison." },
       { name: "Max drawdown", f: "MDD = max (peak − trough) / peak", says: "The worst peak-to-valley loss — the number that ends careers.", here: "RiskGate limits, the incubation watchdog's budget, every profile rule.", to: "/cortex/riskgate", label: "RiskGate" },
-      { name: "Vol targeting", f: "wₜ = σ_target / σ̂ₜ  (capped ≤ 1)", says: "Size down when markets get violent.", here: "The GARCH sizing every promoted strategy runs with.", to: "/coach", label: "Coach" },
+      { name: "Vol targeting", f: "wₜ = σ_target / σ̂ₜ  (capped ≤ 1)", says: "Size down when markets get violent.", here: "The GARCH sizing every promoted strategy runs with.", to: "/cortex/coach", label: "Coach" },
     ],
   },
 ];

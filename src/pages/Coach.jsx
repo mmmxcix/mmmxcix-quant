@@ -415,7 +415,7 @@ export default function Coach() {
           ) : (
             <p className="text-sm text-dim">
               This page is personal.{" "}
-              <Link to="/login?next=/coach" className="text-accent hover:underline">Sign in</Link>{" "}
+              <Link to="/login?next=/cortex/coach" className="text-accent hover:underline">Sign in</Link>{" "}
               with the dev account to continue.
             </p>
           )}
