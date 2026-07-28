@@ -1,0 +1,84 @@
+// agent-daemon.mjs — ONE persistent, windowless scheduler for all Cortex agents.
+//
+// WHY THIS EXISTS. Windows 11's default terminal hijacks every newly CREATED
+// console and shows it in a window, ignoring the hide flag of whoever started the
+// process. So anything that spawns `node` every 15 minutes (a Scheduled Task, an
+// n8n Execute Command, a detached spawn) flashes a terminal, no matter how it is
+// hidden. The fix is to stop creating processes on a schedule: this daemon starts
+// ONCE (hidden), stays running, and launches the agents with child_process.fork(),
+// which INHERITS the parent's console instead of allocating a new one. No new
+// console is ever created, so nothing can be hijacked.
+//
+// Schedules (same cadence as the Scheduled Tasks it replaces):
+//   lab-agent        every 15 min
+//   research-agent   daily 04:00   (lab-agent also triggers it in always-on mode)
+//   revalidate-agent 08,11,14,17,20
+//   discover-sources daily 12:00
+// Each run's output is appended to ~/.mmmxcix-<name>.log. One instance per agent
+// at a time — an overrun is skipped, not stacked.
+
+import { fork } from "node:child_process";
+import { openSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const here = (f) => fileURLToPath(new URL(`./${f}`, import.meta.url));
+const logFor = (name) => join(homedir(), `.mmmxcix-${name}.log`);
+const stamp = () => new Date().toISOString();
+
+const running = new Set();
+
+/** Run an agent script as a forked child (no new console → never a window). */
+function runAgent(name, file) {
+  if (running.has(name)) {
+    console.log(`[${stamp()}] ${name}: previous run still going — skipped`);
+    return;
+  }
+  running.add(name);
+  let fd;
+  try { fd = openSync(logFor(name), "a"); } catch { fd = "ignore"; }
+  const child = fork(here(file), [], {
+    stdio: ["ignore", fd, fd, "ipc"], // inherit-free, but no new console either
+    env: process.env,                 // carries LAB_TOKEN, LAB_LLM_URL, …
+  });
+  console.log(`[${stamp()}] ${name}: started (pid ${child.pid})`);
+  child.on("exit", (code) => {
+    running.delete(name);
+    console.log(`[${stamp()}] ${name}: finished (exit ${code})`);
+  });
+  child.on("error", (e) => {
+    running.delete(name);
+    console.error(`[${stamp()}] ${name}: failed — ${e.message}`);
+  });
+}
+
+// ── schedule helpers ────────────────────────────────────────────────────────
+const MIN = 60_000;
+
+/** Fire `fn` every `minutes`, aligned to the wall clock (not to start time). */
+function everyMinutes(minutes, fn) {
+  const period = minutes * MIN;
+  const tick = () => { fn(); setTimeout(tick, period - (Date.now() % period)); };
+  setTimeout(tick, period - (Date.now() % period));
+}
+
+/** Fire `fn` at the given local hours (minute 0), once per hour boundary. */
+function atHours(hours, fn) {
+  const set = new Set(hours);
+  let lastFired = -1;
+  setInterval(() => {
+    const d = new Date();
+    const key = d.getFullYear() * 1e6 + (d.getMonth() + 1) * 1e4 + d.getDate() * 100 + d.getHours();
+    if (set.has(d.getHours()) && d.getMinutes() < 5 && key !== lastFired) { lastFired = key; fn(); }
+  }, 60 * MIN / 12); // check every 5 min
+}
+
+// ── wire the schedules ──────────────────────────────────────────────────────
+everyMinutes(15, () => runAgent("lab", "lab-agent.mjs"));
+atHours([4], () => runAgent("research", "research-agent.mjs"));
+atHours([8, 11, 14, 17, 20], () => runAgent("revalidate", "revalidate-agent.mjs"));
+atHours([12], () => runAgent("discover", "discover-sources.mjs"));
+
+console.log(`[${stamp()}] agent-daemon running — lab/15min · research/04:00 · revalidate/08,11,14,17,20 · discover/12:00`);
+runAgent("lab", "lab-agent.mjs"); // one immediate pass so a restart isn't idle for 15 min

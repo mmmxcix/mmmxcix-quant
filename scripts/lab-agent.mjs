@@ -16,7 +16,7 @@
 import { readFileSync, writeFileSync, openSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { spawn } from "node:child_process";
+import { fork } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { runBacktest, compileStrategy } from "../src/lib/backtest.js";
 import { BUILT_IN_STRATEGIES } from "../src/lib/strategies.js";
@@ -572,19 +572,13 @@ console.log(`paper run complete: ${summaries.length} strategies, combined ${comb
       saveLocal(local); // mark BEFORE spawn so a crashing research can't hammer every 15 min
       const researchPath = fileURLToPath(new URL("./research-agent.mjs", import.meta.url));
       const logPath = join(homedir(), ".mmmxcix-research.log");
-      let child;
-      if (process.platform === "win32") {
-        // node's `windowsHide` is IGNORED when `detached` is set on Windows, so a
-        // detached research spawn still pops a console. Route it through the
-        // windowless VBS launcher (wscript hides everything it starts, incl. the
-        // cmd that redirects to the log) — the same one the Scheduled Tasks use.
-        const vbs = fileURLToPath(new URL("./run-hidden.vbs", import.meta.url));
-        child = spawn("wscript.exe", [vbs, researchPath, logPath], { detached: true, stdio: "ignore", windowsHide: true });
-      } else {
-        const logFd = openSync(logPath, "a");
-        child = spawn(process.execPath, [researchPath], { detached: true, stdio: ["ignore", logFd, logFd], windowsHide: true, env: process.env });
-      }
-      child.unref();
+      // fork() INHERITS this process's console instead of allocating a new one.
+      // That matters on Windows 11, where the default terminal hijacks every
+      // newly CREATED console and shows it in a window regardless of hide flags —
+      // a detached spawn (or a VBS/Task launcher) therefore always flashed a
+      // terminal. Started from the hidden agent-daemon, nothing is ever visible.
+      const logFd = openSync(logPath, "a");
+      const child = fork(researchPath, [], { stdio: ["ignore", logFd, logFd, "ipc"], env: process.env });
       console.log(`research due (${alwaysOn ? "always-on, >" + everyMs / 60000 + "min" : ">" + everyMs / 3.6e6 + "h"}) → spawned hidden (log: ~/.mmmxcix-research.log)`);
     }
   } catch (e) {
