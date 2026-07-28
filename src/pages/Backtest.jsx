@@ -7,6 +7,7 @@ import SymbolSearch from "@/components/SymbolSearch";
 import MonteCarloPanel from "@/components/MonteCarloPanel";
 import ValidationPanel from "@/components/ValidationPanel";
 import { fetchCandles, MARKETS, INTERVALS, rangesFor, INTERVAL_SECONDS } from "@/lib/data";
+import OptimizerPanel from "@/components/OptimizerPanel";
 import { fetchLseCandles } from "@/lib/lse";
 import { runBacktest, compileStrategy, DEFAULT_STRATEGY_CODE, ORB_STRATEGY_CODE, BIAS_STRATEGY_CODE, BIAS_TREND_CODE } from "@/lib/backtest";
 import { runPythonSignals, signalsToFn, PYTHON_TEMPLATE } from "@/lib/pyRunner";
@@ -557,6 +558,19 @@ export default function Backtest() {
                   <Link to="/registry" className="text-accent hover:underline">open Registry</Link>
                 </span>
               </div>
+
+              {/* Parameter optimizer — builder strategies only (needs a param space) */}
+              {mode === "builder" && strategy && result.candles?.length > 100 && (
+                <OptimizerPanel
+                  strategy={strategy}
+                  candles={result.candles}
+                  capital={capital}
+                  feeBps={feeBps}
+                  positionPct={positionPct}
+                  leverage={leverage}
+                  onApply={(p) => setParamValues({ ...p })}
+                />
+              )}
 
               <div className="rounded-xl border border-line lg-glass p-3">
                 <p className="text-xs text-dim px-2 pt-1 pb-2">
