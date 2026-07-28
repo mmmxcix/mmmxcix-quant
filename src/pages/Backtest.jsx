@@ -55,6 +55,29 @@ export default function Backtest() {
   const [result, setResult] = useState(null);
   const [verdicts, setVerdicts] = useState({ wf: null, dsr: null, noise: null });
   const [saved, setSaved] = useState(false);
+  const [fromRegistry, setFromRegistry] = useState(false);
+
+  // Deep-link from the Registry ("Open in Backtester"): pre-fill the EXACT market,
+  // window (as a custom from/to period — the research ranges like "10y" aren't in
+  // the dropdown), fee, sizing and code so an agent's registry number reproduces
+  // here 1:1. Handed off via sessionStorage to avoid URL-length limits on code.
+  useEffect(() => {
+    let h;
+    try { h = JSON.parse(sessionStorage.getItem("backtest_handoff") || "null"); } catch { h = null; }
+    if (!h) return;
+    sessionStorage.removeItem("backtest_handoff");
+    if (h.market) setMarket(h.market);
+    if (h.symbol) setSymbol(h.symbol);
+    if (h.interval) setIntervalId(h.interval);
+    if (h.customPeriod) { setCustomPeriod(true); if (h.fromDate) setFromDate(h.fromDate); if (h.toDate) setToDate(h.toDate); }
+    if (h.feeBps != null) setFeeBps(h.feeBps);
+    if (h.positionPct != null) setPositionPct(h.positionPct);
+    if (h.mode) setMode(h.mode);
+    if (h.lang) setLang(h.lang);
+    if (h.mode === "code" && typeof h.code === "string") { if (h.lang === "python") setPyCode(h.code); else setCode(h.code); }
+    setFromRegistry(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // AI code generation: the provider keys never reach the browser — the Pages
   // Function /api/generate holds them server-side; access requires the signed-in

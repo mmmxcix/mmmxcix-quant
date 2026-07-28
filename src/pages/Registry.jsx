@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { Boxes, Trash2, Skull, ShieldCheck, FlaskConical, Rocket, Grid3x3, Info, Send, Loader2, Check, Scale } from "lucide-react";
 import {
   getEntries, subscribeRegistry, setStatus, removeEntry, STATUS_META, correlationMatrix, saveEntry,
@@ -7,16 +7,54 @@ import {
 import { cn, fmtPct, fmtNum } from "@/lib/utils";
 import { PROFILES } from "@/lib/profiles";
 import { byId, costFor, describeMarkets } from "@/lib/markets";
+import { INTERVAL_SECONDS } from "@/lib/data";
 import { strategyToCode } from "@/lib/strategyCode";
+import { hasPineSource } from "@/lib/pinescript";
 import CopyButton from "@/components/CopyButton";
 
 const PROFILE_LABEL = Object.fromEntries(Object.entries(PROFILES).map(([id, p]) => [id, p.label]));
+
+// The exact backtest window each research market used (markets.js `range`/`bars`).
+// This is what a registry number was measured over — a 10y TSLA return is a very
+// different thing from a 5y one, so we surface it and let a click reproduce it.
+const RANGE_DAYS = { "5d": 5, "1mo": 30, "3mo": 90, "6mo": 180, "1y": 365, "2y": 730, "5y": 1825, "10y": 3652, max: 36500 };
+function windowFor(mk) {
+  if (!mk) return null;
+  if (mk.range) return { days: RANGE_DAYS[mk.range] ?? 3652, label: mk.range };
+  if (mk.bars) {
+    const days = Math.round((mk.bars * (INTERVAL_SECONDS[mk.interval] || 3600)) / 86400);
+    return { days, label: days >= 365 ? `${(days / 365).toFixed(days >= 1000 ? 0 : 1)}y` : `${days}d` };
+  }
+  return null;
+}
 
 // Survivors of the autonomous research loop (pushed by the PC's research
 // agent into lab:candidates). Private: only renders when the dev token exists.
 function AgentCandidates() {
   const [items, setItems] = useState(undefined); // undefined = loading
   const [imported, setImported] = useState({});
+  const navigate = useNavigate();
+
+  // Reproduce a candidate's exact number: hand the Backtest page the SAME market,
+  // interval, window (as a custom from/to period — the research ranges like "10y"
+  // aren't in the Backtest dropdown), fee and code, then jump there.
+  const openInBacktest = (c, mid) => {
+    const mk = mid ? byId(mid) : (c.markets?.[0] ? byId(c.markets[0]) : null);
+    if (!mk) return;
+    const win = windowFor(mk);
+    const to = new Date();
+    const from = new Date(to.getTime() - (win?.days ?? 3652) * 86_400_000);
+    const iso = (d) => d.toISOString().slice(0, 10);
+    const handoff = {
+      market: mk.asset === "crypto" ? "crypto" : "stock",
+      symbol: mk.symbol, interval: mk.interval,
+      customPeriod: true, fromDate: iso(from), toDate: iso(to),
+      feeBps: costFor(mk), positionPct: 100,
+      mode: "code", code: c.code, lang: c.language || "js",
+    };
+    try { sessionStorage.setItem("backtest_handoff", JSON.stringify(handoff)); } catch { /* quota */ }
+    navigate("/backtest?load=1");
+  };
 
   // Admin session cookie gates this server-side (the page itself only renders
   // inside the RequireAdmin-guarded Cortex hub).
@@ -41,7 +79,7 @@ function AgentCandidates() {
       market: mk ? (mk.asset === "crypto" ? "crypto" : "stock") : "crypto",
       symbol: mk?.symbol || "BTCUSDT",
       interval: mk?.interval || "4h",
-      range: "max",
+      range: mk?.range || "max", // record the actual window it was validated on
       mode: "code", code: c.code, positionPct: 100,
       feeBps: mk ? costFor(mk) : 10,
       metrics: { totalReturnPct: row.ret ?? 0, profitFactor: row.pf ?? 0, maxDrawdownPct: row.dd ?? 0, tradeCount: row.n ?? 0 },
@@ -90,13 +128,23 @@ function AgentCandidates() {
                 {c.markets.map((mid) => {
                   const row = c.byMarket?.[mid] || {};
                   const mk = byId(mid);
+                  const win = windowFor(mk);
+                  const bh = row.bh ?? row.buyHold ?? null; // buy&hold return over the same window
+                  const beats = bh != null && row.ret != null ? row.ret - bh : null;
                   return (
-                    <span key={mid}
-                      title={`${row.ret ?? "?"}% · PF ${row.pf ?? "?"} · dd ${row.dd ?? "?"}% · n=${row.n ?? "?"}`}
-                      className="text-[10px] font-mono rounded border border-up/30 bg-up/5 text-up px-1.5 py-0.5">
+                    <button key={mid} type="button" onClick={() => openInBacktest(c, mid)}
+                      title={`Open in Backtester — ${mk?.symbol} ${mk?.interval} over ${win?.label || "?"}`
+                        + ` · return ${row.ret ?? "?"}%${bh != null ? ` vs buy&hold ${bh}%` : ""} · maxDD ${row.dd ?? "?"}% · PF ${row.pf ?? "?"} · n=${row.n ?? "?"}`}
+                      className="group text-[10px] font-mono rounded border border-up/30 bg-up/5 text-up px-1.5 py-0.5 hover:bg-up/15 hover:border-up/50 transition-colors cursor-pointer">
                       {mk?.label || mid}
-                      {row.ret != null && <span className="text-dim/80"> {row.ret}%</span>}
-                    </span>
+                      {win && <span className="text-dim/60"> {win.label}</span>}
+                      {row.ret != null && <span className="text-dim/90"> {row.ret}%</span>}
+                      {beats != null && (
+                        <span className={beats > 0 ? "text-up" : "text-down"}> {beats > 0 ? "↑" : "↓"}B&amp;H {beats > 0 ? "+" : ""}{beats.toFixed(0)}%</span>
+                      )}
+                      {row.dd != null && <span className="text-down/70"> ▽{row.dd}%</span>}
+                      <span className="text-dim/40 group-hover:text-accent"> ↗</span>
+                    </button>
                   );
                 })}
                 {c.marketsTested > (c.markets?.length || 0) && (
@@ -206,6 +254,7 @@ function Card({ e }) {
                 {strategyToCode(e, "python") && strategyToCode(e, "python") !== strategyToCode(e) && (
                   <CopyButton text={strategyToCode(e, "python")} label="PY" />
                 )}
+                {hasPineSource(e) && <CopyButton text={strategyToCode(e, "pine")} label="Pine" />}
           <button onClick={() => removeEntry(e.id)} title="Delete" className="text-dim hover:text-down transition-colors">
             <Trash2 className="w-3.5 h-3.5" />
           </button>
