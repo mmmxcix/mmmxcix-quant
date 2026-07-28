@@ -110,10 +110,14 @@ export function correlationMatrix(entries) {
  * @param {Object} p
  * @returns {Object} the created entry
  */
-export function saveEntry({ name, market, symbol, interval, range, mode, strategyId, params, code, positionPct, feeBps, metrics, equity, tradeReturns, validation, status = "factory" }) {
+export function saveEntry({ name, market, symbol, interval, range, mode, strategyId, params, code, positionPct, feeBps, metrics, equity, tradeReturns, validation, status = "factory", candidateId = null, language = null }) {
   const entry = {
     id: newId(),
     createdAt: Date.now(),
+    // Which research candidate this came from — lets auto-promotion recognise
+    // what it has already imported instead of adding a copy on every poll.
+    candidateId,
+    language,
     name: name || (mode === "builder" ? strategyId : "Code strategy"),
     market, symbol, interval, range,
     mode, strategyId: strategyId || null, params: params || null,

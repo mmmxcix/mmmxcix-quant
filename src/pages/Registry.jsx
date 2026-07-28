@@ -34,6 +34,12 @@ function AgentCandidates() {
   const [items, setItems] = useState(undefined); // undefined = loading
   const [imported, setImported] = useState({});
   const navigate = useNavigate();
+  // Auto-promotion settings live in localStorage so the choice survives reloads.
+  const [autoPromote, setAutoPromote] = useState(() => localStorage.getItem("quant_auto_promote") === "1");
+  const [autoDsr, setAutoDsr] = useState(() => +(localStorage.getItem("quant_auto_promote_dsr") || 60));
+  const [autoNote, setAutoNote] = useState(null);
+  useEffect(() => { localStorage.setItem("quant_auto_promote", autoPromote ? "1" : "0"); }, [autoPromote]);
+  useEffect(() => { localStorage.setItem("quant_auto_promote_dsr", String(autoDsr)); }, [autoDsr]);
 
   // Reproduce a candidate's exact number: hand the Backtest page the SAME market,
   // interval, window (as a custom from/to period — the research ranges like "10y"
@@ -86,7 +92,7 @@ function AgentCandidates() {
   // Import into the market the strategy was actually validated on — importing
   // everything as BTC 4h (as this used to) would silently misrepresent a rule
   // that only ever worked on, say, EUR/USD daily.
-  const importOne = (c) => {
+  const importOne = (c, status = "factory") => {
     const mid = c.bestMarket || (c.markets || [])[0];
     const mk = mid ? byId(mid) : null;
     const row = (c.byMarket?.[mid]) || Object.values(c.byMarket || {})[0] || {};
@@ -101,10 +107,28 @@ function AgentCandidates() {
       metrics: { totalReturnPct: row.ret ?? 0, profitFactor: row.pf ?? 0, maxDrawdownPct: row.dd ?? 0, tradeCount: row.n ?? 0 },
       equity: [],
       validation: { wf: "pass", dsr: "pass", noise: "pass" }, // it survived the agent's gauntlet
-      status: "factory", // still: re-run it yourself before trusting it
+      status, // "factory" by hand; auto-promotion lands them straight in Paper
+      candidateId: c.id,
     });
     setImported((s) => ({ ...s, [c.id]: true }));
   };
+
+  // ── Auto-promotion ────────────────────────────────────────────────────────
+  // The mechanical steps (import → factory → validated → paper) carry no
+  // judgement: the agent's gauntlet already decided these are worth looking at.
+  // So they can run themselves up to PAPER — the last step, handing a strategy
+  // to the live agent ("Publish to agent"), stays a deliberate human click.
+  // Gated on the agent's own DSR for that candidate so the bar is explicit.
+  useEffect(() => {
+    if (!autoPromote || !Array.isArray(items) || !items.length) return;
+    const known = new Set(getEntries().map((e) => e.candidateId).filter(Boolean));
+    const fresh = items.filter((c) => c.code && !known.has(c.id) && (c.revalidatedDsr ?? c.dsr ?? 0) >= autoDsr);
+    if (!fresh.length) return;
+    for (const c of fresh) importOne(c, "paper");
+    setAutoNote(`${fresh.length} candidate${fresh.length > 1 ? "s" : ""} auto-promoted to Paper (DSR ≥ ${autoDsr}%)`);
+    setTimeout(() => setAutoNote(null), 6000);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, autoPromote, autoDsr]);
 
   return (
     <div className="rounded-xl border border-accent/30 lg-glass p-4 mb-6">
@@ -118,6 +142,28 @@ function AgentCandidates() {
         at the agent's cumulative trial count — then re-checked on fresh data by the daytime re-validator. The badge
         shows which account regime it qualified for. Copy the code, or import it to re-run in the Backtest yourself.
       </p>
+
+      {/* Auto-promotion — the mechanical steps run themselves; handing a strategy
+          to the live agent stays a deliberate click. */}
+      <div className="flex flex-wrap items-center gap-3 mb-3 rounded-lg border border-line bg-bg/40 px-3 py-2">
+        <label className="flex items-center gap-2 text-[11px] text-dim cursor-pointer">
+          <input type="checkbox" checked={autoPromote} onChange={(e) => setAutoPromote(e.target.checked)}
+            className="accent-current" />
+          <span className="text-text">Auto-promote new candidates to <span className="font-medium">Paper</span></span>
+        </label>
+        <label className="flex items-center gap-1.5 text-[11px] text-dim">
+          min DSR
+          <input type="number" value={autoDsr} min={0} max={100} step={5}
+            onChange={(e) => setAutoDsr(Math.min(100, Math.max(0, +e.target.value || 0)))}
+            className="input-base w-16 !py-0.5 font-mono text-[11px]" />
+          %
+        </label>
+        <span className="text-[10px] text-dim">
+          Skips the manual import/promote clicks. <span className="text-text">Publish to agent stays manual</span> — nothing trades until you say so.
+        </span>
+        {autoNote && <span className="text-[10px] text-up ml-auto">{autoNote}</span>}
+      </div>
+
       <div className="space-y-2">
         {items.map((c) => (
           <div key={c.id} className="rounded-lg border border-line bg-bg/40 px-3 py-2">
