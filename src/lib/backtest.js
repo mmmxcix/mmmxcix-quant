@@ -71,7 +71,7 @@ function normalizeSignal(raw) {
  *                  the classic all-in model.
  * @returns {{ equity:Array, buyHold:Array, trades:Array, metrics:Object, warnings:string[] }}
  */
-export function runBacktest({ candles, signalFn, initialCapital = 10000, feeBps = 10, positionPct = 100 }) {
+export function runBacktest({ candles, signalFn, initialCapital = 10000, feeBps = 10, positionPct = 100, leverage = 1 }) {
   const warnings = [];
 
   const emptyResult = () => ({
@@ -104,8 +104,12 @@ export function runBacktest({ candles, signalFn, initialCapital = 10000, feeBps 
   }
 
   const fee = feeBps / 10000;
-  const posFrac = Math.min(100, Math.max(1, positionPct)) / 100;
+  // Leverage multiplies the deployed notional: 3x turns a 100% position into 300%
+  // exposure, amplifying both returns AND drawdowns (and enabling liquidation).
+  const lev = Math.min(10, Math.max(1, Number(leverage) || 1));
+  const posFrac = (Math.min(100, Math.max(1, positionPct)) / 100) * lev;
   const n = candles.length;
+  let liquidated = false; // set once leverage drives equity to zero
 
   // --- Portfolio state -----------------------------------------------------
   let equityVal = initialCapital; // realised equity; equals cash while flat
@@ -212,8 +216,16 @@ export function runBacktest({ candles, signalFn, initialCapital = 10000, feeBps 
     checkBrackets(bar, i);
     if (inPositionThisBar) barsInMarket++;
 
-    // 3) Mark to market at this bar's close.
-    equity.push({ time: bar.time, value: markToMarket(bar.close) });
+    // 3) Mark to market at this bar's close. Under leverage, a mark ≤ 0 means the
+    // account was wiped out — liquidate once, then the curve stays at zero.
+    const mv = markToMarket(bar.close);
+    if (!liquidated && mv <= 0) {
+      liquidated = true;
+      warnings.unshift(`⚠ Liquidated at ${lev}x leverage — equity hit zero on ${new Date(bar.time * 1000).toISOString().slice(0, 10)}. The result past this point is void; lower the leverage.`);
+      equityVal = 0; position = "flat"; dir = 0; units = 0; stopLevel = null; targetLevel = null;
+    }
+    equity.push({ time: bar.time, value: liquidated ? 0 : mv });
+    if (liquidated) { prevDayIndex = Math.floor(bar.time / 86400); continue; }
 
     // 4) Evaluate the signal for this closed bar (executes next bar).
     const dayIndex = Math.floor(bar.time / 86400);

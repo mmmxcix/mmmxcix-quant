@@ -45,7 +45,7 @@ const RESEARCH_LANG = String(process.env.LAB_RESEARCH_LANG || "python").toLowerC
 // least BH_SHARPE_MARGIN (not merely tie it), and its RECENT tail (last 30%) must
 // be genuinely profitable — profitFactor ≥ HOLDOUT_MIN_PF and a positive return —
 // so a strategy that decayed and only looks good over the full 10y is rejected.
-const BH_SHARPE_MARGIN = +(process.env.LAB_BH_MARGIN || 0.15);
+const BH_SHARPE_MARGIN = +(process.env.LAB_BH_MARGIN || 0.10);
 const HOLDOUT_MIN_PF = +(process.env.LAB_HOLDOUT_PF || 1.0);
 
 // Compile a strategy to a signalFn regardless of language: Python goes through

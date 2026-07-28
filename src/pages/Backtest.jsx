@@ -50,6 +50,7 @@ export default function Backtest() {
   const [capital, setCapital] = useState(10000);
   const [feeBps, setFeeBps] = useState(10);
   const [positionPct, setPositionPct] = useState(100);
+  const [leverage, setLeverage] = useState(1);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState(null);
   const [result, setResult] = useState(null);
@@ -185,7 +186,7 @@ export default function Backtest() {
       } else {
         signalFn = compileStrategy(code);
       }
-      const res = runBacktest({ candles, signalFn, initialCapital: capital, feeBps, positionPct });
+      const res = runBacktest({ candles, signalFn, initialCapital: capital, feeBps, positionPct, leverage });
       // Data sanity: if the source silently delivered a coarser granularity
       // than requested (Yahoo does this for long intraday ranges), say so
       // loudly — indicator periods would mean something entirely different.
@@ -361,6 +362,11 @@ export default function Backtest() {
                 Position (%)
                 <input type="number" value={positionPct} min={1} max={100} step={5}
                   onChange={(e) => setPositionPct(+e.target.value || 100)} className="input-base w-full mt-1 font-mono" />
+              </label>
+              <label className="text-xs text-dim" title="Leverage multiplies exposure (3x = 300%). Amplifies returns AND drawdowns — enough drawdown at high leverage liquidates the account (equity → 0).">
+                Leverage (×)
+                <input type="number" value={leverage} min={1} max={10} step={1}
+                  onChange={(e) => setLeverage(Math.min(10, Math.max(1, +e.target.value || 1)))} className="input-base w-full mt-1 font-mono" />
               </label>
             </div>
           </div>
