@@ -172,6 +172,17 @@ function AgentCandidates() {
               </div>
             )}
 
+            {/* The actual rules — a thesis is a claim; this is what the strategy
+                literally does. Collapsed so the card stays scannable. */}
+            {c.code && (
+              <details className="mt-2">
+                <summary className="text-[10px] text-dim cursor-pointer hover:text-accent select-none">
+                  Show the actual rules ({c.language === "python" ? "Python" : "JS"})
+                </summary>
+                <pre className="mt-1.5 max-h-64 overflow-auto rounded-lg border border-line bg-bg/60 p-2.5 text-[10px] font-mono leading-snug text-dim whitespace-pre-wrap">{c.code}</pre>
+              </details>
+            )}
+
             {/* Committee verdict — the qualitative debate on top of the maths.
                 The gauntlet proved it works; this says how much to trust that
                 and when to pull it. */}
