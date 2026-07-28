@@ -83,6 +83,8 @@ export function runBacktest({ candles, signalFn, initialCapital = 10000, feeBps 
       buyHoldReturnPct: 0,
       cagrPct: 0,
       sharpe: 0,
+      sortino: 0,
+      calmar: 0,
       maxDrawdownPct: 0,
       winRatePct: 0,
       profitFactor: 0,
@@ -304,6 +306,23 @@ export function runBacktest({ candles, signalFn, initialCapital = 10000, feeBps 
   const sharpe = sharpeOf(equity);
   const buyHoldSharpe = sharpeOf(buyHold);
 
+  // Sortino — like Sharpe but only DOWNSIDE deviation is penalised (upside
+  // volatility isn't risk). Same annualisation as Sharpe.
+  const sortinoOf = (curve) => {
+    const r = [];
+    for (let i = 1; i < curve.length; i++) {
+      const prev = curve[i - 1].value;
+      if (prev > 0) r.push(curve[i].value / prev - 1);
+    }
+    if (r.length < 2 || periodsPerYear <= 0) return 0;
+    const mean = r.reduce((a, b) => a + b, 0) / r.length;
+    const downside = r.filter((x) => x < 0);
+    if (!downside.length) return mean > 0 ? Infinity : 0;
+    const dd = Math.sqrt(downside.reduce((a, b) => a + b * b, 0) / downside.length);
+    return dd > 0 ? (mean / dd) * Math.sqrt(periodsPerYear) : 0;
+  };
+  const sortino = sortinoOf(equity);
+
   // Max drawdown on the equity curve (and on buy & hold, for a fair
   // risk-adjusted comparison — B&H's pain is otherwise invisible).
   const maxDD = (curve) => {
@@ -316,6 +335,9 @@ export function runBacktest({ candles, signalFn, initialCapital = 10000, feeBps 
   };
   const maxDrawdownPct = maxDD(equity);
   const buyHoldMaxDrawdownPct = maxDD(buyHold);
+
+  // Calmar — CAGR per unit of max drawdown. The return-vs-worst-pain ratio.
+  const calmar = maxDrawdownPct > 0 ? cagrPct / maxDrawdownPct : cagrPct > 0 ? Infinity : 0;
 
   // Trade statistics.
   const wins = trades.filter((t) => t.pnl > 0);
@@ -335,6 +357,8 @@ export function runBacktest({ candles, signalFn, initialCapital = 10000, feeBps 
       cagrPct,
       sharpe,
       buyHoldSharpe,
+      sortino,
+      calmar,
       maxDrawdownPct,
       buyHoldMaxDrawdownPct,
       winRatePct,

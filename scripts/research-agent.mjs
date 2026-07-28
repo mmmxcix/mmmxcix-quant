@@ -41,6 +41,13 @@ import { extractCode, ensureStrategyFn, parseVerdict } from "../functions/_lib/c
 // fall back to the classic strategy(ctx) path.
 const RESEARCH_LANG = String(process.env.LAB_RESEARCH_LANG || "python").toLowerCase() === "js" ? "js" : "python";
 
+// Quality bar (both tunable): a promoted market must beat buy&hold Sharpe by at
+// least BH_SHARPE_MARGIN (not merely tie it), and its RECENT tail (last 30%) must
+// be genuinely profitable — profitFactor ≥ HOLDOUT_MIN_PF and a positive return —
+// so a strategy that decayed and only looks good over the full 10y is rejected.
+const BH_SHARPE_MARGIN = +(process.env.LAB_BH_MARGIN || 0.15);
+const HOLDOUT_MIN_PF = +(process.env.LAB_HOLDOUT_PF || 1.0);
+
 // Compile a strategy to a signalFn regardless of language: Python goes through
 // Pyodide (vectorised signals(df), memoised per candle array — a drop-in for the
 // JS compiler), JS through the classic per-bar compiler. Every backtest, k-fold,
@@ -325,9 +332,12 @@ function holdout(code, candles, feeBps, lang) {
     if (res.warnings.length) return { ok: false, detail: "error on holdout" };
     const m = res.metrics;
     if (m.tradeCount < 5) return { ok: true, skipped: "few trades" };
-    // Not demanding profit — demanding it did not invert. A strategy that made
-    // money overall but bleeds on the recent third is a regime artefact.
-    if (m.profitFactor < 0.9) return { ok: false, detail: `holdout PF ${m.profitFactor.toFixed(2)}` };
+    // The RECENT tail must actually be PROFITABLE, not merely "not inverted": a
+    // strategy that made its money years ago but is flat or bleeding lately is
+    // decayed and shouldn't be traded now. (Tunable via LAB_HOLDOUT_PF.)
+    if (m.profitFactor < HOLDOUT_MIN_PF || m.totalReturnPct <= 0) {
+      return { ok: false, detail: `stale recent tail: PF ${m.profitFactor.toFixed(2)}, ret ${m.totalReturnPct.toFixed(0)}%` };
+    }
     return { ok: true, pf: +m.profitFactor.toFixed(2), ret: +m.totalReturnPct.toFixed(1) };
   } catch {
     return { ok: false, detail: "holdout threw" };
@@ -472,9 +482,12 @@ function gauntlet(code, datasets, globalTrials, lang) {
     // if the strategy doesn't beat holding risk-adjusted, it does not belong in
     // the paper book for that market — no matter how "real" its edge is.
     const bhS = r.m.buyHoldSharpe ?? 0, sh = r.m.sharpe ?? 0;
-    if (sh <= bhS) {
-      byMarket[r.name] = { ...mk, rejected: `Sharpe ${sh.toFixed(2)} ≤ buy&hold ${bhS.toFixed(2)}` };
-      rejections.push(`${r.name}: loses to buy & hold (Sharpe ${sh.toFixed(2)} ≤ ${bhS.toFixed(2)})`);
+    // Raise the bar: don't just TIE buy&hold — beat it by a real margin AND be
+    // positive on its own. A marginal edge over holding isn't worth the effort or
+    // the execution risk. (Tunable via LAB_BH_MARGIN.)
+    if (sh < bhS + BH_SHARPE_MARGIN || sh <= 0) {
+      byMarket[r.name] = { ...mk, rejected: `Sharpe ${sh.toFixed(2)} < buy&hold ${bhS.toFixed(2)} + ${BH_SHARPE_MARGIN}` };
+      rejections.push(`${r.name}: doesn't clear buy & hold by margin (Sharpe ${sh.toFixed(2)} vs ${bhS.toFixed(2)}+${BH_SHARPE_MARGIN})`);
       continue;
     }
 

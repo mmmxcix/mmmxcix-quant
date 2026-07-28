@@ -529,6 +529,8 @@ export default function Backtest() {
                 <MetricCard label="CAGR" num={m.cagrPct} format={fmtPct}
                   tone={m.cagrPct >= 0 ? "text-up" : "text-down"} />
                 <MetricCard label="Sharpe" num={m.sharpe} format={fmtNum} tone="text-text" />
+                <MetricCard label="Sortino" num={Number.isFinite(m.sortino) ? m.sortino : null} format={fmtNum} tone="text-text" value={Number.isFinite(m.sortino) ? fmtNum(m.sortino) : "∞"} />
+                <MetricCard label="Calmar" num={Number.isFinite(m.calmar) ? m.calmar : null} format={fmtNum} tone="text-text" value={Number.isFinite(m.calmar) ? fmtNum(m.calmar) : "∞"} />
                 <MetricCard label="Max drawdown" num={-Math.abs(m.maxDrawdownPct)} format={fmtPct} tone="text-down" />
                 <MetricCard label="B&H max drawdown" num={-Math.abs(m.buyHoldMaxDrawdownPct ?? 0)} format={fmtPct} tone="text-down" />
                 <MetricCard label="Win rate" num={m.winRatePct} format={(v) => fmtPct(v).replace("+", "")} tone="text-text" />
