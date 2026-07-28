@@ -239,6 +239,26 @@ def _ema(s, period):
         out[i] = v[i] * alpha + out[i - 1] * (1 - alpha)
     return pd.Series(out, index=s.index)
 `;
+// Wilder ATR, matching indicators.js exactly: TR series, seeded with the simple
+// mean of the first `period` TRs, then Wilder-smoothed. (A plain rolling mean
+// diverges — the twins must trade identically to the builder version.)
+const PY_ATR = `
+def _atr(df, period):
+    h = df["high"].to_numpy(dtype=float); l = df["low"].to_numpy(dtype=float); c = df["close"].to_numpy(dtype=float)
+    n = len(h)
+    out = np.full(n, np.nan)
+    if period <= 0 or n < period:
+        return pd.Series(out, index=df.index)
+    tr = np.empty(n)
+    tr[0] = h[0] - l[0]
+    for i in range(1, n):
+        pc = c[i - 1]
+        tr[i] = max(h[i] - l[i], abs(h[i] - pc), abs(l[i] - pc))
+    out[period - 1] = tr[:period].mean()
+    for i in range(period, n):
+        out[i] = (out[i - 1] * (period - 1) + tr[i]) / period
+    return pd.Series(out, index=df.index)
+`;
 const PY_RSI = `
 def _rsi(s, period):
     v = s.to_numpy(dtype=float)
@@ -399,6 +419,159 @@ def signals(df):
             pos = -1
         out[i] = pos
     return pd.Series(out, index=df.index)
+`;
+  },
+
+  // ── twins for the newer templates (factor / VWAP / breakout / trend) ───────
+  "absolute-momentum": (p) => {
+    const lookback = P(p, "lookback", 120), trend = P(p, "trend", 200), minRoc = P(p, "minRoc", 0);
+    return `# Absolute Momentum — hold only while trailing return > threshold AND price > trend SMA.
+${PY_HEAD}
+LOOKBACK, TREND, MIN_ROC = ${lookback}, ${trend}, ${minRoc}
+
+def signals(df):
+    close = df["close"]
+    mom = close.pct_change(LOOKBACK) * 100.0
+    ma = close.rolling(TREND).mean()
+    long = (mom > MIN_ROC) & (close > ma)
+    return pd.Series(np.where(long.fillna(False), 1, 0), index=df.index)
+`;
+  },
+
+  "low-vol-timing": (p) => {
+    const atrPeriod = P(p, "atrPeriod", 14), volAvg = P(p, "volAvg", 100), trend = P(p, "trend", 200);
+    return `# Low-Volatility Timing — invested only in calm regimes (ATR below its own average) in an uptrend.
+${PY_HEAD}${PY_ATR}
+ATR_PERIOD, VOL_AVG, TREND = ${atrPeriod}, ${volAvg}, ${trend}
+
+def signals(df):
+    atr = _atr(df, ATR_PERIOD)
+    base = atr.rolling(VOL_AVG).mean()
+    ma = df["close"].rolling(TREND).mean()
+    calm = (atr < base) & (df["close"] > ma)
+    return pd.Series(np.where(calm.fillna(False), 1, 0), index=df.index)
+`;
+  },
+
+  "rolling-vwap-reversion": (p) => {
+    const period = P(p, "period", 50), atrPeriod = P(p, "atrPeriod", 14), stretch = P(p, "stretch", 2);
+    return `# Rolling VWAP Reversion — buy an N-ATR stretch below the rolling VWAP, exit back at VWAP.
+${PY_HEAD}${PY_ATR}
+PERIOD, ATR_PERIOD, STRETCH = ${period}, ${atrPeriod}, ${stretch}
+
+def signals(df):
+    typ = (df["high"] + df["low"] + df["close"]) / 3.0
+    vol = df["volume"].fillna(0)
+    pv = (typ * vol).rolling(PERIOD).sum()
+    vv = vol.rolling(PERIOD).sum()
+    vwap = pv / vv.replace(0, np.nan)
+    atr = _atr(df, ATR_PERIOD)
+    close = df["close"]
+    enter = close < (vwap - STRETCH * atr)
+    exit_ = close >= vwap
+    out = np.zeros(len(df))
+    pos = 0
+    e, x = enter.fillna(False).to_numpy(), exit_.fillna(False).to_numpy()
+    for i in range(len(df)):
+        if pos == 0 and e[i]:
+            pos = 1
+        elif pos == 1 and x[i]:
+            pos = 0
+        out[i] = pos
+    return pd.Series(out, index=df.index)
+`;
+  },
+
+  "turtle-breakout": (p) => {
+    const entryN = P(p, "entryN", 20), exitN = P(p, "exitN", 10), trend = P(p, "trend", 100);
+    return `# Turtle Breakout — enter above the N-bar high in an uptrend, exit below the M-bar low.
+${PY_HEAD}
+ENTRY_N, EXIT_N, TREND = ${entryN}, ${exitN}, ${trend}
+
+def signals(df):
+    close = df["close"]
+    upper = df["high"].rolling(ENTRY_N).max().shift(1)   # prior channel, excludes this bar
+    lower = df["low"].rolling(EXIT_N).min().shift(1)
+    ma = close.rolling(TREND).mean()
+    enter = (close > upper) & (close > ma)
+    exit_ = close < lower
+    out = np.zeros(len(df))
+    pos = 0
+    e, x = enter.fillna(False).to_numpy(), exit_.fillna(False).to_numpy()
+    for i in range(len(df)):
+        if pos == 0 and e[i]:
+            pos = 1
+        elif pos == 1 and x[i]:
+            pos = 0
+        out[i] = pos
+    return pd.Series(out, index=df.index)
+`;
+  },
+
+  "keltner-breakout": (p) => {
+    const period = P(p, "period", 20), mult = P(p, "mult", 1.5);
+    return `# Keltner Breakout — long above EMA + mult*ATR, exit back at the EMA mid-line.
+${PY_HEAD}${PY_EMA}${PY_ATR}
+PERIOD, MULT = ${period}, ${mult}
+
+def signals(df):
+    close = df["close"]
+    mid = _ema(close, PERIOD)
+    atr = _atr(df, PERIOD)
+    enter = close > (mid + MULT * atr)
+    exit_ = close < mid
+    out = np.zeros(len(df))
+    pos = 0
+    e, x = enter.fillna(False).to_numpy(), exit_.fillna(False).to_numpy()
+    for i in range(len(df)):
+        if pos == 0 and e[i]:
+            pos = 1
+        elif pos == 1 and x[i]:
+            pos = 0
+        out[i] = pos
+    return pd.Series(out, index=df.index)
+`;
+  },
+
+  "connors-rsi2": (p) => {
+    const rsiPeriod = P(p, "rsiPeriod", 2), oversold = P(p, "oversold", 10), trend = P(p, "trend", 200), exitSma = P(p, "exitSma", 5);
+    return `# Connors RSI-2 — buy deep short-term oversold dips in an uptrend, sell the bounce.
+${PY_HEAD}${PY_RSI}
+RSI_PERIOD, OVERSOLD, TREND, EXIT_SMA = ${rsiPeriod}, ${oversold}, ${trend}, ${exitSma}
+
+def signals(df):
+    close = df["close"]
+    r = _rsi(close, RSI_PERIOD)
+    ma_t = close.rolling(TREND).mean()
+    ma_e = close.rolling(EXIT_SMA).mean()
+    enter = (close > ma_t) & (r < OVERSOLD)
+    exit_ = close > ma_e
+    out = np.zeros(len(df))
+    pos = 0
+    e, x = enter.fillna(False).to_numpy(), exit_.fillna(False).to_numpy()
+    for i in range(len(df)):
+        if pos == 0 and e[i]:
+            pos = 1
+        elif pos == 1 and x[i]:
+            pos = 0
+        out[i] = pos
+    return pd.Series(out, index=df.index)
+`;
+  },
+
+  "macd-trend": (p) => {
+    const fast = P(p, "fast", 12), slow = P(p, "slow", 26), signal = P(p, "signal", 9);
+    return `# MACD Trend Follow — long while MACD > signal and the histogram is positive.
+${PY_HEAD}${PY_EMA}
+FAST, SLOW, SIGNAL = ${fast}, ${slow}, ${signal}
+
+def signals(df):
+    close = df["close"]
+    macd = _ema(close, FAST) - _ema(close, SLOW)
+    sig = _ema(macd.dropna(), SIGNAL).reindex(macd.index)
+    hist = macd - sig
+    long = (macd > sig) & (hist > 0)
+    return pd.Series(np.where(long.fillna(False), 1, 0), index=df.index)
 `;
   },
 };
