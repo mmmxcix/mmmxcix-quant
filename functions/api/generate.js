@@ -273,6 +273,7 @@ export async function onRequest({ request, env }) {
   const repair = body?.repair;
   const research = body?.research;
   const improve = body?.improve;
+  const review = body?.review;
   const critique = body?.critique;
   const isCritique = !!(critique && typeof critique.code === "string");
   // Language of the generated strategy: Python (Pyodide, def signals(df)) or the
@@ -393,6 +394,24 @@ export async function onRequest({ request, env }) {
         "`function strategy(ctx)` (or `const strategy = (ctx) => { … }`). Change as little as possible and " +
         "keep the original trading logic; return ONLY the corrected JavaScript, no prose.\n\n" +
         "```javascript\n" + brokenCode + "\n```";
+  } else if (review && typeof review.code === "string") {
+    // REVIEW: judge the code in the editor and say what to change — prose, not
+    // code. The counterpart to `improve`, so a user can understand a strategy
+    // (or their own edit) before letting the model rewrite it.
+    const src = review.code.slice(0, 8000);
+    const ask = String(review.prompt || "").trim().slice(0, 500);
+    userMsg =
+      `Review this ${isPython ? "Python signals(df)" : "JavaScript strategy(ctx)"} backtest strategy.\n\n` +
+      "```\n" + src + "\n```\n\n" +
+      (ask ? `The user specifically asks: ${ask}\n\n` : "") +
+      "Answer as a hedge-fund quant reviewing a colleague's rule, in this order:\n" +
+      "1. WHAT IT DOES — the actual rule in one or two sentences (entry, exit, filters), not a paraphrase of the comments.\n" +
+      "2. EDGE — is there a plausible mechanism, or is it curve-fitting? Say plainly if you can't find one.\n" +
+      "3. WEAKNESSES — concrete and specific: look-ahead, single-bar dependence (would it survive a 1-bar execution delay?), " +
+      "too few/too many trades, parameter fragility, no risk exit, degenerate conditions that rarely trigger, costs ignored.\n" +
+      "4. IMPROVE — the 2-4 highest-value changes, each one a concrete rule change (name indicators and thresholds), " +
+      "ranked by how much it would improve risk-adjusted return.\n" +
+      "Be honest and specific — if it looks unlikely to beat buy & hold after costs, say so. Plain prose, no code blocks, under 300 words.";
   } else {
     const prompt = String(body?.prompt || "").trim();
     if (!prompt) return json({ error: "empty_prompt" }, 400);
@@ -400,7 +419,11 @@ export async function onRequest({ request, env }) {
     userMsg = `Create a backtest strategy: ${prompt}`;
   }
 
-  const system = isPython ? PYTHON_SYSTEM_PROMPT : SYSTEM_PROMPT;
+  // A review returns an assessment, so it must NOT be constrained by the
+  // "reply with code only" system prompt.
+  const system = review
+    ? "You are a senior quantitative researcher reviewing backtest strategy code. You are candid, concrete and brief. You never rewrite the code — you explain and advise."
+    : (isPython ? PYTHON_SYSTEM_PROMPT : SYSTEM_PROMPT);
 
   // promptOnly: hand the fully composed prompts to the caller instead of
   // executing them. The local research agent uses this to run generation
@@ -444,6 +467,8 @@ export async function onRequest({ request, env }) {
   // out of the model's reply defensively — models wrap it in prose or fences no
   // matter how firmly you ask them not to.
   if (isCritique) return json({ critique: parseVerdict(text) });
+  // A review is an assessment, not code — hand back the prose as-is.
+  if (review) return json({ review: text.trim().slice(0, 4000) });
   // Python is returned as-is (the JS strategy(ctx) auto-wrap doesn't apply).
   const out = extractCode(text);
   return json({ code: isPython ? out : ensureStrategyFn(out), language: isPython ? "python" : "js" });

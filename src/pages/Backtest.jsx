@@ -106,8 +106,10 @@ export default function Backtest() {
   // Function /api/generate holds them server-side; access requires the signed-in
   // ADMIN (dev) session. The panel is simply hidden for everyone else.
   const [aiPrompt, setAiPrompt] = useState("");
-  const [aiLoading, setAiLoading] = useState(false);
+  const [aiLoading, setAiLoading] = useState(false); // false | "new" | "improve" | "review"
   const [aiError, setAiError] = useState(null);
+  const [aiReview, setAiReview] = useState(null);    // prose assessment of the current code
+  const [prevCode, setPrevCode] = useState(null);    // undo target for an AI rewrite
   const [copied, setCopied] = useState(false);
   const { data: session } = useSession();
   const isDev = session?.user?.role === "admin";
@@ -136,16 +138,33 @@ export default function Backtest() {
     } catch { /* clipboard blocked */ }
   };
 
-  const generateCode = async () => {
+  // The AI works on THIS editor in three ways:
+  //   "new"     — write a fresh strategy from the prompt
+  //   "improve" — rewrite the code that's in the editor (prompt = what to change)
+  //   "review"  — read the code and give an assessment, changing nothing
+  const runAi = async (action) => {
     const p = aiPrompt.trim();
-    if (!p || aiLoading) return;
-    setAiLoading(true);
+    const src = code.trim();
+    if (aiLoading) return;
+    if (action === "new" && !p) return;
+    if (action !== "new" && !src) { setAiError("The editor is empty — there's nothing to work on."); return; }
+    if (action !== "new" && lang === "pine") {
+      setAiError("Pine Script is an export format here — the AI reviews and improves the JavaScript or Python that actually runs in this engine.");
+      return;
+    }
+    setAiLoading(action);
     setAiError(null);
+    setAiReview(null);
     try {
+      const body = action === "new"
+        ? { prompt: p, language: lang }
+        : action === "improve"
+          ? { improve: { code: src, facts: p || "Make it more robust without changing the core idea.", title: presetDirty ? "an edited strategy" : strategy?.name }, language: lang }
+          : { review: { code: src, prompt: p }, language: lang };
       const res = await fetch("/api/generate", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ prompt: p, language: lang }),
+        body: JSON.stringify(body),
       });
       const data = await res.json().catch(() => ({}));
       if (res.status === 401) {
@@ -153,9 +172,15 @@ export default function Backtest() {
       }
       if (res.status === 503) throw new Error("AI not configured yet (Cloudflare secrets missing).");
       if (res.status === 429) throw new Error("Rate limit reached — please wait a moment.");
-      if (!res.ok || !data.code) throw new Error("Generation failed — please try again.");
-      setCode(data.code);          // AI writes straight into the one editor
-      setPresetDirty(true);
+      if (action === "review") {
+        if (!res.ok || !data.review) throw new Error("Review failed — please try again.");
+        setAiReview(data.review);   // assessment only — the code is untouched
+      } else {
+        if (!res.ok || !data.code) throw new Error("Generation failed — please try again.");
+        setPrevCode(code);          // one-step undo, so an AI rewrite is never a dead end
+        setCode(data.code);         // AI writes straight into the one editor
+        setPresetDirty(true);
+      }
     } catch (e) {
       setAiError(e.message);
     } finally {
@@ -538,25 +563,54 @@ export default function Backtest() {
                   </p>
                 )}
 
-                {/* KI-Generator — dev-account only; hidden for everyone else */}
+                {/* AI assistant — dev-account only; hidden for everyone else.
+                    Works ON the code above by default: improve it, or review it.
+                    Writing something brand-new is the explicit "New" action. */}
                 {isDev && (
                   <div className="border-t border-line pt-3 space-y-2">
                     <p className="text-[11px] text-dim flex items-center gap-1.5">
-                      <Sparkles className="w-3.5 h-3.5 text-accent" /> Generate strategy with AI
+                      <Sparkles className="w-3.5 h-3.5 text-accent" /> AI — works on the code above
                     </p>
                     <textarea
                       value={aiPrompt}
                       onChange={(e) => setAiPrompt(e.target.value)}
-                      placeholder="e.g. Buy when RSI drops below 30 and price is above the SMA 200…"
+                      placeholder="What should change? e.g. add an ATR stop and only trade above the SMA 200 — leave empty to let it improve robustness on its own"
                       rows={3}
                       className="input-base w-full text-xs resize-y"
                     />
-                    <button onClick={generateCode} disabled={aiLoading || !aiPrompt.trim()}
+                    <button onClick={() => runAi("improve")} disabled={!!aiLoading || !code.trim()}
+                      title="Rewrites the code in the editor, keeping its core idea"
                       className="btn-accent w-full flex items-center justify-center gap-2 !py-1.5 text-xs">
-                      {aiLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-                      {aiLoading ? "Generating…" : "Generate (replaces the editor content)"}
+                      {aiLoading === "improve" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                      {aiLoading === "improve" ? "Improving…" : "Improve this strategy"}
                     </button>
+                    <div className="flex items-center gap-2">
+                      <button onClick={() => runAi("review")} disabled={!!aiLoading || !code.trim()}
+                        title="Assess the code — explains what it does and what to fix. Changes nothing."
+                        className="chip chip-idle !text-[11px] flex-1 flex items-center justify-center gap-1.5">
+                        {aiLoading === "review" ? <Loader2 className="w-3 h-3 animate-spin" /> : null} Review
+                      </button>
+                      <button onClick={() => runAi("new")} disabled={!!aiLoading || !aiPrompt.trim()}
+                        title="Ignore the editor and write a brand-new strategy from your description"
+                        className="chip chip-idle !text-[11px] flex-1 flex items-center justify-center gap-1.5">
+                        {aiLoading === "new" ? <Loader2 className="w-3 h-3 animate-spin" /> : null} New from prompt
+                      </button>
+                      {prevCode != null && (
+                        <button onClick={() => { setCode(prevCode); setPrevCode(null); }}
+                          title="Restore the code from before the last AI rewrite"
+                          className="chip chip-idle !text-[11px]">Undo</button>
+                      )}
+                    </div>
                     {aiError && <p className="text-[11px] text-down">{aiError}</p>}
+                    {aiReview && (
+                      <div className="rounded-lg border border-line bg-bg/50 p-3">
+                        <div className="flex items-center justify-between mb-1.5">
+                          <p className="text-[10px] uppercase tracking-wide text-accent font-semibold">AI review</p>
+                          <button onClick={() => setAiReview(null)} className="text-[10px] text-dim hover:text-text">dismiss</button>
+                        </div>
+                        <p className="text-[11px] text-dim leading-relaxed whitespace-pre-wrap">{aiReview}</p>
+                      </div>
+                    )}
                   </div>
                 )}
               </>
