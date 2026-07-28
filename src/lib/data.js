@@ -155,6 +155,36 @@ async function fetchYahoo(symbol, yahooInterval, yahooRange, window) {
   return candles;
 }
 
+// Yahoo intraday is short AND capped per request, so a single range=3mo on 5m
+// data 422s. These are the availability + per-request windows (days) — we clamp
+// the request to what actually exists and fetch in chunks, then stitch. (Crypto
+// has full intraday history via Binance; this is a stock-data limitation.)
+const YAHOO_INTRADAY = {
+  "1m": { maxDays: 7, chunk: 7 },
+  "5m": { maxDays: 58, chunk: 58 },
+  "15m": { maxDays: 58, chunk: 58 },
+  "30m": { maxDays: 58, chunk: 58 },
+  "60m": { maxDays: 720, chunk: 720 },
+};
+
+// Fetch stock intraday over [fromSec, toSec], clamped to what Yahoo has and split
+// into per-request chunks (period1/period2), then deduped + sorted ascending.
+async function fetchYahooIntraday(symbol, yInterval, fromSec, toSec) {
+  const cap = YAHOO_INTRADAY[yInterval];
+  const now = Math.floor(Date.now() / 1000);
+  const to = Math.min(toSec, now);
+  let from = Math.max(fromSec, now - cap.maxDays * 86400); // clamp to available history
+  if (to - from < 3600) from = to - cap.chunk * 86400;
+  const chunkSec = cap.chunk * 86400;
+  const seen = new Map();
+  for (let a = from; a < to; a += chunkSec) {
+    const b = Math.min(to, a + chunkSec);
+    try { for (const c of await fetchYahoo(symbol, yInterval, null, { from: a, to: b })) seen.set(c.time, c); }
+    catch { /* a bad chunk shouldn't lose the rest */ }
+  }
+  return [...seen.values()].sort((x, y) => x.time - y.time);
+}
+
 /**
  * Fetch candles. Either a relative `range` (default) or an explicit period
  * `{ from, to }` (unix SECONDS) — the period wins when both are given.
@@ -166,10 +196,16 @@ export async function fetchCandles({ market, symbol, interval = "1d", range = "1
     throw new Error(`Interval ${iDef.label} is not available for this market.`);
   }
   const window = Number.isFinite(from) && Number.isFinite(to) && to > from ? { from, to } : null;
-  const candles =
-    market === "crypto"
-      ? await fetchBinance(symbol, iDef.binance, rDef.days, window)
-      : await fetchYahoo(symbol, iDef.yahoo, rDef.yahoo, window);
+  let candles;
+  if (market === "crypto") {
+    candles = await fetchBinance(symbol, iDef.binance, rDef.days, window);
+  } else if (YAHOO_INTRADAY[iDef.yahoo]) {
+    // Stock intraday → chunked + clamped (a plain range would 422 past the cap).
+    const now = Math.floor(Date.now() / 1000);
+    candles = await fetchYahooIntraday(symbol, iDef.yahoo, window ? window.from : now - rDef.days * 86400, window ? window.to : now);
+  } else {
+    candles = await fetchYahoo(symbol, iDef.yahoo, rDef.yahoo, window);
+  }
   if (candles.length < 2) throw new Error(`Too few data points for "${symbol}".`);
   return candles;
 }
