@@ -110,6 +110,7 @@ export default function Backtest() {
   const [aiError, setAiError] = useState(null);
   const [aiReview, setAiReview] = useState(null);    // prose assessment of the current code
   const [prevCode, setPrevCode] = useState(null);    // undo target for an AI rewrite
+  const [aiCompare, setAiCompare] = useState(null);  // measured before/after of a rewrite
   const [copied, setCopied] = useState(false);
   const { data: session } = useSession();
   const isDev = session?.user?.role === "admin";
@@ -138,6 +139,29 @@ export default function Backtest() {
     } catch { /* clipboard blocked */ }
   };
 
+  /**
+   * Re-run the SAME backtest (same candles, fees, sizing) for the code before and
+   * after an AI rewrite, so "improved" is a measured claim rather than a promise.
+   * Returns null when a version can't run — the caller then just stays quiet.
+   */
+  const compareVersions = async (beforeSrc, afterSrc, prev) => {
+    const runOne = async (src) => {
+      try {
+        const l = detectLang(src);
+        let fn;
+        if (l === "python") fn = signalsToFn(await runPythonSignals(src, prev.candles, setPyStatus));
+        else fn = compileStrategy(src);
+        const r = runBacktest({ candles: prev.candles, signalFn: fn, initialCapital: capital, feeBps, positionPct, leverage });
+        if (r.warnings.some((w) => /error/i.test(w))) return null;
+        return r.metrics;
+      } catch { return null; }
+    };
+    const [a, b] = [await runOne(beforeSrc), await runOne(afterSrc)];
+    setPyStatus(null);
+    if (!a || !b) return null;
+    return { before: a, after: b };
+  };
+
   // The AI works on THIS editor in three ways:
   //   "new"     — write a fresh strategy from the prompt
   //   "improve" — rewrite the code that's in the editor (prompt = what to change)
@@ -155,11 +179,29 @@ export default function Backtest() {
     setAiLoading(action);
     setAiError(null);
     setAiReview(null);
+    setAiCompare(null);
     try {
+      // Give the model the CURRENT numbers as the bar to beat. Without them it
+      // rewrites blind — which is how an "improvement" ended up doubling the
+      // drawdown it was asked to cut.
+      const m = result?.metrics;
+      const baseline = m
+        ? `The current version, backtested on ${symbol} ${interval} (${result.candleCount} bars, ${feeBps}bps/side, ${positionPct}% position${leverage > 1 ? `, ${leverage}x leverage` : ""}), scores: ` +
+          `total return ${m.totalReturnPct.toFixed(1)}%, max drawdown ${m.maxDrawdownPct.toFixed(1)}%, Sharpe ${(m.sharpe ?? 0).toFixed(2)}, ` +
+          `profit factor ${Number.isFinite(m.profitFactor) ? m.profitFactor.toFixed(2) : "∞"}, ${m.tradeCount} trades ` +
+          `(buy & hold over the same window: ${(m.buyHoldReturnPct ?? 0).toFixed(1)}%, Sharpe ${(m.buyHoldSharpe ?? 0).toFixed(2)}). ` +
+          "Your version MUST beat these — do not trade the requested improvement away on another axis " +
+          "(e.g. cutting drawdown by taking far fewer trades, or lifting return by doubling the drawdown). " +
+          "Keep the trade count in the same ballpark unless asked otherwise."
+        : "";
       const body = action === "new"
         ? { prompt: p, language: lang }
         : action === "improve"
-          ? { improve: { code: src, facts: p || "Make it more robust without changing the core idea.", title: presetDirty ? "an edited strategy" : strategy?.name }, language: lang }
+          ? { improve: {
+              code: src,
+              facts: `${p || "Make it more robust without changing the core idea."}${baseline ? `\n\n${baseline}` : ""}`,
+              title: presetDirty ? "an edited strategy" : strategy?.name,
+            }, language: lang }
           : { review: { code: src, prompt: p }, language: lang };
       const res = await fetch("/api/generate", {
         method: "POST",
@@ -180,6 +222,12 @@ export default function Backtest() {
         setPrevCode(code);          // one-step undo, so an AI rewrite is never a dead end
         setCode(data.code);         // AI writes straight into the one editor
         setPresetDirty(true);
+        // MEASURE it. An "improvement" is a claim until the same backtest says
+        // otherwise — this is what stops a rewrite from quietly doubling the
+        // drawdown it was asked to cut.
+        if (action === "improve" && result?.candles?.length) {
+          setAiCompare(await compareVersions(src, data.code, result));
+        }
       }
     } catch (e) {
       setAiError(e.message);
@@ -602,6 +650,42 @@ export default function Backtest() {
                       )}
                     </div>
                     {aiError && <p className="text-[11px] text-down">{aiError}</p>}
+                    {/* Measured verdict on the rewrite — the same backtest, before vs after.
+                        Shown whether it helped or not; "improved" is a claim until measured. */}
+                    {aiCompare && (() => {
+                      const { before: b, after: a } = aiCompare;
+                      const rows = [
+                        ["Return", b.totalReturnPct, a.totalReturnPct, 1, (v) => `${v.toFixed(1)}%`],
+                        ["Max drawdown", b.maxDrawdownPct, a.maxDrawdownPct, -1, (v) => `${v.toFixed(1)}%`],
+                        ["Sharpe", b.sharpe ?? 0, a.sharpe ?? 0, 1, (v) => v.toFixed(2)],
+                        ["Trades", b.tradeCount, a.tradeCount, 0, (v) => String(v)],
+                      ];
+                      const better = (a.sharpe ?? 0) > (b.sharpe ?? 0) && a.maxDrawdownPct <= b.maxDrawdownPct * 1.05;
+                      return (
+                        <div className={cn("rounded-lg border p-3", better ? "border-up/30 bg-up/5" : "border-down/30 bg-down/5")}>
+                          <p className={cn("text-[10px] uppercase tracking-wide font-semibold mb-1.5", better ? "text-up" : "text-down")}>
+                            {better ? "Measured: the rewrite is better" : "Measured: the rewrite is NOT better — consider Undo"}
+                          </p>
+                          <table className="w-full text-[11px] font-mono">
+                            <tbody>
+                              {rows.map(([label, bv, av, dir, fmt]) => {
+                                const delta = av - bv;
+                                const good = dir === 0 ? null : dir > 0 ? delta > 0 : delta < 0;
+                                return (
+                                  <tr key={label}>
+                                    <td className="text-dim font-sans pr-2">{label}</td>
+                                    <td className="text-dim text-right">{fmt(bv)}</td>
+                                    <td className="text-dim px-1">→</td>
+                                    <td className={cn("text-right", good == null ? "text-text" : good ? "text-up" : "text-down")}>{fmt(av)}</td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                          <p className="text-[10px] text-dim mt-1.5">Same data, fees and sizing as your last run.</p>
+                        </div>
+                      );
+                    })()}
                     {aiReview && (
                       <div className="rounded-lg border border-line bg-bg/50 p-3">
                         <div className="flex items-center justify-between mb-1.5">
