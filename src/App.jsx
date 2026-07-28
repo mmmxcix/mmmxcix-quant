@@ -74,17 +74,17 @@ export default function App() {
                 <Route path="/monitor" element={<Redir to="/?view=monitor" />} />
                 <Route path="/tools" element={<Tools />} />
                 <Route path="/regimes" element={<Regimes />} />
+                <Route path="/coach" element={<Coach />} />
                 <Route path="/argus" element={<Argus />} />
                 <Route path="/account" element={<Account />} />
 
-                {/* Cortex hub (Registry · Paper · RiskGate · Brain Vault · Coach) — dev only */}
+                {/* Cortex hub (Registry · Paper · RiskGate · Brain Vault) — dev only */}
                 <Route path="/cortex" element={<Redir to="/cortex/registry" replace />} />
                 <Route path="/cortex/:tab" element={<RequireAdmin><Cortex /></RequireAdmin>} />
                 <Route path="/registry" element={<Redir to="/cortex/registry" replace />} />
                 <Route path="/lab" element={<Redir to="/cortex/paper" replace />} />
                 <Route path="/riskgate" element={<Redir to="/cortex/riskgate" replace />} />
                 <Route path="/brain" element={<Redir to="/cortex/brain" replace />} />
-                <Route path="/coach" element={<Redir to="/cortex/coach" replace />} />
 
                 {/* Backtest hub (+ Compare) */}
                 <Route path="/backtest" element={<Redir to="/backtest/run" replace />} />

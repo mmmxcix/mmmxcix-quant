@@ -42,6 +42,19 @@ export async function onRequest({ request, env }) {
     try { body = await request.json(); } catch { return json({ error: "bad_json" }, 400); }
     if (!env.DEV_ACCESS_TOKEN || !safeEqual(body.token || "", env.DEV_ACCESS_TOKEN)) return json({ error: "unauthorized" }, 401);
 
+    // Full reset — wipe state, open theses and the closed ledger. The ledger is
+    // append-only by design (merged by id), so clearing it needs an explicit
+    // action: used when the paper record was made under conditions we no longer
+    // want to judge the agent by.
+    if (body.reset === true) {
+      try {
+        await Promise.all([kv.delete("argus:state"), kv.delete("argus:theses"), kv.delete("argus:ledger")]);
+      } catch (e) {
+        return json({ error: "kv_reset_failed", detail: String(e?.message || e) }, 503);
+      }
+      return json({ ok: true, reset: true });
+    }
+
     // KV writes can be rejected once the daily write budget is exhausted (free
     // plan). Surface that as a clean 503 rather than an uncaught 1101 — the agent
     // logs it and retries next cycle; reads keep serving the last good state.

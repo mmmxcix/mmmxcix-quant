@@ -57,12 +57,28 @@ function AgentCandidates() {
   };
 
   // Admin session cookie gates this server-side (the page itself only renders
-  // inside the RequireAdmin-guarded Cortex hub).
+  // inside the RequireAdmin-guarded Cortex hub). The research agent pushes new
+  // candidates around the clock, so this POLLS instead of fetching once — a stale
+  // list that only refreshed on a hard reload was the annoying part.
   useEffect(() => {
-    fetch("/api/lab?what=candidates")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((out) => setItems(out?.candidates?.items || []))
-      .catch(() => setItems([]));
+    let alive = true;
+    const load = () => {
+      fetch("/api/lab?what=candidates")
+        .then((r) => (r.ok ? r.json() : null))
+        .then((out) => { if (alive) setItems(out?.candidates?.items || []); })
+        .catch(() => { if (alive) setItems([]); });
+    };
+    load();
+    const id = setInterval(() => { if (!document.hidden) load(); }, 60_000);
+    const onFocus = () => { if (!document.hidden) load(); }; // instant on tab return
+    document.addEventListener("visibilitychange", onFocus);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      alive = false;
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", onFocus);
+      window.removeEventListener("focus", onFocus);
+    };
   }, []);
 
   if (items === null || items === undefined || items.length === 0) return null;

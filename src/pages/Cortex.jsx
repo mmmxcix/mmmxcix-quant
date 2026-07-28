@@ -1,17 +1,18 @@
-import { Boxes, Dices, Shield, Network, Target } from "lucide-react";
+import { Boxes, Dices, Shield, Network } from "lucide-react";
 import TabHub from "@/components/TabHub";
 import AlwaysOnSwitch from "@/components/AlwaysOnSwitch";
 import Registry from "@/pages/Registry";
 import Lab from "@/pages/Lab";
 import RiskGate from "@/pages/RiskGate";
 import BrainVault from "@/pages/BrainVault";
-import Coach from "@/pages/Coach";
+import LabStatus from "@/components/LabStatus";
 
 // Cortex — the autonomous research system as one hub. Registry / Paper /
-// RiskGate / Brain Vault / Coach are tabs under /cortex/:tab; old routes (incl.
-// the standalone /coach) redirect here, so everything the agent produces lives in
-// one place. The Always-On switch (visible on every tab) flips the research
-// cadence between night-only and around-the-clock.
+// RiskGate / Brain Vault are tabs under /cortex/:tab; old routes redirect here.
+// The live "Lab agent (your PC)" panel sits on the Paper tab (it used to live on
+// the Coach page, away from everything it reports on). The Always-On switch
+// (visible on every tab) flips the research cadence between night-only and
+// around-the-clock.
 export default function Cortex() {
   return (
     <TabHub
@@ -20,10 +21,12 @@ export default function Cortex() {
       extra={<AlwaysOnSwitch />}
       tabs={[
         { id: "registry", label: "Registry", icon: Boxes, el: <Registry /> },
-        { id: "paper", label: "Paper", icon: Dices, el: <Lab /> },
+        {
+          id: "paper", label: "Paper", icon: Dices,
+          el: <div className="space-y-5"><LabStatus /><Lab /></div>,
+        },
         { id: "riskgate", label: "RiskGate", icon: Shield, el: <RiskGate /> },
         { id: "brain", label: "Brain Vault", icon: Network, el: <BrainVault /> },
-        { id: "coach", label: "Coach", icon: Target, el: <Coach /> },
       ]}
     />
   );
