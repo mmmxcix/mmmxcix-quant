@@ -88,6 +88,7 @@ export function openThesis(setup, { equity, openRisk, asset, heatCap, baseRiskPc
     id: newId(),
     symbol: setup.symbol, market: setup.market, asset,
     side: setup.side, kind: setup.kind, timeframe: setup.timeframe,
+    bias: setup.bias ?? null, // higher-TF regime at entry — carried into the ledger for learning
     state: "open",
     reason: setup.reason, evidence: setup.evidence || [],
     entry: fillEntry, stop: setup.stop, target: setup.target,

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Radio, TrendingUp, TrendingDown, Trophy, AlertTriangle, Zap, Newspaper } from "lucide-react";
+import { Radio, TrendingUp, TrendingDown, Trophy, AlertTriangle, Zap, Newspaper, GraduationCap } from "lucide-react";
 import { cn, fmtNum } from "@/lib/utils";
 import { ledgerStats } from "@/lib/argus/core";
 import Skeleton from "@/components/Skeleton";
@@ -148,6 +148,27 @@ export default function Argus() {
                   <span className="ml-auto text-[10px] text-dim">{ago(e.at)} ago</span>
                 </div>
                 <p className="text-[11px] text-dim leading-snug">{e.thesis}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* what Argus has learned — Hermes-style lessons from the closed ledger */}
+      {state?.lessons?.length > 0 && (
+        <div>
+          <p className="text-xs text-dim font-medium mb-2 flex items-center gap-1.5">
+            <GraduationCap className="w-3.5 h-3.5" /> What Argus has learned — from {stats.n} closed trades
+          </p>
+          <div className="grid sm:grid-cols-2 gap-2">
+            {state.lessons.map((l, i) => (
+              <div key={i} className={cn("rounded-xl border lg-glass p-3 text-[11px] leading-snug",
+                l.verdict === "strong-positive" ? "border-up/30" : l.verdict === "losing" ? "border-down/30" : "border-line")}>
+                <span className={cn("font-semibold uppercase tracking-wide text-[9px] mr-1.5",
+                  l.verdict === "strong-positive" ? "text-up" : l.verdict === "losing" ? "text-down" : "text-dim")}>
+                  {l.verdict === "strong-positive" ? "favor" : l.verdict === "losing" ? "suppress" : "neutral"}
+                </span>
+                <span className="text-dim">{l.text}</span>
               </div>
             ))}
           </div>

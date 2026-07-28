@@ -113,3 +113,36 @@ test("parseTheses caps at 3 and returns [] on non-JSON / empty", () => {
   assert.deepEqual(parseTheses("no trades today, market is quiet"), []);
   assert.deepEqual(parseTheses(""), []);
 });
+
+// ── Phase-2: market hours (real day-trader) ─────────────────────────────────
+import { marketOpen } from "../src/lib/argus/hours.js";
+
+test("marketOpen: crypto 24/7; stocks only in RTH on weekdays", () => {
+  const sat = new Date("2026-07-25T15:00:00Z"); // Saturday, 11:00 ET
+  assert.equal(marketOpen({ asset: "crypto", symbol: "BTCUSDT" }, sat), true, "crypto open on weekend");
+  assert.equal(marketOpen({ asset: "stock", symbol: "SPY" }, sat), false, "stocks closed on Saturday");
+  const wedMid = new Date("2026-07-22T18:00:00Z"); // Wed 14:00 ET (DST) → open
+  assert.equal(marketOpen({ asset: "stock", symbol: "SPY" }, wedMid), true, "stocks open midday weekday");
+  const wedNight = new Date("2026-07-22T02:00:00Z"); // Tue 22:00 ET → closed
+  assert.equal(marketOpen({ asset: "stock", symbol: "SPY" }, wedNight), false, "stocks closed overnight");
+});
+
+// ── Phase-2: Hermes learning ────────────────────────────────────────────────
+import { deriveLessons, adjustment } from "../src/lib/argus/learn.js";
+
+const closed = (n, kind, side, R) => Array.from({ length: n }, (_, i) =>
+  ({ kind, side, symbol: "SOLUSDT", outcome: R > 0 ? "target" : "stop", R, pnl: R * 100, openedAt: Date.UTC(2026, 0, 1, 14) + i * 60000 }));
+
+test("deriveLessons respects minSample and flags a losing bucket", () => {
+  assert.equal(deriveLessons(closed(10, "mean-reversion", "short", -1), { minSample: 20 }).length, 0, "below minSample → no lessons");
+  const lessons = deriveLessons(closed(30, "mean-reversion", "short", -0.6), { minSample: 20 });
+  assert.ok(lessons.some((l) => l.action === "suppress" && l.dims.kind === "mean-reversion"), "losing bucket → suppress lesson");
+});
+
+test("adjustment clamps to [0.5,1.25] and only matching, well-sampled buckets act", () => {
+  const lessons = deriveLessons(closed(40, "mean-reversion", "short", -1), { minSample: 20 });
+  const a = adjustment(lessons, { kind: "mean-reversion", symbol: "SOLUSDT", side: "short" }, { minSample: 20 });
+  assert.ok(a.mult >= 0.5 && a.mult < 1, "losing setup shrinks size, clamped ≥0.5");
+  const b = adjustment(lessons, { kind: "breakout", symbol: "BTCUSDT", side: "long" }, { minSample: 20 });
+  assert.equal(b.mult, 1, "non-matching setup unaffected");
+});

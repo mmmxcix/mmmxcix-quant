@@ -1,0 +1,202 @@
+// argus/learn.js — the Hermes-style LEARNING loop for the Argus day-trader.
+// Reads the CLOSED-thesis ledger, extracts per-bucket edge, turns the losers and
+// winners into human-readable lessons, and folds them into a *gentle* sizing
+// prior for a proposed setup. Pure + dependency-free (only ledgerStats math is
+// reused) so it runs identically in the Node agent and in a browser test.
+//
+// Design invariants (see docs/DAYTRADER_AGENT.md, Phase 2 "Learn"):
+//   • No bucket influences anything below `minSample` trades — small samples lie.
+//   • The size multiplier is hard-clamped to [0.5, 1.25]. This is a prior, not a
+//     lever; learning must never destabilise the agent.
+//   • Skip (drop a setup entirely) is reserved for egregiously negative, well-
+//     sampled buckets — rare by construction.
+import { ledgerStats } from "./core.js";
+
+// ── tunables (all conservative) ─────────────────────────────────────────────
+const STRONG_EXPECTANCY = 0.20;    // ≥ this R/trade over the bucket → strong-positive
+const HARD_CUT_EXPECTANCY = -0.30; // ≤ this → the firmer of the two size cuts
+const MULT_FLOOR = 0.5, MULT_CEIL = 1.25;
+const BOOST = 1.12, MILD_CUT = 0.85, HARD_CUT = 0.65;
+const SKIP_EXPECTANCY = -0.8, SKIP_WINRATE = 0.28; // only truly broken buckets skip
+
+// ── session bucketing (UTC-hour → trading session) ──────────────────────────
+/** Coarse trading-session bucket for a trade's entry time (UTC hour). */
+export function sessionOf(ts) {
+  if (!Number.isFinite(ts)) return "off";
+  const h = new Date(ts).getUTCHours();
+  if (h >= 0 && h < 7) return "asia";     // Tokyo / Sydney
+  if (h >= 7 && h < 12) return "london";  // London morning
+  if (h >= 12 && h < 20) return "ny";     // New York (overlaps London pm)
+  return "off";                           // 20–24 UTC — thin liquidity
+}
+
+const SESSION_LABEL = { asia: "Asia", london: "London", ny: "New York", off: "off-hours" };
+
+/** A closed thesis is "event"-sourced iff it carried a catalyst, else technical. */
+function sourceOf(c) {
+  return c && c.catalyst ? "event" : "technical";
+}
+
+// ── 1. summarizeLedger — per-bucket stats across the reporting dimensions ────
+/**
+ * Break the closed ledger down by each reporting dimension, reusing ledgerStats
+ * for the math. Every leaf is { n, wins, winRate, avgR, expectancy, pnl }.
+ * @returns {{ overall, kind, symbol, side, session, source, bias }}
+ */
+export function summarizeLedger(closed) {
+  const list = Array.isArray(closed) ? closed : [];
+  const group = (keyFn) => {
+    const g = new Map();
+    for (const c of list) {
+      const k = keyFn(c);
+      if (k == null) continue;
+      if (!g.has(k)) g.set(k, []);
+      g.get(k).push(c);
+    }
+    const out = {};
+    for (const [k, arr] of g) out[k] = ledgerStats(arr);
+    return out;
+  };
+  return {
+    overall: ledgerStats(list),
+    kind: group((c) => c.kind ?? null),
+    symbol: group((c) => c.symbol ?? null),
+    side: group((c) => c.side ?? null),
+    session: group((c) => sessionOf(c.openedAt)),
+    source: group((c) => sourceOf(c)),
+    bias: group((c) => c.bias ?? null), // empty unless theses carried a bias tag
+  };
+}
+
+// ── 2. deriveLessons — one lesson per bucket that clears minSample ───────────
+// Each "view" projects a closed thesis onto a bucket's defining dimensions (or
+// null to exclude it). Single dimensions plus the useful compounds, so a lesson
+// can be as specific as "mean-reversion shorts on SOLUSDT".
+const VIEWS = [
+  (c) => ({ kind: c.kind }),
+  (c) => ({ symbol: c.symbol }),
+  (c) => ({ side: c.side }),
+  (c) => ({ session: sessionOf(c.openedAt) }),
+  (c) => ({ source: sourceOf(c) }),
+  (c) => (c.bias != null ? { bias: c.bias } : null),
+  (c) => ({ kind: c.kind, side: c.side }),
+  (c) => ({ kind: c.kind, symbol: c.symbol }),
+  (c) => ({ symbol: c.symbol, side: c.side }),
+  (c) => ({ kind: c.kind, symbol: c.symbol, side: c.side }),
+];
+
+function dimsValid(dims) {
+  if (!dims) return false;
+  for (const v of Object.values(dims)) if (v == null) return false;
+  return true;
+}
+
+function signedR(r) {
+  const v = Number(r) || 0;
+  return `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(2)}R`;
+}
+
+/** Natural-language description of a bucket's defining dimensions. */
+function describeDims(d) {
+  const sidePl = d.side ? (d.side === "long" ? "longs" : "shorts") : null;
+  let core;
+  if (d.kind && sidePl) core = `${d.kind} ${sidePl}`;
+  else if (d.kind) core = `${d.kind} setups`;
+  else if (sidePl) core = sidePl;
+  else core = "trades";
+  const parts = [core];
+  if (d.symbol) parts.push(`on ${d.symbol}`);
+  if (d.session) parts.push(`in the ${SESSION_LABEL[d.session] || d.session} session`);
+  if (d.source) parts.push(d.source === "event" ? "(event-driven)" : "(technical)");
+  if (d.bias) parts.push(`with ${d.bias}-bias`);
+  return parts.join(" ");
+}
+
+function makeLesson(dims, items) {
+  const s = ledgerStats(items);
+  let verdict, action;
+  if (s.expectancy >= STRONG_EXPECTANCY) { verdict = "strong-positive"; action = "boost"; }
+  else if (s.expectancy < 0) { verdict = "losing"; action = "suppress"; }
+  else { verdict = "neutral"; action = "neutral"; }
+  const word = action === "boost" ? "favor" : action === "suppress" ? "suppress" : "neutral";
+  const text = `${describeDims(dims)}: ${Math.round(s.winRate * 100)}% win, ${signedR(s.expectancy)} over ${s.n} trades → ${word}`;
+  return {
+    dims, verdict, action,
+    n: s.n, wins: s.wins, winRate: s.winRate, avgR: s.avgR, expectancy: s.expectancy, pnl: s.pnl,
+    text,
+  };
+}
+
+/**
+ * Extract lessons from the closed ledger. One lesson per bucket (single-dim and
+ * compound) that reaches `minSample` trades, classified strong-positive /
+ * neutral / losing, sorted strongest-and-most-evidenced first (neutrals last).
+ * @returns {Array<{dims,verdict,action,n,wins,winRate,avgR,expectancy,pnl,text}>}
+ */
+export function deriveLessons(closed, { minSample = 20, max = 50 } = {}) {
+  const list = Array.isArray(closed) ? closed : [];
+  const lessons = [];
+  for (const view of VIEWS) {
+    const groups = new Map(); // json(dims) -> { dims, items }
+    for (const c of list) {
+      const dims = view(c);
+      if (!dimsValid(dims)) continue;
+      const key = JSON.stringify(dims);
+      if (!groups.has(key)) groups.set(key, { dims, items: [] });
+      groups.get(key).items.push(c);
+    }
+    for (const { dims, items } of groups.values()) {
+      if (items.length < minSample) continue;
+      lessons.push(makeLesson(dims, items));
+    }
+  }
+  lessons.sort((a, b) => {
+    const an = a.action === "neutral" ? 1 : 0, bn = b.action === "neutral" ? 1 : 0;
+    if (an !== bn) return an - bn;                                 // actionable first
+    return Math.abs(b.expectancy) - Math.abs(a.expectancy) || b.n - a.n;
+  });
+  return lessons.slice(0, max);
+}
+
+// ── 3. adjustment — fold the lessons into a gentle sizing prior ──────────────
+function matches(dims, setup) {
+  for (const k of Object.keys(dims)) {
+    if (!setup || setup[k] !== dims[k]) return false;
+  }
+  return true;
+}
+
+/**
+ * Turn the lessons into a conservative sizing decision for a proposed setup.
+ * Only lessons whose bucket cleared `minSample` AND whose dimensions all match
+ * the setup contribute. Losing buckets shrink size (or, when egregious, skip);
+ * strong buckets get a mild boost. The net multiplier is hard-clamped to
+ * [0.5, 1.25] — a nudge, never a swing.
+ * @param setup {{kind?,symbol?,side?,session?,source?,bias?}}
+ * @returns {{ mult:number, skip:boolean, reasons:string[] }}
+ */
+export function adjustment(lessons, setup, opts = {}) {
+  const {
+    minSample = 20,
+    floor = MULT_FLOOR, ceil = MULT_CEIL,
+    boost = BOOST, mildCut = MILD_CUT, hardCut = HARD_CUT,
+    hardCutExpectancy = HARD_CUT_EXPECTANCY,
+    skipExpectancy = SKIP_EXPECTANCY, skipWinRate = SKIP_WINRATE, skipMinSample = minSample,
+  } = opts;
+  let mult = 1, skip = false;
+  const reasons = [];
+  for (const l of lessons || []) {
+    if (!l || !l.dims || l.n < minSample) continue;
+    if (!matches(l.dims, setup)) continue;
+    if (l.action === "boost") {
+      mult *= boost;
+      reasons.push(l.text);
+    } else if (l.action === "suppress") {
+      mult *= l.expectancy <= hardCutExpectancy ? hardCut : mildCut;
+      reasons.push(l.text);
+      if (l.n >= skipMinSample && l.expectancy <= skipExpectancy && l.winRate <= skipWinRate) skip = true;
+    }
+  }
+  mult = Math.max(floor, Math.min(ceil, mult));
+  return { mult, skip, reasons };
+}

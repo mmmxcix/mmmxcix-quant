@@ -9,6 +9,8 @@ import { openThesis, evaluateExit } from "../src/lib/argus/core.js";
 import { scan } from "../src/lib/argus/scanners.js";
 import { buildBrief, diffBrief, renderBrief } from "../src/lib/argus/brief.js";
 import { callArgusLLM } from "../src/lib/argus/llm.js";
+import { deriveLessons, adjustment, sessionOf } from "../src/lib/argus/learn.js";
+import { marketOpen } from "../src/lib/argus/hours.js";
 
 const SITE = process.env.LAB_SITE || "https://quant.mmmxcix.com";
 const TOKEN = process.env.LAB_TOKEN;
@@ -22,6 +24,9 @@ const EQUITY0 = +(process.env.LAB_ARGUS_EQUITY || 10000);
 // biases. Best-effort (free LLM pool is flaky) and opt-out via LAB_ARGUS_LLM=0.
 const LLM_ON = process.env.LAB_ARGUS_LLM !== "0";
 const EVENT_TTL = +(process.env.LAB_ARGUS_EVENT_TTL_MIN || 240) * 60_000; // biases expire (4h)
+// Hermes-style learning: buckets need at least this many closed trades before any
+// lesson is allowed to touch sizing (small samples lie). Tunable, conservative.
+const LEARN_MIN = +(process.env.LAB_ARGUS_LEARN_MIN || 20);
 // News-reachable tickers Argus may trade if a catalyst clearly names them.
 const EVENT_TICKERS = ["USO", "XLE", "ITA", "GLD", "UNG", "XOP", "SLV", "TLT", "UUP"];
 
@@ -40,6 +45,9 @@ const UNIVERSE = [
 let equity = EQUITY0;
 let open = [];          // open theses
 let forming = [];       // parked "approaching" setups {symbol, asset, side, kind, trigger, reason}
+let ledger = [];        // closed theses (mirror of KV argus:ledger, for learning)
+let lessons = [];       // current Hermes lessons derived from the ledger (recomputed each full scan)
+let closedAll = [];     // closed-thesis ledger the lessons are learned from (hydrated + appended)
 let closedToday = [];
 let dayStamp = new Date().getUTCDate();
 let equityDayStart = EQUITY0;
@@ -114,6 +122,8 @@ function manageExits(inst, last5, ledgerAdd) {
       equity += res.pnl;
       closedToday.push(res);
       ledgerAdd.push(res);
+      closedAll.push(res); // feed the learning ledger
+      if (closedAll.length > 600) closedAll = closedAll.slice(-600);
       console.log(`[${new Date().toISOString()}] CLOSE ${res.symbol} ${res.side} ${res.outcome} R=${res.R.toFixed(2)} pnl=${res.pnl.toFixed(2)} eq=${equity.toFixed(0)}`);
     }
   }
@@ -121,14 +131,30 @@ function manageExits(inst, last5, ledgerAdd) {
 
 function tryOpen(inst, setup, halted) {
   if (halted) return;
+  if (!marketOpen(inst)) return;                          // never open a closed market
   if (open.some((o) => o.symbol === inst.symbol)) return; // one position per instrument
   const bias = eventBias.get(inst.symbol);
   // Event-only tickers (added purely because news named them) trade only with a
   // matching-direction catalyst — price alone isn't enough to justify them.
   if (!isCore(inst.symbol) && (!bias || bias.side !== setup.side)) return;
+
+  // Hermes learning: nudge (or veto) sizing from what the ledger has taught us
+  // about this kind of setup. Gentle by construction — mult is hard-clamped and
+  // only buckets with ≥ LEARN_MIN closed trades count.
+  const evented = bias && bias.side === setup.side;
+  const adj = adjustment(lessons, {
+    kind: setup.kind, symbol: inst.symbol, side: setup.side,
+    session: sessionOf(Date.now()), source: evented ? "event" : "technical", bias: setup.bias,
+  }, { minSample: LEARN_MIN });
+  if (adj.skip) {
+    console.log(`[${new Date().toISOString()}] SKIP ${inst.symbol} ${setup.side} ${setup.kind} — lesson: ${adj.reasons[0] || "losing bucket"}`);
+    return;
+  }
+  const riskPct = BASE_RISK * adj.mult;
+
   const th = openThesis(
     { ...setup, symbol: inst.symbol, market: inst.asset },
-    { equity, openRisk: openRisk(), asset: inst.asset, heatCap: HEAT_CAP, baseRiskPct: BASE_RISK },
+    { equity, openRisk: openRisk(), asset: inst.asset, heatCap: HEAT_CAP, baseRiskPct: riskPct },
   );
   if (th) {
     if (bias && bias.side === th.side) { // enrich a confirmed setup with its catalyst
@@ -140,6 +166,7 @@ function tryOpen(inst, setup, halted) {
     }
     open.push(th);
     forming = forming.filter((f) => f.symbol !== inst.symbol);
+    if (adj.mult !== 1) console.log(`[${new Date().toISOString()}] LESSON ${inst.symbol} size ×${adj.mult.toFixed(2)} — ${adj.reasons[0] || ""}`);
     console.log(`[${new Date().toISOString()}] OPEN ${th.symbol} ${th.side} ${th.kind}${th.catalyst ? " [event]" : ""} @${th.entry.toFixed(4)} stop ${th.stop.toFixed(4)} tgt ${th.target.toFixed(4)} risk ${th.riskAmt.toFixed(0)} — ${th.reason}`);
   } else {
     // no heat room → park as forming so it's re-checked on the fast loop
@@ -162,13 +189,20 @@ async function cycle(fullScan) {
     const halted = dailyPnl <= -DAILY_STOP * equityDayStart;
 
     // Full scans consult the event channel first, so news-driven biases are live
-    // before the technical scan runs (and can expand the universe).
-    if (fullScan) await runEventChannel();
+    // before the technical scan runs (and can expand the universe). Then relearn
+    // from the closed-thesis ledger so this scan's sizing reflects the latest edge.
+    if (fullScan) {
+      await runEventChannel();
+      lessons = deriveLessons(closedAll, { minSample: LEARN_MIN });
+    }
 
-    // On the fast loop, only touch instruments with an open thesis or a forming setup.
+    // On the fast loop, only touch instruments with an open thesis or a forming
+    // setup. Skip instruments whose market is CLOSED (weekends/after-hours for
+    // stocks) — a real day-trader trades only what's open; still keep anything we
+    // already hold so its exits are managed.
     const uni = activeUniverse();
     const active = new Set([...open.map((o) => o.symbol), ...forming.map((f) => f.symbol)]);
-    const insts = fullScan ? uni : uni.filter((i) => active.has(i.symbol));
+    const insts = (fullScan ? uni : uni.filter((i) => active.has(i.symbol))).filter((i) => marketOpen(i) || active.has(i.symbol));
 
     for (const inst of insts) {
       let tf;
@@ -192,7 +226,7 @@ async function cycle(fullScan) {
       await persist(ledgerAdd, { halted, dailyPnl });
       lastPersistSig = sig;
     }
-    if (fullScan) console.log(`[${new Date().toISOString()}] scan: ${open.length} open · ${forming.length} forming · ${eventBias.size} event-bias · eq ${equity.toFixed(0)} · heat ${(openRisk() / equity * 100).toFixed(1)}%${halted ? " · DAILY-HALT" : ""}`);
+    if (fullScan) console.log(`[${new Date().toISOString()}] scan: ${insts.length}/${uni.length} open-mkt · ${open.length} open · ${forming.length} forming · ${eventBias.size} event-bias · ${lessons.length} lessons · eq ${equity.toFixed(0)} · heat ${(openRisk() / equity * 100).toFixed(1)}%${halted ? " · DAILY-HALT" : ""}`);
   } catch (e) {
     console.error(`cycle failed: ${e.message}`);
   } finally {
@@ -207,7 +241,7 @@ async function persist(ledgerAdd, extra) {
     .map(([symbol, v]) => ({ symbol, side: v.side, thesis: v.thesis, confidence: v.confidence, horizon: v.horizon, at: v.at, model: v.model }));
   const body = {
     token: TOKEN,
-    state: { equity, open: open.length, forming: forming.length, heatPct: openRisk() / equity, dayPnl: extra.dailyPnl, halted: extra.halted, universe: activeUniverse().length, events },
+    state: { equity, open: open.length, forming: forming.length, heatPct: openRisk() / equity, dayPnl: extra.dailyPnl, halted: extra.halted, universe: activeUniverse().length, events, lessons: lessons.slice(0, 8).map((l) => ({ text: l.text, verdict: l.verdict, n: l.n })) },
     theses: open,
     ledgerAdd,
   };
@@ -224,11 +258,15 @@ async function hydrate() {
     const j = await r.json();
     if (j.state?.equity) equity = j.state.equity;
     if (Array.isArray(j.theses)) open = j.theses;
+    if (Array.isArray(j.ledger)) { // learn from the full closed ledger on startup
+      closedAll = j.ledger.slice(-600);
+      lessons = deriveLessons(closedAll, { minSample: LEARN_MIN });
+    }
     for (const e of j.state?.events || []) { // restore fresh event biases across restarts
       if (Date.now() - (e.at || 0) < EVENT_TTL) eventBias.set(e.symbol, { side: e.side, thesis: e.thesis, confidence: e.confidence, evidence: [], horizon: e.horizon, at: e.at, model: e.model });
     }
     equityDayStart = equity;
-    console.log(`hydrated: eq ${equity.toFixed(0)}, ${open.length} open theses, ${eventBias.size} event-bias`);
+    console.log(`hydrated: eq ${equity.toFixed(0)}, ${open.length} open theses, ${eventBias.size} event-bias, ${closedAll.length} closed → ${lessons.length} lessons`);
   } catch { /* fresh start */ }
 }
 
