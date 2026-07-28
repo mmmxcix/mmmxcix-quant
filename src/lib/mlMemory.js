@@ -10,7 +10,11 @@
 //    way these models "get better". We do NOT pretend a Random Forest can
 //    learn incrementally between runs; it can't.
 //
-// Storage: localStorage (per browser), capped. Never throws.
+// Storage: localStorage is the instant local cache; /api/mlmemory (KV) is the
+// durable, CROSS-DEVICE home. The ledger is the only evidence of real
+// out-of-sample skill, so it must survive a cache clear and follow the account
+// to another machine. Writes go to both (server push is fire-and-forget and
+// merges server-side, so two devices never overwrite each other). Never throws.
 
 import { fetchCandles } from "@/lib/data";
 
@@ -25,9 +29,58 @@ const read = (key) => {
     return Array.isArray(v) ? v : [];
   } catch { return []; }
 };
-const write = (key, arr) => {
+const writeLocal = (key, arr) => {
   try { localStorage.setItem(key, JSON.stringify(arr)); } catch { /* quota */ }
 };
+
+/** Persist locally AND push to the server (best-effort; local never blocks). */
+const write = (key, arr) => {
+  writeLocal(key, arr);
+  const field = key === RUNS_KEY ? "runs" : "preds";
+  try {
+    fetch("/api/mlmemory", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ [field]: arr }),
+      keepalive: true, // survives a tab close right after a run
+    }).catch(() => { /* offline / not signed in — local copy stands */ });
+  } catch { /* fetch unavailable */ }
+};
+
+/**
+ * Pull the server copy and merge it into this browser. Call once when the track
+ * record mounts: a fresh device then shows the full history instead of "empty",
+ * and anything made here while offline is pushed back up.
+ * @returns {Promise<boolean>} true when local data changed
+ */
+export async function syncFromServer() {
+  try {
+    const res = await fetch("/api/mlmemory");
+    if (!res.ok) return false;
+    const srv = await res.json();
+    let changed = false;
+    for (const [key, list, cap] of [[RUNS_KEY, srv.runs, RUNS_CAP], [PREDS_KEY, srv.preds, PREDS_CAP]]) {
+      if (!Array.isArray(list)) continue;
+      const local = read(key);
+      const keyFn = key === RUNS_KEY
+        ? (r) => `${r.ts}|${r.label}`
+        : (p) => `${p.type}|${p.type === "ranking" ? p.month : `${p.symbol}|${p.model}|${p.lastBarTime}`}`;
+      const by = new Map();
+      for (const e of [...list, ...local]) {
+        if (!e || typeof e !== "object") continue;
+        const k = keyFn(e);
+        const prev = by.get(k);
+        if (!prev || (e.resolved && !prev.resolved)) by.set(k, e);
+      }
+      const merged = [...by.values()].sort((a, b) => (b.madeAt || b.ts || 0) - (a.madeAt || a.ts || 0)).slice(0, cap);
+      if (merged.length !== local.length) changed = true;
+      writeLocal(key, merged);
+      // Push anything the server was missing (offline-made entries).
+      if (merged.length !== list.length) write(key, merged);
+    }
+    return changed;
+  } catch { return false; }
+}
 
 /* ── Run log ─────────────────────────────────────────────────────────── */
 

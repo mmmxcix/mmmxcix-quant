@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { History, ClipboardCheck, Hourglass, RefreshCw, Loader2 } from "lucide-react";
 import { cn, fmtPct, fmtNum } from "@/lib/utils";
-import { getRuns, getPredictions, resolvePredictions, ledgerStats } from "@/lib/mlMemory";
+import { getRuns, getPredictions, resolvePredictions, ledgerStats, syncFromServer } from "@/lib/mlMemory";
 
 // Track record — the studio's memory made visible. Two ledgers:
 // 1. every run it has seen (config + out-of-sample score),
@@ -24,11 +24,14 @@ export default function MLTrackRecord() {
     setStats(ledgerStats());
   };
 
-  // On mount: resolve anything resolvable, then show the updated ledger.
+  // On mount: pull the account's server-side copy (so the track record is the
+  // same on every device), then resolve anything resolvable and show it.
   useEffect(() => {
     let alive = true;
     (async () => {
       setResolving(true);
+      await syncFromServer();
+      if (alive) refresh();               // show the merged history immediately
       await resolvePredictions();
       if (alive) { refresh(); setResolving(false); }
     })();
@@ -171,7 +174,7 @@ export default function MLTrackRecord() {
         How the studio "learns", honestly: every run retrains on the latest, longer history (the
         legitimate improvement channel — these models can't learn incrementally between runs);
         the run log remembers which configs scored what out-of-sample; and the prediction ledger is
-        graded by reality itself. Stored in this browser.
+        graded by reality itself. Stored on your account — the same track record on every device.
       </p>
     </div>
   );
