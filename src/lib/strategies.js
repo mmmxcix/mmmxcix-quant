@@ -769,4 +769,43 @@ export const BUILT_IN_STRATEGIES = [
       };
     },
   },
+
+  {
+    id: "opening-drive",
+    name: "Opening Drive Momentum (Intraday)",
+    description:
+      "Intraday, prop-firm-friendly: after the session opens, if price has DRIVEN more than one ATR away from the opening price within the first few bars, it joins that momentum with an ATR stop and an R-multiple target — one trade per day, US cash session by default. Trades the well-documented opening-auction directional impulse; the tight ATR stop keeps drawdown shallow (fits an evaluation account). Use an intraday interval (5m/15m).",
+    params: [
+      { key: "sessionStartH", label: "Session start (UTC h)", default: 13, min: 0, max: 23, step: 1 },
+      { key: "sessionStartM", label: "Session start (UTC min)", default: 30, min: 0, max: 59, step: 15 },
+      { key: "driveBars", label: "Drive window (bars)", default: 3, min: 1, max: 20, step: 1 },
+      { key: "atrPeriod", label: "ATR period", default: 14, min: 5, max: 60, step: 1 },
+      { key: "targetR", label: "Take-profit (R)", default: 1.5, min: 0.5, max: 5, step: 0.25 },
+      { key: "longOnly", label: "Long only (1/0)", default: 0, min: 0, max: 1, step: 1 },
+    ],
+    build({ sessionStartH = 13, sessionStartM = 30, driveBars = 3, atrPeriod = 14, targetR = 1.5, longOnly = 0 } = {}) {
+      let openPx = null, bars = 0, traded = false;
+      return (ctx) => {
+        const a = cached(ctx.candles, `atr:${atrPeriod}`, () => ind.atr(ctx.candles, atrPeriod));
+        if (ctx.session.isNewDay) { openPx = null; bars = 0; traded = false; }
+        if (ctx.position !== "flat") return ctx.position; // brackets do the exiting
+        const sesStart = sessionStartH * 60 + sessionStartM;
+        if (ctx.session.minuteOfDay < sesStart || traded) return "flat";
+        if (openPx === null) openPx = ctx.open;           // anchor at the session open
+        bars++;
+        const atrNow = a[ctx.index];
+        if (bars <= driveBars || atrNow == null || !(atrNow > 0)) return "flat";
+        const move = ctx.close - openPx;                  // signed drive since the open
+        if (move > atrNow) {
+          traded = true;
+          return { signal: "long", stop: ctx.close - atrNow, target: ctx.close + atrNow * targetR };
+        }
+        if (!longOnly && move < -atrNow) {
+          traded = true;
+          return { signal: "short", stop: ctx.close + atrNow, target: ctx.close - atrNow * targetR };
+        }
+        return "flat";
+      };
+    },
+  },
 ];

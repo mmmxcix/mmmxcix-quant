@@ -47,6 +47,10 @@ const RESEARCH_LANG = String(process.env.LAB_RESEARCH_LANG || "python").toLowerC
 // so a strategy that decayed and only looks good over the full 10y is rejected.
 const BH_SHARPE_MARGIN = +(process.env.LAB_BH_MARGIN || 0.10);
 const HOLDOUT_MIN_PF = +(process.env.LAB_HOLDOUT_PF || 1.0);
+// Absolute quality floor: a promoted market must clear a real risk-adjusted bar,
+// not merely beat buy&hold — the goal is strategies a quant would actually find
+// attractive (Sharpe ≈ 1+), not marginal ones. Tunable via LAB_MIN_SHARPE.
+const MIN_SHARPE = +(process.env.LAB_MIN_SHARPE || 1.0);
 
 // Compile a strategy to a signalFn regardless of language: Python goes through
 // Pyodide (vectorised signals(df), memoised per candle array — a drop-in for the
@@ -482,10 +486,16 @@ function gauntlet(code, datasets, globalTrials, lang) {
     // if the strategy doesn't beat holding risk-adjusted, it does not belong in
     // the paper book for that market — no matter how "real" its edge is.
     const bhS = r.m.buyHoldSharpe ?? 0, sh = r.m.sharpe ?? 0;
-    // Raise the bar: don't just TIE buy&hold — beat it by a real margin AND be
-    // positive on its own. A marginal edge over holding isn't worth the effort or
-    // the execution risk. (Tunable via LAB_BH_MARGIN.)
-    if (sh < bhS + BH_SHARPE_MARGIN || sh <= 0) {
+    // (a) Absolute quality floor — must be genuinely attractive on its own, not
+    // just positive. A quant ignores a Sharpe-0.4 strategy however you dress it.
+    if (sh < MIN_SHARPE) {
+      byMarket[r.name] = { ...mk, rejected: `Sharpe ${sh.toFixed(2)} < ${MIN_SHARPE} quality floor` };
+      rejections.push(`${r.name}: Sharpe ${sh.toFixed(2)} below the ${MIN_SHARPE} quant-grade floor`);
+      continue;
+    }
+    // (b) And it must still BEAT buy&hold by a margin — a great Sharpe that merely
+    // matches holding the asset isn't worth the execution risk. (LAB_BH_MARGIN.)
+    if (sh < bhS + BH_SHARPE_MARGIN) {
       byMarket[r.name] = { ...mk, rejected: `Sharpe ${sh.toFixed(2)} < buy&hold ${bhS.toFixed(2)} + ${BH_SHARPE_MARGIN}` };
       rejections.push(`${r.name}: doesn't clear buy & hold by margin (Sharpe ${sh.toFixed(2)} vs ${bhS.toFixed(2)}+${BH_SHARPE_MARGIN})`);
       continue;
