@@ -571,15 +571,21 @@ console.log(`paper run complete: ${summaries.length} strategies, combined ${comb
       local.lastResearchAt = Date.now();
       saveLocal(local); // mark BEFORE spawn so a crashing research can't hammer every 15 min
       const researchPath = fileURLToPath(new URL("./research-agent.mjs", import.meta.url));
-      const logFd = openSync(join(homedir(), ".mmmxcix-research.log"), "a");
-      const child = spawn(process.execPath, [researchPath], {
-        detached: true,
-        stdio: ["ignore", logFd, logFd],
-        windowsHide: true, // don't pop a console window every cycle (Windows)
-        env: process.env, // carries LAB_TOKEN
-      });
+      const logPath = join(homedir(), ".mmmxcix-research.log");
+      let child;
+      if (process.platform === "win32") {
+        // node's `windowsHide` is IGNORED when `detached` is set on Windows, so a
+        // detached research spawn still pops a console. Route it through the
+        // windowless VBS launcher (wscript hides everything it starts, incl. the
+        // cmd that redirects to the log) — the same one the Scheduled Tasks use.
+        const vbs = fileURLToPath(new URL("./run-hidden.vbs", import.meta.url));
+        child = spawn("wscript.exe", [vbs, researchPath, logPath], { detached: true, stdio: "ignore", windowsHide: true });
+      } else {
+        const logFd = openSync(logPath, "a");
+        child = spawn(process.execPath, [researchPath], { detached: true, stdio: ["ignore", logFd, logFd], windowsHide: true, env: process.env });
+      }
       child.unref();
-      console.log(`research due (${alwaysOn ? "always-on, >" + everyMs / 60000 + "min" : ">" + everyMs / 3.6e6 + "h"}) → spawned detached (log: ~/.mmmxcix-research.log)`);
+      console.log(`research due (${alwaysOn ? "always-on, >" + everyMs / 60000 + "min" : ">" + everyMs / 3.6e6 + "h"}) → spawned hidden (log: ~/.mmmxcix-research.log)`);
     }
   } catch (e) {
     console.error("research auto-schedule skipped:", e.message);
