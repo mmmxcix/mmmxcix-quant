@@ -324,8 +324,12 @@ export async function onRequest({ request, env }) {
         "  - No look-ahead: row i may only use rows <= i. Use rolling()/shift() correctly; NEVER .shift(-1). Fill warm-up NaNs with 0.\n" +
         "  - The edge must survive being executed one bar late (no dependence on an exact single-bar touch).\n" +
         "  - Up to 5 parameters, hardcoded as constants. Long and/or short. numpy (np) + pandas (pd) only, no other imports.\n\n" +
-        "Start the code with 3 short comment lines: `# EDGE:` (why this has an edge, one sentence), " +
-        "`# WORKS:` (the market regime/conditions it needs), `# BREAKS:` (what kills it). Then the single self-contained " +
+        "Start the code with exactly 3 comment lines that describe the RULE, not vibes:\n" +
+        "  `# EDGE:` the concrete mechanism AND the actual rule — name the indicators, thresholds and directions you use " +
+        "(e.g. 'long when close>SMA200 and RSI(2)<10, exit when close>SMA5 — buys short-term dips in an uptrend'); one sentence, specific enough to reproduce.\n" +
+        "  `# WORKS:` the market regime/conditions it needs (trend vs chop, high/low volatility, session).\n" +
+        "  `# BREAKS:` the concrete condition that kills it.\n" +
+        "Do NOT write vague market commentary ('looks like', 'seems bullish', 'resembles X', 'recently') — state the systematic rule. Then the single self-contained " +
         "`def signals(df):` (plus any helpers). Prefer a rule the source actually states over one you invent. Name nothing after the source."
       : head +
         "Act as a hedge-fund quant. Turn the systematic idea in this source into ONE robust, testable " +
@@ -341,8 +345,12 @@ export async function onRequest({ request, env }) {
         "  - The edge must NOT depend on catching a move within a single bar; it must survive being executed " +
         "one bar late. Avoid entries that only work at an exact price touch.\n" +
         "  - Up to 5 parameters, hardcoded as const. Long and/or short. No look-ahead (only data up to ctx.index).\n\n" +
-        "Start the code with 3 short comment lines: `// EDGE:` (why this has an edge, one sentence), " +
-        "`// WORKS:` (the market regime/conditions it needs), `// BREAKS:` (what kills it). Then the code. " +
+        "Start the code with exactly 3 comment lines that describe the RULE, not vibes:\n" +
+        "  `// EDGE:` the concrete mechanism AND the actual rule — name the indicators, thresholds and directions you use " +
+        "(e.g. 'long when EMA50>EMA200 and price reclaims VWAP, ATR stop + 2R target — trend-continuation entries'); one sentence, specific enough to reproduce.\n" +
+        "  `// WORKS:` the market regime/conditions it needs (trend vs chop, high/low volatility, session).\n" +
+        "  `// BREAKS:` the concrete condition that kills it.\n" +
+        "Do NOT write vague market commentary ('looks like', 'seems bullish', 'resembles X', 'recently') — state the systematic rule. Then the code. " +
         "Prefer a rule the source actually states over one you invent. Name nothing after the source.";
   } else if (improve && typeof improve.code === "string") {
     // The always-on BUILD/IMPROVE loop: a strategy that traded but failed ONE
