@@ -576,4 +576,197 @@ export const BUILT_IN_STRATEGIES = [
       };
     },
   },
+
+  {
+    id: "absolute-momentum",
+    name: "Absolute Momentum (Time-Series)",
+    description:
+      "The tradable single-asset momentum factor (Moskowitz/AQR time-series momentum): hold the asset only while its own trailing return is positive AND price is above a long trend average, otherwise stand in cash. Captures persistent trends and sidesteps the worst drawdowns. (Cross-sectional Value/Quality factors need the multi-asset engine; this is the timing version.)",
+    params: [
+      { key: "lookback", label: "Momentum lookback (bars)", default: 120, min: 20, max: 400, step: 5 },
+      { key: "trend", label: "Trend filter SMA", default: 200, min: 20, max: 400, step: 5 },
+      { key: "minRoc", label: "Min return % to hold", default: 0, min: -20, max: 20, step: 1 },
+    ],
+    build({ lookback = 120, trend = 200, minRoc = 0 } = {}) {
+      return (ctx) => {
+        const prices = cachedCloses(ctx.candles);
+        const r = cached(ctx.candles, `roc:${lookback}`, () => ind.roc(prices, lookback));
+        const s = cached(ctx.candles, `sma:${trend}`, () => ind.sma(prices, trend));
+        const mom = r[ctx.index], ma = s[ctx.index];
+        if (mom === null || ma === null) return "flat";
+        // Long only when the trend is up AND absolute momentum is positive.
+        return mom > minRoc && ctx.close > ma ? "long" : "flat";
+      };
+    },
+  },
+
+  {
+    id: "low-vol-timing",
+    name: "Low-Volatility Timing (Factor)",
+    description:
+      "The low-volatility anomaly as a timing rule: be invested only in CALM regimes — when ATR (volatility) sits below its own longer average and price is above trend — and step aside when volatility expands. Historically low-vol regimes deliver better risk-adjusted returns; this trims exposure into turbulent, drawdown-prone markets.",
+    params: [
+      { key: "atrPeriod", label: "ATR period", default: 14, min: 5, max: 60, step: 1 },
+      { key: "volAvg", label: "Vol baseline (SMA of ATR)", default: 100, min: 20, max: 300, step: 5 },
+      { key: "trend", label: "Trend filter SMA", default: 200, min: 20, max: 400, step: 5 },
+    ],
+    build({ atrPeriod = 14, volAvg = 100, trend = 200 } = {}) {
+      return (ctx) => {
+        const prices = cachedCloses(ctx.candles);
+        const a = cached(ctx.candles, `atr:${atrPeriod}`, () => ind.atr(ctx.candles, atrPeriod));
+        // Rolling SMA of ATR over its VALID values only — feeding the null warm-up
+        // into ind.sma would poison the running sum with NaN forever.
+        const aAvg = cached(ctx.candles, `atrsma:${atrPeriod}:${volAvg}`, () => {
+          const out = new Array(a.length).fill(null);
+          const q = []; let sum = 0;
+          for (let i = 0; i < a.length; i++) {
+            if (a[i] == null) continue;
+            q.push(a[i]); sum += a[i];
+            if (q.length > volAvg) sum -= q.shift();
+            if (q.length === volAvg) out[i] = sum / volAvg;
+          }
+          return out;
+        });
+        const s = cached(ctx.candles, `sma:${trend}`, () => ind.sma(prices, trend));
+        const atrNow = a[ctx.index], base = aAvg[ctx.index], ma = s[ctx.index];
+        if (atrNow == null || base == null || ma == null) return "flat";
+        // Calm + uptrend → invested; volatility expansion → flat.
+        return atrNow < base && ctx.close > ma ? "long" : "flat";
+      };
+    },
+  },
+
+  {
+    id: "rolling-vwap-reversion",
+    name: "Rolling VWAP Reversion",
+    description:
+      "A swing (non-intraday) VWAP mean-reversion: buys when price is stretched a set number of ATRs BELOW the rolling volume-weighted average price (value), and exits back at the VWAP. Volume-weighting anchors 'fair value' to where real trade happened, so the fade reverts to a level the market actually defended.",
+    params: [
+      { key: "period", label: "VWAP window (bars)", default: 50, min: 10, max: 300, step: 5 },
+      { key: "atrPeriod", label: "ATR period", default: 14, min: 5, max: 60, step: 1 },
+      { key: "stretch", label: "Entry stretch (ATRs below)", default: 2, min: 0.5, max: 6, step: 0.25 },
+    ],
+    build({ period = 50, atrPeriod = 14, stretch = 2 } = {}) {
+      return (ctx) => {
+        const a = cached(ctx.candles, `atr:${atrPeriod}`, () => ind.atr(ctx.candles, atrPeriod));
+        const vwap = cached(ctx.candles, `rvwap:${period}`, () => {
+          const c = ctx.candles, out = new Array(c.length).fill(null);
+          const typ = [], vol = [];
+          let pv = 0, v = 0;
+          for (let i = 0; i < c.length; i++) {
+            const t = (c[i].high + c[i].low + c[i].close) / 3, u = c[i].volume ?? 0;
+            typ.push(t); vol.push(u);
+            pv += t * u; v += u;
+            if (i >= period) { pv -= typ[i - period] * vol[i - period]; v -= vol[i - period]; }
+            if (i >= period - 1 && v > 0) out[i] = pv / v;
+          }
+          return out;
+        });
+        const vw = vwap[ctx.index], atrNow = a[ctx.index];
+        if (vw == null || atrNow == null || !(atrNow > 0)) return "flat";
+        if (ctx.position === "flat") {
+          return ctx.close < vw - stretch * atrNow ? "long" : "flat"; // stretched below value → buy
+        }
+        return ctx.close >= vw ? "flat" : "long"; // exit once price reverts to VWAP
+      };
+    },
+  },
+
+  {
+    id: "turtle-breakout",
+    name: "Turtle Breakout (Trend-Filtered)",
+    description:
+      "The classic Donchian trend-following breakout (Turtle system) with a long-trend filter: enters long on a close above the N-bar high, but only while price is above a long moving average (so it doesn't buy breakouts inside a downtrend), and exits on a close below the shorter M-bar low. Rides sustained momentum; the trend filter cuts the whipsaws pure breakouts suffer in chop.",
+    params: [
+      { key: "entryN", label: "Entry channel (bars)", default: 20, min: 5, max: 200, step: 1 },
+      { key: "exitN", label: "Exit channel (bars)", default: 10, min: 3, max: 100, step: 1 },
+      { key: "trend", label: "Trend filter SMA", default: 100, min: 20, max: 400, step: 5 },
+    ],
+    build({ entryN = 20, exitN = 10, trend = 100 } = {}) {
+      return (ctx) => {
+        const prices = cachedCloses(ctx.candles);
+        const dcIn = cached(ctx.candles, `dc:${entryN}`, () => ind.donchian(ctx.candles, entryN));
+        const dcOut = cached(ctx.candles, `dc:${exitN}`, () => ind.donchian(ctx.candles, exitN));
+        const s = cached(ctx.candles, `sma:${trend}`, () => ind.sma(prices, trend));
+        const up = dcIn[ctx.index]?.upper, lo = dcOut[ctx.index]?.lower, ma = s[ctx.index];
+        if (up == null || lo == null || ma == null) return "flat";
+        if (ctx.position === "flat") {
+          return ctx.close > up && ctx.close > ma ? "long" : "flat"; // breakout in an uptrend
+        }
+        return ctx.close < lo ? "flat" : "long"; // trail out on the shorter-channel break
+      };
+    },
+  },
+
+  {
+    id: "keltner-breakout",
+    name: "Keltner Channel Breakout",
+    description:
+      "A volatility breakout: goes long when price closes above an EMA plus a multiple of ATR (an expansion out of the value channel), and exits back at the EMA mid-line. Because the band is ATR-scaled, the trigger self-adjusts to each market's volatility instead of a fixed distance.",
+    params: [
+      { key: "period", label: "EMA / ATR period", default: 20, min: 5, max: 100, step: 1 },
+      { key: "mult", label: "ATR multiple", default: 1.5, min: 0.5, max: 4, step: 0.25 },
+    ],
+    build({ period = 20, mult = 1.5 } = {}) {
+      return (ctx) => {
+        const prices = cachedCloses(ctx.candles);
+        const e = cached(ctx.candles, `ema:${period}`, () => ind.ema(prices, period));
+        const a = cached(ctx.candles, `atr:${period}`, () => ind.atr(ctx.candles, period));
+        const mid = e[ctx.index], atrNow = a[ctx.index];
+        if (mid == null || atrNow == null) return "flat";
+        if (ctx.position === "flat") {
+          return ctx.close > mid + mult * atrNow ? "long" : "flat"; // upper-band breakout
+        }
+        return ctx.close < mid ? "flat" : "long"; // fall back to the mid-line → exit
+      };
+    },
+  },
+
+  {
+    id: "connors-rsi2",
+    name: "Connors RSI-2 Pullback",
+    description:
+      "Larry Connors' short-term mean-reversion: in a confirmed uptrend (price above a long SMA) it buys deep 2-period-RSI oversold dips and sells the bounce (price back above a short SMA, or RSI recovered). Trades the 'buy the dip in an uptrend' edge — high win-rate, short holding period.",
+    params: [
+      { key: "rsiPeriod", label: "RSI period", default: 2, min: 2, max: 10, step: 1 },
+      { key: "oversold", label: "Oversold threshold", default: 10, min: 2, max: 30, step: 1 },
+      { key: "trend", label: "Trend filter SMA", default: 200, min: 20, max: 400, step: 5 },
+      { key: "exitSma", label: "Exit SMA", default: 5, min: 2, max: 50, step: 1 },
+    ],
+    build({ rsiPeriod = 2, oversold = 10, trend = 200, exitSma = 5 } = {}) {
+      return (ctx) => {
+        const prices = cachedCloses(ctx.candles);
+        const r = cached(ctx.candles, `rsi:${rsiPeriod}`, () => ind.rsi(prices, rsiPeriod));
+        const st = cached(ctx.candles, `sma:${trend}`, () => ind.sma(prices, trend));
+        const se = cached(ctx.candles, `sma:${exitSma}`, () => ind.sma(prices, exitSma));
+        const rv = r[ctx.index], maT = st[ctx.index], maE = se[ctx.index];
+        if (rv == null || maT == null || maE == null) return "flat";
+        if (ctx.position === "flat") {
+          return ctx.close > maT && rv < oversold ? "long" : "flat"; // dip in an uptrend
+        }
+        return ctx.close > maE ? "flat" : "long"; // sell the bounce back above the short SMA
+      };
+    },
+  },
+
+  {
+    id: "macd-trend",
+    name: "MACD Trend Follow",
+    description:
+      "Trend-following on the MACD: long while the MACD line is above its signal line and the histogram is positive (momentum confirmed up), flat otherwise. A smoothed dual-EMA momentum filter that stays out of choppy, momentum-less phases.",
+    params: [
+      { key: "fast", label: "Fast EMA", default: 12, min: 3, max: 100, step: 1 },
+      { key: "slow", label: "Slow EMA", default: 26, min: 5, max: 200, step: 1 },
+      { key: "signal", label: "Signal EMA", default: 9, min: 2, max: 50, step: 1 },
+    ],
+    build({ fast = 12, slow = 26, signal = 9 } = {}) {
+      return (ctx) => {
+        const prices = cachedCloses(ctx.candles);
+        const m = cached(ctx.candles, `macd:${fast}:${slow}:${signal}`, () => ind.macd(prices, fast, slow, signal));
+        const v = m[ctx.index];
+        if (v == null || v.macd == null || v.signal == null) return "flat";
+        return v.macd > v.signal && v.hist > 0 ? "long" : "flat";
+      };
+    },
+  },
 ];
