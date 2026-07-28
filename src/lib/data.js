@@ -155,22 +155,23 @@ async function fetchYahoo(symbol, yahooInterval, yahooRange, window) {
   return candles;
 }
 
-// Yahoo intraday is short AND capped per request, so a single range=3mo on 5m
-// data 422s. These are the availability + per-request windows (days) — we clamp
-// the request to what actually exists and fetch in chunks, then stitch. (Crypto
-// has full intraday history via Binance; this is a stock-data limitation.)
-const YAHOO_INTRADAY = {
+// Yahoo SUB-HOUR data (1m..30m) is short AND capped per request, so a plain
+// range=3mo on 5m 422s. Availability + per-request window in days — we clamp to
+// what exists and fetch in chunks via period1/period2, then stitch. NOTE: 1h
+// (60m) is NOT here — Yahoo REJECTS period1/period2 for 60m (422); it must use
+// range (works to ~2y). Crypto has full intraday via Binance; this is a
+// stock-data ceiling, not a bug.
+const YAHOO_SUBHOUR = {
   "1m": { maxDays: 7, chunk: 7 },
   "5m": { maxDays: 58, chunk: 58 },
   "15m": { maxDays: 58, chunk: 58 },
   "30m": { maxDays: 58, chunk: 58 },
-  "60m": { maxDays: 720, chunk: 720 },
 };
 
-// Fetch stock intraday over [fromSec, toSec], clamped to what Yahoo has and split
+// Fetch stock sub-hour over [fromSec, toSec], clamped to what Yahoo has and split
 // into per-request chunks (period1/period2), then deduped + sorted ascending.
 async function fetchYahooIntraday(symbol, yInterval, fromSec, toSec) {
-  const cap = YAHOO_INTRADAY[yInterval];
+  const cap = YAHOO_SUBHOUR[yInterval];
   const now = Math.floor(Date.now() / 1000);
   const to = Math.min(toSec, now);
   let from = Math.max(fromSec, now - cap.maxDays * 86400); // clamp to available history
@@ -196,13 +197,22 @@ export async function fetchCandles({ market, symbol, interval = "1d", range = "1
     throw new Error(`Interval ${iDef.label} is not available for this market.`);
   }
   const window = Number.isFinite(from) && Number.isFinite(to) && to > from ? { from, to } : null;
+  const now = Math.floor(Date.now() / 1000);
+  const isMaxDaily = !window && range === "max" && (iDef.yahoo === "1d" || iDef.yahoo === "1wk");
   let candles;
   if (market === "crypto") {
     candles = await fetchBinance(symbol, iDef.binance, rDef.days, window);
-  } else if (YAHOO_INTRADAY[iDef.yahoo]) {
-    // Stock intraday → chunked + clamped (a plain range would 422 past the cap).
-    const now = Math.floor(Date.now() / 1000);
+  } else if (YAHOO_SUBHOUR[iDef.yahoo]) {
+    // Sub-hour → chunked + clamped period requests (a plain range 422s past the cap).
     candles = await fetchYahooIntraday(symbol, iDef.yahoo, window ? window.from : now - rDef.days * 86400, window ? window.to : now);
+  } else if (iDef.yahoo === "60m" && window) {
+    // 1h can't take period1/period2 (422) — a custom window falls back to range=2y
+    // (its max), which is the widest 1h history Yahoo serves anyway.
+    candles = await fetchYahoo(symbol, "60m", "2y", null);
+  } else if (isMaxDaily) {
+    // range=max COARSENS daily/weekly to monthly bars — use period1=0 for the FULL
+    // daily/weekly history at the requested granularity instead.
+    candles = await fetchYahoo(symbol, iDef.yahoo, null, { from: 0, to: now });
   } else {
     candles = await fetchYahoo(symbol, iDef.yahoo, rDef.yahoo, window);
   }
