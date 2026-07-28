@@ -28,6 +28,15 @@ export function buildAuth({ db, secret, baseURL, devEmail }) {
     database: { dialect: new D1Dialect({ database: db }), type: "sqlite" },
     secret,
     baseURL,
+    // The Pages preview domain is a legitimate second entrance to the SAME
+    // deployment — when the custom domain has a problem (a poisoned CDN/browser
+    // cache, a DNS change), *.pages.dev is how you still get in. Without it
+    // Better Auth rejects the sign-in as a foreign origin.
+    trustedOrigins: [
+      baseURL,
+      "https://mmmxcix-quant.pages.dev",
+      "https://quant.mmmxcix.com",
+    ].filter(Boolean),
     basePath: "/api/auth",
     emailAndPassword: {
       enabled: true,
