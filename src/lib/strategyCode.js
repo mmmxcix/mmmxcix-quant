@@ -14,6 +14,8 @@
 // and defines `strategy(ctx)`, so it drops straight into the backtester, the AI
 // generator's repair channel, or your own tooling.
 
+import { toPineScript } from "./pinescript.js";
+
 const P = (params, key, dflt) => {
   const v = params?.[key];
   return v === undefined || v === null || v === "" ? dflt : v;
@@ -419,10 +421,14 @@ export function hasPythonSource(entry) {
  * note rather than a wrong program.
  *
  * @param {object} entry  a lab strategy entry ({ mode, code, strategyId, params, name })
+ * @param {"js"|"python"|"pine"} [lang="js"]  target language for the export
  * @returns {string}
  */
 export function strategyToCode(entry, lang = "js") {
   if (!entry) return "";
+  // Pine Script is a third export target; the pinescript module owns dispatch
+  // (builder+known id → full script, otherwise an honest commented note).
+  if (lang === "pine") return toPineScript(entry);
   if (entry.mode === "code" || typeof entry.code === "string") {
     // Code entries copy as whatever language they were validated in; asking
     // for the OTHER language yields nothing rather than a fake translation.
