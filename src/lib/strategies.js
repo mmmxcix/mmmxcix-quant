@@ -808,4 +808,95 @@ export const BUILT_IN_STRATEGIES = [
       };
     },
   },
+
+  {
+    id: "linreg-channel",
+    name: "Linear-Regression Channel (Trend + Pullback)",
+    description:
+      "The single most information-dense line in quant trading: a least-squares regression fitted through the last N closes. Its SLOPE is momentum (which way, how strong); a price's DISTANCE from it — measured in residual standard deviations — is a stretch that tends to snap back. This template combines both into one multi-factor rule: only trade WITH the regression's trend, and only enter on a pullback INTO the line, exiting as price reverts to (or past) it. Far more robust than a raw slope or a raw band on its own.",
+    params: [
+      { key: "length", label: "Regression length (bars)", default: 100, min: 20, max: 400, step: 5 },
+      { key: "minSlopePct", label: "Min trend slope (% over window)", default: 3, min: 0, max: 40, step: 1 },
+      { key: "entryZ", label: "Pullback entry (σ below line)", default: 1, min: 0.25, max: 3, step: 0.25 },
+      { key: "exitZ", label: "Exit (σ past line)", default: 0.25, min: -1, max: 2, step: 0.25 },
+      { key: "allowShort", label: "Allow shorts (1/0)", default: 1, min: 0, max: 1, step: 1 },
+    ],
+    build({ length = 100, minSlopePct = 3, entryZ = 1, exitZ = 0.25, allowShort = 1 } = {}) {
+      return (ctx) => {
+        const prices = cachedCloses(ctx.candles);
+        const lr = cached(ctx.candles, `linreg:${length}`, () => ind.linreg(prices, length));
+        const r = lr[ctx.index];
+        if (r == null) return "flat";
+        const up = r.slopePct >= minSlopePct / 100;
+        const down = r.slopePct <= -minSlopePct / 100;
+        // Manage an open position first: exit once price has reverted to/through the line.
+        if (ctx.position === "long") return r.z >= exitZ || down ? "flat" : "long";
+        if (ctx.position === "short") return r.z <= -exitZ || up ? "flat" : "short";
+        // Flat: enter on a pullback INTO the trend (buy the dip in an uptrend).
+        if (up && r.z <= -entryZ) return "long";
+        if (allowShort && down && r.z >= entryZ) return "short";
+        return "flat";
+      };
+    },
+  },
+
+  {
+    id: "rsi-divergence",
+    name: "Momentum Divergence Reversal (RSI)",
+    description:
+      "Classic divergence: price prints a lower low while momentum (RSI) prints a HIGHER low — the down-move is losing force, a reversal often follows (and the mirror image for tops). This is the single-asset cousin of the correlated-pair divergence idea; it needs only one series, so it runs directly in this engine. Enters on the confirmed divergence with an ATR stop beyond the pivot and an R-multiple target. Note: divergence is an anticipatory signal — always risk-managed, never sized up.",
+    params: [
+      { key: "rsiPeriod", label: "RSI period", default: 14, min: 5, max: 40, step: 1 },
+      { key: "pivot", label: "Pivot lookback (bars each side)", default: 5, min: 2, max: 20, step: 1 },
+      { key: "maxGap", label: "Max bars between pivots", default: 60, min: 10, max: 200, step: 5 },
+      { key: "atrPeriod", label: "ATR period (stop)", default: 14, min: 5, max: 60, step: 1 },
+      { key: "targetR", label: "Take-profit (R)", default: 2, min: 0.5, max: 5, step: 0.25 },
+      { key: "allowShort", label: "Allow shorts (1/0)", default: 1, min: 0, max: 1, step: 1 },
+    ],
+    build({ rsiPeriod = 14, pivot = 5, maxGap = 60, atrPeriod = 14, targetR = 2, allowShort = 1 } = {}) {
+      // Remember the last confirmed swing low/high (price + RSI at the pivot bar).
+      let lastLow = null, lastHigh = null;
+      return (ctx) => {
+        const prices = cachedCloses(ctx.candles);
+        const rsiArr = cached(ctx.candles, `rsi:${rsiPeriod}`, () => ind.rsi(prices, rsiPeriod));
+        const a = cached(ctx.candles, `atr:${atrPeriod}`, () => ind.atr(ctx.candles, atrPeriod));
+        if (ctx.position !== "flat") return ctx.position; // brackets handle exits
+
+        const i = ctx.index;
+        const atrNow = a[i];
+        // A pivot is confirmed `pivot` bars after it forms (needs bars on both sides).
+        const p = i - pivot;
+        if (p - pivot < 0 || atrNow == null || !(atrNow > 0)) return "flat";
+        const lows = ctx.candles, k = p;
+        let isLow = true, isHigh = true;
+        for (let j = 1; j <= pivot; j++) {
+          if (!(lows[k].low <= lows[k - j].low && lows[k].low <= lows[k + j].low)) isLow = false;
+          if (!(lows[k].high >= lows[k - j].high && lows[k].high >= lows[k + j].high)) isHigh = false;
+        }
+        const rsiAtPivot = rsiArr[k];
+        if (rsiAtPivot == null) return "flat";
+
+        let signal = "flat";
+        if (isLow) {
+          // Bullish divergence: price lower low, RSI higher low, within maxGap.
+          if (lastLow && (k - lastLow.idx) <= maxGap &&
+              lows[k].low < lastLow.px && rsiAtPivot > lastLow.rsi) {
+            signal = "long";
+          }
+          lastLow = { idx: k, px: lows[k].low, rsi: rsiAtPivot };
+        }
+        if (isHigh) {
+          // Bearish divergence: price higher high, RSI lower high.
+          if (allowShort && lastHigh && (k - lastHigh.idx) <= maxGap &&
+              lows[k].high > lastHigh.px && rsiAtPivot < lastHigh.rsi) {
+            signal = "short";
+          }
+          lastHigh = { idx: k, px: lows[k].high, rsi: rsiAtPivot };
+        }
+        if (signal === "long") return { signal: "long", stop: ctx.close - atrNow, target: ctx.close + atrNow * targetR };
+        if (signal === "short") return { signal: "short", stop: ctx.close + atrNow, target: ctx.close - atrNow * targetR };
+        return "flat";
+      };
+    },
+  },
 ];

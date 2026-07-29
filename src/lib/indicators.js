@@ -244,3 +244,61 @@ export function macd(values, fast = 12, slow = 26, signalPeriod = 9) {
   }
   return out;
 }
+
+/**
+ * Rolling linear-regression channel: the least-squares line fitted through the
+ * last `period` values at each bar. The single line captures BOTH ideas a
+ * regression carries — its slope is trend/momentum, and a price's distance from
+ * it (in residual-standard-deviations, `z`) is a stretch that tends to snap back.
+ *
+ * At each bar i (for i >= period-1), fits y = a + b·x over x = 0..period-1
+ * (x = period-1 is the current bar), and reports the line at the current bar.
+ *   - value: the fitted line at the current bar (a + b·(period-1))
+ *   - slope: b, in price units per bar
+ *   - slopePct: slope as a fraction of the line value over the whole window
+ *     (b·period / value) — a scale-free "how far the trend travels across the
+ *     window", comparable across instruments and prices
+ *   - resStd: population std-dev of the residuals (the channel half-width unit)
+ *   - z: (current price − line) / resStd — how many channel units price sits
+ *     from its own trendline (negative = below the line)
+ * @param {number[]} values
+ * @param {number} period
+ * @returns {({value:number, slope:number, slopePct:number, resStd:number, z:number}|null)[]}
+ */
+export function linreg(values, period) {
+  const out = new Array(values.length).fill(null);
+  if (period < 2 || values.length < period) return out;
+  // x = 0..period-1 is fixed each window, so its sums are constant.
+  const n = period;
+  const sumX = (n * (n - 1)) / 2;
+  const sumXX = ((n - 1) * n * (2 * n - 1)) / 6;
+  const denom = n * sumXX - sumX * sumX; // > 0 for n >= 2
+  for (let i = period - 1; i < values.length; i++) {
+    let sumY = 0, sumXY = 0;
+    for (let k = 0; k < n; k++) {
+      const y = values[i - (n - 1) + k];
+      sumY += y;
+      sumXY += k * y;
+    }
+    const b = (n * sumXY - sumX * sumY) / denom; // slope
+    const a = (sumY - b * sumX) / n;             // intercept
+    // Residual population variance around the fitted line.
+    let ss = 0;
+    for (let k = 0; k < n; k++) {
+      const y = values[i - (n - 1) + k];
+      const resid = y - (a + b * k);
+      ss += resid * resid;
+    }
+    const resStd = Math.sqrt(ss / n);
+    const value = a + b * (n - 1); // line at the current bar
+    const price = values[i];
+    out[i] = {
+      value,
+      slope: b,
+      slopePct: value !== 0 ? (b * n) / value : 0,
+      resStd,
+      z: resStd > 0 ? (price - value) / resStd : 0,
+    };
+  }
+  return out;
+}

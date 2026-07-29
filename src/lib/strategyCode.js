@@ -212,6 +212,73 @@ function strategy(ctx) {
   return "flat";
 }`;
   },
+
+  "linreg-channel": (p) => {
+    const length = P(p, "length", 100), minSlopePct = P(p, "minSlopePct", 3), entryZ = P(p, "entryZ", 1), exitZ = P(p, "exitZ", 0.25), allowShort = P(p, "allowShort", 1);
+    return `// Linear-Regression Channel — trade WITH the regression slope, enter on a pullback INTO the line.
+const LENGTH = ${length}, MIN_SLOPE_PCT = ${minSlopePct}, ENTRY_Z = ${entryZ}, EXIT_Z = ${exitZ}, ALLOW_SHORT = ${allowShort};
+let _c = null, _lr = null;
+// Least-squares line through the last LENGTH closes: slope (trend) + z (stretch).
+function _linreg(vals, period) {
+  const out = new Array(vals.length).fill(null);
+  if (period < 2 || vals.length < period) return out;
+  const n = period, sumX = n * (n - 1) / 2, sumXX = (n - 1) * n * (2 * n - 1) / 6, denom = n * sumXX - sumX * sumX;
+  for (let i = period - 1; i < vals.length; i++) {
+    let sumY = 0, sumXY = 0;
+    for (let k = 0; k < n; k++) { const y = vals[i - (n - 1) + k]; sumY += y; sumXY += k * y; }
+    const b = (n * sumXY - sumX * sumY) / denom, a = (sumY - b * sumX) / n;
+    let ss = 0; for (let k = 0; k < n; k++) { const r = vals[i - (n - 1) + k] - (a + b * k); ss += r * r; }
+    const resStd = Math.sqrt(ss / n), value = a + b * (n - 1), price = vals[i];
+    out[i] = { value, slopePct: value !== 0 ? (b * n) / value : 0, z: resStd > 0 ? (price - value) / resStd : 0 };
+  }
+  return out;
+}
+function strategy(ctx) {
+  if (_c !== ctx.candles) { _c = ctx.candles; _lr = _linreg(ctx.indicators.closes(ctx.candles), LENGTH); }
+  const r = _lr[ctx.index];
+  if (r == null) return "flat";
+  const up = r.slopePct >= MIN_SLOPE_PCT / 100, down = r.slopePct <= -MIN_SLOPE_PCT / 100;
+  if (ctx.position === "long") return (r.z >= EXIT_Z || down) ? "flat" : "long";
+  if (ctx.position === "short") return (r.z <= -EXIT_Z || up) ? "flat" : "short";
+  if (up && r.z <= -ENTRY_Z) return "long";
+  if (ALLOW_SHORT && down && r.z >= ENTRY_Z) return "short";
+  return "flat";
+}`;
+  },
+
+  "rsi-divergence": (p) => {
+    const rsiPeriod = P(p, "rsiPeriod", 14), pivot = P(p, "pivot", 5), maxGap = P(p, "maxGap", 60), atrPeriod = P(p, "atrPeriod", 14), targetR = P(p, "targetR", 2), allowShort = P(p, "allowShort", 1);
+    return `// Momentum Divergence Reversal (RSI) — price lower-low + RSI higher-low = bullish (mirror for tops).
+const RSI_PERIOD = ${rsiPeriod}, PIVOT = ${pivot}, MAX_GAP = ${maxGap}, ATR_PERIOD = ${atrPeriod}, TARGET_R = ${targetR}, ALLOW_SHORT = ${allowShort};
+let _c = null, _rsi = null, _atr = null, lastLow = null, lastHigh = null;
+function strategy(ctx) {
+  if (_c !== ctx.candles) { _c = ctx.candles; const px = ctx.indicators.closes(ctx.candles);
+    _rsi = ctx.indicators.rsi(px, RSI_PERIOD); _atr = ctx.indicators.atr(ctx.candles, ATR_PERIOD);
+    lastLow = null; lastHigh = null; }
+  if (ctx.position !== "flat") return ctx.position; // brackets handle exits
+  const i = ctx.index, atrNow = _atr[i], k = i - PIVOT; // pivot confirmed PIVOT bars later
+  if (k - PIVOT < 0 || atrNow == null || !(atrNow > 0)) return "flat";
+  const c = ctx.candles;
+  let isLow = true, isHigh = true;
+  for (let j = 1; j <= PIVOT; j++) {
+    if (!(c[k].low <= c[k - j].low && c[k].low <= c[k + j].low)) isLow = false;
+    if (!(c[k].high >= c[k - j].high && c[k].high >= c[k + j].high)) isHigh = false;
+  }
+  const rp = _rsi[k]; if (rp == null) return "flat";
+  let signal = "flat";
+  if (isLow) {
+    if (lastLow && (k - lastLow.idx) <= MAX_GAP && c[k].low < lastLow.px && rp > lastLow.rsi) signal = "long";
+    lastLow = { idx: k, px: c[k].low, rsi: rp };
+  }
+  if (isHigh) {
+    if (ALLOW_SHORT && lastHigh && (k - lastHigh.idx) <= MAX_GAP && c[k].high > lastHigh.px && rp < lastHigh.rsi) signal = "short";
+    lastHigh = { idx: k, px: c[k].high, rsi: rp };
+  }
+  if (signal === "long") return { signal: "long", stop: ctx.close - atrNow, target: ctx.close + atrNow * TARGET_R };
+  if (signal === "short") return { signal: "short", stop: ctx.close + atrNow, target: ctx.close - atrNow * TARGET_R };
+  return "flat";
+}`;
+  },
 };
 
 export const hasBuiltinSource = (id) => id in BUILTIN_SOURCE;
@@ -572,6 +639,49 @@ def signals(df):
     hist = macd - sig
     long = (macd > sig) & (hist > 0)
     return pd.Series(np.where(long.fillna(False), 1, 0), index=df.index)
+`;
+  },
+
+  "linreg-channel": (p) => {
+    const length = P(p, "length", 100), minSlopePct = P(p, "minSlopePct", 3), entryZ = P(p, "entryZ", 1), exitZ = P(p, "exitZ", 0.25), allowShort = P(p, "allowShort", 1);
+    // Stateful hysteresis (entry threshold != exit threshold), so it's a bar loop
+    // rather than a vectorised mask — mirrors the builder's state machine exactly.
+    return `# Linear-Regression Channel — trade WITH the regression slope, enter on a pullback INTO the line.
+${PY_HEAD}
+LENGTH, MIN_SLOPE_PCT, ENTRY_Z, EXIT_Z, ALLOW_SHORT = ${length}, ${minSlopePct}, ${entryZ}, ${exitZ}, ${allowShort}
+
+def signals(df):
+    close = df["close"].to_numpy(dtype=float)
+    n = len(close)
+    out = np.zeros(n)
+    L = LENGTH
+    if L >= 2 and n >= L:
+        x = np.arange(L, dtype=float)
+        sx = x.sum(); sxx = (x * x).sum(); denom = L * sxx - sx * sx
+        pos = 0
+        for i in range(L - 1, n):
+            y = close[i - L + 1:i + 1]
+            sy = y.sum(); sxy = (x * y).sum()
+            b = (L * sxy - sx * sy) / denom
+            a = (sy - b * sx) / L
+            resid = y - (a + b * x)
+            res_std = np.sqrt((resid * resid).sum() / L)
+            value = a + b * (L - 1)
+            z = (close[i] - value) / res_std if res_std > 0 else 0.0
+            slope_pct = (b * L) / value if value != 0 else 0.0
+            up = slope_pct >= MIN_SLOPE_PCT / 100.0
+            down = slope_pct <= -MIN_SLOPE_PCT / 100.0
+            if pos == 1:
+                pos = 0 if (z >= EXIT_Z or down) else 1
+            elif pos == -1:
+                pos = 0 if (z <= -EXIT_Z or up) else -1
+            else:
+                if up and z <= -ENTRY_Z:
+                    pos = 1
+                elif ALLOW_SHORT and down and z >= ENTRY_Z:
+                    pos = -1
+            out[i] = pos
+    return pd.Series(out, index=df.index)
 `;
   },
 };
