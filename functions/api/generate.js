@@ -92,6 +92,53 @@ Rules:
 - Return 0 during warm-up (NaN indicator values) — fill NaNs with 0.
 - Concise English comments. Keep it a single self-contained function plus its helpers.`;
 
+// ── The quant knowledge every generation/improvement channel carries ────────
+// Prepended to the improve/review prompts. Without it the model rewrites from
+// vibes — that is how an "improvement" asked to CUT drawdown came back having
+// doubled it. This is the working knowledge of a senior systematic researcher:
+// what the goal actually is, the canonical strategy families and when each one
+// works, the failure modes that make a backtest lie, and the mechanical bugs
+// specific to this engine.
+const QUANT_KNOWLEDGE = `
+WHAT YOU ARE OPTIMISING FOR (in this order):
+1. Risk-adjusted return that SURVIVES out-of-sample and after costs — Sharpe/Sortino, not raw return.
+2. Beating buy & hold risk-adjusted over the same window. A strategy that trails simply holding the asset has no reason to exist.
+3. A drawdown the account can actually sit through, and enough trades (≥30, ideally ≥100) for the result to mean anything.
+Never buy one metric with another: cutting drawdown by barely trading, or lifting return by doubling drawdown, is not an improvement.
+
+THE CANONICAL STRATEGY FAMILIES AND WHEN THEY WORK:
+• Trend following (MA crossover, Donchian/Turtle channel breakout, Keltner breakout). Works in sustained directional markets with expanding volatility; bleeds in chop. Fix chop by filtering (only trade above a long SMA, or require an ADX/slope threshold) and by exiting on a shorter channel.
+• Time-series (absolute) momentum: hold only while the asset's own trailing return is positive. The most robust single-asset factor; pairs naturally with a long-trend filter.
+• Cross-sectional momentum / factor ranking (value, momentum, quality, low-volatility): rank a universe, long the top decile. Graded with Information Coefficient and Information Ratio, not just return.
+• Mean reversion (RSI-2 / Connors, Bollinger fade, VWAP reversion). Works in ranging, high-liquidity, mean-reverting regimes and SHORT holding periods; catastrophic in a trending crash. Always require a trend filter (buy dips only above the SMA-200) and a hard stop — "it'll come back" is how accounts die.
+• Volatility breakout / opening range (ORB, squeeze). Needs intraday data and a real session; scale the trigger to ATR, never a fixed number of points.
+• Carry / seasonality / post-earnings drift (PEAD): slow, capacity-heavy edges that need long windows to show up.
+
+REGIME AWARENESS (the single highest-value addition to most rules):
+Most strategies are regime-conditional. A trend rule needs a trend; a fade needs a range. Add a filter that decides WHEN to be active — price vs a long SMA, EMA slope, ATR relative to its own average, realised volatility percentile — and sit flat outside it. That usually improves Sharpe and drawdown at once, without touching the entry logic.
+
+RISK MANAGEMENT THAT ACTUALLY WORKS:
+• Stops should be STRUCTURAL or volatility-scaled (a multiple of ATR, the other side of the range, a swing low) — never a fixed percentage. A fixed % stop is unrelated to how the market is moving, and a −2% loss needs more than +2% to recover.
+• Size from the stop distance, not from a fixed lot: risk a small constant fraction of equity per trade.
+• Volatility targeting (scale exposure by target-vol ÷ realised-vol) reduces drawdown more reliably than any entry tweak.
+• Cap correlated exposure — three trades on the same driver is one trade at triple size.
+
+HOW BACKTESTS LIE (check every one of these before claiming an improvement):
+• Look-ahead: using a bar's own close to decide a trade filled at that close, or any .shift(-1). In this engine the signal on bar i executes at the OPEN of bar i+1 — an edge that dies with a one-bar delay was never real.
+• Overfitting: many parameters, oddly specific thresholds, or a rule tuned until the equity curve looks good. Prefer round, defensible values and FEWER parameters. Every extra parameter needs its own justification.
+• Too few trades: a 12-trade backtest is an anecdote. Wide confidence intervals, no statistical claim.
+• Costs ignored: spread + fees + slippage kill most high-frequency "edges". If it only works at 0 bps, it doesn't work.
+• Degenerate conditions: a rule that almost never triggers, or one that enters and never exits.
+• Regime artefact: made all its money in one period (e.g. 2020) and flat since. Check the recent tail separately.
+
+MECHANICAL BUGS SPECIFIC TO THIS ENGINE (fix on sight):
+• Indicator warm-up returns null/NaN — guard it and return flat/0, never compare against null.
+• bollinger/donchian/macd return OBJECTS: read bb[i].lower, dc[i].upper, m[i].macd. Comparing the whole element to a number silently never triggers.
+• Donchian excludes the current bar — that is deliberate, don't "fix" it.
+• Python: fill warm-up NaNs with 0, use rolling()/shift() correctly, never .shift(-1), and return exactly one value per row.
+• Recompute indicator arrays once per candle array, not per bar.
+`;
+
 function json(body, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -420,10 +467,17 @@ export async function onRequest({ request, env }) {
   }
 
   // A review returns an assessment, so it must NOT be constrained by the
-  // "reply with code only" system prompt.
+  // "reply with code only" system prompt. Both the review and the improve
+  // channels carry the quant knowledge — they are the two that JUDGE an existing
+  // strategy, which is exactly where domain knowledge decides the outcome.
   const system = review
-    ? "You are a senior quantitative researcher reviewing backtest strategy code. You are candid, concrete and brief. You never rewrite the code — you explain and advise."
-    : (isPython ? PYTHON_SYSTEM_PROMPT : SYSTEM_PROMPT);
+    ? "You are a senior quantitative researcher reviewing backtest strategy code. You are candid, concrete and brief. " +
+      "You never rewrite the code — you explain and advise.\n" + QUANT_KNOWLEDGE
+    : improve
+      ? (isPython ? PYTHON_SYSTEM_PROMPT : SYSTEM_PROMPT) +
+        "\n\nYou are a senior systematic researcher improving an existing strategy. Apply this knowledge:\n" + QUANT_KNOWLEDGE +
+        "\nKeep the core idea. Change the fewest things that raise risk-adjusted return, and state nothing you did not actually implement."
+      : (isPython ? PYTHON_SYSTEM_PROMPT : SYSTEM_PROMPT);
 
   // promptOnly: hand the fully composed prompts to the caller instead of
   // executing them. The local research agent uses this to run generation

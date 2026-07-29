@@ -753,7 +753,9 @@ export default function Backtest() {
                   {saved ? "Saved to registry" : "Save to registry"}
                 </button>
                 <span className="text-[11px] text-dim">
-                  Captures metrics {verdicts.wf || verdicts.dsr || verdicts.noise ? "+ the validation verdicts you've run" : "(run the validation below to also capture its verdicts)"} ·{" "}
+                  {verdicts.wf === "pass" && verdicts.dsr === "pass" && verdicts.noise === "pass"
+                    ? <>Passed all three validations → saves straight into <span className="text-up">Validated</span>.</>
+                    : <>Saves into <span className="text-text">Factory</span> (a saved candidate). Run the validation below — walk-forward, DSR and noise — and it goes straight into <span className="text-up">Validated</span> instead.</>} ·{" "}
                   <Link to="/registry" className="text-accent hover:underline">open Registry</Link>
                 </span>
               </div>
