@@ -48,3 +48,40 @@ test("walk-forward returns a coherent verdict on a stable objective", () => {
   assert.equal(wf.verdict, "robust", "a stationary edge should read robust");
   assert.ok(wf.folds.length >= 1, "produced folds");
 });
+
+// ── parameter-stability heatmap ─────────────────────────────────────────────
+import { parameterHeatmap } from "../src/lib/optimizer.js";
+
+const HM_PARAMS = [
+  { key: "a", min: 0, max: 8, step: 1 },
+  { key: "b", min: 0, max: 8, step: 1 },
+];
+
+test("parameterHeatmap flags a broad plateau as robust", () => {
+  // Smooth dome peaking mid-grid → best cell's neighbours are nearly as good.
+  const evaluate = ({ a, b }) => 100 - (a - 4) ** 2 - (b - 4) ** 2;
+  const hm = parameterHeatmap({ params: HM_PARAMS, xKey: "a", yKey: "b", evaluate, cap: 9 });
+  assert.ok(hm.best, "found a best cell");
+  assert.equal(hm.xs.length, 9);
+  assert.equal(hm.verdict, "robust", `dome should be robust, got ${hm.verdict}`);
+  assert.ok(hm.robustness > 0.8, `plateau robustness high, got ${hm.robustness}`);
+});
+
+test("parameterHeatmap flags a lone spike as overfit", () => {
+  // One cell is spectacular, everything else is flat and mediocre.
+  const evaluate = ({ a, b }) => (a === 3 && b === 5 ? 100 : 1);
+  const hm = parameterHeatmap({ params: HM_PARAMS, xKey: "a", yKey: "b", evaluate, cap: 9 });
+  assert.equal(hm.verdict, "overfit", `isolated spike should be overfit, got ${hm.verdict}`);
+  assert.ok(hm.robustness < 0.2, `spike robustness low, got ${hm.robustness}`);
+});
+
+test("parameterHeatmap treats non-finite scores as empty cells", () => {
+  const evaluate = ({ a }) => (a < 3 ? -Infinity : a);
+  const hm = parameterHeatmap({ params: HM_PARAMS, xKey: "a", yKey: "b", evaluate, cap: 9 });
+  assert.equal(hm.cells[0][0], null, "penalised combo becomes a null cell");
+  assert.ok(hm.best.score > 0, "best ignores the null cells");
+});
+
+test("parameterHeatmap returns null when the two axes are the same param", () => {
+  assert.equal(parameterHeatmap({ params: HM_PARAMS, xKey: "a", yKey: "a", evaluate: () => 1 }), null);
+});

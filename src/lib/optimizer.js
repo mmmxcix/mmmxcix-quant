@@ -115,6 +115,64 @@ export function optimize({ method = "bayesian", params, evaluate, budget }) {
   return bayesianSearch({ params, evaluate, iterations: budget ?? 120 });
 }
 
+// ── Parameter-stability heatmap — the over-fit picture ───────────────────────
+/**
+ * Sweep TWO parameters across a grid and score every combination, so the shape
+ * of the result surface is visible. A robust edge shows a broad PLATEAU of good
+ * values — you could be off by a step and still be fine. An over-fit one shows a
+ * lone SPIKE surrounded by mediocre cells: the "great" parameters are luck, and
+ * live trading won't land exactly on them. This is the map bennnytrades' clip
+ * calls step one of validation.
+ * @param {object} o
+ * @param {Array} o.params            all strategy param defs
+ * @param {string} o.xKey             param on the x-axis
+ * @param {string} o.yKey             param on the y-axis
+ * @param {(paramsObj)=>number} o.evaluate
+ * @param {object} [o.base]           values for the params NOT being swept
+ * @param {number} [o.cap]            cells per axis
+ * @returns {{xKey,yKey,xs,ys,cells,min,max,best,robustness,verdict}|null}
+ */
+export function parameterHeatmap({ params, xKey, yKey, evaluate, base = {}, cap = 9 }) {
+  const px = params.find((p) => p.key === xKey);
+  const py = params.find((p) => p.key === yKey);
+  if (!px || !py || xKey === yKey) return null;
+  const xs = candidateValues(px, cap);
+  const ys = candidateValues(py, cap);
+  const cells = [];
+  let min = Infinity, max = -Infinity;
+  let best = null;
+  for (let j = 0; j < ys.length; j++) {
+    const row = [];
+    for (let i = 0; i < xs.length; i++) {
+      const raw = safe(evaluate, { ...base, [xKey]: xs[i], [yKey]: ys[j] });
+      const s = Number.isFinite(raw) ? raw : null; // null = degenerate (the caller's -Infinity penalty)
+      if (s != null) {
+        if (s < min) min = s;
+        if (s > max) max = s;
+        if (!best || s > best.score) best = { i, j, score: s };
+      }
+      row.push(s);
+    }
+    cells.push(row);
+  }
+  if (!best) return { xKey, yKey, xs, ys, cells, min, max, best: null, robustness: 0, verdict: "empty" };
+
+  // Robustness = how the best cell's orthogonal neighbours hold up, relative to
+  // the full spread. Neighbours nearly as good → a plateau; a sharp drop → a spike.
+  const neigh = [];
+  for (const [di, dj] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
+    const ni = best.i + di, nj = best.j + dj;
+    if (nj >= 0 && nj < ys.length && ni >= 0 && ni < xs.length && cells[nj][ni] != null) neigh.push(cells[nj][ni]);
+  }
+  const spread = max - min;
+  const nMean = neigh.length ? neigh.reduce((a, b) => a + b, 0) / neigh.length : min;
+  // 1 = neighbours equal the best (flat plateau), 0 = neighbours at the global worst.
+  const robustness = spread > 0 ? Math.max(0, Math.min(1, (nMean - min) / spread)) : 1;
+  const drop = spread > 0 ? (best.score - nMean) / spread : 0;
+  const verdict = spread <= 0 ? "flat" : drop < 0.25 ? "robust" : drop > 0.6 ? "overfit" : "mixed";
+  return { xKey, yKey, xs, ys, cells, min, max, best, robustness, verdict };
+}
+
 // ── Walk-forward validation — the over-fit guard ─────────────────────────────
 /**
  * Optimize IN-SAMPLE, score OUT-OF-SAMPLE across rolling windows over the back

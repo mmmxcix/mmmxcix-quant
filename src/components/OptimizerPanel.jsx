@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { Sparkles, Loader2, Check, ShieldCheck, AlertTriangle } from "lucide-react";
+import { Sparkles, Loader2, Check, ShieldCheck, AlertTriangle, Grid3x3 } from "lucide-react";
 import { cn, fmtNum } from "@/lib/utils";
 import { runBacktest } from "@/lib/backtest";
-import { optimize, walkForward } from "@/lib/optimizer";
+import { optimize, walkForward, parameterHeatmap } from "@/lib/optimizer";
 
 // Parameter optimizer for a built-in (builder-mode) strategy: sweep its params
 // with Grid / Bayesian / Genetic search against a selectable objective, then
@@ -24,6 +24,21 @@ const VERDICT = {
   inconclusive: { cls: "border-line bg-bg text-dim", Icon: AlertTriangle, hint: "too few out-of-sample trades — use a longer/intraday history" },
   "n/a": { cls: "border-line bg-bg text-dim", Icon: AlertTriangle, hint: "not enough data" },
 };
+// Verdicts for the parameter-stability map — a picture of over-fitting.
+const HM_VERDICT = {
+  robust: { cls: "text-up", label: "Robust plateau", hint: "good values cluster together — being a step off still works" },
+  mixed: { cls: "text-accent", label: "Mixed", hint: "the peak has some slope around it — usable, but pick a value inside the good zone" },
+  overfit: { cls: "text-down", label: "Overfit spike", hint: "the best cell is a lone island — those params are luck, not edge" },
+  flat: { cls: "text-dim", label: "Flat", hint: "the objective barely changes across the grid — this pair isn't the sensitive one" },
+  empty: { cls: "text-dim", label: "No valid cells", hint: "every combination was degenerate (too few trades)" },
+};
+// Score → colour. Red (worst) → amber → green (best), null cells greyed out.
+function cellColor(v, min, max) {
+  if (v == null) return "rgba(120,120,130,0.10)";
+  const t = max > min ? (v - min) / (max - min) : 1; // 0..1
+  const hue = 8 + t * 132; // 8=red, 140=green
+  return `hsl(${hue} 70% ${18 + t * 22}%)`;
+}
 
 export default function OptimizerPanel({ strategy, candles, capital, feeBps, positionPct, leverage, onApply }) {
   const [method, setMethod] = useState("bayesian");
@@ -32,9 +47,14 @@ export default function OptimizerPanel({ strategy, candles, capital, feeBps, pos
   const [res, setRes] = useState(null);   // { method, results, best }
   const [wf, setWf] = useState(null);     // walk-forward verdict
   const [applied, setApplied] = useState(false);
+  const [hm, setHm] = useState(null);     // parameter-stability heatmap
+  const [hmRunning, setHmRunning] = useState(false);
 
   const params = strategy?.params || [];
   const score = OBJECTIVES[objective].get;
+  // Default the two heatmap axes to the strategy's first two params.
+  const [xKey, setXKey] = useState(params[0]?.key);
+  const [yKey, setYKey] = useState(params[1]?.key ?? params[0]?.key);
 
   // Score a candle slice for a param set; penalise degenerate (too few trades).
   const scoreSlice = (p, from, to) => {
@@ -56,6 +76,19 @@ export default function OptimizerPanel({ strategy, candles, capital, feeBps, pos
           setWf(walkForward({ params, scoreSlice, n: candles.length, method, folds: 4, budget: 50 }));
         }
       } finally { setRunning(false); }
+    }, 30);
+  };
+
+  // Build the stability map for the two chosen axes, holding the other params at
+  // their current builder values (so the picture is around the point you'd trade).
+  const runHeatmap = () => {
+    if (!xKey || !yKey || xKey === yKey) return;
+    setHmRunning(true); setHm(null);
+    setTimeout(() => {
+      try {
+        const base = Object.fromEntries(params.map((p) => [p.key, p.default]));
+        setHm(parameterHeatmap({ params, xKey, yKey, evaluate: (p) => scoreSlice(p), base, cap: 9 }));
+      } finally { setHmRunning(false); }
     }, 30);
   };
 
@@ -140,6 +173,83 @@ export default function OptimizerPanel({ strategy, candles, capital, feeBps, pos
           </div>
         );
       })()}
+
+      {/* Parameter-stability heatmap — sweep two params, see whether the good
+          zone is a plateau (robust) or a lone spike (over-fit). */}
+      {params.length >= 2 && (
+        <div className="border-t border-line pt-3 space-y-2">
+          <div className="flex flex-wrap items-end gap-3">
+            <p className="text-xs font-semibold flex items-center gap-1.5 mr-1">
+              <Grid3x3 className="w-3.5 h-3.5 text-accent" /> Stability map
+            </p>
+            <label className="text-xs text-dim">X axis
+              <select value={xKey} onChange={(e) => setXKey(e.target.value)} className="input-base w-full mt-1">
+                {params.map((p) => <option key={p.key} value={p.key}>{p.key}</option>)}
+              </select>
+            </label>
+            <label className="text-xs text-dim">Y axis
+              <select value={yKey} onChange={(e) => setYKey(e.target.value)} className="input-base w-full mt-1">
+                {params.map((p) => <option key={p.key} value={p.key}>{p.key}</option>)}
+              </select>
+            </label>
+            <button onClick={runHeatmap} disabled={hmRunning || xKey === yKey} className="btn-ghost text-xs flex items-center gap-2">
+              {hmRunning ? <Loader2 className="w-4 h-4 animate-spin" /> : <Grid3x3 className="w-4 h-4" />}
+              {hmRunning ? "Mapping…" : "Map stability"}
+            </button>
+            {xKey === yKey && <span className="text-[10px] text-down">pick two different params</span>}
+          </div>
+
+          {hm?.best && (() => {
+            const v = HM_VERDICT[hm.verdict] || HM_VERDICT.flat;
+            return (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 text-xs">
+                  <span className={cn("font-semibold", v.cls)}>{v.label}</span>
+                  <span className="text-dim">— {v.hint}</span>
+                  <span className="ml-auto text-dim">stability <span className="font-mono text-text">{Math.round(hm.robustness * 100)}%</span></span>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="border-separate" style={{ borderSpacing: 2 }}>
+                    <tbody>
+                      {hm.cells.map((row, jj) => {
+                        // Rows render top = highest Y, so reverse for a natural chart.
+                        const j = hm.ys.length - 1 - jj;
+                        return (
+                          <tr key={j}>
+                            <td className="text-[9px] text-dim font-mono pr-1 text-right align-middle">{fmtNum(hm.ys[j], 2)}</td>
+                            {hm.cells[j].map((val, i) => {
+                              const isBest = hm.best.i === i && hm.best.j === j;
+                              return (
+                                <td key={i}
+                                  title={`${hm.xKey}=${hm.xs[i]} · ${hm.yKey}=${hm.ys[j]} → ${val == null ? "n/a" : fmtNum(val, 2)}`}
+                                  className={cn("w-7 h-7 rounded-sm text-center align-middle", isBest && "ring-2 ring-white/80")}
+                                  style={{ background: cellColor(val, hm.min, hm.max) }}>
+                                  {isBest && <Check className="w-3 h-3 inline text-white" />}
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        );
+                      })}
+                      <tr>
+                        <td />
+                        {hm.xs.map((xv, i) => (
+                          <td key={i} className="text-[9px] text-dim font-mono text-center pt-1">{fmtNum(xv, 2)}</td>
+                        ))}
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                <p className="text-[10px] text-dim">
+                  Colour = {OBJECTIVES[objective].label} (green best, red worst). X = <span className="font-mono">{hm.xKey}</span>,
+                  Y = <span className="font-mono">{hm.yKey}</span>, other params at their defaults. The white cell is the peak — trade a value INSIDE the green zone, not on a lone bright cell.
+                </p>
+              </div>
+            );
+          })()}
+          {hm && !hm.best && <p className="text-[11px] text-down">Every combination was degenerate (too few trades) — widen the ranges or use more data.</p>}
+        </div>
+      )}
     </div>
   );
 }
