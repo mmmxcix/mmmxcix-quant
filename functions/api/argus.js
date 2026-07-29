@@ -31,8 +31,10 @@ export async function onRequest({ request, env }) {
     const what = new URL(request.url).searchParams.get("what") || "all";
     const read = async (k) => { try { return JSON.parse((await kv.get(`argus:${k}`)) || "null"); } catch { return null; } };
     if (what === "all") {
-      const [state, theses, ledger] = await Promise.all([read("state"), read("theses"), read("ledger")]);
-      return json({ ok: true, state, theses: theses || [], ledger: ledger || [] });
+      const [state, theses, ledger, journal, skills] = await Promise.all([
+        read("state"), read("theses"), read("ledger"), read("journal"), read("skills"),
+      ]);
+      return json({ ok: true, state, theses: theses || [], ledger: ledger || [], journal: journal || [], skills: skills || [] });
     }
     return json({ ok: true, [what]: await read(what) });
   }
@@ -48,7 +50,7 @@ export async function onRequest({ request, env }) {
     // want to judge the agent by.
     if (body.reset === true) {
       try {
-        await Promise.all([kv.delete("argus:state"), kv.delete("argus:theses"), kv.delete("argus:ledger")]);
+        await Promise.all([kv.delete("argus:state"), kv.delete("argus:theses"), kv.delete("argus:ledger"), kv.delete("argus:journal"), kv.delete("argus:skills")]);
       } catch (e) {
         return json({ error: "kv_reset_failed", detail: String(e?.message || e) }, 503);
       }
@@ -61,6 +63,9 @@ export async function onRequest({ request, env }) {
     try {
       if (body.state) await kv.put("argus:state", JSON.stringify({ ...body.state, at: Date.now() }));
       if (Array.isArray(body.theses)) await kv.put("argus:theses", JSON.stringify(body.theses.slice(0, 200)));
+      // Hermes journal + crystallised skills — the agent's written memory.
+      if (Array.isArray(body.journal)) await kv.put("argus:journal", JSON.stringify(body.journal.slice(0, 300)));
+      if (Array.isArray(body.skills)) await kv.put("argus:skills", JSON.stringify(body.skills.slice(0, 50)));
       if (Array.isArray(body.ledgerAdd) && body.ledgerAdd.length) {
         let existing = [];
         try { existing = JSON.parse((await kv.get("argus:ledger")) || "[]"); } catch { /* fresh */ }

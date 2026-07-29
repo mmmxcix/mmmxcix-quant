@@ -372,7 +372,9 @@ export async function onRequest({ request, env }) {
         "  - No look-ahead: row i may only use rows <= i. Use rolling()/shift() correctly; NEVER .shift(-1). Fill warm-up NaNs with 0.\n" +
         "  - The edge must survive being executed one bar late (no dependence on an exact single-bar touch).\n" +
         "  - Up to 5 parameters, hardcoded as constants. Long and/or short. numpy (np) + pandas (pd) only, no other imports.\n\n" +
-        "Start the code with exactly 3 comment lines that describe the RULE, not vibes:\n" +
+        "Start the code with exactly 4 comment lines that describe the RULE, not vibes:\n" +
+        "  `# NAME:` a short descriptive name for the STRATEGY itself (3-6 words, e.g. 'Volatility-filtered EMA pullback' or " +
+        "'RSI-2 dip buy in uptrend'). Name the MECHANISM — never the source article, a ticker, or a headline.\n" +
         "  `# EDGE:` the concrete mechanism AND the actual rule — name the indicators, thresholds and directions you use " +
         "(e.g. 'long when close>SMA200 and RSI(2)<10, exit when close>SMA5 — buys short-term dips in an uptrend'); one sentence, specific enough to reproduce.\n" +
         "  `# WORKS:` the market regime/conditions it needs (trend vs chop, high/low volatility, session).\n" +
@@ -393,7 +395,9 @@ export async function onRequest({ request, env }) {
         "  - The edge must NOT depend on catching a move within a single bar; it must survive being executed " +
         "one bar late. Avoid entries that only work at an exact price touch.\n" +
         "  - Up to 5 parameters, hardcoded as const. Long and/or short. No look-ahead (only data up to ctx.index).\n\n" +
-        "Start the code with exactly 3 comment lines that describe the RULE, not vibes:\n" +
+        "Start the code with exactly 4 comment lines that describe the RULE, not vibes:\n" +
+        "  `// NAME:` a short descriptive name for the STRATEGY itself (3-6 words, e.g. 'Volatility-filtered EMA pullback' or " +
+        "'RSI-2 dip buy in uptrend'). Name the MECHANISM — never the source article, a ticker, or a headline.\n" +
         "  `// EDGE:` the concrete mechanism AND the actual rule — name the indicators, thresholds and directions you use " +
         "(e.g. 'long when EMA50>EMA200 and price reclaims VWAP, ATR stop + 2R target — trend-continuation entries'); one sentence, specific enough to reproduce.\n" +
         "  `// WORKS:` the market regime/conditions it needs (trend vs chop, high/low volatility, session).\n" +

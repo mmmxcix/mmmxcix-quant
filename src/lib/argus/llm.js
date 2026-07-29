@@ -73,6 +73,33 @@ async function callOnce(model, messages) {
   return { content, model: j?.model || model };
 }
 
+/**
+ * Generic one-shot chat over the same fallback chain — used by the Hermes
+ * post-mortem (reflect.js), which needs its own system prompt rather than the
+ * event-thesis one. Returns { ok, text, model?, error? }. Never throws.
+ */
+export async function chatOnce(messages, { maxTokens = 500, temperature = 0.3 } = {}) {
+  let lastErr = "no model available";
+  for (const model of MODEL_CHAIN) {
+    try {
+      const res = await fetch(`${LLM_URL}/chat/completions`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model, messages, max_tokens: maxTokens, temperature, stream: false }),
+        signal: AbortSignal.timeout(60_000),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const j = await res.json();
+      const text = j?.choices?.[0]?.message?.content || "";
+      if (!text.trim()) throw new Error("empty response");
+      return { ok: true, text, model: j?.model || model };
+    } catch (e) {
+      lastErr = `${model}: ${String(e.message || e)}`;
+    }
+  }
+  return { ok: false, text: "", error: lastErr };
+}
+
 /** Call OmniRoute for event theses, walking the model chain until one answers.
  *  Returns { ok, theses, raw?, model?, error? }. Never throws. */
 export async function callArgusLLM(briefText, ctx) {

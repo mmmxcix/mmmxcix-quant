@@ -422,9 +422,9 @@ function delayedSharpe(code, candles, feeBps, lang) {
 // LITERAL (not new RegExp with a template string) — the latter's \\s collapses
 // to a literal s and silently never matches.
 function parseThesis(code) {
-  const out = { edge: "", works: "", breaks: "" };
+  const out = { name: "", edge: "", works: "", breaks: "" };
   // Accept both comment styles so it works for JS (// EDGE:) and Python (# EDGE:).
-  const re = /(?:\/\/|#)\s*(EDGE|WORKS|BREAKS)\s*:\s*(.+)/gi;
+  const re = /(?:\/\/|#)\s*(NAME|EDGE|WORKS|BREAKS)\s*:\s*(.+)/gi;
   let m;
   while ((m = re.exec(code))) {
     const key = m[1].toLowerCase();
@@ -816,7 +816,10 @@ for (const paper of fresh) {
     if (verdict.pass) {
       const cand = {
         id: `rc_${Date.now().toString(36)}`,
-        name: paper.title.slice(0, 70),
+        // Name it after what the RULE does, not after the article it came from —
+        // "Bitcoin looks like Google did in its early days" told you nothing about
+        // the strategy. Falls back to the source title when the model omits it.
+        name: (parseThesis(code).name || paper.title).slice(0, 70),
         paper: paper.link,
         source: paper.source,
         kind: paper.kind,

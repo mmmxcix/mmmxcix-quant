@@ -8,9 +8,10 @@ import { loadMarket } from "./marketdata.mjs";
 import { openThesis, evaluateExit } from "../src/lib/argus/core.js";
 import { scan } from "../src/lib/argus/scanners.js";
 import { buildBrief, diffBrief, renderBrief } from "../src/lib/argus/brief.js";
-import { callArgusLLM } from "../src/lib/argus/llm.js";
 import { deriveLessons, adjustment, sessionOf } from "../src/lib/argus/learn.js";
 import { marketOpen } from "../src/lib/argus/hours.js";
+import { buildReflectionMessages, parseReflection, crystallise, skillsFor } from "../src/lib/argus/reflect.js";
+import { callArgusLLM, chatOnce } from "../src/lib/argus/llm.js";
 
 const SITE = process.env.LAB_SITE || "https://quant.mmmxcix.com";
 const TOKEN = process.env.LAB_TOKEN;
@@ -54,6 +55,9 @@ let equityDayStart = EQUITY0;
 let cycleRunning = false;
 let eventBias = new Map(); // symbol -> { side, thesis, confidence, evidence, horizon, at, model }
 let prevBrief = null;
+let journal = [];       // Hermes post-mortems, newest first
+let skills = [];        // lessons crystallised from repeats — consulted before a trade
+let reflectQueue = [];  // closed trades awaiting their post-mortem
 let lastPersistSig = ""; // skip redundant KV writes on the fast loop (write budget)
 
 const openRisk = () => open.reduce((a, t) => a + t.riskAmt, 0);
@@ -123,10 +127,35 @@ function manageExits(inst, last5, ledgerAdd) {
       closedToday.push(res);
       ledgerAdd.push(res);
       closedAll.push(res); // feed the learning ledger
+      reflectQueue.push(res); // Hermes: every closed trade earns a post-mortem
       if (closedAll.length > 600) closedAll = closedAll.slice(-600);
       console.log(`[${new Date().toISOString()}] CLOSE ${res.symbol} ${res.side} ${res.outcome} R=${res.R.toFixed(2)} pnl=${res.pnl.toFixed(2)} eq=${equity.toFixed(0)}`);
     }
   }
+}
+
+
+/** Hermes REFLECT step: one post-mortem per closed trade, written into the
+ *  journal. Best-effort — a flaky LLM just means the trade waits for the next
+ *  cycle. Bounded per run so a backlog can't stall the agent. */
+async function runReflections(max = 3) {
+  if (!LLM_ON || !reflectQueue.length) return;
+  const recentLessons = journal.slice(0, 8).map((r) => r.lesson).filter(Boolean);
+  for (let i = 0; i < max && reflectQueue.length; i++) {
+    const trade = reflectQueue.shift();
+    try {
+      const out = await chatOnce(buildReflectionMessages(trade, { recentLessons }), { maxTokens: 420 });
+      if (!out.ok) { reflectQueue.unshift(trade); break; } // LLM down — retry next cycle
+      const entry = parseReflection(out.text, trade);
+      if (!entry) continue;
+      journal.unshift(entry);
+      if (journal.length > 300) journal = journal.slice(0, 300);
+      console.log(`[${new Date().toISOString()}] REFLECT ${trade.symbol} ${trade.outcome} ${entry.verdict}: ${entry.lesson || entry.cause}`);
+    } catch { reflectQueue.unshift(trade); break; }
+  }
+  // CRYSTALLISE: a lesson written down repeatedly for the same situation becomes
+  // a rule the agent obeys before its next trade of that kind.
+  skills = crystallise(journal);
 }
 
 function tryOpen(inst, setup, halted) {
@@ -148,6 +177,15 @@ function tryOpen(inst, setup, halted) {
   }, { minSample: LEARN_MIN });
   if (adj.skip) {
     console.log(`[${new Date().toISOString()}] SKIP ${inst.symbol} ${setup.side} ${setup.kind} — lesson: ${adj.reasons[0] || "losing bucket"}`);
+    return;
+  }
+  // REUSE — the last Hermes step. A rule the agent wrote down repeatedly for
+  // exactly this situation ("avoid") vetoes the trade; a "prefer" one is noted
+  // on the thesis so the reasoning is visible rather than hidden in a number.
+  const applicable = skillsFor(skills, { kind: setup.kind, symbol: inst.symbol, side: setup.side });
+  const veto = applicable.find((s) => s.verdict === "avoid" && s.times >= 3 && s.avgR < 0);
+  if (veto) {
+    console.log(`[${new Date().toISOString()}] SKIP ${inst.symbol} ${setup.side} ${setup.kind} — skill (${veto.times}×, ${veto.avgR}R): ${veto.lesson}`);
     return;
   }
   const riskPct = BASE_RISK * adj.mult;
@@ -193,6 +231,7 @@ async function cycle(fullScan) {
     // from the closed-thesis ledger so this scan's sizing reflects the latest edge.
     if (fullScan) {
       await runEventChannel();
+      await runReflections();
       lessons = deriveLessons(closedAll, { minSample: LEARN_MIN });
     }
 
@@ -241,9 +280,11 @@ async function persist(ledgerAdd, extra) {
     .map(([symbol, v]) => ({ symbol, side: v.side, thesis: v.thesis, confidence: v.confidence, horizon: v.horizon, at: v.at, model: v.model }));
   const body = {
     token: TOKEN,
-    state: { equity, open: open.length, forming: forming.length, heatPct: openRisk() / equity, dayPnl: extra.dailyPnl, halted: extra.halted, universe: activeUniverse().length, events, lessons: lessons.slice(0, 8).map((l) => ({ text: l.text, verdict: l.verdict, n: l.n })) },
+    state: { equity, open: open.length, forming: forming.length, heatPct: openRisk() / equity, dayPnl: extra.dailyPnl, halted: extra.halted, universe: activeUniverse().length, events, skills: skills.slice(0, 8), lessons: lessons.slice(0, 8).map((l) => ({ text: l.text, verdict: l.verdict, n: l.n })) },
     theses: open,
     ledgerAdd,
+    journal: journal.slice(0, 60),   // Hermes post-mortems (newest first)
+    skills,                          // rules crystallised from repeated lessons
   };
   try {
     const r = await fetch(`${SITE}/api/argus`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
@@ -262,11 +303,13 @@ async function hydrate() {
       closedAll = j.ledger.slice(-600);
       lessons = deriveLessons(closedAll, { minSample: LEARN_MIN });
     }
+    if (Array.isArray(j.journal)) journal = j.journal.slice(0, 300);
+    if (Array.isArray(j.skills)) skills = j.skills;
     for (const e of j.state?.events || []) { // restore fresh event biases across restarts
       if (Date.now() - (e.at || 0) < EVENT_TTL) eventBias.set(e.symbol, { side: e.side, thesis: e.thesis, confidence: e.confidence, evidence: [], horizon: e.horizon, at: e.at, model: e.model });
     }
     equityDayStart = equity;
-    console.log(`hydrated: eq ${equity.toFixed(0)}, ${open.length} open theses, ${eventBias.size} event-bias, ${closedAll.length} closed → ${lessons.length} lessons`);
+    console.log(`hydrated: eq ${equity.toFixed(0)}, ${open.length} open theses, ${eventBias.size} event-bias, ${closedAll.length} closed → ${lessons.length} lessons, ${journal.length} reflections → ${skills.length} skills`);
   } catch { /* fresh start */ }
 }
 

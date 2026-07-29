@@ -146,3 +146,42 @@ test("adjustment clamps to [0.5,1.25] and only matching, well-sampled buckets ac
   const b = adjustment(lessons, { kind: "breakout", symbol: "BTCUSDT", side: "long" }, { minSample: 20 });
   assert.equal(b.mult, 1, "non-matching setup unaffected");
 });
+
+// ── Phase-3: Hermes reflection loop ─────────────────────────────────────────
+import { describeTrade, parseReflection, crystallise, skillsFor } from "../src/lib/argus/reflect.js";
+
+const closedTrade = (over = {}) => ({
+  id: "t1", symbol: "SOLUSDT", asset: "crypto", kind: "mean-reversion", side: "short",
+  timeframe: "5m", reason: "Stretched 3.1 ATR above VWAP", entry: 74.18, stop: 74.30,
+  target: 73.99, plannedR: 2, outcome: "stop", exit: 74.30, R: -1.05, pnl: -190, riskAmt: 181,
+  openedAt: 1e12, exitAt: 1e12 + 36e5, ...over,
+});
+
+test("describeTrade states the facts a post-mortem needs", () => {
+  const s = describeTrade(closedTrade({ catalyst: "OPEC cut" }));
+  assert.match(s, /SOLUSDT/); assert.match(s, /mean-reversion short/);
+  assert.match(s, /stop/); assert.match(s, /-1\.05R/); assert.match(s, /OPEC cut/);
+});
+
+test("parseReflection extracts a journal entry and clamps confidence", () => {
+  const reply = '```json\n{"verdict":"bad-process","cause":"faded a strong uptrend","mistake":"ignored the 1h bias",' +
+    '"lesson":"skip mean-reversion shorts while the 1h bias is up","applies":{"kind":"mean-reversion","side":"short"},"confidence":1.4}\n```';
+  const e = parseReflection(reply, closedTrade());
+  assert.equal(e.verdict, "bad-process");
+  assert.equal(e.confidence, 1, "clamped to [0,1]");
+  assert.equal(e.applies.kind, "mean-reversion");
+  assert.equal(e.applies.symbol, null, "omitted dimension stays null");
+  assert.equal(e.R, -1.05);
+  assert.equal(parseReflection("no json here", closedTrade()), null);
+});
+
+test("crystallise promotes a lesson only after it repeats, and skillsFor matches scope", () => {
+  const one = parseReflection('{"verdict":"bad-process","cause":"c","mistake":"m","lesson":"skip mean-reversion shorts in an uptrend","applies":{"kind":"mean-reversion","side":"short"},"confidence":0.8}', closedTrade());
+  assert.equal(crystallise([one, one]).length, 0, "twice is not yet a rule");
+  const skills = crystallise([one, one, one]);
+  assert.equal(skills.length, 1, "three times becomes a skill");
+  assert.equal(skills[0].verdict, "avoid");
+  assert.ok(skills[0].avgR < 0);
+  assert.equal(skillsFor(skills, { kind: "mean-reversion", symbol: "SOLUSDT", side: "short" }).length, 1, "applies to the matching setup");
+  assert.equal(skillsFor(skills, { kind: "breakout", symbol: "SOLUSDT", side: "long" }).length, 0, "not to a different setup");
+});

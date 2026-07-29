@@ -175,6 +175,57 @@ export default function Argus() {
         </div>
       )}
 
+      {/* Hermes journal — a post-mortem per closed trade, and the rules that
+          repeated often enough to become binding. */}
+      {(data.skills?.length > 0 || data.journal?.length > 0) && (
+        <div className="grid lg:grid-cols-2 gap-3">
+          {data.skills?.length > 0 && (
+            <div className="rounded-xl border border-line lg-glass p-4">
+              <p className="text-xs text-dim font-medium mb-2 flex items-center gap-1.5">
+                <GraduationCap className="w-3.5 h-3.5" /> Rules Argus wrote for itself
+              </p>
+              <div className="space-y-2">
+                {data.skills.slice(0, 6).map((s, i) => (
+                  <div key={i} className={cn("rounded-lg border p-2.5 text-[11px] leading-snug",
+                    s.verdict === "avoid" ? "border-down/30" : "border-up/30")}>
+                    <span className={cn("font-semibold uppercase tracking-wide text-[9px] mr-1.5",
+                      s.verdict === "avoid" ? "text-down" : "text-up")}>{s.verdict}</span>
+                    <span className="text-text/90">{s.lesson}</span>
+                    <span className="text-dim"> · learned {s.times}× · {s.avgR >= 0 ? "+" : ""}{s.avgR}R avg</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {data.journal?.length > 0 && (
+            <div className="rounded-xl border border-line lg-glass p-4">
+              <p className="text-xs text-dim font-medium mb-2 flex items-center gap-1.5">
+                <Newspaper className="w-3.5 h-3.5" /> Trade post-mortems
+              </p>
+              <div className="space-y-2 max-h-72 overflow-y-auto">
+                {data.journal.slice(0, 12).map((r, i) => (
+                  <div key={i} className="border-b border-line/40 pb-2 last:border-0 text-[11px] leading-snug">
+                    <div className="flex items-center gap-2 mb-0.5">
+                      <span className="font-mono font-semibold">{r.symbol}</span>
+                      <span className="text-dim">{r.kind} {r.side}</span>
+                      <span className={cn("font-mono", (r.R ?? 0) >= 0 ? "text-up" : "text-down")}>
+                        {(r.R ?? 0) >= 0 ? "+" : ""}{r.R}R
+                      </span>
+                      <span className={cn("ml-auto text-[9px] uppercase tracking-wide font-semibold",
+                        r.verdict === "bad-process" ? "text-down" : r.verdict === "good-process" ? "text-up" : "text-dim")}>
+                        {r.verdict?.replace("-", " ")}
+                      </span>
+                    </div>
+                    <p className="text-dim">{r.cause}</p>
+                    {r.mistake && r.mistake !== "none" && <p className="text-down/80">Should have: {r.mistake}</p>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ledger */}
       {ledger.length > 0 && (
         <div className="rounded-xl border border-line lg-glass p-4">
