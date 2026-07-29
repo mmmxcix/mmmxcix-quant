@@ -87,8 +87,6 @@ function AgentCandidates() {
     };
   }, []);
 
-  if (items === null || items === undefined || items.length === 0) return null;
-
   // Import into the market the strategy was actually validated on — importing
   // everything as BTC 4h (as this used to) would silently misrepresent a rule
   // that only ever worked on, say, EUR/USD daily.
@@ -129,6 +127,8 @@ function AgentCandidates() {
     setTimeout(() => setAutoNote(null), 6000);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items, autoPromote, autoDsr]);
+
+  if (items === null || items === undefined || items.length === 0) return null;
 
   return (
     <div className="rounded-xl border border-accent/30 lg-glass p-4 mb-6">
