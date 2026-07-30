@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Boxes, Trash2, Skull, ShieldCheck, FlaskConical, Rocket, Grid3x3, Info, Send, Loader2, Check, Scale, Wrench } from "lucide-react";
+import { Boxes, Trash2, Skull, ShieldCheck, FlaskConical, Rocket, Grid3x3, Info, Send, Loader2, Check, Scale, Wrench, Search } from "lucide-react";
 import {
   getEntries, subscribeRegistry, setStatus, removeEntry, STATUS_META, correlationMatrix, saveEntry,
 } from "@/lib/registry";
@@ -338,7 +338,14 @@ function Card({ e }) {
     <div className="rounded-lg border border-line bg-bg/40 p-3 space-y-2">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <p className="text-sm font-medium text-text truncate">{e.name}</p>
+          <div className="flex items-center gap-1.5">
+            {/* Where it came from — your own backtest, or a Cortex research find. */}
+            <span className={cn("text-[8px] uppercase tracking-wide font-semibold px-1 py-px rounded shrink-0",
+              e.candidateId ? "bg-accent/15 text-accent" : "bg-up/15 text-up")}>
+              {e.candidateId ? "Cortex" : "You"}
+            </span>
+            <p className="text-sm font-medium text-text truncate">{e.name}</p>
+          </div>
           <p className="text-[10px] text-dim font-mono">{e.symbol} · {e.interval} · {e.mode}{e.positionPct != null ? ` · ${e.positionPct}%` : ""}</p>
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
@@ -510,12 +517,25 @@ function PublishToAgent({ entries }) {
 export default function Registry() {
   const [entries, setEntries] = useState(getEntries());
   useEffect(() => subscribeRegistry(() => setEntries(getEntries())), []);
+  const [query, setQuery] = useState("");
+  const [showGraveyard, setShowGraveyard] = useState(false); // buried strats are hidden until asked for
+
+  const matches = (e) => {
+    const q = query.trim().toLowerCase();
+    if (!q) return true;
+    return (e.name || "").toLowerCase().includes(q) || (e.symbol || "").toLowerCase().includes(q);
+  };
 
   const byStatus = useMemo(() => {
     const g = { factory: [], validated: [], paper: [], improve: [], graveyard: [] };
-    for (const e of entries) (g[e.status] || g.factory).push(e);
+    for (const e of entries) if (matches(e)) (g[e.status] || g.factory).push(e);
     return g;
-  }, [entries]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entries, query]);
+
+  const graveyardCount = useMemo(() => entries.filter((e) => e.status === "graveyard").length, [entries]);
+  // The living library = everything that isn't buried; graveyard is opt-in.
+  const activeCols = COLS.filter((c) => c.id !== "graveyard");
 
   const corrSet = useMemo(
     () => entries.filter((e) => e.status === "paper" || e.status === "validated"),
@@ -541,13 +561,31 @@ export default function Registry() {
 
       {entries.length === 0 ? (
         <div className="rounded-xl border border-line lg-glass p-8 text-center text-sm text-dim">
-          No strategies yet. Run a backtest and click <span className="text-accent">“Save to registry”</span> under the result.
+          No strategies yet. Run a backtest and click <span className="text-accent">“Save to registry”</span> under the result —
+          it lands here in the library. Cortex's own finds show up automatically.
         </div>
       ) : (
         <>
           <PublishToAgent entries={entries} />
-          <div className="grid md:grid-cols-2 xl:grid-cols-5 gap-4 mb-8">
-            {COLS.map((col) => {
+
+          {/* Library toolbar — search across every strategy; the Graveyard stays
+              out of the library until you explicitly ask for it. */}
+          <div className="flex flex-wrap items-center gap-2 mb-3">
+            <div className="relative flex-1 min-w-[12rem] max-w-xs">
+              <Search className="w-3.5 h-3.5 text-dim absolute left-2.5 top-1/2 -translate-y-1/2" />
+              <input value={query} onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search the library…"
+                className="input-base w-full text-xs !pl-8" />
+            </div>
+            <span className="text-[11px] text-dim">{entries.length - graveyardCount} in library</span>
+            <button onClick={() => setShowGraveyard((v) => !v)}
+              className={cn("chip !text-[11px] ml-auto flex items-center gap-1.5", showGraveyard ? "chip-active" : "chip-idle")}>
+              <Skull className="w-3.5 h-3.5" /> Graveyard {graveyardCount}
+            </button>
+          </div>
+
+          <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
+            {activeCols.map((col) => {
               const Icon = col.icon;
               const list = byStatus[col.id];
               return (
@@ -560,13 +598,29 @@ export default function Registry() {
                   <p className="text-[10px] text-dim px-1 mb-2">{STATUS_META[col.id].hint}</p>
                   <div className="space-y-2">
                     {list.length === 0
-                      ? <p className="text-[11px] text-dim px-1 py-4 text-center">empty</p>
+                      ? <p className="text-[11px] text-dim px-1 py-4 text-center">{query ? "no match" : "empty"}</p>
                       : list.map((e) => <Card key={e.id} e={e} />)}
                   </div>
                 </div>
               );
             })}
           </div>
+
+          {/* Graveyard — opt-in. Buried strategies (too weak, decayed, etc.) are
+              kept as a record but stay out of the library above by default. */}
+          {showGraveyard && (
+            <div className="rounded-xl border border-line lg-glass p-3 mb-8">
+              <div className="flex items-center gap-2 mb-3 px-1">
+                <Skull className="w-4 h-4 text-dim" />
+                <p className="text-sm font-semibold text-dim">Graveyard</p>
+                <span className="text-[10px] text-dim">— buried, kept as a record of what failed</span>
+                <span className="text-xs font-mono text-dim ml-auto">{byStatus.graveyard.length}</span>
+              </div>
+              {byStatus.graveyard.length === 0
+                ? <p className="text-[11px] text-dim px-1 py-4 text-center">{query ? "no match" : "empty"}</p>
+                : <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-2">{byStatus.graveyard.map((e) => <Card key={e.id} e={e} />)}</div>}
+            </div>
+          )}
 
           <div className="rounded-xl border border-line lg-glass p-4">
             <div className="flex items-center gap-2 mb-3">
