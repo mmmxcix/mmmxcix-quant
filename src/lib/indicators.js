@@ -246,6 +246,41 @@ export function macd(values, fast = 12, slow = 26, signalPeriod = 9) {
 }
 
 /**
+ * Supertrend (ATR trailing bands) — the popular trend-following overlay. Builds
+ * ATR bands around the HL2 midline, carries the final bands forward with the
+ * standard rules, and flips a trend direction when price closes through the
+ * active band.
+ * @param {Array<{high:number,low:number,close:number}>} candles
+ * @param {number} period  ATR period
+ * @param {number} mult    band multiplier
+ * @returns {({value:number, dir:number}|null)[]}  dir = +1 up (long), -1 down
+ */
+export function supertrend(candles, period = 10, mult = 3) {
+  const out = new Array(candles.length).fill(null);
+  const a = atr(candles, period);
+  let fUpper = null, fLower = null;   // current final bands
+  let pfUpper = null, pfLower = null; // previous bar's final bands
+  let st = null;                       // the supertrend line
+  for (let i = 0; i < candles.length; i++) {
+    if (a[i] == null) continue;
+    const c = candles[i];
+    const hl2 = (c.high + c.low) / 2;
+    const bUpper = hl2 + mult * a[i];
+    const bLower = hl2 - mult * a[i];
+    const prevClose = candles[i - 1].close;
+    // Final bands tighten only, until price closes through the prior band.
+    fUpper = (pfUpper == null || bUpper < pfUpper || prevClose > pfUpper) ? bUpper : pfUpper;
+    fLower = (pfLower == null || bLower > pfLower || prevClose < pfLower) ? bLower : pfLower;
+    if (st == null) st = fUpper;                       // seed on the upper band
+    else if (st === pfUpper) st = c.close <= fUpper ? fUpper : fLower;
+    else /* st === pfLower */ st = c.close >= fLower ? fLower : fUpper;
+    out[i] = { value: st, dir: st === fUpper ? -1 : 1 }; // dir +1 up (long), -1 down
+    pfUpper = fUpper; pfLower = fLower;
+  }
+  return out;
+}
+
+/**
  * Rolling linear-regression channel: the least-squares line fitted through the
  * last `period` values at each bar. The single line captures BOTH ideas a
  * regression carries — its slope is trend/momentum, and a price's distance from

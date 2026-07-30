@@ -841,6 +841,26 @@ export const BUILT_IN_STRATEGIES = [
   },
 
   {
+    id: "supertrend",
+    name: "Supertrend (ATR Trend)",
+    description:
+      "The popular ATR trend-following overlay (as ranked by Gobi's TradingXBot): a volatility-scaled trailing band flips a trend direction when price closes through it. Long while the trend is up, flat (or short) when it flips down. Rides sustained moves and steps aside in chop; the ATR scaling adapts the band to each market's volatility. Best on trending instruments and higher timeframes.",
+    params: [
+      { key: "atrPeriod", label: "ATR period", default: 10, min: 5, max: 60, step: 1 },
+      { key: "mult", label: "Band multiplier", default: 3, min: 1, max: 8, step: 0.5 },
+      { key: "allowShort", label: "Allow shorts (1/0)", default: 0, min: 0, max: 1, step: 1 },
+    ],
+    build({ atrPeriod = 10, mult = 3, allowShort = 0 } = {}) {
+      return (ctx) => {
+        const st = cached(ctx.candles, `st:${atrPeriod}:${mult}`, () => ind.supertrend(ctx.candles, atrPeriod, mult));
+        const s = st[ctx.index];
+        if (s == null) return "flat";
+        return s.dir > 0 ? "long" : allowShort ? "short" : "flat";
+      };
+    },
+  },
+
+  {
     id: "rsi-divergence",
     name: "Momentum Divergence Reversal (RSI)",
     description:

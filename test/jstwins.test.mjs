@@ -26,7 +26,7 @@ function series(n = 900) {
 }
 
 // Every strategy that HAS a JS twin must reproduce its builder exactly.
-const IDS = ["linreg-channel", "rsi-divergence"];
+const IDS = ["linreg-channel", "rsi-divergence", "supertrend"];
 
 for (const id of IDS) {
   test(`JS twin of "${id}" trades identically to its builder`, () => {

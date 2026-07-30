@@ -279,6 +279,33 @@ function strategy(ctx) {
   return "flat";
 }`;
   },
+  "supertrend": (p) => {
+    const atrPeriod = P(p, "atrPeriod", 10), mult = P(p, "mult", 3), allowShort = P(p, "allowShort", 0);
+    return `// Supertrend (ATR Trend) — a volatility band flips a trend direction on a close through it.
+const ATR_PERIOD = ${atrPeriod}, MULT = ${mult}, ALLOW_SHORT = ${allowShort};
+let _c = null, _st = null;
+function _supertrend(candles, period, mult, atrFn) {
+  const a = atrFn(candles, period), out = new Array(candles.length).fill(null);
+  let fU = null, fL = null, pfU = null, pfL = null, st = null;
+  for (let i = 0; i < candles.length; i++) {
+    if (a[i] == null) continue;
+    const c = candles[i], hl2 = (c.high + c.low) / 2;
+    const bU = hl2 + mult * a[i], bL = hl2 - mult * a[i], pc = candles[i - 1].close;
+    fU = (pfU == null || bU < pfU || pc > pfU) ? bU : pfU;
+    fL = (pfL == null || bL > pfL || pc < pfL) ? bL : pfL;
+    if (st == null) st = fU; else if (st === pfU) st = c.close <= fU ? fU : fL; else st = c.close >= fL ? fL : fU;
+    out[i] = { dir: st === fU ? -1 : 1 };
+    pfU = fU; pfL = fL;
+  }
+  return out;
+}
+function strategy(ctx) {
+  if (_c !== ctx.candles) { _c = ctx.candles; _st = _supertrend(ctx.candles, ATR_PERIOD, MULT, ctx.indicators.atr); }
+  const s = _st[ctx.index];
+  if (s == null) return "flat";
+  return s.dir > 0 ? "long" : ALLOW_SHORT ? "short" : "flat";
+}`;
+  },
 };
 
 export const hasBuiltinSource = (id) => id in BUILTIN_SOURCE;
@@ -681,6 +708,36 @@ def signals(df):
                 elif ALLOW_SHORT and down and z >= ENTRY_Z:
                     pos = -1
             out[i] = pos
+    return pd.Series(out, index=df.index)
+`;
+  },
+  "supertrend": (p) => {
+    const atrPeriod = P(p, "atrPeriod", 10), mult = P(p, "mult", 3), allowShort = P(p, "allowShort", 0);
+    // Stateful carry-forward recursion — a bar loop, not a vectorised mask.
+    return `# Supertrend (ATR Trend) — a volatility band flips a trend direction on a close through it.
+${PY_HEAD}${PY_ATR}
+ATR_PERIOD, MULT, ALLOW_SHORT = ${atrPeriod}, ${mult}, ${allowShort}
+
+def signals(df):
+    atr = _atr(df, ATR_PERIOD).to_numpy()
+    high = df["high"].to_numpy(dtype=float); low = df["low"].to_numpy(dtype=float); close = df["close"].to_numpy(dtype=float)
+    n = len(df); out = np.zeros(n)
+    fU = None; fL = None; pfU = None; pfL = None; st = None
+    for i in range(n):
+        if np.isnan(atr[i]):
+            continue
+        hl2 = (high[i] + low[i]) / 2.0
+        bU = hl2 + MULT * atr[i]; bL = hl2 - MULT * atr[i]; pc = close[i - 1]
+        fU = bU if (pfU is None or bU < pfU or pc > pfU) else pfU
+        fL = bL if (pfL is None or bL > pfL or pc < pfL) else pfL
+        if st is None:
+            st = fU
+        elif st == pfU:
+            st = fU if close[i] <= fU else fL
+        else:
+            st = fL if close[i] >= fL else fU
+        out[i] = 1 if st != fU else (-1 if ALLOW_SHORT else 0)
+        pfU = fU; pfL = fL
     return pd.Series(out, index=df.index)
 `;
   },

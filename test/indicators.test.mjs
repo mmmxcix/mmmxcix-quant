@@ -23,3 +23,25 @@ test("linreg z is negative when price dips below its uptrend line", () => {
   assert.ok(r[11].slope > 0, "still an uptrend");
   assert.ok(r[11].z < 0, "a dip below the line reads as negative z");
 });
+
+// ── supertrend ──────────────────────────────────────────────────────────────
+import { supertrend as _supertrend } from "../src/lib/indicators.js";
+
+test("supertrend flips direction and sits below price in an uptrend", () => {
+  const c = Array.from({ length: 60 }, (_, i) => {
+    const p = 100 + i; // steady uptrend
+    return { time: i * 3600, open: p, high: p + 1, low: p - 1, close: p, volume: 1 };
+  });
+  const st = _supertrend(c, 10, 3);
+  const last = st[59];
+  assert.ok(last, "has a value after warm-up");
+  assert.equal(last.dir, 1, "uptrend → dir +1");
+  assert.ok(last.value < c[59].close, "the band trails BELOW price in an uptrend");
+});
+
+test("supertrend turns down after a sharp drop", () => {
+  const up = Array.from({ length: 40 }, (_, i) => ({ time: i * 3600, open: 100 + i, high: 101 + i, low: 99 + i, close: 100 + i, volume: 1 }));
+  const down = Array.from({ length: 20 }, (_, i) => { const p = 140 - i * 4; return { time: (40 + i) * 3600, open: p, high: p + 1, low: p - 1, close: p, volume: 1 }; });
+  const st = _supertrend([...up, ...down], 10, 3);
+  assert.equal(st[st.length - 1].dir, -1, "a sharp decline flips it to a downtrend");
+});
