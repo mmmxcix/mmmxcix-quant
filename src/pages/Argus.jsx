@@ -1,13 +1,34 @@
 import { useEffect, useState } from "react";
-import { Radio, TrendingUp, TrendingDown, Trophy, AlertTriangle, Zap, Newspaper, GraduationCap } from "lucide-react";
+import { Link } from "react-router-dom";
+import { Radio, TrendingUp, TrendingDown, Trophy, AlertTriangle, Zap, Newspaper, GraduationCap, LineChart, X, Ban } from "lucide-react";
 import { cn, fmtNum } from "@/lib/utils";
 import { ledgerStats } from "@/lib/argus/core";
+import { useSession } from "@/lib/authClient";
 import Skeleton from "@/components/Skeleton";
 
 // Argus — the 24/7 day-trading agent (Phase 0: technical channel, paper only).
-// Reads the agent's KV state from /api/argus. Educational, not advice.
+// Reads the agent's KV state from /api/argus. Public: everyone can watch what
+// the agent does. Dev-only controls (close/cancel a trade) are gated inline.
 
 const money = (n) => (n >= 0 ? "+" : "−") + fmtNum(Math.abs(n), 2);
+
+// Map an Argus instrument to Charts market + a sane interval, then hand the
+// trade over as namespaced params so Charts draws entry/stop/target + reason.
+const CRYPTO = /USDT$|USD$|BTC$|ETH$/;
+const TF_TO_INTERVAL = { "1m": "1m", "5m": "5m", "15m": "15m", "30m": "30m", "1h": "1h", "2h": "2h", "4h": "4h", "1d": "1d" };
+function chartHref(t, outcome = "open") {
+  const market = t.asset === "crypto" || (t.asset == null && CRYPTO.test(t.symbol)) ? "crypto" : "stock";
+  const p = new URLSearchParams({ market, symbol: t.symbol, interval: TF_TO_INTERVAL[t.timeframe] || "15m" });
+  if (Number.isFinite(t.entry)) p.set("tEntry", String(t.entry));
+  if (Number.isFinite(t.stop)) p.set("tStop", String(t.stop));
+  if (Number.isFinite(t.target)) p.set("tTarget", String(t.target));
+  if (t.side) p.set("tSide", t.side);
+  const at = t.openedAt ?? t.exitAt ?? t.at;
+  if (at) p.set("tAt", String(Math.round(at / 1000))); // ms → unix seconds
+  if (t.reason || t.catalyst) p.set("tReason", (t.reason || t.catalyst).slice(0, 180));
+  p.set("tOutcome", outcome);
+  return `/charts?${p.toString()}`;
+}
 const ago = (ts) => {
   const s = Math.max(0, (Date.now() - ts) / 1000);
   if (s < 90) return `${Math.round(s)}s`;
@@ -37,6 +58,9 @@ function Stat({ label, value, sub, tone = "text-text" }) {
 
 export default function Argus() {
   const [data, setData] = useState(undefined); // undefined=loading
+  const [cmdBusy, setCmdBusy] = useState(null); // id being closed/cancelled
+  const { data: session } = useSession();
+  const isDev = session?.user?.role === "admin";
 
   useEffect(() => {
     let alive = true;
@@ -51,6 +75,21 @@ export default function Argus() {
     const id = setInterval(() => { if (!document.hidden) load(); }, 30_000);
     return () => { alive = false; clearInterval(id); };
   }, []);
+
+  // Dev-only: queue a "close now" / "cancel" the agent acts on next cycle.
+  // Session-gated server-side (admin cookie), so no token travels from the client.
+  const command = async (type, id, label) => {
+    if (!isDev || cmdBusy) return;
+    if (!window.confirm(`${type === "close" ? "Close" : "Cancel"} ${label}? Argus will act on its next scan.`)) return;
+    setCmdBusy(id);
+    try {
+      const r = await fetch("/api/argus", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ command: { type, id } }),
+      });
+      if (!r.ok) throw new Error();
+    } catch { /* surfaced by the button staying enabled */ } finally { setCmdBusy(null); }
+  };
 
   if (data === undefined) return <Skeleton className="h-64 w-full rounded-xl" />;
 
@@ -98,7 +137,7 @@ export default function Argus() {
         ) : (
           <div className="grid md:grid-cols-2 gap-3">
             {theses.map((t) => (
-              <div key={t.id} className="rounded-xl border border-line lg-glass p-4">
+              <div key={t.id} className="rounded-xl border border-line lg-glass p-4 hover:border-accent/40 transition-colors">
                 <div className="flex items-center gap-2 mb-2">
                   <span className="font-mono font-semibold">{t.symbol}</span>
                   <SideTag side={t.side} />
@@ -113,6 +152,17 @@ export default function Argus() {
                   <span>{t.plannedR?.toFixed(1)}R</span>
                 </div>
                 <p className="text-[11px] text-dim mt-2 leading-snug">{t.reason} · risk {fmtNum(t.riskAmt, 0)}</p>
+                <div className="flex items-center gap-2 mt-3">
+                  <Link to={chartHref(t, "open")} className="btn-ghost text-xs flex items-center gap-1.5">
+                    <LineChart className="w-3.5 h-3.5" /> View on chart
+                  </Link>
+                  {isDev && (
+                    <button onClick={() => command("close", t.id, `${t.symbol} ${t.side}`)} disabled={cmdBusy === t.id}
+                      className="btn-ghost text-xs flex items-center gap-1.5 !text-down hover:!bg-down/10 ml-auto">
+                      <X className="w-3.5 h-3.5" /> {cmdBusy === t.id ? "Closing…" : "Close now"}
+                    </button>
+                  )}
+                </div>
                 {t.catalyst && (
                   <div className="mt-2 rounded-lg border border-accent/30 bg-accent/5 px-2.5 py-1.5">
                     <p className="text-[10px] uppercase tracking-wide text-accent font-semibold flex items-center gap-1 mb-0.5">
@@ -148,6 +198,14 @@ export default function Argus() {
                   <span className="ml-auto text-[10px] text-dim">{ago(e.at)} ago</span>
                 </div>
                 <p className="text-[11px] text-dim leading-snug">{e.thesis}</p>
+                <div className="flex items-center gap-2 mt-2">
+                  <Link to={chartHref({ symbol: e.symbol, side: e.side, reason: e.thesis, at: e.at }, "planned")}
+                    className="text-[10px] text-accent hover:underline flex items-center gap-1"><LineChart className="w-3 h-3" /> chart</Link>
+                  {isDev && (
+                    <button onClick={() => command("cancel", e.symbol, `${e.symbol} bias`)} disabled={cmdBusy === e.symbol}
+                      className="text-[10px] text-down hover:underline flex items-center gap-1 ml-auto"><Ban className="w-3 h-3" /> {cmdBusy === e.symbol ? "…" : "cancel"}</button>
+                  )}
+                </div>
               </div>
             ))}
           </div>
@@ -241,8 +299,12 @@ export default function Argus() {
               </thead>
               <tbody className="font-mono">
                 {ledger.slice(0, 40).map((c) => (
-                  <tr key={c.id} className="border-t border-line/40">
-                    <td className="py-1.5 font-semibold">{c.symbol}</td>
+                  <tr key={c.id} className="border-t border-line/40 hover:bg-accent/5">
+                    <td className="py-1.5 font-semibold">
+                      <Link to={chartHref(c, c.outcome)} className="hover:text-accent flex items-center gap-1">
+                        {c.symbol} <LineChart className="w-3 h-3 text-dim" />
+                      </Link>
+                    </td>
                     <td className={c.side === "long" ? "text-up" : "text-down"}>{c.side}</td>
                     <td className="text-dim">{c.kind}</td>
                     <td className={cn(c.outcome === "target" ? "text-up" : c.outcome === "stop" ? "text-down" : "text-dim")}>{c.outcome}</td>

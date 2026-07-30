@@ -89,6 +89,9 @@ const NAV_GROUPS = [
       { to: "/regimes", label: "Regimes", icon: Waypoints },
       { to: "/portfolio", label: "Portfolio", icon: Briefcase },
       { to: "/tools", label: "Tools", icon: Wrench },
+      // Argus is public — anyone can watch what the agent does (paper only). The
+      // Cortex research system stays dev-only (see DEV_ITEMS).
+      { to: "/argus", label: "Argus", icon: Radio },
     ],
   },
   {
@@ -108,7 +111,7 @@ function useDevNav() {
 }
 
 const DEV_ITEMS = {
-  Strategy: [{ to: "/cortex", label: "Cortex", icon: Cpu }, { to: "/argus", label: "Argus", icon: Radio }],
+  Strategy: [{ to: "/cortex", label: "Cortex", icon: Cpu }],
   Learn: [{ to: "/coach", label: "Coach", icon: Target }],
 };
 

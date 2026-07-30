@@ -118,6 +118,12 @@ function finalize(th, refExit, outcome, now) {
   return { ...th, state: "closed", exit, exitAt: now, outcome, pnl, R };
 }
 
+/** Force-close a thesis at a reference price (a human "close now"), filled and
+ *  accounted exactly like a normal exit but tagged "manual". */
+export function closeThesisAt(th, refPrice, now = Date.now()) {
+  return finalize(th, refPrice, "manual", now);
+}
+
 /** Aggregate stats for the closed-thesis ledger. */
 export function ledgerStats(closed) {
   const n = closed.length;

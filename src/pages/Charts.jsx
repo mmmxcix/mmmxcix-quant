@@ -15,7 +15,7 @@ import { sma, ema, bollinger, closes } from "@/lib/indicators";
 import { vizColor } from "@/lib/vizColors";
 import { getAlertsFor, addAlert, removeAlert, subscribeAlerts, checkAlerts, ensureNotificationPermission } from "@/lib/alerts";
 import { cn, fmtPrice, fmtPct } from "@/lib/utils";
-import { Bell, X, Scale, Info as InfoIcon } from "lucide-react";
+import { Bell, X, Scale, Info as InfoIcon, Radio } from "lucide-react";
 
 // Compact price header above the chart — last price (live tick if streaming),
 // change vs the previous bar, and the current bar's OHLC.
@@ -258,6 +258,21 @@ export default function Charts() {
     return () => { lines.forEach((l) => { try { mainSeries.removePriceLine(l); } catch { /* gone */ } }); };
   }, [alerts, mainSeries]);
 
+  // Entry / stop / target lines for a handed-over trade — solid, labelled, so
+  // it reads like a real order ticket sitting on the chart.
+  useEffect(() => {
+    if (!mainSeries || !trade) return;
+    const lines = [];
+    const add = (price, color, title) => {
+      if (price == null) return;
+      lines.push(mainSeries.createPriceLine({ price, color, lineWidth: 2, lineStyle: 0, axisLabelVisible: true, title }));
+    };
+    add(trade.entry, "#3b82f6", `Entry (${trade.side})`);
+    add(trade.stop, "#ef4444", "Stop");
+    add(trade.target, "#10b981", "Target");
+    return () => { lines.forEach((l) => { try { mainSeries.removePriceLine(l); } catch { /* gone */ } }); };
+  }, [trade, mainSeries]);
+
   const submitAlert = async (direction) => {
     const p = parseFloat(alertPrice);
     if (!p || p <= 0) return;
@@ -287,6 +302,37 @@ export default function Charts() {
     }
     return out;
   }, [candles, indicators]);
+
+  // A trade handed over from Argus (click a thesis) or a backtest link: its
+  // entry / stop / target become price lines with a marker + the reason Argus
+  // gave, so you see exactly what the agent did on the real chart. Params are
+  // namespaced (t*) so they never collide with the alert lines.
+  const trade = useMemo(() => {
+    const entry = parseFloat(params.get("tEntry"));
+    if (!Number.isFinite(entry)) return null;
+    const num = (k) => { const v = parseFloat(params.get(k)); return Number.isFinite(v) ? v : null; };
+    return {
+      entry,
+      stop: num("tStop"),
+      target: num("tTarget"),
+      side: params.get("tSide") === "short" ? "short" : "long",
+      at: num("tAt"), // entry time (unix seconds)
+      reason: params.get("tReason") || "",
+      label: params.get("tLabel") || "",
+      outcome: params.get("tOutcome") || "", // open | planned | target | stop | signal | eod
+    };
+  }, [params]);
+
+  const tradeMarkers = useMemo(() => {
+    if (!trade?.at) return [];
+    return [{ time: trade.at, side: trade.side === "long" ? "buy" : "sell", text: `Argus ${trade.side}` }];
+  }, [trade]);
+
+  const clearTrade = () => {
+    const next = new URLSearchParams(params);
+    ["tEntry", "tStop", "tTarget", "tSide", "tAt", "tReason", "tLabel", "tOutcome"].forEach((k) => next.delete(k));
+    setParams(next);
+  };
 
   const stats = useMemo(() => {
     if (!candles || candles.length < 2) return null;
@@ -540,6 +586,22 @@ export default function Charts() {
         </div>
       )}
 
+      {/* A handed-over Argus trade — its plan and the reason it was taken. */}
+      {trade && (
+        <div className="rounded-xl border border-accent/40 bg-accent/5 px-4 py-2.5 flex flex-wrap items-center gap-x-4 gap-y-1">
+          <span className="text-[11px] uppercase tracking-wide text-accent font-semibold flex items-center gap-1.5">
+            <Radio className="w-3.5 h-3.5" /> Argus {trade.side}{trade.outcome && trade.outcome !== "open" ? ` · ${trade.outcome}` : ""}
+          </span>
+          <span className="font-mono text-xs text-dim">
+            entry <span className="text-text">{fmtPrice(trade.entry)}</span>
+            {trade.stop != null && <> · <span className="text-down">stop {fmtPrice(trade.stop)}</span></>}
+            {trade.target != null && <> · <span className="text-up">target {fmtPrice(trade.target)}</span></>}
+          </span>
+          {trade.reason && <span className="text-xs text-dim flex-1 min-w-[12rem]">{trade.reason}</span>}
+          <button onClick={clearTrade} className="text-dim hover:text-text ml-auto" aria-label="Clear trade overlay"><X className="w-4 h-4" /></button>
+        </div>
+      )}
+
       <div className="rounded-xl border border-line lg-glass p-3">
         {!error && candles && <PriceHeader candles={candles} livePrice={livePrice} />}
         {error ? (
@@ -554,6 +616,7 @@ export default function Charts() {
               candles={candles}
               chartType={chartType}
               overlays={overlays}
+              markers={tradeMarkers}
               height={chartHeight()}
               magnet={magnet}
               livePrice={livePrice}

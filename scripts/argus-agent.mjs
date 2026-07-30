@@ -5,7 +5,7 @@
 // Paper only. Persists to /api/argus. Env: LAB_TOKEN (req), LAB_SITE,
 // LAB_ARGUS_EQUITY (paper start, default 10000).
 import { loadMarket } from "./marketdata.mjs";
-import { openThesis, evaluateExit } from "../src/lib/argus/core.js";
+import { openThesis, evaluateExit, closeThesisAt } from "../src/lib/argus/core.js";
 import { scan } from "../src/lib/argus/scanners.js";
 import { buildBrief, diffBrief, renderBrief } from "../src/lib/argus/brief.js";
 import { deriveLessons, adjustment, sessionOf } from "../src/lib/argus/learn.js";
@@ -58,6 +58,8 @@ let prevBrief = null;
 let journal = [];       // Hermes post-mortems, newest first
 let skills = [];        // lessons crystallised from repeats — consulted before a trade
 let reflectQueue = [];  // closed trades awaiting their post-mortem
+let forceClose = new Set(); // thesis ids the dev asked to close now (drained each cycle)
+let pendingCommands = []; // raw dev commands drained this cycle, acked once handled
 let lastPersistSig = ""; // skip redundant KV writes on the fast loop (write budget)
 
 const openRisk = () => open.reduce((a, t) => a + t.riskAmt, 0);
@@ -120,7 +122,8 @@ async function loadTF(inst) {
 
 function manageExits(inst, last5, ledgerAdd) {
   for (const th of open.filter((o) => o.symbol === inst.symbol)) {
-    const res = evaluateExit(th, last5);
+    // Dev "close now" takes priority over the normal stop/target check.
+    const res = forceClose.has(th.id) ? closeThesisAt(th, last5.close) : evaluateExit(th, last5);
     if (res) {
       open = open.filter((o) => o.id !== th.id);
       equity += res.pnl;
@@ -212,6 +215,45 @@ function tryOpen(inst, setup, halted) {
   }
 }
 
+/** Drain the dev command queue (admin-issued "close now" / "cancel"). Closes are
+ *  deferred to manageExits (they need a live price); cancels act immediately. */
+async function drainCommands() {
+  try {
+    const r = await fetch(`${SITE}/api/argus?what=commands`);
+    const j = await r.json();
+    pendingCommands = Array.isArray(j.commands) ? j.commands : [];
+  } catch { pendingCommands = []; return; }
+  for (const c of pendingCommands) {
+    if (c.type === "close") {
+      forceClose.add(c.id);
+    } else if (c.type === "cancel") {
+      const before = forming.length;
+      forming = forming.filter((f) => f.symbol !== c.id);
+      if (eventBias.has(c.id)) eventBias.delete(c.id);
+      if (forming.length !== before || eventBias.size) console.log(`[${new Date().toISOString()}] CANCEL ${c.id} (dev)`);
+    }
+  }
+}
+
+/** Ack the commands we've now carried out so the queue clears. A close is only
+ *  acked once its thesis is actually gone from `open`; a cancel is immediate. */
+async function ackCommands() {
+  if (!pendingCommands.length) return;
+  const ack = [];
+  for (const c of pendingCommands) {
+    if (c.type === "cancel") ack.push(c.id);
+    else if (c.type === "close" && !open.some((o) => o.id === c.id)) { ack.push(c.id); forceClose.delete(c.id); }
+  }
+  pendingCommands = [];
+  if (!ack.length) return;
+  try {
+    await fetch(`${SITE}/api/argus`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: TOKEN, commandAck: ack }),
+    });
+  } catch { /* retried next cycle */ }
+}
+
 function resetDayIfNeeded() {
   const d = new Date().getUTCDate();
   if (d !== dayStamp) { dayStamp = d; closedToday = []; equityDayStart = equity; }
@@ -223,6 +265,7 @@ async function cycle(fullScan) {
   const ledgerAdd = [];
   try {
     resetDayIfNeeded();
+    await drainCommands(); // act on dev "close now" / "cancel" this cycle (fast + full)
     const dailyPnl = closedToday.reduce((a, c) => a + c.pnl, 0);
     const halted = dailyPnl <= -DAILY_STOP * equityDayStart;
 
@@ -265,6 +308,7 @@ async function cycle(fullScan) {
       await persist(ledgerAdd, { halted, dailyPnl });
       lastPersistSig = sig;
     }
+    await ackCommands(); // clear handled dev commands from the queue
     if (fullScan) console.log(`[${new Date().toISOString()}] scan: ${insts.length}/${uni.length} open-mkt · ${open.length} open · ${forming.length} forming · ${eventBias.size} event-bias · ${lessons.length} lessons · eq ${equity.toFixed(0)} · heat ${(openRisk() / equity * 100).toFixed(1)}%${halted ? " · DAILY-HALT" : ""}`);
   } catch (e) {
     console.error(`cycle failed: ${e.message}`);

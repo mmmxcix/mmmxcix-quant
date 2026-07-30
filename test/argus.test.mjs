@@ -2,7 +2,7 @@
 // logic, run with `npm test`.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { sizePosition, fillPrice, openThesis, evaluateExit, ledgerStats } from "../src/lib/argus/core.js";
+import { sizePosition, fillPrice, openThesis, evaluateExit, ledgerStats, closeThesisAt } from "../src/lib/argus/core.js";
 import { breakout, meanReversion, scan } from "../src/lib/argus/scanners.js";
 
 const bar = (o, h, l, c, v = 1000, t = 0) => ({ time: t, open: o, high: h, low: l, close: c, volume: v });
@@ -184,4 +184,14 @@ test("crystallise promotes a lesson only after it repeats, and skillsFor matches
   assert.ok(skills[0].avgR < 0);
   assert.equal(skillsFor(skills, { kind: "mean-reversion", symbol: "SOLUSDT", side: "short" }).length, 1, "applies to the matching setup");
   assert.equal(skillsFor(skills, { kind: "breakout", symbol: "SOLUSDT", side: "long" }).length, 0, "not to a different setup");
+});
+
+test("closeThesisAt force-closes at a reference price, tagged manual", () => {
+  const setup = { symbol: "BTCUSDT", market: "crypto", side: "long", kind: "breakout", timeframe: "5m", entry: 100, stop: 98, target: 106, reason: "t" };
+  const th = openThesis(setup, { equity: 10000, openRisk: 0, asset: "crypto", heatCap: 0.06, baseRiskPct: 0.02 });
+  const res = closeThesisAt(th, 103); // dev closes mid-trade, before target
+  assert.equal(res.outcome, "manual");
+  assert.equal(res.state, "closed");
+  assert.ok(res.exit < 103, "long exit fills below the mark (slippage)");
+  assert.ok(res.pnl > 0 && res.R > 0, "closed in profit");
 });

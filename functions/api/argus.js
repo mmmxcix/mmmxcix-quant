@@ -5,6 +5,8 @@
 //   argus:ledger   agent → site   closed theses (appended, merged by id, capped)
 // GET is public (paper-trading display, educational). POST is token-gated.
 
+import { isAdminRequest } from "../_lib/auth.mjs";
+
 function json(body, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -42,7 +44,39 @@ export async function onRequest({ request, env }) {
   if (request.method === "POST") {
     let body;
     try { body = await request.json(); } catch { return json({ error: "bad_json" }, 400); }
+
+    // Dev command channel — the human (admin session, NOT the machine token)
+    // queues an instruction the agent acts on next cycle: force-close an open
+    // thesis, or cancel a forming/planned setup. Queued in KV; the agent drains
+    // it. Session-gated exactly like /api/generate, so the dev UI needs no token.
+    if (body.command) {
+      if (!(await isAdminRequest(env, request))) return json({ error: "unauthorized" }, 401);
+      const c = body.command;
+      const type = c?.type === "cancel" ? "cancel" : c?.type === "close" ? "close" : null;
+      const id = typeof c?.id === "string" ? c.id.slice(0, 64) : null;
+      if (!type || !id) return json({ error: "bad_command" }, 400);
+      try {
+        let q = [];
+        try { q = JSON.parse((await kv.get("argus:commands")) || "[]"); } catch { /* fresh */ }
+        q = q.filter((x) => !(x.id === id && x.type === type)); // de-dupe
+        q.push({ type, id, at: Date.now() });
+        await kv.put("argus:commands", JSON.stringify(q.slice(-50)));
+      } catch (e) {
+        return json({ error: "kv_write_failed", detail: String(e?.message || e) }, 503);
+      }
+      return json({ ok: true, queued: { type, id } });
+    }
+
     if (!env.DEV_ACCESS_TOKEN || !safeEqual(body.token || "", env.DEV_ACCESS_TOKEN)) return json({ error: "unauthorized" }, 401);
+    // The agent drains the command queue by acking the ids it has handled.
+    if (Array.isArray(body.commandAck) && body.commandAck.length) {
+      try {
+        let q = [];
+        try { q = JSON.parse((await kv.get("argus:commands")) || "[]"); } catch { /* fresh */ }
+        const done = new Set(body.commandAck);
+        await kv.put("argus:commands", JSON.stringify(q.filter((x) => !done.has(x.id))));
+      } catch { /* best effort */ }
+    }
 
     // Full reset — wipe state, open theses and the closed ledger. The ledger is
     // append-only by design (merged by id), so clearing it needs an explicit
@@ -50,7 +84,7 @@ export async function onRequest({ request, env }) {
     // want to judge the agent by.
     if (body.reset === true) {
       try {
-        await Promise.all([kv.delete("argus:state"), kv.delete("argus:theses"), kv.delete("argus:ledger"), kv.delete("argus:journal"), kv.delete("argus:skills")]);
+        await Promise.all([kv.delete("argus:state"), kv.delete("argus:theses"), kv.delete("argus:ledger"), kv.delete("argus:journal"), kv.delete("argus:skills"), kv.delete("argus:commands")]);
       } catch (e) {
         return json({ error: "kv_reset_failed", detail: String(e?.message || e) }, 503);
       }
