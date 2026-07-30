@@ -71,7 +71,7 @@ function normalizeSignal(raw) {
  *                  the classic all-in model.
  * @returns {{ equity:Array, buyHold:Array, trades:Array, metrics:Object, warnings:string[] }}
  */
-export function runBacktest({ candles, signalFn, initialCapital = 10000, feeBps = 10, positionPct = 100, leverage = 1 }) {
+export function runBacktest({ candles, signalFn, initialCapital = 10000, feeBps = 10, positionPct = 100, leverage = 1, fundingRates = null }) {
   const warnings = [];
 
   const emptyResult = () => ({
@@ -187,6 +187,17 @@ export function runBacktest({ candles, signalFn, initialCapital = 10000, feeBps 
     }
   };
 
+  // Perpetual funding: crypto perps pay/receive funding at each funding time
+  // (~every 8h). Ignoring it is where most crypto backtests quietly lie — a
+  // long in a persistently positive-funding market bleeds it continuously. Fed
+  // as [{ time, rate }] (rate = fraction, e.g. 0.0001 = 0.01%); applied to the
+  // OPEN position's notional as the funding stamp is crossed.
+  const funding = Array.isArray(fundingRates) && fundingRates.length
+    ? [...fundingRates].filter((f) => Number.isFinite(f?.time) && Number.isFinite(f?.rate)).sort((a, b) => a.time - b.time)
+    : null;
+  let fIdx = 0;
+  let fundingPaid = 0;
+
   // --- Main loop -----------------------------------------------------------
   let prevDayIndex = null;
   for (let i = 0; i < n; i++) {
@@ -215,6 +226,22 @@ export function runBacktest({ candles, signalFn, initialCapital = 10000, feeBps 
     const inPositionThisBar = position !== "flat";
     checkBrackets(bar, i);
     if (inPositionThisBar) barsInMarket++;
+
+    // 2b) Charge/credit funding for every funding stamp at or before this bar's
+    // time while a position is held. A long pays when the rate is positive; a
+    // short receives it. Deducted from the position's realised base so it
+    // compounds into the mark and carries to the exit.
+    if (funding) {
+      while (fIdx < funding.length && funding[fIdx].time <= bar.time) {
+        if (position !== "flat") {
+          const notional = units * bar.close;
+          const pay = dir * notional * funding[fIdx].rate; // long+posRate → positive → cost
+          equityAfterEntry -= pay;
+          fundingPaid += pay;
+        }
+        fIdx++;
+      }
+    }
 
     // 3) Mark to market at this bar's close. Under leverage, a mark ≤ 0 means the
     // account was wiped out — liquidate once, then the curve stays at zero.
@@ -377,6 +404,9 @@ export function runBacktest({ candles, signalFn, initialCapital = 10000, feeBps 
       profitFactor,
       tradeCount: trades.length,
       exposurePct: (barsInMarket / n) * 100,
+      // Total funding paid (positive) or received (negative) over the run, as a
+      // % of starting capital. Only meaningful when fundingRates were supplied.
+      fundingPaidPct: funding ? (fundingPaid / initialCapital) * 100 : null,
     },
     warnings,
   };

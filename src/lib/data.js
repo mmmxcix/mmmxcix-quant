@@ -7,6 +7,35 @@
 // blocks cross-origin browser requests.
 
 const BINANCE = "https://api.binance.com/api/v3";
+const BINANCE_FAPI = "https://fapi.binance.com/fapi/v1";
+
+/**
+ * Perpetual funding-rate history for a Binance USDⓈ-M perp, over [fromSec, toSec].
+ * Returns [{ time (unix sec), rate (fraction, e.g. 0.0001 = 0.01%) }] ascending.
+ * Public endpoint, browser-callable (Binance sends permissive CORS). Funding
+ * stamps ~every 8h; ignoring them makes crypto backtests overstate longs.
+ */
+export async function fetchFunding(symbol, fromSec, toSec) {
+  const sym = symbol.toUpperCase();
+  const endMs = Math.floor(toSec * 1000);
+  let out = [];
+  let start = Math.floor(fromSec * 1000);
+  for (let guard = 0; guard < 60; guard++) {
+    const url = `${BINANCE_FAPI}/fundingRate?symbol=${encodeURIComponent(sym)}&startTime=${start}&limit=1000`;
+    const res = await fetch(url);
+    if (!res.ok) {
+      if (res.status === 400) throw new Error(`No perp funding for "${sym}" on Binance Futures (e.g. BTCUSDT).`);
+      throw new Error(`Binance funding error ${res.status}`);
+    }
+    const rows = await res.json();
+    if (!Array.isArray(rows) || rows.length === 0) break;
+    for (const r of rows) out.push({ time: Math.floor(r.fundingTime / 1000), rate: +r.fundingRate });
+    const last = rows[rows.length - 1].fundingTime;
+    if (rows.length < 1000 || last >= endMs) break;
+    start = last + 1;
+  }
+  return out.filter((f) => f.time <= toSec);
+}
 const YAHOO = "/api/yahoo/v8/finance/chart";
 
 export const MARKETS = [

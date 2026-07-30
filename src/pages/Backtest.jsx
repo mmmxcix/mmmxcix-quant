@@ -6,7 +6,7 @@ import CandleChart from "@/components/CandleChart";
 import SymbolSearch from "@/components/SymbolSearch";
 import MonteCarloPanel from "@/components/MonteCarloPanel";
 import ValidationPanel from "@/components/ValidationPanel";
-import { fetchCandles, MARKETS, INTERVALS, rangesFor, INTERVAL_SECONDS } from "@/lib/data";
+import { fetchCandles, fetchFunding, MARKETS, INTERVALS, rangesFor, INTERVAL_SECONDS } from "@/lib/data";
 import OptimizerPanel from "@/components/OptimizerPanel";
 import { fetchLseCandles } from "@/lib/lse";
 import { runBacktest, compileStrategy } from "@/lib/backtest";
@@ -73,6 +73,7 @@ export default function Backtest() {
   const [feeBps, setFeeBps] = useState(10);
   const [positionPct, setPositionPct] = useState(100);
   const [leverage, setLeverage] = useState(1);
+  const [applyFunding, setApplyFunding] = useState(false); // perp funding (crypto)
   const [running, setRunning] = useState(false);
   const [error, setError] = useState(null);
   const [result, setResult] = useState(null);
@@ -382,7 +383,17 @@ export default function Backtest() {
       } else {
         signalFn = compileStrategy(code);
       }
-      const res = runBacktest({ candles, signalFn, initialCapital: capital, feeBps, positionPct, leverage });
+      // Perp funding (crypto only): fetch the funding history for this window so
+      // the backtest charges longs / credits shorts, instead of pretending
+      // funding is free. Best-effort — a fetch failure just runs without it.
+      let fundingRates = null;
+      if (applyFunding && market === "crypto" && candles.length) {
+        try {
+          fundingRates = await fetchFunding(symbol.trim().toUpperCase(), candles[0].time, candles[candles.length - 1].time);
+          if (!fundingRates.length) setError("No perp funding history for this symbol — ran without funding.");
+        } catch (e) { setError(`Funding unavailable (${e.message}) — ran without it.`); }
+      }
+      const res = runBacktest({ candles, signalFn, initialCapital: capital, feeBps, positionPct, leverage, fundingRates });
       // Data sanity: if the source silently delivered a coarser granularity
       // than requested (Yahoo does this for long intraday ranges), say so
       // loudly — indicator periods would mean something entirely different.
@@ -573,6 +584,14 @@ export default function Backtest() {
                   onChange={(e) => setLeverage(Math.min(10, Math.max(1, +e.target.value || 1)))} className="input-base w-full mt-1 font-mono" />
               </label>
             </div>
+            {/* Perp funding — crypto only. Ignoring funding is where most crypto
+                backtests quietly lie (a long in positive-funding markets bleeds it). */}
+            {market === "crypto" && (
+              <label className="flex items-center gap-2 text-xs text-dim cursor-pointer" title="Fetch the Binance perp funding history for the window and charge longs / credit shorts each ~8h funding stamp. Makes crypto backtests honest.">
+                <input type="checkbox" checked={applyFunding} onChange={(e) => setApplyFunding(e.target.checked)} className="accent-current" />
+                <span className="text-text">Apply perp funding</span> — models the ~8h funding longs pay / shorts earn
+              </label>
+            )}
           </div>
 
           <div className="rounded-xl border border-line lg-glass p-4 space-y-3">
@@ -844,6 +863,11 @@ export default function Backtest() {
                 <MetricCard label="Win rate" num={m.winRatePct} format={(v) => fmtPct(v).replace("+", "")} tone="text-text" />
                 <MetricCard label="Profit factor" num={Number.isFinite(m.profitFactor) ? m.profitFactor : null} format={fmtNum} tone="text-text" value={fmtNum(m.profitFactor)} />
                 <MetricCard label="Trades · Exposure" value={`${m.tradeCount} · ${fmtNum(m.exposurePct, 0)}%`} tone="text-text" />
+                {m.fundingPaidPct != null && (
+                  <MetricCard label="Funding paid" num={-m.fundingPaidPct} format={fmtPct}
+                    tone={m.fundingPaidPct > 0 ? "text-down" : "text-up"}
+                    value={`${m.fundingPaidPct >= 0 ? "−" : "+"}${fmtNum(Math.abs(m.fundingPaidPct), 2)}%`} />
+                )}
               </div>
 
               {/* Save to the Strategy Registry (the lab notebook) */}
