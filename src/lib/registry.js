@@ -41,6 +41,39 @@ function write(list) {
   listeners.forEach((fn) => fn());
 }
 
+// ── Server sync (D1-backed /api/library, admin-gated) ────────────────────────
+// localStorage stays the instant cache (offline-first, no UI lag); every write is
+// mirrored to the server so the library is identical on every device and Cortex
+// can manage it centrally. Network calls are fire-and-forget — offline just means
+// the local copy leads until the next syncFromServer().
+async function push(body) {
+  try {
+    await fetch("/api/library", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify(body), keepalive: true,
+    });
+  } catch { /* offline — the local cache still holds it */ }
+}
+
+/** Pull the server library and make it the local truth. Call on the Registry
+ *  page mount. On an empty server with a non-empty local cache, migrates the
+ *  browser's existing library up (one-time). Returns true if a sync happened. */
+export async function syncFromServer() {
+  try {
+    const r = await fetch("/api/library");
+    if (!r.ok) return false; // not admin / DB not bound → stay local-only
+    const j = await r.json();
+    if (!j.ok || !Array.isArray(j.entries)) return false;
+    const local = read();
+    if (j.entries.length === 0 && local.length > 0) {
+      await push({ bulkUpsert: local }); // migrate this browser's library to the server
+      return true;
+    }
+    write(j.entries); // server is the source of truth
+    return true;
+  } catch { return false; }
+}
+
 export function getEntries() {
   return read();
 }
@@ -140,22 +173,31 @@ export function saveEntry({ name, market, symbol, interval, range, mode, strateg
     note: "",
   };
   write([entry, ...read()]);
+  push({ upsert: entry });
   return entry;
 }
 
 export function setStatus(id, status) {
   if (!STATUSES.includes(status)) return;
   write(read().map((e) => (e.id === id ? { ...e, status } : e)));
+  push({ setStatus: { id, status } });
 }
 
 export function attachValidation(id, validation) {
-  write(read().map((e) => (e.id === id ? { ...e, validation: { ...e.validation, ...validation } } : e)));
+  const next = read().map((e) => (e.id === id ? { ...e, validation: { ...e.validation, ...validation } } : e));
+  write(next);
+  const updated = next.find((e) => e.id === id);
+  if (updated) push({ upsert: updated });
 }
 
 export function setNote(id, note) {
-  write(read().map((e) => (e.id === id ? { ...e, note } : e)));
+  const next = read().map((e) => (e.id === id ? { ...e, note } : e));
+  write(next);
+  const updated = next.find((e) => e.id === id);
+  if (updated) push({ upsert: updated });
 }
 
 export function removeEntry(id) {
   write(read().filter((e) => e.id !== id));
+  push({ remove: id });
 }

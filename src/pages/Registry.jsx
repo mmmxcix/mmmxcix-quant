@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Boxes, Trash2, Skull, ShieldCheck, FlaskConical, Rocket, Grid3x3, Info, Send, Loader2, Check, Scale, Wrench, Search } from "lucide-react";
 import {
-  getEntries, subscribeRegistry, setStatus, removeEntry, STATUS_META, correlationMatrix, saveEntry,
+  getEntries, subscribeRegistry, setStatus, removeEntry, STATUS_META, correlationMatrix, saveEntry, syncFromServer,
 } from "@/lib/registry";
 import { cn, fmtPct, fmtNum } from "@/lib/utils";
 import { PROFILES } from "@/lib/profiles";
@@ -517,6 +517,13 @@ function PublishToAgent({ entries }) {
 export default function Registry() {
   const [entries, setEntries] = useState(getEntries());
   useEffect(() => subscribeRegistry(() => setEntries(getEntries())), []);
+  // Pull the shared server library on mount so the same strategies show on every
+  // device (self-found + Cortex-found), then keep syncing while the tab is open.
+  useEffect(() => {
+    syncFromServer();
+    const id = setInterval(() => { if (!document.hidden) syncFromServer(); }, 60_000);
+    return () => clearInterval(id);
+  }, []);
   const [query, setQuery] = useState("");
   const [showGraveyard, setShowGraveyard] = useState(false); // buried strats are hidden until asked for
 
