@@ -7,7 +7,7 @@
 import { loadMarket } from "./marketdata.mjs";
 import { openThesis, evaluateExit, closeThesisAt } from "../src/lib/argus/core.js";
 import { scan } from "../src/lib/argus/scanners.js";
-import { buildBrief, diffBrief, renderBrief } from "../src/lib/argus/brief.js";
+import { buildBrief, diffBrief, renderBrief, parseFearGreed } from "../src/lib/argus/brief.js";
 import { deriveLessons, adjustment, sessionOf } from "../src/lib/argus/learn.js";
 import { marketOpen } from "../src/lib/argus/hours.js";
 import { buildReflectionMessages, parseReflection, crystallise, skillsFor } from "../src/lib/argus/reflect.js";
@@ -55,6 +55,7 @@ let equityDayStart = EQUITY0;
 let cycleRunning = false;
 let eventBias = new Map(); // symbol -> { side, thesis, confidence, evidence, horizon, at, model }
 let prevBrief = null;
+let eventFng = null; // latest crypto Fear & Greed reading (shown on the Argus page)
 let journal = [];       // Hermes post-mortems, newest first
 let skills = [];        // lessons crystallised from repeats — consulted before a trade
 let reflectQueue = [];  // closed trades awaiting their post-mortem
@@ -85,8 +86,11 @@ async function runEventChannel() {
   if (!LLM_ON) return;
   try {
     const get = async (p) => { try { const r = await fetch(SITE + p); return r.ok ? await r.json() : null; } catch { return null; } };
+    // Crypto Fear & Greed (alternative.me) — a sentiment input the LLM factors in.
+    const fngRaw = await fetch("https://api.alternative.me/fng/?limit=1").then((r) => (r.ok ? r.json() : null)).catch(() => null);
     const [world, conflicts, disasters, news] = await Promise.all([get("/api/world"), get("/api/conflicts"), get("/api/disasters"), get("/api/news")]);
-    const brief = buildBrief({ world, conflicts: conflicts?.conflicts, disasters: disasters?.disasters, news });
+    eventFng = parseFearGreed(fngRaw);
+    const brief = buildBrief({ world, conflicts: conflicts?.conflicts, disasters: disasters?.disasters, news, fng: eventFng });
     brief.deltas = diffBrief(prevBrief, brief);
     prevBrief = brief;
     const ctx = { universe: [...UNIVERSE.map((u) => u.symbol), ...EVENT_TICKERS], open: open.map((o) => o.symbol) };
@@ -324,7 +328,7 @@ async function persist(ledgerAdd, extra) {
     .map(([symbol, v]) => ({ symbol, side: v.side, thesis: v.thesis, confidence: v.confidence, horizon: v.horizon, at: v.at, model: v.model }));
   const body = {
     token: TOKEN,
-    state: { equity, open: open.length, forming: forming.length, heatPct: openRisk() / equity, dayPnl: extra.dailyPnl, halted: extra.halted, universe: activeUniverse().length, events, skills: skills.slice(0, 8), lessons: lessons.slice(0, 8).map((l) => ({ text: l.text, verdict: l.verdict, n: l.n })) },
+    state: { equity, open: open.length, forming: forming.length, heatPct: openRisk() / equity, dayPnl: extra.dailyPnl, halted: extra.halted, universe: activeUniverse().length, events, fng: eventFng, skills: skills.slice(0, 8), lessons: lessons.slice(0, 8).map((l) => ({ text: l.text, verdict: l.verdict, n: l.n })) },
     theses: open,
     ledgerAdd,
     journal: journal.slice(0, 60),   // Hermes post-mortems (newest first)

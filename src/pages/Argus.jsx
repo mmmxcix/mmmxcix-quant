@@ -222,6 +222,22 @@ export default function Argus() {
         )}
       </div>
 
+      {/* Crypto Fear & Greed — the sentiment reading Argus's event channel factors in. */}
+      {state?.fng && (() => {
+        const v = state.fng.value;
+        const tone = v <= 25 ? "text-down" : v >= 75 ? "text-up" : v >= 55 ? "text-up/80" : v <= 45 ? "text-down/80" : "text-dim";
+        return (
+          <div className="flex items-center gap-3 rounded-xl border border-line lg-glass px-4 py-2.5">
+            <span className="text-[11px] text-dim uppercase tracking-wide">Crypto Fear &amp; Greed</span>
+            <div className="flex-1 h-1.5 rounded-full bg-gradient-to-r from-down via-dim to-up relative">
+              <div className="absolute top-1/2 -translate-y-1/2 w-2.5 h-2.5 rounded-full bg-text ring-2 ring-bg" style={{ left: `calc(${v}% - 5px)` }} />
+            </div>
+            <span className={cn("font-mono text-sm font-semibold", tone)}>{v}</span>
+            <span className="text-[11px] text-dim">{state.fng.classification}</span>
+          </div>
+        );
+      })()}
+
       {/* event watch — alt-data biases the LLM channel is tracking, awaiting a technical trigger */}
       {state?.events?.length > 0 && (
         <div>

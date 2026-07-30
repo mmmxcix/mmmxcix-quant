@@ -97,6 +97,8 @@ test("bootstrapTrades needs a real sample and orders its percentiles", () => {
   assert.ok(mc.retP5 <= mc.retMed && mc.retMed <= mc.retP95, "percentiles ordered");
   assert.ok(mc.pProfit > 0.9, "a real edge is profitable in most resamples");
   assert.ok(mc.retP5 > 0, "even the 5th percentile is positive for a strong edge");
+  assert.ok(mc.sharpeP5 <= mc.sharpeMed && mc.sharpeMed <= mc.sharpeP95, "Sharpe CI ordered");
+  assert.ok(mc.sharpeP5 > 0, "a strong edge keeps a positive 5th-percentile Sharpe");
   assert.ok(mc.ddP95 >= mc.ddMed, "worst-case drawdown ≥ median");
 });
 

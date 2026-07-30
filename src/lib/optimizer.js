@@ -216,25 +216,33 @@ export function bootstrapTrades(tradeReturns, { runs = 500, seed = 99 } = {}) {
   const n = tradeReturns?.length ?? 0;
   if (n < 5) return null; // too few trades to say anything honest
   const rng = mulberry32(seed);
-  const finals = [], dds = [];
+  const finals = [], dds = [], sharpes = [];
   for (let r = 0; r < runs; r++) {
-    let eq = 1, peak = 1, maxDD = 0;
+    let eq = 1, peak = 1, maxDD = 0, sum = 0, sumSq = 0;
     for (let i = 0; i < n; i++) {
       const ret = tradeReturns[(rng() * n) | 0]; // draw a trade with replacement
       eq *= 1 + ret;
       if (eq > peak) peak = eq;
       const dd = peak > 0 ? (peak - eq) / peak : 0;
       if (dd > maxDD) maxDD = dd;
+      sum += ret; sumSq += ret * ret;
     }
     finals.push((eq - 1) * 100);
     dds.push(maxDD * 100);
+    // Per-trade Sharpe of this resampled path (mean/σ of its trade returns). The
+    // spread of these across paths is the Sharpe CI — a P5 still above 0 means the
+    // edge's risk-adjusted return is robust, not a lucky ordering.
+    const mean = sum / n;
+    const variance = sumSq / n - mean * mean;
+    sharpes.push(variance > 0 ? mean / Math.sqrt(variance) : 0);
   }
-  finals.sort((a, b) => a - b); dds.sort((a, b) => a - b);
+  finals.sort((a, b) => a - b); dds.sort((a, b) => a - b); sharpes.sort((a, b) => a - b);
   const q = (arr, p) => arr[Math.min(arr.length - 1, Math.max(0, Math.floor(p * arr.length)))];
   return {
     runs, trades: n,
     retP5: q(finals, 0.05), retMed: q(finals, 0.5), retP95: q(finals, 0.95),
     ddMed: q(dds, 0.5), ddP95: q(dds, 0.95),
+    sharpeP5: q(sharpes, 0.05), sharpeMed: q(sharpes, 0.5), sharpeP95: q(sharpes, 0.95),
     pProfit: finals.filter((x) => x > 0).length / runs,
   };
 }

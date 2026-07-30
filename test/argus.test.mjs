@@ -195,3 +195,13 @@ test("closeThesisAt force-closes at a reference price, tagged manual", () => {
   assert.ok(res.exit < 103, "long exit fills below the mark (slippage)");
   assert.ok(res.pnl > 0 && res.R > 0, "closed in profit");
 });
+
+import { parseFearGreed, buildBrief, renderBrief } from "../src/lib/argus/brief.js";
+test("parseFearGreed reads the alternative.me shape + renders into the brief", () => {
+  const fng = parseFearGreed({ data: [{ value: "22", value_classification: "Extreme Fear", timestamp: "1" }] });
+  assert.deepEqual(fng, { value: 22, classification: "Extreme Fear" });
+  assert.equal(parseFearGreed({ data: [] }), null);
+  const brief = buildBrief({ news: [], fng });
+  assert.equal(brief.fearGreed.value, 22);
+  assert.match(renderBrief(brief), /Fear & Greed index: 22\/100 \(Extreme Fear\)/);
+});

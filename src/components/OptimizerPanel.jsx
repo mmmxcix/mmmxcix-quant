@@ -322,6 +322,14 @@ export default function OptimizerPanel({ strategy, candles, capital, feeBps, pos
                     worst-case drawdown <span className="text-down">P95 {fmtNum(rep.ddP95, 0)}%</span> ·
                     profitable in <span className={rep.pProfit >= 0.9 ? "text-up" : "text-down"}>{Math.round(rep.pProfit * 100)}%</span> of resamples
                   </p>
+                  {rep.sharpeP5 != null && (
+                    <p>
+                      Sharpe (per trade) <span className={rep.sharpeP5 > 0 ? "text-up" : "text-down"}>P5 {fmtNum(rep.sharpeP5, 2)}</span> ·
+                      <span className="text-text"> median {fmtNum(rep.sharpeMed, 2)}</span> ·
+                      <span className="text-up"> P95 {fmtNum(rep.sharpeP95, 2)}</span>
+                      <span className="text-dim"> — a P5 above 0 = a robust edge</span>
+                    </p>
+                  )}
                 </div>
               ) : <p className="font-mono opacity-80">No parameter set produced enough trades to resample — widen the ranges or use more data.</p>}
               <p className="opacity-75 text-[10px]">

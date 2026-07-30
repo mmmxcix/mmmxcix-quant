@@ -76,7 +76,17 @@ export function buildBrief(raw, now = Date.now()) {
     conflicts: summarizeConflicts(raw.conflicts || []),
     disasters: summarizeDisasters(raw.disasters || []),
     chokepoints: chokepointCongestion(raw.world?.ships || []),
+    fearGreed: raw.fng || null, // { value 0-100, classification } — crypto sentiment
   };
+}
+
+/** Parse the alternative.me Fear & Greed response into { value, classification }. */
+export function parseFearGreed(json) {
+  const d = json?.data?.[0];
+  if (!d) return null;
+  const value = Math.round(Number(d.value));
+  if (!Number.isFinite(value)) return null;
+  return { value, classification: String(d.value_classification || "").trim() };
 }
 
 /** What changed vs the previous brief — new headlines, new red/orange hazards,
@@ -102,6 +112,7 @@ export function diffBrief(prev, cur) {
 /** Compact text the LLM reads. Signal, not volume. */
 export function renderBrief(brief) {
   const L = [];
+  if (brief.fearGreed) L.push(`CRYPTO MARKET SENTIMENT:\n- Fear & Greed index: ${brief.fearGreed.value}/100 (${brief.fearGreed.classification}) — extreme fear can mark capitulation lows, extreme greed froth tops.`);
   if (brief.deltas?.length) L.push("CHANGED SINCE LAST CHECK:\n" + brief.deltas.map((d) => `- [${d.kind}] ${d.text}`).join("\n"));
   L.push("TOP HEADLINES:\n" + brief.headlines.slice(0, 8).map((h) => `- ${h.title} (${h.source})`).join("\n"));
   if (brief.conflicts.length) L.push("CONFLICT (fatalities, ~6mo):\n" + brief.conflicts.slice(0, 5).map((c) => `- ${c.country}: ${c.deaths}`).join("\n"));
