@@ -526,12 +526,25 @@ export default function Registry() {
   }, []);
   const [query, setQuery] = useState("");
   const [showGraveyard, setShowGraveyard] = useState(false); // buried strats are hidden until asked for
+  const [sourceFilter, setSourceFilter] = useState("all");   // all | you | cortex
+  const [stageFilter, setStageFilter] = useState("all");     // all | factory | validated | paper | improve
 
   const matches = (e) => {
     const q = query.trim().toLowerCase();
     if (!q) return true;
     return (e.name || "").toLowerCase().includes(q) || (e.symbol || "").toLowerCase().includes(q);
   };
+
+  // The LIBRARY view (top) — every strategy, own + Cortex, with real filters.
+  // Graveyard stays out unless you toggle it on or filter to it explicitly.
+  const library = useMemo(() => entries.filter((e) => {
+    if (e.status === "graveyard" && !showGraveyard) return false;
+    if (stageFilter !== "all" && e.status !== stageFilter) return false;
+    if (sourceFilter === "you" && e.candidateId) return false;
+    if (sourceFilter === "cortex" && !e.candidateId) return false;
+    return matches(e);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [entries, query, sourceFilter, stageFilter, showGraveyard]);
 
   const byStatus = useMemo(() => {
     const g = { factory: [], validated: [], paper: [], improve: [], graveyard: [] };
@@ -564,33 +577,60 @@ export default function Registry() {
         or buried in the <span className="text-dim">Graveyard</span>. Stored in this browser.
       </p>
 
-      <AgentCandidates />
-
       {entries.length === 0 ? (
-        <div className="rounded-xl border border-line lg-glass p-8 text-center text-sm text-dim">
-          No strategies yet. Run a backtest and click <span className="text-accent">“Save to registry”</span> under the result —
-          it lands here in the library. Cortex's own finds show up automatically.
-        </div>
+        <>
+          <AgentCandidates />
+          <div className="rounded-xl border border-line lg-glass p-8 text-center text-sm text-dim">
+            No strategies yet. Run a backtest and click <span className="text-accent">“Save to registry”</span> under the result —
+            it lands here in the library. Cortex's own finds show up automatically.
+          </div>
+        </>
       ) : (
         <>
           <PublishToAgent entries={entries} />
 
-          {/* Library toolbar — search across every strategy; the Graveyard stays
-              out of the library until you explicitly ask for it. */}
-          <div className="flex flex-wrap items-center gap-2 mb-3">
-            <div className="relative flex-1 min-w-[12rem] max-w-xs">
-              <Search className="w-3.5 h-3.5 text-dim absolute left-2.5 top-1/2 -translate-y-1/2" />
-              <input value={query} onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search the library…"
-                className="input-base w-full text-xs !pl-8" />
+          {/* ── THE LIBRARY (top) — every strategy, own + Cortex, filterable ── */}
+          <div className="rounded-xl border border-line lg-glass p-4 mb-6">
+            <div className="flex flex-wrap items-center gap-2 mb-3">
+              <Boxes className="w-4 h-4 text-accent" />
+              <p className="text-sm font-semibold">Library</p>
+              <span className="text-[11px] text-dim">· {library.length} shown · {entries.length - graveyardCount} total</span>
+              <div className="relative ml-auto min-w-[12rem]">
+                <Search className="w-3.5 h-3.5 text-dim absolute left-2.5 top-1/2 -translate-y-1/2" />
+                <input value={query} onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Search name or symbol…" className="input-base w-full text-xs !pl-8" />
+              </div>
             </div>
-            <span className="text-[11px] text-dim">{entries.length - graveyardCount} in library</span>
-            <button onClick={() => setShowGraveyard((v) => !v)}
-              className={cn("chip !text-[11px] ml-auto flex items-center gap-1.5", showGraveyard ? "chip-active" : "chip-idle")}>
-              <Skull className="w-3.5 h-3.5" /> Graveyard {graveyardCount}
-            </button>
+            {/* Filters: source · stage · graveyard */}
+            <div className="flex flex-wrap items-center gap-1.5 mb-3">
+              <span className="text-[10px] text-dim uppercase tracking-wide mr-1">Source</span>
+              {[["all", "All"], ["you", "You"], ["cortex", "Cortex"]].map(([id, label]) => (
+                <button key={id} onClick={() => setSourceFilter(id)}
+                  className={cn("chip !text-[10px]", sourceFilter === id ? "chip-active" : "chip-idle")}>{label}</button>
+              ))}
+              <span className="text-[10px] text-dim uppercase tracking-wide mx-1 ml-3">Stage</span>
+              {[["all", "All"], ...activeCols.map((c) => [c.id, STATUS_META[c.id].label])].map(([id, label]) => (
+                <button key={id} onClick={() => setStageFilter(id)}
+                  className={cn("chip !text-[10px]", stageFilter === id ? "chip-active" : "chip-idle")}>{label}</button>
+              ))}
+              <button onClick={() => setShowGraveyard((v) => !v)}
+                className={cn("chip !text-[10px] ml-auto flex items-center gap-1", showGraveyard ? "chip-active" : "chip-idle")}>
+                <Skull className="w-3 h-3" /> Graveyard {graveyardCount}
+              </button>
+            </div>
+            {library.length === 0 ? (
+              <p className="text-[11px] text-dim py-6 text-center">No strategy matches these filters.</p>
+            ) : (
+              <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">
+                {library.map((e) => <Card key={e.id} e={e} />)}
+              </div>
+            )}
           </div>
 
+          {/* ── THE PIPELINE (below) — where each strategy is in its lifecycle ── */}
+          <div className="flex items-center gap-2 mb-2">
+            <p className="text-xs font-semibold text-dim uppercase tracking-wide">Pipeline · where each strategy is</p>
+          </div>
           <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
             {activeCols.map((col) => {
               const Icon = col.icon;
@@ -614,7 +654,7 @@ export default function Registry() {
           </div>
 
           {/* Graveyard — opt-in. Buried strategies (too weak, decayed, etc.) are
-              kept as a record but stay out of the library above by default. */}
+              kept as a record but stay out of the library/pipeline by default. */}
           {showGraveyard && (
             <div className="rounded-xl border border-line lg-glass p-3 mb-8">
               <div className="flex items-center gap-2 mb-3 px-1">
@@ -628,6 +668,9 @@ export default function Registry() {
                 : <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-2">{byStatus.graveyard.map((e) => <Card key={e.id} e={e} />)}</div>}
             </div>
           )}
+
+          {/* Incoming raw research finds — import them into the library above. */}
+          <AgentCandidates />
 
           <div className="rounded-xl border border-line lg-glass p-4">
             <div className="flex items-center gap-2 mb-3">
