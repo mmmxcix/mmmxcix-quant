@@ -28,6 +28,7 @@ export function detectLang(src) {
 }
 const LANG_LABEL = { js: "JavaScript", python: "Python", pine: "Pine Script" };
 import { saveEntry } from "@/lib/registry";
+import { windowProfile } from "@/lib/windowProfile";
 import { cn, fmtNum, fmtPct } from "@/lib/utils";
 
 const DEFAULT_SYMBOL = { crypto: "BTCUSDT", stock: "SPY" };
@@ -361,6 +362,11 @@ export default function Backtest() {
 
   const saveToRegistry = () => {
     if (!result) return;
+    // Time-window memory: WHERE in the backtest the money was made. Stored on the
+    // entry so a decayed ("good-early") strategy carries its flaw, and Cortex can
+    // later pair it with a complementary ("good-late") one.
+    const wp = windowProfile(result.equity, { segments: 2 });
+    const flaw = wp && wp.profile !== "consistent" && wp.profile !== "good-late" ? wp.summary : null;
     saveEntry({
       name: mode === "builder" ? strategy.name : `${strategy?.name || "Code"} (edited)`,
       market, symbol: symbol.trim().toUpperCase(), interval, range,
@@ -374,6 +380,8 @@ export default function Backtest() {
       equity: result.equity,
       tradeReturns: result.trades.map((t) => t.pnlPct / 100),
       validation: verdicts,
+      windowProfile: wp,
+      failureReason: flaw,
       // A strategy that passed every run validation earns "validated" straight away.
       status: verdicts.wf === "pass" && verdicts.dsr === "pass" && verdicts.noise === "pass" ? "validated" : "factory",
     });

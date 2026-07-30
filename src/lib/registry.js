@@ -115,7 +115,7 @@ export function correlationMatrix(entries) {
  * @param {Object} p
  * @returns {Object} the created entry
  */
-export function saveEntry({ name, market, symbol, interval, range, mode, strategyId, params, code, positionPct, feeBps, metrics, equity, tradeReturns, validation, status = "factory", candidateId = null, language = null }) {
+export function saveEntry({ name, market, symbol, interval, range, mode, strategyId, params, code, positionPct, feeBps, metrics, equity, tradeReturns, validation, status = "factory", candidateId = null, language = null, windowProfile = null, failureReason = null }) {
   const entry = {
     id: newId(),
     createdAt: Date.now(),
@@ -123,6 +123,10 @@ export function saveEntry({ name, market, symbol, interval, range, mode, strateg
     // what it has already imported instead of adding a copy on every poll.
     candidateId,
     language,
+    // Time-window memory (src/lib/windowProfile.js): where in the backtest the
+    // money was made, and the flaw text if it decayed / was erratic.
+    windowProfile,
+    failureReason,
     name: name || (mode === "builder" ? strategyId : "Code strategy"),
     market, symbol, interval, range,
     mode, strategyId: strategyId || null, params: params || null,

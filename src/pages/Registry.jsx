@@ -307,6 +307,15 @@ const COLS = [
   { id: "graveyard", icon: Skull, tone: "text-dim" },
 ];
 
+// Short labels for the time-window profile (src/lib/windowProfile.js).
+const WP_LABEL = {
+  consistent: "consistent across time",
+  "good-early": "good early · decayed",
+  "good-late": "weak early · strong now",
+  unprofitable: "unprofitable throughout",
+  erratic: "erratic across time",
+};
+
 // Where each status can move next (forward promote · sideline to improve · bury).
 const MOVES = {
   factory: [["validated", "Promote"], ["improve", "Needs work"], ["graveyard", "Bury"]],
@@ -350,6 +359,20 @@ function Card({ e }) {
           <span className="text-dim">PF</span><span className="col-span-2 text-right text-text">{fmtNum(m.profitFactor, 2)}</span>
           <span className="text-dim">maxDD</span><span className="col-span-2 text-right text-down">-{fmtNum(m.maxDrawdownPct, 0)}%</span>
           <span className="text-dim">trades</span><span className="col-span-2 text-right text-text">{m.tradeCount}</span>
+        </div>
+      )}
+
+      {/* Time-window profile — where the money was made across the backtest. */}
+      {e.windowProfile?.segments && (
+        <div>
+          <div className="flex items-center gap-1 mb-0.5" title={e.windowProfile.summary}>
+            {e.windowProfile.segments.map((s, i) => (
+              <div key={i} className={cn("h-1.5 flex-1 rounded-sm", s.ret > 0.02 ? "bg-up/70" : s.ret < -0.02 ? "bg-down/70" : "bg-line")} />
+            ))}
+          </div>
+          <p className="text-[9px] uppercase tracking-wide text-dim">
+            {WP_LABEL[e.windowProfile.profile] || e.windowProfile.profile}
+          </p>
         </div>
       )}
 
