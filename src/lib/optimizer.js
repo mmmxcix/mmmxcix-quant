@@ -173,6 +173,74 @@ export function parameterHeatmap({ params, xKey, yKey, evaluate, base = {}, cap 
   return { xKey, yKey, xs, ys, cells, min, max, best, robustness, verdict };
 }
 
+// ── Monte-Carlo trade bootstrap ──────────────────────────────────────────────
+/**
+ * Resample a strategy's own trade returns (with replacement) many times and
+ * compound each draw into an equity path — so a single backtest becomes a
+ * DISTRIBUTION of outcomes rather than one lucky (or unlucky) number. Reveals
+ * sequence risk (how bad the drawdown could plausibly have been) and sampling
+ * uncertainty (a 5th-percentile that's still positive is a real edge).
+ * @param {number[]} tradeReturns  per-trade FRACTIONAL returns (pnlPct / 100)
+ * @param {object} [o]
+ * @param {number} [o.runs]
+ * @param {number} [o.seed]
+ * @returns {{runs,trades,retP5,retMed,retP95,ddMed,ddP95,pProfit}|null}
+ */
+export function bootstrapTrades(tradeReturns, { runs = 500, seed = 99 } = {}) {
+  const n = tradeReturns?.length ?? 0;
+  if (n < 5) return null; // too few trades to say anything honest
+  const rng = mulberry32(seed);
+  const finals = [], dds = [];
+  for (let r = 0; r < runs; r++) {
+    let eq = 1, peak = 1, maxDD = 0;
+    for (let i = 0; i < n; i++) {
+      const ret = tradeReturns[(rng() * n) | 0]; // draw a trade with replacement
+      eq *= 1 + ret;
+      if (eq > peak) peak = eq;
+      const dd = peak > 0 ? (peak - eq) / peak : 0;
+      if (dd > maxDD) maxDD = dd;
+    }
+    finals.push((eq - 1) * 100);
+    dds.push(maxDD * 100);
+  }
+  finals.sort((a, b) => a - b); dds.sort((a, b) => a - b);
+  const q = (arr, p) => arr[Math.min(arr.length - 1, Math.max(0, Math.floor(p * arr.length)))];
+  return {
+    runs, trades: n,
+    retP5: q(finals, 0.05), retMed: q(finals, 0.5), retP95: q(finals, 0.95),
+    ddMed: q(dds, 0.5), ddP95: q(dds, 0.95),
+    pProfit: finals.filter((x) => x > 0).length / runs,
+  };
+}
+
+/**
+ * Monte-Carlo across MANY parameter sets, not one — bennnytrades' point: judging
+ * a strategy from a Monte-Carlo of a single (optimised) parameter set is exactly
+ * how you fool yourself. Bootstraps each set and reports how many stay profitable
+ * at the 5th percentile, so a robust FAMILY is distinguished from a lucky point.
+ * @param {object} o
+ * @param {Array<object>} o.paramSets
+ * @param {(paramsObj)=>number[]|null} o.backtest  → fractional trade returns
+ * @param {number} [o.runs]
+ * @param {number} [o.seed]
+ */
+export function monteCarloParams({ paramSets, backtest, runs = 400, seed = 99 }) {
+  const results = [];
+  for (const p of paramSets) {
+    const tr = backtest(p);
+    results.push({ params: p, mc: bootstrapTrades(tr, { runs, seed }) });
+  }
+  const valid = results.filter((r) => r.mc);
+  const robust = valid.filter((r) => r.mc.retP5 > 0 && r.mc.pProfit >= 0.9);
+  // Representative = the valid set whose median return is the MEDIAN of the group
+  // (a typical outcome, not the cherry-picked best).
+  const byMed = [...valid].sort((a, b) => a.mc.retMed - b.mc.retMed);
+  const representative = byMed.length ? byMed[Math.floor(byMed.length / 2)] : null;
+  const frac = valid.length ? robust.length / valid.length : 0;
+  const verdict = valid.length === 0 ? "inconclusive" : frac >= 0.6 ? "robust" : frac >= 0.3 ? "mixed" : "fragile";
+  return { results, tested: results.length, valid: valid.length, robustCount: robust.length, representative, verdict };
+}
+
 // ── Walk-forward validation — the over-fit guard ─────────────────────────────
 /**
  * Optimize IN-SAMPLE, score OUT-OF-SAMPLE across rolling windows over the back

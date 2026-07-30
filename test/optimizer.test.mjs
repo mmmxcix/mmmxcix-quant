@@ -85,3 +85,36 @@ test("parameterHeatmap treats non-finite scores as empty cells", () => {
 test("parameterHeatmap returns null when the two axes are the same param", () => {
   assert.equal(parameterHeatmap({ params: HM_PARAMS, xKey: "a", yKey: "a", evaluate: () => 1 }), null);
 });
+
+// ── Monte-Carlo trade bootstrap ─────────────────────────────────────────────
+import { bootstrapTrades, monteCarloParams } from "../src/lib/optimizer.js";
+
+test("bootstrapTrades needs a real sample and orders its percentiles", () => {
+  assert.equal(bootstrapTrades([0.01, 0.02]), null, "too few trades → null");
+  // A strongly positive edge (mostly wins) → distribution sits above zero.
+  const wins = Array.from({ length: 60 }, (_, i) => (i % 3 === 0 ? -0.01 : 0.02));
+  const mc = bootstrapTrades(wins, { runs: 300, seed: 5 });
+  assert.ok(mc.retP5 <= mc.retMed && mc.retMed <= mc.retP95, "percentiles ordered");
+  assert.ok(mc.pProfit > 0.9, "a real edge is profitable in most resamples");
+  assert.ok(mc.retP5 > 0, "even the 5th percentile is positive for a strong edge");
+  assert.ok(mc.ddP95 >= mc.ddMed, "worst-case drawdown ≥ median");
+});
+
+test("bootstrapTrades marks a coin-flip edge as unreliable", () => {
+  const flat = Array.from({ length: 80 }, (_, i) => (i % 2 === 0 ? 0.02 : -0.02));
+  const mc = bootstrapTrades(flat, { runs: 300, seed: 7 });
+  assert.ok(mc.retP5 < 0, "downside tail is negative for a no-edge strategy");
+  assert.ok(mc.pProfit < 0.9, "not reliably profitable");
+});
+
+test("monteCarloParams separates a robust family from lucky points", () => {
+  const good = Array.from({ length: 60 }, (_, i) => (i % 3 === 0 ? -0.01 : 0.02));
+  const bad = Array.from({ length: 60 }, (_, i) => (i % 2 === 0 ? 0.02 : -0.021));
+  // Two robust sets, one fragile → majority robust.
+  const backtest = (p) => (p.k === 3 ? bad : good);
+  const out = monteCarloParams({ paramSets: [{ k: 1 }, { k: 2 }, { k: 3 }], backtest, runs: 200 });
+  assert.equal(out.valid, 3);
+  assert.equal(out.robustCount, 2);
+  assert.equal(out.verdict, "robust");
+  assert.ok(out.representative, "picks a representative set");
+});

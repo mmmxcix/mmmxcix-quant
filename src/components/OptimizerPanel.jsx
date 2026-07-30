@@ -1,8 +1,23 @@
 import { useState } from "react";
-import { Sparkles, Loader2, Check, ShieldCheck, AlertTriangle, Grid3x3 } from "lucide-react";
+import { Sparkles, Loader2, Check, ShieldCheck, AlertTriangle, Grid3x3, Dices } from "lucide-react";
 import { cn, fmtNum } from "@/lib/utils";
 import { runBacktest } from "@/lib/backtest";
-import { optimize, walkForward, parameterHeatmap } from "@/lib/optimizer";
+import { optimize, walkForward, parameterHeatmap, monteCarloParams, candidateValues } from "@/lib/optimizer";
+
+// A spread of parameter sets across the space (coarse grid, sampled down) — so
+// the Monte-Carlo runs on the whole family, not one optimised point.
+function sampleParamSets(params, maxSets = 16) {
+  let combos = [{}];
+  for (const p of params) {
+    const vals = candidateValues(p, 3);
+    const next = [];
+    for (const c of combos) for (const v of vals) next.push({ ...c, [p.key]: v });
+    combos = next;
+  }
+  if (combos.length <= maxSets) return combos;
+  const stride = combos.length / maxSets;
+  return Array.from({ length: maxSets }, (_, i) => combos[Math.floor(i * stride)]);
+}
 
 // Parameter optimizer for a built-in (builder-mode) strategy: sweep its params
 // with Grid / Bayesian / Genetic search against a selectable objective, then
@@ -49,6 +64,8 @@ export default function OptimizerPanel({ strategy, candles, capital, feeBps, pos
   const [applied, setApplied] = useState(false);
   const [hm, setHm] = useState(null);     // parameter-stability heatmap
   const [hmRunning, setHmRunning] = useState(false);
+  const [mc, setMc] = useState(null);     // Monte-Carlo across parameter sets
+  const [mcRunning, setMcRunning] = useState(false);
 
   const params = strategy?.params || [];
   const score = OBJECTIVES[objective].get;
@@ -89,6 +106,24 @@ export default function OptimizerPanel({ strategy, candles, capital, feeBps, pos
         const base = Object.fromEntries(params.map((p) => [p.key, p.default]));
         setHm(parameterHeatmap({ params, xKey, yKey, evaluate: (p) => scoreSlice(p), base, cap: 9 }));
       } finally { setHmRunning(false); }
+    }, 30);
+  };
+
+  // Monte-Carlo: for a spread of parameter sets, bootstrap each strategy's own
+  // trade returns into a distribution, and report how many stay profitable at
+  // the 5th percentile — the family's robustness, not a single point's luck.
+  const runMonteCarlo = () => {
+    setMcRunning(true); setMc(null);
+    setTimeout(() => {
+      try {
+        const paramSets = sampleParamSets(params, 16);
+        const backtest = (p) => {
+          const r = runBacktest({ candles, signalFn: strategy.build(p), initialCapital: capital, feeBps, positionPct, leverage });
+          if (r.metrics.tradeCount < 5) return null;
+          return r.trades.map((t) => t.pnlPct / 100); // fractional per-trade returns
+        };
+        setMc(monteCarloParams({ paramSets, backtest, runs: 400 }));
+      } finally { setMcRunning(false); }
     }, 30);
   };
 
@@ -250,6 +285,52 @@ export default function OptimizerPanel({ strategy, candles, capital, feeBps, pos
           {hm && !hm.best && <p className="text-[11px] text-down">Every combination was degenerate (too few trades) — widen the ranges or use more data.</p>}
         </div>
       )}
+
+      {/* Monte-Carlo across parameter sets — resample each set's own trades into a
+          distribution, so "profitable" comes with a confidence, and judged across
+          the whole family rather than one lucky optimised point. */}
+      <div className="border-t border-line pt-3 space-y-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="text-xs font-semibold flex items-center gap-1.5">
+            <Dices className="w-3.5 h-3.5 text-accent" /> Monte-Carlo robustness
+          </p>
+          <span className="text-[10px] text-dim">· bootstraps trades across a spread of parameter sets</span>
+          <button onClick={runMonteCarlo} disabled={mcRunning} className="ml-auto btn-ghost text-xs flex items-center gap-2">
+            {mcRunning ? <Loader2 className="w-4 h-4 animate-spin" /> : <Dices className="w-4 h-4" />}
+            {mcRunning ? "Resampling…" : "Run Monte-Carlo"}
+          </button>
+        </div>
+
+        {mc && (() => {
+          const v = VERDICT[mc.verdict] || VERDICT["n/a"];
+          const rep = mc.representative?.mc;
+          return (
+            <div className={cn("rounded-lg border p-3 text-xs space-y-2", v.cls)}>
+              <div className="flex items-center gap-2 font-semibold">
+                <v.Icon className="w-4 h-4" /> Monte-Carlo: {mc.verdict}
+                <span className="font-normal opacity-80">— {mc.robustCount}/{mc.valid} parameter sets profitable at the 5th percentile</span>
+              </div>
+              {rep ? (
+                <div className="space-y-1 font-mono opacity-90">
+                  <p>Typical set · {rep.trades} trades × {rep.runs} resamples:</p>
+                  <p>
+                    return <span className="text-down">P5 {fmtNum(rep.retP5, 0)}%</span> ·
+                    <span className="text-text"> median {fmtNum(rep.retMed, 0)}%</span> ·
+                    <span className="text-up"> P95 {fmtNum(rep.retP95, 0)}%</span>
+                  </p>
+                  <p>
+                    worst-case drawdown <span className="text-down">P95 {fmtNum(rep.ddP95, 0)}%</span> ·
+                    profitable in <span className={rep.pProfit >= 0.9 ? "text-up" : "text-down"}>{Math.round(rep.pProfit * 100)}%</span> of resamples
+                  </p>
+                </div>
+              ) : <p className="font-mono opacity-80">No parameter set produced enough trades to resample — widen the ranges or use more data.</p>}
+              <p className="opacity-75 text-[10px]">
+                Each set's own trades are drawn with replacement 400× and compounded. A 5th-percentile return that's still positive across most sets = a real edge; a great median with a deeply negative P5 = sequence luck. Judging one optimised set here would flatter it — that's why it runs the whole family.
+              </p>
+            </div>
+          );
+        })()}
+      </div>
     </div>
   );
 }
