@@ -1112,6 +1112,11 @@ export default function WorldMap() {
     const el = wrapRef.current;
     if (!el) return;
     let drag = null, downAt = null;
+    // Active touch/pen/mouse pointers, for two-finger pinch-zoom on mobile.
+    const pointers = new Map(); // pointerId -> { x, y }
+    let pinch = null;           // { d } — finger spread on the previous frame
+    const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+    const mid = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
     const toWorld = (e) => {
       const r = el.getBoundingClientRect();
       const { cx, cy, scale } = viewRef.current;
@@ -1197,9 +1202,40 @@ export default function WorldMap() {
     const onUi = (e) => e.target.closest?.("[data-mapui]");
     const onDown = (e) => {
       if (onUi(e)) return;
-      drag = toWorld(e); downAt = { x: e.clientX, y: e.clientY }; el.setPointerCapture(e.pointerId);
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      el.setPointerCapture(e.pointerId);
+      if (pointers.size === 1) {
+        drag = toWorld(e); downAt = { x: e.clientX, y: e.clientY };
+      } else if (pointers.size === 2) {
+        // Second finger down → pinch-zoom; a pinch is never a tap.
+        drag = null; downAt = null;
+        const [a, b] = [...pointers.values()];
+        pinch = { d: dist(a, b) };
+      }
     };
     const onMove = (e) => {
+      // Two fingers → pinch-zoom (and two-finger pan) around their midpoint.
+      if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pointers.size >= 2 && pinch) {
+        const [a, b] = [...pointers.values()];
+        const nd = dist(a, b), nm = mid(a, b);
+        const r = el.getBoundingClientRect();
+        const view = viewRef.current;
+        // World point currently under the finger midpoint (at the old scale)…
+        const mu = (nm.x - r.left - r.width / 2) / view.scale + view.cx;
+        const mv = (nm.y - r.top - r.height / 2) / view.scale + view.cy;
+        const ns = Math.min(600_000, Math.max(1, view.scale * (nd / (pinch.d || nd))));
+        // …kept under the midpoint after zooming, which also folds in any drift
+        // of the midpoint (two-finger pan) for free.
+        view.cx = mu - (nm.x - r.left - r.width / 2) / ns;
+        view.cy = mv - (nm.y - r.top - r.height / 2) / ns;
+        view.scale = ns;
+        clampView();
+        pinch = { d: nd };
+        needsDraw.current = true;
+        setHover(null);
+        return;
+      }
       if (!drag && onUi(e)) { setHover(null); return; }
       const p = toWorld(e);
       if (drag) {
@@ -1251,6 +1287,15 @@ export default function WorldMap() {
       }
     };
     const onUp = (e) => {
+      pointers.delete(e.pointerId);
+      if (pointers.size < 2) pinch = null;
+      if (pointers.size === 1) {
+        // Dropped from a pinch back to one finger — re-anchor the pan to it so
+        // the map doesn't jump, and don't register the lift as a tap.
+        const [only] = [...pointers.values()];
+        drag = toWorld({ clientX: only.x, clientY: only.y }); downAt = null;
+        return;
+      }
       const wasClick = downAt && Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) < 5;
       drag = null; downAt = null;
       if (!wasClick) return;
@@ -1308,14 +1353,23 @@ export default function WorldMap() {
       clampView();
       needsDraw.current = true;
     };
+    // The browser can steal a pointer mid-gesture (scroll takeover, etc.) — treat
+    // that exactly like a lift so drag/pinch state never gets stuck.
+    const onCancel = (e) => {
+      pointers.delete(e.pointerId);
+      if (pointers.size < 2) pinch = null;
+      if (pointers.size === 0) { drag = null; downAt = null; }
+    };
     el.addEventListener("pointerdown", onDown);
     el.addEventListener("pointermove", onMove);
     el.addEventListener("pointerup", onUp);
+    el.addEventListener("pointercancel", onCancel);
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => {
       el.removeEventListener("pointerdown", onDown);
       el.removeEventListener("pointermove", onMove);
       el.removeEventListener("pointerup", onUp);
+      el.removeEventListener("pointercancel", onCancel);
       el.removeEventListener("wheel", onWheel);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1360,7 +1414,10 @@ export default function WorldMap() {
       <div className="relative">
         <div ref={wrapRef} className="relative rounded-xl border border-line lg-glass overflow-hidden cursor-grab active:cursor-grabbing"
           style={{ height: "min(68vh, 720px)" }}>
-          <canvas ref={canvasRef} className="block w-full h-full" />
+          {/* touch-action:none hands ALL touch gestures on the map to our pinch/pan
+              handlers instead of letting the browser scroll or zoom the page. It's
+              on the canvas only, so the layer panel above still scrolls normally. */}
+          <canvas ref={canvasRef} className="block w-full h-full" style={{ touchAction: "none" }} />
 
           {/* Layer panel (worldmonitor-style, our design language) — folds away on mobile */}
           <div data-mapui className="absolute top-3 left-3 z-10 w-52 max-w-[calc(100vw-1.5rem)] rounded-xl border border-line bg-bg/85 backdrop-blur flex flex-col max-h-[calc(100%-1.5rem)]">
@@ -1467,7 +1524,8 @@ export default function WorldMap() {
             </div>
           )}
           <p className="absolute bottom-2 right-3 text-[10px] text-dim pointer-events-none">
-            drag = pan · wheel = zoom · click anything for details
+            <span className="hidden sm:inline">drag = pan · wheel = zoom · click anything for details</span>
+            <span className="sm:hidden">drag = pan · pinch = zoom · tap for details</span>
           </p>
         </div>
 
