@@ -17,6 +17,24 @@ function json(body, status = 200) {
   });
 }
 
+function safeEqual(a, b) {
+  const enc = new TextEncoder();
+  const ab = enc.encode(String(a)), bb = enc.encode(String(b));
+  if (ab.length !== bb.length) return false;
+  let d = 0;
+  for (let i = 0; i < ab.length; i++) d |= ab[i] ^ bb[i];
+  return d === 0;
+}
+
+// Two callers: the dev in a browser (admin session cookie) and the Cortex agent
+// on the PC (machine token — header for GET, body for POST), which is what lets
+// the agent re-test and re-file the library on its own.
+async function authorized(env, request, body) {
+  if (await isAdminRequest(env, request)) return true;
+  const tok = request.headers.get("x-lab-token") || body?.token || "";
+  return !!env.DEV_ACCESS_TOKEN && safeEqual(tok, env.DEV_ACCESS_TOKEN);
+}
+
 const OWNER = "dev"; // single-tenant for now; ready to key by user id later
 const CAP = 2000;    // safety ceiling on library size
 
@@ -34,9 +52,9 @@ function cols(e) {
 export async function onRequest({ request, env }) {
   const db = env.DB;
   if (!db) return json({ error: "db_not_bound" }, 503);
-  if (!(await isAdminRequest(env, request))) return json({ error: "unauthorized" }, 401);
 
   if (request.method === "GET") {
+    if (!(await authorized(env, request, null))) return json({ error: "unauthorized" }, 401);
     try {
       const { results } = await db
         .prepare("SELECT data FROM library WHERE owner = ? ORDER BY updated_at DESC LIMIT ?")
@@ -52,6 +70,7 @@ export async function onRequest({ request, env }) {
   if (request.method === "POST") {
     let body;
     try { body = await request.json(); } catch { return json({ error: "bad_json" }, 400); }
+    if (!(await authorized(env, request, body))) return json({ error: "unauthorized" }, 401);
     const now = Date.now();
     try {
       // Remove by id.

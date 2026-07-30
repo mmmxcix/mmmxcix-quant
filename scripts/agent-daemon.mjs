@@ -79,6 +79,9 @@ everyMinutes(15, () => runAgent("lab", "lab-agent.mjs"));
 atHours([4], () => runAgent("research", "research-agent.mjs"));
 atHours([8, 11, 14, 17, 20], () => runAgent("revalidate", "revalidate-agent.mjs"));
 atHours([12], () => runAgent("discover", "discover-sources.mjs"));
+// Auto-progression: re-test the whole library and re-file each strategy's stage
+// (advance / improve / bury). Twice daily, offset from the research passes.
+atHours([6, 18], () => runAgent("retest", "retest-library.mjs"));
 
-console.log(`[${stamp()}] agent-daemon running — lab/15min · research/04:00 · revalidate/08,11,14,17,20 · discover/12:00`);
+console.log(`[${stamp()}] agent-daemon running — lab/15min · research/04:00 · revalidate/08,11,14,17,20 · discover/12:00 · retest/06,18`);
 runAgent("lab", "lab-agent.mjs"); // one immediate pass so a restart isn't idle for 15 min
