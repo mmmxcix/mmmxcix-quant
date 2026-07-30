@@ -47,13 +47,21 @@ export function priorLow(candles, n) {
  * sets how much cash is at risk. No fixed-% stops.
  * @returns {null | { size, riskAmt }}
  */
-export function sizePosition({ equity, entry, stop, openRisk = 0, heatCap = 0.06, baseRiskPct = 0.02 }) {
+export function sizePosition({ equity, entry, stop, openRisk = 0, openNotional = 0, heatCap = 0.06, baseRiskPct = 0.02, maxLeverage = 3, maxExposure = 3 }) {
   const stopDist = Math.abs(entry - stop);
   if (!(stopDist > 0) || !(equity > 0)) return null;
-  const room = heatCap * equity - openRisk;              // cash still allowed
-  const riskAmt = Math.min(baseRiskPct * equity, room);
-  if (riskAmt <= equity * 0.0005) return null;           // no meaningful room → wait
-  return { size: riskAmt / stopDist, riskAmt };
+  const room = heatCap * equity - openRisk;              // risk budget still allowed
+  const riskAmt0 = Math.min(baseRiskPct * equity, room);
+  if (riskAmt0 <= equity * 0.0005) return null;          // no meaningful risk room → wait
+  let size = riskAmt0 / stopDist;
+  // Cap NOTIONAL, not just risk: a tight stop turns a small $risk into a huge
+  // position (implicit leverage). Bound BOTH the per-trade leverage and the TOTAL
+  // open exposure, so a 10k account can't carry 60k of positions.
+  const notionalCap = Math.min(maxLeverage * equity, Math.max(0, maxExposure * equity - openNotional));
+  const maxSize = entry > 0 ? notionalCap / entry : 0;
+  if (maxSize <= 0) return null;                          // exposure budget full → wait
+  if (size > maxSize) size = maxSize;
+  return { size, riskAmt: size * stopDist };              // risk follows the (possibly capped) size
 }
 
 // ── realistic paper fills ───────────────────────────────────────────────────
@@ -80,9 +88,9 @@ export function newId() {
  * Open a thesis from a validated setup: fills the entry, sizes it, computes the
  * cash risk. Returns null if there's no heat room (caller keeps it forming).
  */
-export function openThesis(setup, { equity, openRisk, asset, heatCap, baseRiskPct, now = Date.now() }) {
+export function openThesis(setup, { equity, openRisk, openNotional = 0, asset, heatCap, baseRiskPct, maxLeverage, maxExposure, now = Date.now() }) {
   const fillEntry = fillPrice(setup.entry, setup.side, "entry", asset);
-  const sized = sizePosition({ equity, entry: fillEntry, stop: setup.stop, openRisk, heatCap, baseRiskPct });
+  const sized = sizePosition({ equity, entry: fillEntry, stop: setup.stop, openRisk, openNotional, heatCap, baseRiskPct, maxLeverage, maxExposure });
   if (!sized) return null;
   return {
     id: newId(),

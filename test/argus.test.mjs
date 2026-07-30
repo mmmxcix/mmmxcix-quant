@@ -20,6 +20,20 @@ test("heat sizing: full base risk when empty, shrinks with open risk, null when 
   assert.equal(c, null, "no room → null (park in watch-mode)");
 });
 
+test("exposure caps: a tight stop can't blow past the notional limit", () => {
+  // Tiny stop (0.1) → risk-based size would be huge; the per-trade leverage cap
+  // (3x) bounds the notional to 3× equity.
+  const a = sizePosition({ equity: 10000, entry: 100, stop: 99.9, openRisk: 0, maxLeverage: 3, maxExposure: 3 });
+  assert.ok(a.size * 100 <= 3 * 10000 + 1e-6, "per-trade notional ≤ 3× equity");
+  assert.ok(a.riskAmt < 200, "risk follows the capped size (less than the 2% target)");
+  // Total-exposure cap: with 2.8× already open, only 0.2× notional room is left.
+  const b = sizePosition({ equity: 10000, entry: 100, stop: 98, openRisk: 0, openNotional: 28000, maxExposure: 3 });
+  assert.ok(b.size * 100 <= 2000 + 1e-6, "new notional fits the 0.2× remaining budget");
+  // Exposure budget full → null.
+  const full = sizePosition({ equity: 10000, entry: 100, stop: 98, openNotional: 30000, maxExposure: 3 });
+  assert.equal(full, null, "no exposure room → null");
+});
+
 test("fill price moves against the trader on entry and exit", () => {
   assert.ok(fillPrice(100, "long", "entry", "crypto") > 100, "long entry pays up");
   assert.ok(fillPrice(100, "long", "exit", "crypto") < 100, "long exit gets less");

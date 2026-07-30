@@ -19,6 +19,12 @@ if (!TOKEN) { console.error("LAB_TOKEN is not set."); process.exit(1); }
 
 const HEAT_CAP = +(process.env.LAB_ARGUS_HEAT || 0.06);
 const BASE_RISK = +(process.env.LAB_ARGUS_RISK || 0.02);
+// Exposure caps — the risk gate for NOTIONAL, not just risk. A tight stop turns a
+// tiny $risk into a huge position; without these a 10k account carried ~60k of
+// positions. Per-trade leverage ≤ MAX_LEVERAGE× equity; total open notional ≤
+// MAX_EXPOSURE× equity. Tunable; conservative day-trader defaults.
+const MAX_LEVERAGE = +(process.env.LAB_ARGUS_MAX_LEVERAGE || 3);
+const MAX_EXPOSURE = +(process.env.LAB_ARGUS_MAX_EXPOSURE || 3);
 const DAILY_STOP = +(process.env.LAB_ARGUS_DAILY_STOP || 0.04);
 const EQUITY0 = +(process.env.LAB_ARGUS_EQUITY || 10000);
 // Phase-1 event channel: LLM reads the alt-data briefing and proposes directional
@@ -204,7 +210,7 @@ function tryOpen(inst, setup, halted) {
 
   const th = openThesis(
     { ...setup, symbol: inst.symbol, market: inst.asset },
-    { equity, openRisk: openRisk(), asset: inst.asset, heatCap: HEAT_CAP, baseRiskPct: riskPct },
+    { equity, openRisk: openRisk(), openNotional: openNotional(), asset: inst.asset, heatCap: HEAT_CAP, baseRiskPct: riskPct, maxLeverage: MAX_LEVERAGE, maxExposure: MAX_EXPOSURE },
   );
   if (th) {
     if (bias && bias.side === th.side) { // enrich a confirmed setup with its catalyst
@@ -367,7 +373,38 @@ async function hydrate() {
 }
 
 await hydrate();
+// Near-instant dev commands: a light 15s loop that drains the queue and closes a
+// commanded position at the LIVE price right away, instead of waiting up to 2 min
+// for the next scan. Shares the cycleRunning mutex so it never races a scan.
+async function runCommandsFast() {
+  if (cycleRunning) return;
+  cycleRunning = true;
+  try {
+    await drainCommands(); // sets forceClose + performs cancels immediately
+    if (forceClose.size) {
+      const ledgerAdd = [];
+      for (const th of open.filter((o) => forceClose.has(o.id))) {
+        let price = th.entry;
+        try {
+          const ds = await loadMarket({ id: th.symbol, asset: th.asset, symbol: th.symbol, interval: "1m", bars: 2, range: "1d" });
+          const last = ds?.candles?.[ds.candles.length - 1];
+          if (last) price = last.close;
+        } catch { /* fall back to entry */ }
+        const res = closeThesisAt(th, price);
+        open = open.filter((o) => o.id !== th.id);
+        equity += res.pnl; closedToday.push(res); ledgerAdd.push(res); closedAll.push(res); reflectQueue.push(res);
+        forceClose.delete(th.id);
+        console.log(`[${new Date().toISOString()}] CLOSE (dev·instant) ${res.symbol} ${res.outcome} R=${res.R.toFixed(2)} pnl=${res.pnl.toFixed(2)} eq=${equity.toFixed(0)}`);
+      }
+      if (ledgerAdd.length) await persist(ledgerAdd, { halted: false, dailyPnl: closedToday.reduce((a, c) => a + c.pnl, 0) });
+    }
+    await ackCommands();
+  } catch (e) { console.error(`[${new Date().toISOString()}] fast-commands failed: ${e.message}`); }
+  finally { cycleRunning = false; }
+}
+
 setInterval(() => cycle(true), 15 * 60_000);
 setInterval(() => cycle(false), 2 * 60_000);
+setInterval(runCommandsFast, 15_000);
 cycle(true);
 console.log(`Argus running — universe ${UNIVERSE.length} core (+${EVENT_TICKERS.length} event) · event-channel ${LLM_ON ? "on" : "off"} · heat ${HEAT_CAP * 100}% cap / ${BASE_RISK * 100}% base · daily stop ${DAILY_STOP * 100}% · paper eq ${EQUITY0}`);
