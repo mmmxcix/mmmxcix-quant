@@ -5,16 +5,16 @@
 // See docs/DAYTRADER_AGENT.md.
 
 const LLM_URL = (process.env.LAB_LLM_URL || "http://localhost:3000/v1").replace(/\/+$/, "");
-// OmniRoute's free provider pools rotate in and out of rate limits, so a single
-// model 503s often. We try a chain of meta-routes (different pools) until one
-// answers; the caller degrades gracefully if all are exhausted. Override the
-// head of the chain with LAB_ARGUS_MODEL.
+// The models Argus requests from OmniRoute, tried in order until one answers.
+//
+// CRITICAL: never put `auto/best-*` here. Those meta-routes ask OmniRoute for the
+// STRONGEST model available — which, once you connect Claude Code, is your Opus
+// SUBSCRIPTION. Background agents must run on FREE models only, so this is an
+// explicit list of free models (set via env), NOT a "best" route. If every free
+// model is rate-limited the event channel just skips a cycle (best-effort).
 const MODEL_CHAIN = [
-  process.env.LAB_ARGUS_MODEL,
-  "auto/best-coding",
-  "auto/best-reasoning",
-  "auto/best-fast",
-  "auto/coding",
+  process.env.LAB_ARGUS_MODEL || "groq/llama-3.3-70b-versatile",
+  ...(process.env.LAB_ARGUS_FALLBACKS || "auto/best-fast").split(",").map((s) => s.trim()),
 ].filter(Boolean).filter((m, i, a) => a.indexOf(m) === i);
 
 /** Robustly pull a JSON array of theses out of an LLM reply (fences, prose). */

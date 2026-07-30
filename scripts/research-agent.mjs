@@ -200,10 +200,14 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // post-processes with the same shared helpers the server uses. Any failure
 // falls back to the site's own provider chain — nothing gets less reliable.
 const LLM_URL = (process.env.LAB_LLM_URL || "").replace(/\/+$/, "");
-// auto/coding routes across the free cascade; the ":free" variant had an
-// empty candidate set on this install and 503s — avoid it.
-const LLM_MODEL = process.env.LAB_LLM_MODEL || "auto/coding";
-const LLM_CRITIQUE_MODEL = process.env.LAB_LLM_CRITIQUE_MODEL || "auto/reasoning";
+// The models this nightly agent requests from OmniRoute. CRITICAL: do NOT use
+// `auto/coding` / `auto/reasoning` / `auto/best-*` here — those route to the
+// STRONGEST model available, which becomes your Claude Code Opus SUBSCRIPTION
+// once it's connected. A nightly agent reading many papers would burn it fast.
+// Default to a concrete FREE model; override with LAB_LLM_MODEL if your OmniRoute
+// names it differently. Any failure falls back to the site's provider chain.
+const LLM_MODEL = process.env.LAB_LLM_MODEL || "groq/llama-3.3-70b-versatile";
+const LLM_CRITIQUE_MODEL = process.env.LAB_LLM_CRITIQUE_MODEL || LLM_MODEL;
 
 async function callLocalRouter(system, user, model) {
   const res = await fetch(`${LLM_URL}/chat/completions`, {
