@@ -13,12 +13,17 @@
 const KEY = "quant_registry";
 const listeners = new Set();
 
-export const STATUSES = ["factory", "validated", "paper", "graveyard"];
+// The lifecycle every strategy — self-found (saved from Backtest) or Cortex-found
+// — flows through: factory → validated → paper as it clears re-testing, with two
+// side-exits: "improve" for a strategy that has a KNOWN, fixable flaw (e.g. it
+// only worked in the first half of the window) and "graveyard" for a dead one.
+export const STATUSES = ["factory", "validated", "paper", "improve", "graveyard"];
 export const STATUS_META = {
-  factory: { label: "Factory", hint: "Saved candidate — not yet validated" },
+  factory: { label: "Factory", hint: "In the library — awaiting / between re-tests" },
   validated: { label: "Validated", hint: "Survived the validation pipeline" },
   paper: { label: "Paper", hint: "Promoted for paper trading" },
-  graveyard: { label: "Graveyard", hint: "Buried — kept as a record" },
+  improve: { label: "Improve", hint: "Salvageable — a known flaw worth fixing" },
+  graveyard: { label: "Graveyard", hint: "Buried — kept as a record of what failed" },
 };
 
 function read() {

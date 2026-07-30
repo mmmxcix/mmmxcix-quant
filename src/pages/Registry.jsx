@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Boxes, Trash2, Skull, ShieldCheck, FlaskConical, Rocket, Grid3x3, Info, Send, Loader2, Check, Scale } from "lucide-react";
+import { Boxes, Trash2, Skull, ShieldCheck, FlaskConical, Rocket, Grid3x3, Info, Send, Loader2, Check, Scale, Wrench } from "lucide-react";
 import {
   getEntries, subscribeRegistry, setStatus, removeEntry, STATUS_META, correlationMatrix, saveEntry,
 } from "@/lib/registry";
@@ -114,16 +114,17 @@ function AgentCandidates() {
   // ── Auto-promotion ────────────────────────────────────────────────────────
   // The mechanical steps (import → factory → validated → paper) carry no
   // judgement: the agent's gauntlet already decided these are worth looking at.
-  // So they can run themselves up to PAPER — the last step, handing a strategy
-  // to the live agent ("Publish to agent"), stays a deliberate human click.
-  // Gated on the agent's own DSR for that candidate so the bar is explicit.
+  // So a fresh candidate clearing the DSR bar auto-enters the LIBRARY at Factory
+  // — the first stage every strategy starts in — instead of needing a manual
+  // import click. Progression from there (Factory → Validated → Paper) and the
+  // hand-off to the live agent stay deliberate.
   useEffect(() => {
     if (!autoPromote || !Array.isArray(items) || !items.length) return;
     const known = new Set(getEntries().map((e) => e.candidateId).filter(Boolean));
     const fresh = items.filter((c) => c.code && !known.has(c.id) && (c.revalidatedDsr ?? c.dsr ?? 0) >= autoDsr);
     if (!fresh.length) return;
-    for (const c of fresh) importOne(c, "paper");
-    setAutoNote(`${fresh.length} candidate${fresh.length > 1 ? "s" : ""} auto-promoted to Paper (DSR ≥ ${autoDsr}%)`);
+    for (const c of fresh) importOne(c, "factory");
+    setAutoNote(`${fresh.length} candidate${fresh.length > 1 ? "s" : ""} added to the library (Factory · DSR ≥ ${autoDsr}%)`);
     setTimeout(() => setAutoNote(null), 6000);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items, autoPromote, autoDsr]);
@@ -149,7 +150,7 @@ function AgentCandidates() {
         <label className="flex items-center gap-2 text-[11px] text-dim cursor-pointer">
           <input type="checkbox" checked={autoPromote} onChange={(e) => setAutoPromote(e.target.checked)}
             className="accent-current" />
-          <span className="text-text">Auto-promote new candidates to <span className="font-medium">Paper</span></span>
+          <span className="text-text">Auto-add new candidates to the library (<span className="font-medium">Factory</span>)</span>
         </label>
         <label className="flex items-center gap-1.5 text-[11px] text-dim">
           min DSR
@@ -159,7 +160,7 @@ function AgentCandidates() {
           %
         </label>
         <span className="text-[10px] text-dim">
-          Skips the manual import/promote clicks. <span className="text-text">Publish to agent stays manual</span> — nothing trades until you say so.
+          They enter at Factory and progress as they're re-tested. <span className="text-text">Publish to agent stays manual</span> — nothing trades until you say so.
         </span>
         {autoNote && <span className="text-[10px] text-up ml-auto">{autoNote}</span>}
       </div>
@@ -302,15 +303,17 @@ const COLS = [
   { id: "factory", icon: FlaskConical, tone: "text-accent" },
   { id: "validated", icon: ShieldCheck, tone: "text-up" },
   { id: "paper", icon: Rocket, tone: "text-blue-400" },
+  { id: "improve", icon: Wrench, tone: "text-amber-400" },
   { id: "graveyard", icon: Skull, tone: "text-dim" },
 ];
 
-// Where each status can move next (forward promote + bury).
+// Where each status can move next (forward promote · sideline to improve · bury).
 const MOVES = {
-  factory: [["validated", "Promote"], ["graveyard", "Bury"]],
-  validated: [["paper", "Go paper"], ["graveyard", "Bury"]],
+  factory: [["validated", "Promote"], ["improve", "Needs work"], ["graveyard", "Bury"]],
+  validated: [["paper", "Go paper"], ["improve", "Needs work"], ["graveyard", "Bury"]],
   paper: [["validated", "Pause"], ["graveyard", "Bury"]],
-  graveyard: [["factory", "Revive"]],
+  improve: [["factory", "Back to Factory"], ["graveyard", "Bury"]],
+  graveyard: [["improve", "Revive to fix"], ["factory", "Revive"]],
 };
 
 function verdictDot(v) {
@@ -358,6 +361,15 @@ function Card({ e }) {
       </div>
 
       {e.note && <p className="text-[10px] text-dim italic leading-snug">“{e.note}”</p>}
+
+      {/* Why it stalled — the flaw Cortex (or you) recorded, so a salvageable
+          strategy carries its known problem into the Improve bucket. */}
+      {e.failureReason && (
+        <p className={cn("text-[10px] leading-snug rounded px-1.5 py-1",
+          e.status === "graveyard" ? "text-dim bg-bg" : "text-amber-400/90 bg-amber-400/5")}>
+          {e.failureReason}
+        </p>
+      )}
 
       <div className="flex flex-wrap gap-1 pt-0.5">
         {(MOVES[e.status] || []).map(([to, label]) => (
@@ -477,7 +489,7 @@ export default function Registry() {
   useEffect(() => subscribeRegistry(() => setEntries(getEntries())), []);
 
   const byStatus = useMemo(() => {
-    const g = { factory: [], validated: [], paper: [], graveyard: [] };
+    const g = { factory: [], validated: [], paper: [], improve: [], graveyard: [] };
     for (const e of entries) (g[e.status] || g.factory).push(e);
     return g;
   }, [entries]);
@@ -495,10 +507,11 @@ export default function Registry() {
         <h1 className="text-xl sm:text-2xl font-bold">Registry</h1>
       </div>
       <p className="text-sm text-dim mb-6 max-w-2xl">
-        Your strategy notebook. Save a backtest from the{" "}
-        <Link to="/backtest" className="text-accent hover:underline">Backtest</Link> page, then move each idea
-        through its lifecycle: <span className="text-accent">Factory</span> → <span className="text-up">Validated</span> → <span className="text-blue-400">Paper</span>,
-        or bury the failures in the <span className="text-dim">Graveyard</span>. Stored in this browser.
+        Your strategy library — both the ones you found (saved from the{" "}
+        <Link to="/backtest" className="text-accent hover:underline">Backtest</Link> page) and the ones Cortex found.
+        Every strategy flows through its lifecycle: <span className="text-accent">Factory</span> → <span className="text-up">Validated</span> → <span className="text-blue-400">Paper</span> as it's
+        re-tested, side-lined to <span className="text-amber-400">Improve</span> when it has a fixable flaw,
+        or buried in the <span className="text-dim">Graveyard</span>. Stored in this browser.
       </p>
 
       <AgentCandidates />
@@ -510,7 +523,7 @@ export default function Registry() {
       ) : (
         <>
           <PublishToAgent entries={entries} />
-          <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-4 mb-8">
+          <div className="grid md:grid-cols-2 xl:grid-cols-5 gap-4 mb-8">
             {COLS.map((col) => {
               const Icon = col.icon;
               const list = byStatus[col.id];
