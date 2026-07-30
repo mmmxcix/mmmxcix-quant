@@ -28,6 +28,10 @@ const EVENT_TTL = +(process.env.LAB_ARGUS_EVENT_TTL_MIN || 240) * 60_000; // bia
 // Hermes-style learning: buckets need at least this many closed trades before any
 // lesson is allowed to touch sizing (small samples lie). Tunable, conservative.
 const LEARN_MIN = +(process.env.LAB_ARGUS_LEARN_MIN || 20);
+// Trade duration: keep them SHORT — a real intraday day-trader is in and out.
+// Hard cap 8h (a position still open then is force-closed at market), aiming for
+// ~1-4h via the ATR targets. Tunable via LAB_ARGUS_MAX_HOLD_H.
+const MAX_HOLD_MS = +(process.env.LAB_ARGUS_MAX_HOLD_H || 8) * 3600_000;
 // News-reachable tickers Argus may trade if a catalyst clearly names them.
 const EVENT_TICKERS = ["USO", "XLE", "ITA", "GLD", "UNG", "XOP", "SLV", "TLT", "UUP"];
 
@@ -127,7 +131,7 @@ async function loadTF(inst) {
 function manageExits(inst, last5, ledgerAdd) {
   for (const th of open.filter((o) => o.symbol === inst.symbol)) {
     // Dev "close now" takes priority over the normal stop/target check.
-    const res = forceClose.has(th.id) ? closeThesisAt(th, last5.close) : evaluateExit(th, last5);
+    const res = forceClose.has(th.id) ? closeThesisAt(th, last5.close) : evaluateExit(th, last5, { maxHoldMs: MAX_HOLD_MS });
     if (res) {
       open = open.filter((o) => o.id !== th.id);
       equity += res.pnl;

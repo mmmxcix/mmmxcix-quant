@@ -191,7 +191,26 @@ export default function Argus() {
                   <span className="text-up">{fmtNum(t.target, 4)}</span>
                   <span>{t.plannedR?.toFixed(1)}R</span>
                 </div>
-                <p className="text-[11px] text-dim mt-2 leading-snug">{t.reason} · risk {fmtNum(t.riskAmt, 0)}</p>
+                {(() => {
+                  // How much Argus actually committed, and whether that implies
+                  // leverage (notional > available equity → >1x exposure).
+                  const notional = Number.isFinite(t.size) && Number.isFinite(t.entry) ? t.size * t.entry : null;
+                  const exposure = notional && state?.equity ? notional / state.equity : null;
+                  const levered = exposure != null && exposure > 1.05;
+                  return (
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-2 text-[11px] font-mono">
+                      {notional != null && <span className="text-dim">placed <span className="text-text">{fmtNum(notional, 0)}</span></span>}
+                      {exposure != null && (
+                        <span className={cn("inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold",
+                          levered ? "bg-down/10 text-down" : "bg-line/40 text-dim")}>
+                          {exposure.toFixed(1)}× {levered ? "leverage" : "no leverage"}
+                        </span>
+                      )}
+                      <span className="text-dim">risk <span className="text-text">{fmtNum(t.riskAmt, 0)}</span></span>
+                    </div>
+                  );
+                })()}
+                <p className="text-[11px] text-dim mt-1.5 leading-snug">{t.reason}</p>
                 <div className="flex items-center gap-2 mt-3">
                   <Link to={chartHref(t, "open")} className="btn-ghost text-xs flex items-center gap-1.5">
                     <LineChart className="w-3.5 h-3.5" /> View on chart
