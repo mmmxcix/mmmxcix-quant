@@ -35,7 +35,7 @@ function AgentCandidates() {
   const [imported, setImported] = useState({});
   const navigate = useNavigate();
   // Auto-promotion settings live in localStorage so the choice survives reloads.
-  const [autoPromote, setAutoPromote] = useState(() => localStorage.getItem("quant_auto_promote") === "1");
+  const [autoPromote, setAutoPromote] = useState(() => localStorage.getItem("quant_auto_promote") !== "0"); // default ON
   const [autoDsr, setAutoDsr] = useState(() => +(localStorage.getItem("quant_auto_promote_dsr") || 60));
   const [autoNote, setAutoNote] = useState(null);
   useEffect(() => { localStorage.setItem("quant_auto_promote", autoPromote ? "1" : "0"); }, [autoPromote]);
@@ -95,18 +95,27 @@ function AgentCandidates() {
     const mk = mid ? byId(mid) : null;
     const row = (c.byMarket?.[mid]) || Object.values(c.byMarket || {})[0] || {};
     saveEntry({
-      name: `[research] ${c.name.slice(0, 46)}${mk ? ` · ${mk.label}` : ""}`,
+      name: c.name.slice(0, 60), // clean name; the "Cortex" badge marks the source
       market: mk ? (mk.asset === "crypto" ? "crypto" : "stock") : "crypto",
       symbol: mk?.symbol || "BTCUSDT",
       interval: mk?.interval || "4h",
       range: mk?.range || "max", // record the actual window it was validated on
-      mode: "code", code: c.code, positionPct: 100,
+      mode: "code", code: c.code, language: c.language || "js", positionPct: 100,
       feeBps: mk ? costFor(mk) : 10,
       metrics: { totalReturnPct: row.ret ?? 0, profitFactor: row.pf ?? 0, maxDrawdownPct: row.dd ?? 0, tradeCount: row.n ?? 0 },
       equity: [],
       validation: { wf: "pass", dsr: "pass", noise: "pass" }, // it survived the agent's gauntlet
-      status, // "factory" by hand; auto-promotion lands them straight in Paper
+      status,
       candidateId: c.id,
+      // Carry the full research context so the library card shows the thesis,
+      // committee verdict, DSR, markets and source — the old feed's richness.
+      research: {
+        thesis: c.thesis || null, committee: c.committee || null,
+        dsr: c.dsr ?? null, revalidatedDsr: c.revalidatedDsr ?? null,
+        profiles: c.profiles || [], markets: c.markets || [], byMarket: c.byMarket || {},
+        marketsTested: c.marketsTested ?? null,
+        source: c.source || null, paper: c.paper || null, kind: c.kind || null, readFullText: !!c.readFullText,
+      },
     });
     setImported((s) => ({ ...s, [c.id]: true }));
   };
@@ -129,172 +138,24 @@ function AgentCandidates() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items, autoPromote, autoDsr]);
 
-  if (items === null || items === undefined || items.length === 0) return null;
-
+  // The candidate FEED is gone — new finds auto-import into the library below.
+  // This renders only the small ingestion control (auto-add + DSR bar).
   return (
-    <div className="rounded-xl border border-accent/30 lg-glass p-4 mb-6">
-      <div className="flex items-center gap-2 mb-1">
-        <FlaskConical className="w-4 h-4 text-accent" />
-        <p className="text-sm font-semibold">Agent research candidates</p>
-        <span className="text-[10px] text-dim uppercase tracking-wide">· found &amp; validated by your research agent · private</span>
-      </div>
-      <p className="text-[11px] text-dim mb-3">
-        Each survived: profitable on BTC 4h AND SPY 1d after costs, k-fold, noise test, and the Deflated Sharpe hurdle
-        at the agent's cumulative trial count — then re-checked on fresh data by the daytime re-validator. The badge
-        shows which account regime it qualified for. Copy the code, or import it to re-run in the Backtest yourself.
-      </p>
-
-      {/* Auto-promotion — the mechanical steps run themselves; handing a strategy
-          to the live agent stays a deliberate click. */}
-      <div className="flex flex-wrap items-center gap-3 mb-3 rounded-lg border border-line bg-bg/40 px-3 py-2">
-        <label className="flex items-center gap-2 text-[11px] text-dim cursor-pointer">
-          <input type="checkbox" checked={autoPromote} onChange={(e) => setAutoPromote(e.target.checked)}
-            className="accent-current" />
-          <span className="text-text">Auto-add new candidates to the library (<span className="font-medium">Factory</span>)</span>
-        </label>
-        <label className="flex items-center gap-1.5 text-[11px] text-dim">
-          min DSR
-          <input type="number" value={autoDsr} min={0} max={100} step={5}
-            onChange={(e) => setAutoDsr(Math.min(100, Math.max(0, +e.target.value || 0)))}
-            className="input-base w-16 !py-0.5 font-mono text-[11px]" />
-          %
-        </label>
-        <span className="text-[10px] text-dim">
-          They enter at Factory and progress as they're re-tested. <span className="text-text">Publish to agent stays manual</span> — nothing trades until you say so.
-        </span>
-        {autoNote && <span className="text-[10px] text-up ml-auto">{autoNote}</span>}
-      </div>
-
-      <div className="space-y-2">
-        {items.map((c) => (
-          <div key={c.id} className="rounded-lg border border-line bg-bg/40 px-3 py-2">
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-              <span className="text-sm text-text flex-1 min-w-[200px]">{c.name}</span>
-              {(c.profiles || []).map((p) => (
-                <span key={p} className={cn(
-                  "text-[9px] uppercase tracking-wide rounded px-1.5 py-0.5 font-semibold",
-                  p === "prop" ? "bg-accent/15 text-accent" : "bg-up/10 text-up"
-                )}>{PROFILE_LABEL[p] || p}</span>
-              ))}
-              <span className="text-[11px] font-mono text-dim">
-                DSR {c.dsr}%
-                {c.revalidatedDsr != null && c.revalidatedDsr !== c.dsr && (
-                  <span className={c.revalidatedDsr >= c.dsr ? "text-up" : "text-dim"}> → {c.revalidatedDsr}%</span>
-                )}
-              </span>
-            </div>
-
-            {/* Where it works. A strategy is not good in the abstract — it is
-                good on a venue, and burying that would misrepresent it. */}
-            {(c.markets || []).length > 0 && (
-              <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
-                {c.markets.map((mid) => {
-                  const row = c.byMarket?.[mid] || {};
-                  const mk = byId(mid);
-                  const win = windowFor(mk);
-                  // The honest bar the gauntlet enforces is RISK-ADJUSTED: a market
-                  // is only promoted if its Sharpe beats buy&hold's (a strategy in
-                  // the market <100% of the time can win on Sharpe with a lower raw
-                  // return). Show both; the ↑B&H badge is the Sharpe verdict.
-                  const bhRet = row.bhRet ?? null;
-                  const beatsSharpe = row.sharpe != null && row.bhSharpe != null ? row.sharpe - row.bhSharpe : null;
-                  return (
-                    <button key={mid} type="button" onClick={() => openInBacktest(c, mid)}
-                      title={`Open in Backtester — ${mk?.symbol} ${mk?.interval} over ${win?.label || "?"}`
-                        + ` · return ${row.ret ?? "?"}%${bhRet != null ? ` vs buy&hold ${bhRet}%` : ""}`
-                        + ` · Sharpe ${row.sharpe ?? "?"} vs B&H ${row.bhSharpe ?? "?"} · maxDD ${row.dd ?? "?"}% · PF ${row.pf ?? "?"} · n=${row.n ?? "?"}`}
-                      className="group text-[10px] font-mono rounded border border-up/30 bg-up/5 text-up px-1.5 py-0.5 hover:bg-up/15 hover:border-up/50 transition-colors cursor-pointer">
-                      {mk?.label || mid}
-                      {win && <span className="text-dim/60"> {win.label}</span>}
-                      {row.ret != null && <span className="text-dim/90"> {row.ret}%</span>}
-                      {beatsSharpe != null && (
-                        <span className={beatsSharpe > 0 ? "text-up" : "text-down"} title={`Sharpe ${row.sharpe} vs buy&hold ${row.bhSharpe}`}>
-                          {beatsSharpe > 0 ? " ↑B&amp;H" : " ↓B&amp;H"}
-                        </span>
-                      )}
-                      {row.dd != null && <span className="text-down/70"> ▽{row.dd}%</span>}
-                      <span className="text-dim/40 group-hover:text-accent"> ↗</span>
-                    </button>
-                  );
-                })}
-                {c.marketsTested > (c.markets?.length || 0) && (
-                  <span className="text-[10px] text-dim">
-                    of {c.marketsTested} tested · {describeMarkets(c.markets)}
-                  </span>
-                )}
-              </div>
-            )}
-
-            {/* Thesis — the framework's "why does this have an edge", parsed
-                from the strategy's own EDGE/WORKS/BREAKS header. */}
-            {c.thesis && (c.thesis.edge || c.thesis.works || c.thesis.breaks) && (
-              <div className="mt-2 space-y-0.5 text-[11px]">
-                {c.thesis.edge && <p className="text-dim"><span className="text-up font-semibold">Edge</span> — {c.thesis.edge}</p>}
-                {c.thesis.works && <p className="text-dim"><span className="text-accent font-semibold">Works</span> — {c.thesis.works}</p>}
-                {c.thesis.breaks && <p className="text-dim"><span className="text-down font-semibold">Breaks</span> — {c.thesis.breaks}</p>}
-              </div>
-            )}
-
-            {/* The actual rules — a thesis is a claim; this is what the strategy
-                literally does. Collapsed so the card stays scannable. */}
-            {c.code && (
-              <details className="mt-2">
-                <summary className="text-[10px] text-dim cursor-pointer hover:text-accent select-none">
-                  Show the actual rules ({c.language === "python" ? "Python" : "JS"})
-                </summary>
-                <pre className="mt-1.5 max-h-64 overflow-auto rounded-lg border border-line bg-bg/60 p-2.5 text-[10px] font-mono leading-snug text-dim whitespace-pre-wrap">{c.code}</pre>
-              </details>
-            )}
-
-            {/* Committee verdict — the qualitative debate on top of the maths.
-                The gauntlet proved it works; this says how much to trust that
-                and when to pull it. */}
-            {c.committee && (
-              <div className="mt-2 rounded-lg border border-line bg-bg/40 p-2.5 text-[11px] space-y-1.5">
-                <div className="flex items-center gap-2">
-                  <Scale className="w-3.5 h-3.5 text-accent" />
-                  <span className="font-semibold text-text">Committee verdict</span>
-                  {c.committee.confidence != null && (
-                    <span className={cn(
-                      "font-mono px-1.5 py-0.5 rounded text-[10px]",
-                      c.committee.confidence >= 60 ? "bg-up/10 text-up"
-                        : c.committee.confidence >= 35 ? "bg-accent/10 text-accent"
-                        : "bg-down/10 text-down"
-                    )}>
-                      confidence {c.committee.confidence}%
-                    </span>
-                  )}
-                  {c.committee.regime && <span className="text-dim">regime: {c.committee.regime}</span>}
-                </div>
-                {c.committee.bull && <p className="text-dim"><span className="text-up font-semibold">Bull</span> — {c.committee.bull}</p>}
-                {c.committee.bear && <p className="text-dim"><span className="text-down font-semibold">Bear</span> — {c.committee.bear}</p>}
-                {(c.committee.invalidations || []).length > 0 && (
-                  <div className="text-dim/80">
-                    <span className="text-dim font-semibold">Pull it if:</span>
-                    <ul className="list-disc list-inside mt-0.5">
-                      {c.committee.invalidations.map((inv, i) => <li key={i}>{inv}</li>)}
-                    </ul>
-                  </div>
-                )}
-              </div>
-            )}
-
-            <div className="flex flex-wrap items-center gap-2 mt-1.5">
-              <span className="text-[10px] text-dim">
-                {c.source}{c.kind && c.kind !== "paper" ? ` · ${c.kind}` : ""}
-                {c.readFullText ? " · full text" : " · abstract only"}
-              </span>
-              {c.paper && <a href={c.paper} target="_blank" rel="noopener noreferrer" className="text-[11px] text-accent hover:underline">source</a>}
-              <span className="flex-1" />
-              <CopyButton text={c.code} label={c.language === "python" ? "Copy PY" : "Copy code"} />
-              <button onClick={() => importOne(c)} disabled={imported[c.id]}
-                className={cn("chip !text-[11px]", imported[c.id] ? "chip-idle text-up" : "chip-idle hover:text-accent")}>
-                {imported[c.id] ? "✓ imported" : "Import to Registry"}
-              </button>
-            </div>
-          </div>
-        ))}
-      </div>
+    <div className="flex flex-wrap items-center gap-3 mb-6 rounded-xl border border-line lg-glass px-3 py-2">
+      <FlaskConical className="w-4 h-4 text-accent shrink-0" />
+      <label className="flex items-center gap-2 text-[11px] text-dim cursor-pointer">
+        <input type="checkbox" checked={autoPromote} onChange={(e) => setAutoPromote(e.target.checked)} className="accent-current" />
+        <span className="text-text">Auto-add Cortex research finds to the library (<span className="font-medium">Factory</span>)</span>
+      </label>
+      <label className="flex items-center gap-1.5 text-[11px] text-dim">
+        min DSR
+        <input type="number" value={autoDsr} min={0} max={100} step={5}
+          onChange={(e) => setAutoDsr(Math.min(100, Math.max(0, +e.target.value || 0)))}
+          className="input-base w-16 !py-0.5 font-mono text-[11px]" />
+        %
+      </label>
+      <span className="text-[10px] text-dim">They land in Factory and progress as they're re-tested. Publish to agent stays manual.</span>
+      {autoNote && <span className="text-[10px] text-up ml-auto">{autoNote}</span>}
     </div>
   );
 }
@@ -331,20 +192,46 @@ function verdictDot(v) {
   return "bg-line";
 }
 
-function Card({ e }) {
+function Card({ e, rich = false }) {
   const m = e.metrics;
   const val = e.validation || {};
+  const r = e.research || null;
+  const navigate = useNavigate();
+
+  // Reproduce this strategy in the Backtester — its own market/window/code (or a
+  // specific research market when a chip is clicked). Handed off via sessionStorage.
+  const openInBacktest = (mid) => {
+    const mk = mid ? byId(mid) : null;
+    const days = RANGE_DAYS[(mk?.range) || e.range] ?? 3652;
+    const to = new Date(), from = new Date(to.getTime() - days * 86_400_000);
+    const iso = (d) => d.toISOString().slice(0, 10);
+    const codeBits = e.code ? { code: e.code } : { strategyId: e.strategyId || undefined, params: e.params || undefined };
+    const handoff = mk
+      ? { market: mk.asset === "crypto" ? "crypto" : "stock", symbol: mk.symbol, interval: mk.interval, customPeriod: true, fromDate: iso(from), toDate: iso(to), feeBps: costFor(mk), positionPct: 100, ...codeBits }
+      : { market: e.market, symbol: e.symbol, interval: e.interval, customPeriod: true, fromDate: iso(from), toDate: iso(to), feeBps: e.feeBps, positionPct: e.positionPct, ...codeBits };
+    try { sessionStorage.setItem("backtest_handoff", JSON.stringify(handoff)); } catch { /* quota */ }
+    navigate("/backtest?load=1");
+  };
+
   return (
     <div className="rounded-lg border border-line bg-bg/40 p-3 space-y-2">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5 flex-wrap">
             {/* Where it came from — your own backtest, or a Cortex research find. */}
             <span className={cn("text-[8px] uppercase tracking-wide font-semibold px-1 py-px rounded shrink-0",
               e.candidateId ? "bg-accent/15 text-accent" : "bg-up/15 text-up")}>
               {e.candidateId ? "Cortex" : "You"}
             </span>
             <p className="text-sm font-medium text-text truncate">{e.name}</p>
+            {rich && r?.dsr != null && (
+              <span className="text-[10px] font-mono text-dim ml-1">
+                DSR {r.dsr}%{r.revalidatedDsr != null && r.revalidatedDsr !== r.dsr && <span className={r.revalidatedDsr >= r.dsr ? "text-up" : "text-dim"}> → {r.revalidatedDsr}%</span>}
+              </span>
+            )}
+            {rich && (r?.profiles || []).map((p) => (
+              <span key={p} className={cn("text-[9px] uppercase tracking-wide rounded px-1.5 py-0.5 font-semibold", p === "prop" ? "bg-accent/15 text-accent" : "bg-up/10 text-up")}>{PROFILE_LABEL[p] || p}</span>
+            ))}
           </div>
           <p className="text-[10px] text-dim font-mono">{e.symbol} · {e.interval} · {e.mode}{e.positionPct != null ? ` · ${e.positionPct}%` : ""}</p>
         </div>
@@ -367,6 +254,57 @@ function Card({ e }) {
           <span className="text-dim">maxDD</span><span className="col-span-2 text-right text-down">-{fmtNum(m.maxDrawdownPct, 0)}%</span>
           <span className="text-dim">trades</span><span className="col-span-2 text-right text-text">{m.tradeCount}</span>
         </div>
+      )}
+
+      {/* Markets it was validated on (Cortex) — each opens in the Backtester. */}
+      {rich && (r?.markets || []).length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          {r.markets.map((mid) => {
+            const row = r.byMarket?.[mid] || {}; const mk = byId(mid); const win = windowFor(mk);
+            return (
+              <button key={mid} type="button" onClick={() => openInBacktest(mid)}
+                title={`Open in Backtester — ${mk?.symbol} ${mk?.interval} over ${win?.label || "?"} · return ${row.ret ?? "?"}% · maxDD ${row.dd ?? "?"}%`}
+                className="group text-[10px] font-mono rounded border border-up/30 bg-up/5 text-up px-1.5 py-0.5 hover:bg-up/15 hover:border-up/50 transition-colors">
+                {mk?.label || mid}{win && <span className="text-dim/60"> {win.label}</span>}{row.ret != null && <span className="text-dim/90"> {row.ret}%</span>}<span className="text-dim/40 group-hover:text-accent"> ↗</span>
+              </button>
+            );
+          })}
+          {r.marketsTested > (r.markets?.length || 0) && <span className="text-[10px] text-dim">of {r.marketsTested} tested</span>}
+        </div>
+      )}
+
+      {/* Thesis (Cortex) — edge / works / breaks. */}
+      {rich && r?.thesis && (r.thesis.edge || r.thesis.works || r.thesis.breaks) && (
+        <div className="space-y-0.5 text-[11px]">
+          {r.thesis.edge && <p className="text-dim"><span className="text-up font-semibold">Edge</span> — {r.thesis.edge}</p>}
+          {r.thesis.works && <p className="text-dim"><span className="text-accent font-semibold">Works</span> — {r.thesis.works}</p>}
+          {r.thesis.breaks && <p className="text-dim"><span className="text-down font-semibold">Breaks</span> — {r.thesis.breaks}</p>}
+        </div>
+      )}
+
+      {/* The actual rules — collapsed so the card stays scannable. */}
+      {rich && e.code && (
+        <details>
+          <summary className="text-[10px] text-dim cursor-pointer hover:text-accent select-none">Show the actual rules ({e.language === "python" ? "Python" : "JS"})</summary>
+          <pre className="mt-1.5 max-h-64 overflow-auto rounded-lg border border-line bg-bg/60 p-2.5 text-[10px] font-mono leading-snug text-dim whitespace-pre-wrap">{e.code}</pre>
+        </details>
+      )}
+
+      {/* Committee verdict (Cortex) — the qualitative debate on top of the maths. */}
+      {rich && r?.committee && (
+        <details className="rounded-lg border border-line bg-bg/40 p-2 text-[11px]">
+          <summary className="flex items-center gap-2 cursor-pointer select-none">
+            <Scale className="w-3.5 h-3.5 text-accent" /><span className="font-semibold text-text">Committee verdict</span>
+            {r.committee.confidence != null && <span className={cn("font-mono px-1.5 py-0.5 rounded text-[10px]", r.committee.confidence >= 60 ? "bg-up/10 text-up" : r.committee.confidence >= 35 ? "bg-accent/10 text-accent" : "bg-down/10 text-down")}>conf {r.committee.confidence}%</span>}
+          </summary>
+          <div className="mt-1.5 space-y-1">
+            {r.committee.bull && <p className="text-dim"><span className="text-up font-semibold">Bull</span> — {r.committee.bull}</p>}
+            {r.committee.bear && <p className="text-dim"><span className="text-down font-semibold">Bear</span> — {r.committee.bear}</p>}
+            {(r.committee.invalidations || []).length > 0 && (
+              <div className="text-dim/80"><span className="font-semibold">Pull it if:</span><ul className="list-disc list-inside mt-0.5">{r.committee.invalidations.map((inv, i) => <li key={i}>{inv}</li>)}</ul></div>
+            )}
+          </div>
+        </details>
       )}
 
       {/* Time-window profile — where the money was made across the backtest. */}
@@ -399,6 +337,15 @@ function Card({ e }) {
           e.status === "graveyard" ? "text-dim bg-bg" : "text-amber-400/90 bg-amber-400/5")}>
           {e.failureReason}
         </p>
+      )}
+
+      {/* Source + open in the Backtester (rich cards). */}
+      {rich && (
+        <div className="flex items-center gap-2 text-[10px] text-dim">
+          {r?.source && <span>{r.source}{r.kind && r.kind !== "paper" ? ` · ${r.kind}` : ""}{r.readFullText ? " · full text" : r.source ? " · abstract" : ""}</span>}
+          {r?.paper && <a href={r.paper} target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">source</a>}
+          <button onClick={() => openInBacktest()} className="ml-auto text-accent hover:underline">Open in Backtest ↗</button>
+        </div>
       )}
 
       <div className="flex flex-wrap gap-1 pt-0.5">
@@ -621,8 +568,8 @@ export default function Registry() {
             {library.length === 0 ? (
               <p className="text-[11px] text-dim py-6 text-center">No strategy matches these filters.</p>
             ) : (
-              <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">
-                {library.map((e) => <Card key={e.id} e={e} />)}
+              <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                {library.map((e) => <Card key={e.id} e={e} rich />)}
               </div>
             )}
           </div>
