@@ -33,6 +33,11 @@ export async function onRequest({ request, env }) {
     const what = new URL(request.url).searchParams.get("what") || "all";
     const read = async (k) => { try { return JSON.parse((await kv.get(`argus:${k}`)) || "null"); } catch { return null; } };
     if (what === "all") {
+      // One consolidated key now (see POST) — 5× fewer KV reads/writes than the
+      // old five-key layout. Fall back to the legacy keys until the next persist
+      // rewrites everything into the snapshot.
+      const snap = await read("snapshot");
+      if (snap) return json({ ok: true, state: snap.state || null, theses: snap.theses || [], ledger: snap.ledger || [], journal: snap.journal || [], skills: snap.skills || [] });
       const [state, theses, ledger, journal, skills] = await Promise.all([
         read("state"), read("theses"), read("ledger"), read("journal"), read("skills"),
       ]);
@@ -84,30 +89,36 @@ export async function onRequest({ request, env }) {
     // want to judge the agent by.
     if (body.reset === true) {
       try {
-        await Promise.all([kv.delete("argus:state"), kv.delete("argus:theses"), kv.delete("argus:ledger"), kv.delete("argus:journal"), kv.delete("argus:skills"), kv.delete("argus:commands")]);
+        await Promise.all([kv.delete("argus:snapshot"), kv.delete("argus:state"), kv.delete("argus:theses"), kv.delete("argus:ledger"), kv.delete("argus:journal"), kv.delete("argus:skills"), kv.delete("argus:commands")]);
       } catch (e) {
         return json({ error: "kv_reset_failed", detail: String(e?.message || e) }, 503);
       }
       return json({ ok: true, reset: true });
     }
 
-    // KV writes can be rejected once the daily write budget is exhausted (free
-    // plan). Surface that as a clean 503 rather than an uncaught 1101 — the agent
-    // logs it and retries next cycle; reads keep serving the last good state.
+    // Persist the whole agent state as ONE key (argus:snapshot) instead of up to
+    // five separate puts per cycle — the old layout was the main consumer of the
+    // free-tier daily WRITE budget (~5 writes every 2-15 min). Now it's exactly
+    // one write per persist. KV writes can be rejected once the budget is spent;
+    // surface that as a clean 503 (the agent retries next cycle).
     try {
-      if (body.state) await kv.put("argus:state", JSON.stringify({ ...body.state, at: Date.now() }));
-      if (Array.isArray(body.theses)) await kv.put("argus:theses", JSON.stringify(body.theses.slice(0, 200)));
-      // Hermes journal + crystallised skills — the agent's written memory.
-      if (Array.isArray(body.journal)) await kv.put("argus:journal", JSON.stringify(body.journal.slice(0, 300)));
-      if (Array.isArray(body.skills)) await kv.put("argus:skills", JSON.stringify(body.skills.slice(0, 50)));
-      if (Array.isArray(body.ledgerAdd) && body.ledgerAdd.length) {
-        let existing = [];
-        try { existing = JSON.parse((await kv.get("argus:ledger")) || "[]"); } catch { /* fresh */ }
-        const byId = new Map(existing.map((c) => [c.id, c]));
-        for (const c of body.ledgerAdd) byId.set(c.id, c);
-        const merged = [...byId.values()].sort((a, b) => (b.exitAt || 0) - (a.exitAt || 0)).slice(0, LEDGER_CAP);
-        await kv.put("argus:ledger", JSON.stringify(merged));
+      let snap = await read("snapshot");
+      if (!snap) { // one-time migration from the legacy keys
+        const [state, theses, ledger, journal, skills] = await Promise.all([
+          read("state"), read("theses"), read("ledger"), read("journal"), read("skills"),
+        ]);
+        snap = { state: state || null, theses: theses || [], ledger: ledger || [], journal: journal || [], skills: skills || [] };
       }
+      if (body.state) snap.state = { ...body.state, at: Date.now() };
+      if (Array.isArray(body.theses)) snap.theses = body.theses.slice(0, 200);
+      if (Array.isArray(body.journal)) snap.journal = body.journal.slice(0, 300);
+      if (Array.isArray(body.skills)) snap.skills = body.skills.slice(0, 50);
+      if (Array.isArray(body.ledgerAdd) && body.ledgerAdd.length) {
+        const byId = new Map((snap.ledger || []).map((c) => [c.id, c]));
+        for (const c of body.ledgerAdd) byId.set(c.id, c);
+        snap.ledger = [...byId.values()].sort((a, b) => (b.exitAt || 0) - (a.exitAt || 0)).slice(0, LEDGER_CAP);
+      }
+      await kv.put("argus:snapshot", JSON.stringify(snap));
     } catch (e) {
       return json({ error: "kv_write_failed", detail: String(e?.message || e) }, 503);
     }
