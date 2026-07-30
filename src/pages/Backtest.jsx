@@ -112,6 +112,8 @@ export default function Backtest() {
   const [aiReview, setAiReview] = useState(null);    // prose assessment of the current code
   const [prevCode, setPrevCode] = useState(null);    // undo target for an AI rewrite
   const [aiCompare, setAiCompare] = useState(null);  // measured before/after of a rewrite
+  const [aiRejected, setAiRejected] = useState(null); // a worse attempt we did NOT apply
+  const [aiNote, setAiNote] = useState(null);        // status line for the improve flow
   const [copied, setCopied] = useState(false);
   const { data: session } = useSession();
   const isDev = session?.user?.role === "admin";
@@ -177,10 +179,18 @@ export default function Backtest() {
       setAiError("Pine Script is an export format here — the AI reviews and improves the JavaScript or Python that actually runs in this engine.");
       return;
     }
+    // Improve needs a baseline backtest to verify against — without one it can't
+    // know whether an "improvement" actually helped.
+    if (action === "improve" && !result?.candles?.length) {
+      setAiError("Run the backtest first — then I can verify an improvement actually beats it, and only keep it if it does.");
+      return;
+    }
     setAiLoading(action);
     setAiError(null);
     setAiReview(null);
     setAiCompare(null);
+    setAiRejected(null);
+    setAiNote(null);
     try {
       // Give the model the CURRENT numbers as the bar to beat. Without them it
       // rewrites blind — which is how an "improvement" ended up doubling the
@@ -191,43 +201,72 @@ export default function Backtest() {
           `total return ${m.totalReturnPct.toFixed(1)}%, max drawdown ${m.maxDrawdownPct.toFixed(1)}%, Sharpe ${(m.sharpe ?? 0).toFixed(2)}, ` +
           `profit factor ${Number.isFinite(m.profitFactor) ? m.profitFactor.toFixed(2) : "∞"}, ${m.tradeCount} trades ` +
           `(buy & hold over the same window: ${(m.buyHoldReturnPct ?? 0).toFixed(1)}%, Sharpe ${(m.buyHoldSharpe ?? 0).toFixed(2)}). ` +
-          "Your version MUST beat these — do not trade the requested improvement away on another axis " +
-          "(e.g. cutting drawdown by taking far fewer trades, or lifting return by doubling the drawdown). " +
-          "Keep the trade count in the same ballpark unless asked otherwise."
+          "Your version MUST beat these on Sharpe without materially worsening drawdown. Make the SMALLEST change that does so — " +
+          "keep the core idea and the trade count in the same ballpark; do not buy one metric with another " +
+          "(no cutting drawdown by barely trading, no lifting return by doubling drawdown)."
         : "";
-      const body = action === "new"
-        ? { prompt: p, language: lang }
-        : action === "improve"
-          ? { improve: {
-              code: src,
-              facts: `${p || "Make it more robust without changing the core idea."}${baseline ? `\n\n${baseline}` : ""}`,
-              title: presetDirty ? "an edited strategy" : strategy?.name,
-            }, language: lang }
-          : { review: { code: src, prompt: p }, language: lang };
-      const res = await fetch("/api/generate", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.status === 401) {
-        throw new Error("Sign in with the dev account to use AI generation.");
-      }
-      if (res.status === 503) throw new Error("AI not configured yet (Cloudflare secrets missing).");
-      if (res.status === 429) throw new Error("Rate limit reached — please wait a moment.");
+      const improveBody = { improve: {
+        code: src,
+        facts: `${p || "Make the smallest change that raises risk-adjusted return without changing the core idea."}${baseline ? `\n\n${baseline}` : ""}`,
+        title: presetDirty ? "an edited strategy" : strategy?.name,
+      }, language: lang };
+
+      const callGenerate = async (body) => {
+        const res = await fetch("/api/generate", {
+          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.status === 401) throw new Error("Sign in with the dev account to use AI generation.");
+        if (res.status === 503) throw new Error("AI not configured yet (Cloudflare secrets missing).");
+        if (res.status === 429) throw new Error("Rate limit reached — please wait a moment.");
+        return { res, data };
+      };
+
       if (action === "review") {
+        const { res, data } = await callGenerate({ review: { code: src, prompt: p }, language: lang });
         if (!res.ok || !data.review) throw new Error("Review failed — please try again.");
-        setAiReview(data.review);   // assessment only — the code is untouched
-      } else {
+        setAiReview(data.review);
+      } else if (action === "new") {
+        const { res, data } = await callGenerate({ prompt: p, language: lang });
         if (!res.ok || !data.code) throw new Error("Generation failed — please try again.");
-        setPrevCode(code);          // one-step undo, so an AI rewrite is never a dead end
-        setCode(data.code);         // AI writes straight into the one editor
-        setPresetDirty(true);
-        // MEASURE it. An "improvement" is a claim until the same backtest says
-        // otherwise — this is what stops a rewrite from quietly doubling the
-        // drawdown it was asked to cut.
-        if (action === "improve" && result?.candles?.length) {
-          setAiCompare(await compareVersions(src, data.code, result));
+        setPrevCode(code); setCode(data.code); setPresetDirty(true);
+      } else {
+        // IMPROVE — verify before apply. Fetch a couple of candidates, backtest
+        // each against the current version, and only apply one that genuinely
+        // beats it. If none do, keep the user's code and show the best attempt.
+        const N = 2;
+        const settled = await Promise.allSettled(Array.from({ length: N }, () => callGenerate(improveBody)));
+        const codes = [];
+        for (const s of settled) {
+          if (s.status === "fulfilled" && s.value.res.ok && s.value.data.code) codes.push(s.value.data.code);
+        }
+        // de-dupe identical candidates
+        const uniq = [...new Set(codes)];
+        if (!uniq.length) {
+          const firstReject = settled.find((s) => s.status === "rejected");
+          throw new Error(firstReject?.reason?.message || "Generation failed — please try again.");
+        }
+        const scored = [];
+        for (const cand of uniq) {
+          const cmp = await compareVersions(src, cand, result);
+          if (cmp) scored.push({ code: cand, cmp });
+        }
+        const isBetter = (c) => (c.after.sharpe ?? -99) > (c.before.sharpe ?? -99) && c.after.maxDrawdownPct <= c.before.maxDrawdownPct * 1.05;
+        const gain = (c) => (c.after.sharpe ?? 0) - (c.before.sharpe ?? 0);
+        const winners = scored.filter((s) => isBetter(s.cmp)).sort((a, b) => gain(b.cmp) - gain(a.cmp));
+        if (winners.length) {
+          setPrevCode(code); setCode(winners[0].code); setPresetDirty(true);
+          setAiCompare(winners[0].cmp);
+          setAiNote({ ok: true, text: `Applied a verified improvement${uniq.length > 1 ? ` (best of ${uniq.length} attempts)` : ""}.` });
+        } else if (scored.length) {
+          // Nothing beat the current version — DON'T make it worse. Keep the code,
+          // surface the best attempt so the user can inspect or force-apply it.
+          const best = scored.sort((a, b) => gain(b.cmp) - gain(a.cmp))[0];
+          setAiCompare(best.cmp);
+          setAiRejected(best.code);
+          setAiNote({ ok: false, text: `No attempt beat your current version — kept yours. The best try is below.` });
+        } else {
+          throw new Error("Couldn't backtest the attempts — please try again.");
         }
       }
     } catch (e) {
@@ -235,6 +274,13 @@ export default function Backtest() {
     } finally {
       setAiLoading(false);
     }
+  };
+
+  // Apply a rejected AI attempt anyway (the user overrides the "not better" call).
+  const applyRejected = () => {
+    if (!aiRejected) return;
+    setPrevCode(code); setCode(aiRejected); setPresetDirty(true);
+    setAiRejected(null); setAiNote({ ok: true, text: "Applied the AI's attempt (you overrode the verification)." });
   };
 
   const strategy = useMemo(
@@ -658,8 +704,10 @@ export default function Backtest() {
                       )}
                     </div>
                     {aiError && <p className="text-[11px] text-down">{aiError}</p>}
-                    {/* Measured verdict on the rewrite — the same backtest, before vs after.
-                        Shown whether it helped or not; "improved" is a claim until measured. */}
+                    {aiNote && <p className={cn("text-[11px]", aiNote.ok ? "text-up" : "text-amber-400")}>{aiNote.text}</p>}
+                    {/* Measured verdict — the same backtest, before vs after. When the
+                        attempt was rejected (kept your version), it's shown as a rejected
+                        try you can force-apply, not something already in the editor. */}
                     {aiCompare && (() => {
                       const { before: b, after: a } = aiCompare;
                       const rows = [
@@ -669,10 +717,11 @@ export default function Backtest() {
                         ["Trades", b.tradeCount, a.tradeCount, 0, (v) => String(v)],
                       ];
                       const better = (a.sharpe ?? 0) > (b.sharpe ?? 0) && a.maxDrawdownPct <= b.maxDrawdownPct * 1.05;
+                      const rejected = !!aiRejected;
                       return (
-                        <div className={cn("rounded-lg border p-3", better ? "border-up/30 bg-up/5" : "border-down/30 bg-down/5")}>
-                          <p className={cn("text-[10px] uppercase tracking-wide font-semibold mb-1.5", better ? "text-up" : "text-down")}>
-                            {better ? "Measured: the rewrite is better" : "Measured: the rewrite is NOT better — consider Undo"}
+                        <div className={cn("rounded-lg border p-3", rejected ? "border-amber-400/30 bg-amber-400/5" : better ? "border-up/30 bg-up/5" : "border-down/30 bg-down/5")}>
+                          <p className={cn("text-[10px] uppercase tracking-wide font-semibold mb-1.5", rejected ? "text-amber-400" : better ? "text-up" : "text-down")}>
+                            {rejected ? "Best attempt — NOT applied (yours is better)" : better ? "Applied: measured better" : "Measured: not better — consider Undo"}
                           </p>
                           <table className="w-full text-[11px] font-mono">
                             <tbody>
@@ -691,6 +740,9 @@ export default function Backtest() {
                             </tbody>
                           </table>
                           <p className="text-[10px] text-dim mt-1.5">Same data, fees and sizing as your last run.</p>
+                          {aiRejected && (
+                            <button onClick={applyRejected} className="chip chip-idle !text-[10px] mt-2 hover:text-accent">Apply anyway</button>
+                          )}
                         </div>
                       );
                     })()}
