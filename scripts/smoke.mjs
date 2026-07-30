@@ -39,10 +39,18 @@ try {
     try {
       await page.goto(`http://localhost:${PORT}${path}`, { waitUntil: "networkidle2", timeout: 30000 });
       await new Promise((r) => setTimeout(r, 800));
-      const ok = await page.evaluate(() => document.body.innerText.length > 50);
+      // React's ErrorBoundary CATCHES a render error, so it never surfaces as a
+      // `pageerror` and the fallback text is >50 chars — a TDZ/ReferenceError
+      // would sail through. Detect the fallback in the DOM and treat it as broken.
+      const state = await page.evaluate(() => ({
+        len: document.body.innerText.length,
+        boundary: /went wrong on this page/i.test(document.body.innerText),
+      }));
+      const ok = state.len > 50 && !state.boundary;
       if (!ok || errors.length) {
         fails++;
-        console.log(`✗ ${path} → ${ok ? "renders but throws" : "WHITE"} ${errors.length ? "| " + errors.join(" | ") : ""}`);
+        const why = state.boundary ? "ERROR BOUNDARY (render crashed)" : state.len > 50 ? "renders but throws" : "WHITE";
+        console.log(`✗ ${path} → ${why} ${errors.length ? "| " + errors.join(" | ") : ""}`);
       } else {
         console.log(`✓ ${path}`);
       }

@@ -258,6 +258,38 @@ export default function Charts() {
     return () => { lines.forEach((l) => { try { mainSeries.removePriceLine(l); } catch { /* gone */ } }); };
   }, [alerts, mainSeries]);
 
+  // A trade handed over from Argus (click a thesis) or a backtest link: its
+  // entry / stop / target become price lines with a marker + the reason Argus
+  // gave, so you see exactly what the agent did on the real chart. Params are
+  // namespaced (t*) so they never collide with the alert lines. Declared BEFORE
+  // the price-line effect below — its dependency array reads `trade` at render.
+  const trade = useMemo(() => {
+    const entry = parseFloat(params.get("tEntry"));
+    if (!Number.isFinite(entry)) return null;
+    const num = (k) => { const v = parseFloat(params.get(k)); return Number.isFinite(v) ? v : null; };
+    return {
+      entry,
+      stop: num("tStop"),
+      target: num("tTarget"),
+      side: params.get("tSide") === "short" ? "short" : "long",
+      at: num("tAt"), // entry time (unix seconds)
+      reason: params.get("tReason") || "",
+      label: params.get("tLabel") || "",
+      outcome: params.get("tOutcome") || "", // open | planned | target | stop | signal | eod
+    };
+  }, [params]);
+
+  const tradeMarkers = useMemo(() => {
+    if (!trade?.at) return [];
+    return [{ time: trade.at, side: trade.side === "long" ? "buy" : "sell", text: `Argus ${trade.side}` }];
+  }, [trade]);
+
+  const clearTrade = () => {
+    const next = new URLSearchParams(params);
+    ["tEntry", "tStop", "tTarget", "tSide", "tAt", "tReason", "tLabel", "tOutcome"].forEach((k) => next.delete(k));
+    setParams(next);
+  };
+
   // Entry / stop / target lines for a handed-over trade — solid, labelled, so
   // it reads like a real order ticket sitting on the chart.
   useEffect(() => {
@@ -302,37 +334,6 @@ export default function Charts() {
     }
     return out;
   }, [candles, indicators]);
-
-  // A trade handed over from Argus (click a thesis) or a backtest link: its
-  // entry / stop / target become price lines with a marker + the reason Argus
-  // gave, so you see exactly what the agent did on the real chart. Params are
-  // namespaced (t*) so they never collide with the alert lines.
-  const trade = useMemo(() => {
-    const entry = parseFloat(params.get("tEntry"));
-    if (!Number.isFinite(entry)) return null;
-    const num = (k) => { const v = parseFloat(params.get(k)); return Number.isFinite(v) ? v : null; };
-    return {
-      entry,
-      stop: num("tStop"),
-      target: num("tTarget"),
-      side: params.get("tSide") === "short" ? "short" : "long",
-      at: num("tAt"), // entry time (unix seconds)
-      reason: params.get("tReason") || "",
-      label: params.get("tLabel") || "",
-      outcome: params.get("tOutcome") || "", // open | planned | target | stop | signal | eod
-    };
-  }, [params]);
-
-  const tradeMarkers = useMemo(() => {
-    if (!trade?.at) return [];
-    return [{ time: trade.at, side: trade.side === "long" ? "buy" : "sell", text: `Argus ${trade.side}` }];
-  }, [trade]);
-
-  const clearTrade = () => {
-    const next = new URLSearchParams(params);
-    ["tEntry", "tStop", "tTarget", "tSide", "tAt", "tReason", "tLabel", "tOutcome"].forEach((k) => next.delete(k));
-    setParams(next);
-  };
 
   const stats = useMemo(() => {
     if (!candles || candles.length < 2) return null;
