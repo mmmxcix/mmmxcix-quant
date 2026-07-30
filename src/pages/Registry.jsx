@@ -10,6 +10,7 @@ import { byId, costFor, describeMarkets } from "@/lib/markets";
 import { INTERVAL_SECONDS } from "@/lib/data";
 import { strategyToCode } from "@/lib/strategyCode";
 import { hasPineSource } from "@/lib/pinescript";
+import { findComplementaryPairs } from "@/lib/combine";
 import CopyButton from "@/components/CopyButton";
 
 const PROFILE_LABEL = Object.fromEntries(Object.entries(PROFILES).map(([id, p]) => [id, p.label]));
@@ -509,6 +510,10 @@ export default function Registry() {
     [entries]
   );
 
+  // Complementary pairs — a decayed (good-early) + an improving (good-late) that
+  // blend into something consistent. Computed from the stored window profiles.
+  const combos = useMemo(() => findComplementaryPairs(entries).slice(0, 6), [entries]);
+
   return (
     <div className="max-w-6xl">
       <p className="text-[10px] tracking-[0.3em] text-dim uppercase mb-1">Strategy Lab</p>
@@ -613,6 +618,40 @@ export default function Registry() {
               {byStatus.graveyard.length === 0
                 ? <p className="text-[11px] text-dim px-1 py-4 text-center">{query ? "no match" : "empty"}</p>
                 : <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-2">{byStatus.graveyard.map((e) => <Card key={e.id} e={e} />)}</div>}
+            </div>
+          )}
+
+          {/* Suggested combinations — a decayed (good-early) + an improving
+              (good-late) strategy that BLEND into something consistent. Computed
+              from the stored window profiles; one carries the years the other bleeds. */}
+          {combos.length > 0 && (
+            <div className="rounded-xl border border-line lg-glass p-4 mb-6">
+              <div className="flex items-center gap-2 mb-1">
+                <Wrench className="w-4 h-4 text-accent" />
+                <p className="text-sm font-semibold">Suggested combinations</p>
+                <span className="text-[10px] text-dim">· complementary pairs that smooth into a consistent whole</span>
+              </div>
+              <p className="text-[11px] text-dim mb-3">A strategy that decayed and one that only came good recently can, blended 50/50, cover each other's weak years. Cortex found these from the time-window profiles — worth building and testing as one.</p>
+              <div className="grid md:grid-cols-2 gap-2">
+                {combos.map(({ a, b, blend }) => (
+                  <div key={`${a.id}_${b.id}`} className="rounded-lg border border-up/25 bg-up/5 p-3 space-y-1.5">
+                    <div className="text-[11px] text-text flex items-center gap-1 flex-wrap">
+                      <span className="font-medium truncate max-w-[45%]" title={a.name}>{a.name}</span>
+                      <span className="text-dim">+</span>
+                      <span className="font-medium truncate max-w-[45%]" title={b.name}>{b.name}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1 flex-1">
+                        {blend.returns.map((r, i) => (
+                          <div key={i} className={cn("h-1.5 flex-1 rounded-sm", r > 0.02 ? "bg-up/70" : r < -0.02 ? "bg-down/70" : "bg-line")} />
+                        ))}
+                      </div>
+                      <span className="text-[9px] uppercase tracking-wide text-up font-semibold">consistent blend</span>
+                    </div>
+                    <p className="text-[10px] text-dim leading-snug">{blend.summary}</p>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 
