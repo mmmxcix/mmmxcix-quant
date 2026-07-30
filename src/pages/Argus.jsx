@@ -116,6 +116,46 @@ export default function Argus() {
         )}
       </div>
 
+      {/* Learning banner — make it unmistakable that Argus is paper-only, not
+          advice, and only goes public once its record shows a REAL edge. Govind
+          (tradingbot.gobiautomates.com) rightly warns that win rate alone can
+          hide losses, so the readiness gate is positive R-EXPECTANCY over a real
+          sample, with win rate shown but not the gate. */}
+      {(() => {
+        const READY_TRADES = 100;
+        const ready = stats.n >= READY_TRADES && stats.expectancy > 0 && stats.winRate >= 0.4;
+        const pctTrades = Math.min(100, Math.round((stats.n / READY_TRADES) * 100));
+        return (
+          <div className="rounded-xl border border-accent/30 bg-accent/5 p-4">
+            <div className="flex items-center gap-2 mb-1">
+              <Radio className="w-4 h-4 text-accent" />
+              <p className="text-sm font-semibold">Watch Argus learn — live on paper</p>
+            </div>
+            <p className="text-[13px] text-dim leading-relaxed">
+              Argus is an educational agent learning to day-trade with <span className="text-text">virtual money</span>.
+              {" "}<span className="text-text">This is not financial advice.</span> It stays in paper mode, building and
+              honestly grading its own track record — and only goes public once that record shows a real, repeatable
+              edge (<span className="text-text">positive expectancy over a real sample</span>), not merely a high win
+              rate, which can sit right on top of losing money.
+            </p>
+            <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[11px] font-mono">
+              <div className="flex items-center gap-2">
+                <div className="w-28 h-1.5 rounded-full bg-line overflow-hidden">
+                  <div className="h-full bg-accent" style={{ width: `${pctTrades}%` }} />
+                </div>
+                <span className="text-dim">{stats.n}/{READY_TRADES} trades</span>
+              </div>
+              <span className="text-dim">expectancy <span className={stats.expectancy > 0 ? "text-up" : "text-down"}>{stats.expectancy >= 0 ? "+" : ""}{stats.expectancy.toFixed(2)}R</span></span>
+              <span className="text-dim">win rate {(stats.winRate * 100).toFixed(0)}%</span>
+              <span className={cn("ml-auto inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 uppercase tracking-wide text-[10px] font-semibold",
+                ready ? "border-up/40 bg-up/10 text-up" : "border-line bg-bg text-dim")}>
+                {ready ? "✓ track record ready" : "learning…"}
+              </span>
+            </div>
+          </div>
+        );
+      })()}
+
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
         <Stat label="Paper equity" value={state ? fmtNum(state.equity, 0) : "–"} big />
         <Stat label="Open theses" value={theses.length} sub={state ? `${(state.forming ?? 0)} forming` : ""} />
