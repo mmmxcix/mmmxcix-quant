@@ -173,6 +173,32 @@ export function parameterHeatmap({ params, xKey, yKey, evaluate, base = {}, cap 
   return { xKey, yKey, xs, ys, cells, min, max, best, robustness, verdict };
 }
 
+/**
+ * Deterministic neighbour VARIANTS of a parameter set — for mining the library:
+ * each variant nudges exactly ONE parameter up or down by `spread` steps, so
+ * Cortex can probe whether a stored strategy has a better neighbour without a
+ * full optimisation. Clamped to each param's range and de-duplicated.
+ * @param {Array} params        strategy param defs (key/min/max/step)
+ * @param {object} base         the current parameter values
+ * @param {number} [spread]     steps to move (default 1)
+ * @returns {object[]}          distinct neighbour param sets (excludes the base)
+ */
+export function paramVariants(params, base, spread = 1) {
+  const key = (o) => params.map((p) => o[p.key]).join(",");
+  const seen = new Set([key(base)]);
+  const out = [];
+  for (const p of params) {
+    for (const dir of [-1, 1]) {
+      const step = (p.step || 1) * spread * dir;
+      const v = clampStep((base[p.key] ?? p.default ?? p.min ?? 0) + step, p);
+      const cand = { ...base, [p.key]: v };
+      const k = key(cand);
+      if (!seen.has(k)) { seen.add(k); out.push(cand); }
+    }
+  }
+  return out;
+}
+
 // ── Monte-Carlo trade bootstrap ──────────────────────────────────────────────
 /**
  * Resample a strategy's own trade returns (with replacement) many times and

@@ -118,3 +118,18 @@ test("monteCarloParams separates a robust family from lucky points", () => {
   assert.equal(out.verdict, "robust");
   assert.ok(out.representative, "picks a representative set");
 });
+
+// ── library mining: parameter variants ──────────────────────────────────────
+import { paramVariants } from "../src/lib/optimizer.js";
+
+test("paramVariants nudges one param at a time, clamped + de-duplicated", () => {
+  const params = [{ key: "a", min: 0, max: 4, step: 1 }, { key: "b", min: 0, max: 4, step: 1 }];
+  const v = paramVariants(params, { a: 2, b: 2 }, 1);
+  // a±1 and b±1 = 4 neighbours, none equal to the base.
+  assert.equal(v.length, 4);
+  assert.ok(v.some((x) => x.a === 1 && x.b === 2) && v.some((x) => x.a === 3 && x.b === 2));
+  assert.ok(v.every((x) => !(x.a === 2 && x.b === 2)), "base excluded");
+  // At an edge, the clamped move collides with the base and is dropped.
+  const edge = paramVariants(params, { a: 0, b: 0 }, 1);
+  assert.equal(edge.length, 2, "a-1 and b-1 clamp to the base and drop out");
+});

@@ -219,10 +219,11 @@ function Card({ e, rich = false }) {
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="flex items-center gap-1.5 flex-wrap">
-            {/* Where it came from — your own backtest, or a Cortex research find. */}
+            {/* Where it came from — your backtest, a Cortex research find, or a
+                mined variant of an existing library strategy. */}
             <span className={cn("text-[8px] uppercase tracking-wide font-semibold px-1 py-px rounded shrink-0",
-              e.candidateId ? "bg-accent/15 text-accent" : "bg-up/15 text-up")}>
-              {e.candidateId ? "Cortex" : "You"}
+              e.minedFrom ? "bg-amber-400/15 text-amber-400" : e.candidateId ? "bg-accent/15 text-accent" : "bg-up/15 text-up")}>
+              {e.minedFrom ? "Mined" : e.candidateId ? "Cortex" : "You"}
             </span>
             <p className="text-sm font-medium text-text truncate">{e.name}</p>
             {rich && r?.dsr != null && (
