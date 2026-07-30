@@ -25,11 +25,20 @@ export function setOmniConfig(patch) {
 export function omniEnabled() { return !!omniConfig().enabled; }
 export const omniUrl = () => (omniConfig().url || "http://localhost:3000/v1").replace(/\/+$/, "");
 export const omniModel = () => omniConfig().model || "auto/best-coding";
+// The CLI shim (scripts/cli-llm-shim.mjs) — a LOCAL coding CLI on your Claude
+// subscription, tried BEFORE OmniRoute so you get Opus without an API bill. Its
+// own config, so only the builder uses it (background agents keep their OmniRoute).
+export function cliEnabled() { return !!omniConfig().cliEnabled; }
+export const cliUrl = () => (omniConfig().cliUrl || "http://localhost:8899/v1").replace(/\/+$/, "");
+// The model to request on the CLI/subscription endpoint. If you connected Claude
+// Code to OmniRoute, set url to your OmniRoute and this to that model's name — the
+// background agents request different models, so only the builder hits it.
+export const cliModel = () => omniConfig().cliModel || "cli";
 
 /** Reachability probe with a short timeout — used to show status + decide fallback. */
-export async function omniPing() {
+export async function omniPing(url = omniUrl()) {
   try {
-    const r = await fetch(`${omniUrl()}/models`, { signal: AbortSignal.timeout(2500) });
+    const r = await fetch(`${url}/models`, { signal: AbortSignal.timeout(2500) });
     return r.ok;
   } catch { return false; }
 }
@@ -40,7 +49,9 @@ export async function omniPing() {
  * caller cleanly falls back to the server chain).
  * @param {object} body  the normal /api/generate body (prompt | improve | review …)
  */
-export async function omniGenerate(body) {
+export async function omniGenerate(body, endpoint = null) {
+  const url = (endpoint?.url || omniUrl());
+  const model = (endpoint?.model || omniModel());
   // 1) Ask the server for the exact prompts it would use (no LLM spent).
   const pr = await fetch("/api/generate", {
     method: "POST", headers: { "content-type": "application/json" },
@@ -50,17 +61,17 @@ export async function omniGenerate(body) {
   const { system, user, isCritique, language } = await pr.json();
   if (!system || !user) return null;
 
-  // 2) Run them through the local router.
+  // 2) Run them through the chosen local endpoint (CLI shim or OmniRoute).
   let text;
   try {
-    const res = await fetch(`${omniUrl()}/chat/completions`, {
+    const res = await fetch(`${url}/chat/completions`, {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        model: omniModel(),
+        model,
         messages: [{ role: "system", content: system }, { role: "user", content: user }],
         temperature: 0.3, stream: false,
       }),
-      signal: AbortSignal.timeout(120000),
+      signal: AbortSignal.timeout(180000),
     });
     if (!res.ok) return null;
     const j = await res.json();

@@ -29,7 +29,7 @@ export function detectLang(src) {
 const LANG_LABEL = { js: "JavaScript", python: "Python", pine: "Pine Script" };
 import { saveEntry } from "@/lib/registry";
 import { windowProfile } from "@/lib/windowProfile";
-import { omniEnabled, omniGenerate, omniConfig, setOmniConfig, omniPing } from "@/lib/omniroute";
+import { omniEnabled, omniGenerate, omniConfig, setOmniConfig, omniPing, cliEnabled, cliUrl, cliModel } from "@/lib/omniroute";
 import { cn, fmtNum, fmtPct } from "@/lib/utils";
 
 const DEFAULT_SYMBOL = { crypto: "BTCUSDT", stock: "SPY" };
@@ -116,10 +116,12 @@ export default function Backtest() {
   const [aiCompare, setAiCompare] = useState(null);  // measured before/after of a rewrite
   const [aiRejected, setAiRejected] = useState(null); // a worse attempt we did NOT apply
   const [aiNote, setAiNote] = useState(null);        // status line for the improve flow
-  const [omniCfg, setOmniCfg] = useState(() => omniConfig()); // local OmniRoute settings
+  const [omniCfg, setOmniCfg] = useState(() => omniConfig()); // local OmniRoute + CLI settings
   const [omniStatus, setOmniStatus] = useState(null); // null | "checking" | "ok" | "down"
+  const [cliStatus, setCliStatus] = useState(null);
   const pingOmni = async () => { setOmniStatus("checking"); setOmniStatus((await omniPing()) ? "ok" : "down"); };
-  useEffect(() => { if (omniCfg.enabled) pingOmni(); /* eslint-disable-next-line */ }, []);
+  const pingCli = async () => { setCliStatus("checking"); setCliStatus((await omniPing(cliUrl())) ? "ok" : "down"); };
+  useEffect(() => { if (omniCfg.enabled) pingOmni(); if (omniCfg.cliEnabled) pingCli(); /* eslint-disable-next-line */ }, []);
   const [copied, setCopied] = useState(false);
   const { data: session } = useSession();
   const isDev = session?.user?.role === "admin";
@@ -218,8 +220,15 @@ export default function Backtest() {
       }, language: lang };
 
       const callGenerate = async (body) => {
-        // Prefer the local OmniRoute when enabled (free, strong models); fall back
-        // to the Cloudflare provider chain if it's unreachable or returns nothing.
+        // Priority: local CLI (your Claude subscription — free Opus) → local
+        // OmniRoute (free/strong) → the Cloudflare provider chain. Each falls
+        // through on any failure or empty result.
+        if (cliEnabled()) {
+          const viaCli = await omniGenerate(body, { url: cliUrl(), model: cliModel() }).catch(() => null);
+          if (viaCli && (viaCli.code || viaCli.review || viaCli.critique)) {
+            return { res: { ok: true, status: 200 }, data: viaCli };
+          }
+        }
         if (omniEnabled()) {
           const local = await omniGenerate(body).catch(() => null);
           if (local && (local.code || local.review || local.critique)) {
@@ -706,18 +715,42 @@ export default function Backtest() {
                       <p className="text-[11px] text-dim flex items-center gap-1.5">
                         <Sparkles className="w-3.5 h-3.5 text-accent" /> AI — works on the code above
                       </p>
+                      {/* CLI/subscription first (your Claude via a shim or OmniRoute), then OmniRoute, then cloud. */}
+                      <label className="ml-auto flex items-center gap-1.5 text-[10px] text-dim cursor-pointer" title="Route generation through your Claude subscription first — the CLI shim, or your OmniRoute with the Claude-Code model. Only the builder uses this; background agents don't.">
+                        <input type="checkbox" checked={!!omniCfg.cliEnabled}
+                          onChange={(e) => { const c = setOmniConfig({ cliEnabled: e.target.checked }); setOmniCfg(c); if (e.target.checked) pingCli(); }}
+                          className="accent-current" />
+                        CLI (subscription)
+                        {omniCfg.cliEnabled && (
+                          <span className={cn("w-1.5 h-1.5 rounded-full",
+                            cliStatus === "ok" ? "bg-up" : cliStatus === "down" ? "bg-down" : "bg-line")} />
+                        )}
+                      </label>
                       {/* Free/strong path: route through the local OmniRoute. */}
-                      <label className="ml-auto flex items-center gap-1.5 text-[10px] text-dim cursor-pointer" title="Route generation through your local OmniRoute (free, strong models). Falls back to the cloud if unreachable.">
+                      <label className="flex items-center gap-1.5 text-[10px] text-dim cursor-pointer" title="Route generation through your local OmniRoute (free, strong models). Falls back to the cloud if unreachable.">
                         <input type="checkbox" checked={!!omniCfg.enabled}
                           onChange={(e) => { const c = setOmniConfig({ enabled: e.target.checked }); setOmniCfg(c); if (e.target.checked) pingOmni(); }}
                           className="accent-current" />
-                        Local OmniRoute
+                        OmniRoute
                         {omniCfg.enabled && (
                           <span className={cn("w-1.5 h-1.5 rounded-full",
                             omniStatus === "ok" ? "bg-up" : omniStatus === "down" ? "bg-down" : "bg-line")} />
                         )}
                       </label>
                     </div>
+                    {omniCfg.cliEnabled && (
+                      <div className="flex items-center gap-1.5">
+                        <input value={omniCfg.cliUrl || "http://localhost:8899/v1"}
+                          onChange={(e) => { const c = setOmniConfig({ cliUrl: e.target.value }); setOmniCfg(c); }}
+                          placeholder="CLI shim, or your OmniRoute URL" className="input-base flex-1 !py-1 text-[10px] font-mono" />
+                        <input value={omniCfg.cliModel || "cli"}
+                          onChange={(e) => { const c = setOmniConfig({ cliModel: e.target.value }); setOmniCfg(c); }}
+                          placeholder="claude-code model" className="input-base w-32 !py-1 text-[10px] font-mono" />
+                        <button onClick={pingCli} className="chip chip-idle !text-[10px]">
+                          {cliStatus === "checking" ? "…" : "test"}
+                        </button>
+                      </div>
+                    )}
                     {omniCfg.enabled && (
                       <div className="flex items-center gap-1.5">
                         <input value={omniCfg.url || "http://localhost:3000/v1"}
@@ -731,8 +764,8 @@ export default function Backtest() {
                         </button>
                       </div>
                     )}
-                    {omniCfg.enabled && omniStatus === "down" && (
-                      <p className="text-[10px] text-down">OmniRoute unreachable — the AI will use the cloud fallback. Check it's running + allows CORS for this origin.</p>
+                    {((omniCfg.cliEnabled && cliStatus === "down") || (omniCfg.enabled && omniStatus === "down")) && (
+                      <p className="text-[10px] text-down">A local endpoint is unreachable — the AI falls through (CLI → OmniRoute → cloud). Check it's running + allows CORS for this origin.</p>
                     )}
                     <textarea
                       value={aiPrompt}

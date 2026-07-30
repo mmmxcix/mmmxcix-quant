@@ -28,10 +28,11 @@ const EVENT_TTL = +(process.env.LAB_ARGUS_EVENT_TTL_MIN || 240) * 60_000; // bia
 // Hermes-style learning: buckets need at least this many closed trades before any
 // lesson is allowed to touch sizing (small samples lie). Tunable, conservative.
 const LEARN_MIN = +(process.env.LAB_ARGUS_LEARN_MIN || 20);
-// Trade duration: keep them SHORT — a real intraday day-trader is in and out.
-// Hard cap 8h (a position still open then is force-closed at market), aiming for
-// ~1-4h via the ATR targets. Tunable via LAB_ARGUS_MAX_HOLD_H.
-const MAX_HOLD_MS = +(process.env.LAB_ARGUS_MAX_HOLD_H || 8) * 3600_000;
+// Trade duration: hard cap 3 days (a position still open then is force-closed),
+// but Argus is a DAY-TRADER at heart — it prefers short, high-conviction setups
+// (reaching the same target with a tighter stop = more exposure) over long swing
+// holds that hinge on news. The cap is the backstop, not the goal. Tunable.
+const MAX_HOLD_MS = +(process.env.LAB_ARGUS_MAX_HOLD_H || 72) * 3600_000;
 // News-reachable tickers Argus may trade if a catalyst clearly names them.
 const EVENT_TICKERS = ["USO", "XLE", "ITA", "GLD", "UNG", "XOP", "SLV", "TLT", "UUP"];
 
