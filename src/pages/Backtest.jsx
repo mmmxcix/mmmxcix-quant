@@ -29,6 +29,7 @@ export function detectLang(src) {
 const LANG_LABEL = { js: "JavaScript", python: "Python", pine: "Pine Script" };
 import { saveEntry } from "@/lib/registry";
 import { windowProfile } from "@/lib/windowProfile";
+import { omniEnabled, omniGenerate, omniConfig, setOmniConfig, omniPing } from "@/lib/omniroute";
 import { cn, fmtNum, fmtPct } from "@/lib/utils";
 
 const DEFAULT_SYMBOL = { crypto: "BTCUSDT", stock: "SPY" };
@@ -114,6 +115,10 @@ export default function Backtest() {
   const [aiCompare, setAiCompare] = useState(null);  // measured before/after of a rewrite
   const [aiRejected, setAiRejected] = useState(null); // a worse attempt we did NOT apply
   const [aiNote, setAiNote] = useState(null);        // status line for the improve flow
+  const [omniCfg, setOmniCfg] = useState(() => omniConfig()); // local OmniRoute settings
+  const [omniStatus, setOmniStatus] = useState(null); // null | "checking" | "ok" | "down"
+  const pingOmni = async () => { setOmniStatus("checking"); setOmniStatus((await omniPing()) ? "ok" : "down"); };
+  useEffect(() => { if (omniCfg.enabled) pingOmni(); /* eslint-disable-next-line */ }, []);
   const [copied, setCopied] = useState(false);
   const { data: session } = useSession();
   const isDev = session?.user?.role === "admin";
@@ -212,6 +217,14 @@ export default function Backtest() {
       }, language: lang };
 
       const callGenerate = async (body) => {
+        // Prefer the local OmniRoute when enabled (free, strong models); fall back
+        // to the Cloudflare provider chain if it's unreachable or returns nothing.
+        if (omniEnabled()) {
+          const local = await omniGenerate(body).catch(() => null);
+          if (local && (local.code || local.review || local.critique)) {
+            return { res: { ok: true, status: 200 }, data: local };
+          }
+        }
         const res = await fetch("/api/generate", {
           method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
         });
@@ -670,9 +683,38 @@ export default function Backtest() {
                     Writing something brand-new is the explicit "New" action. */}
                 {isDev && (
                   <div className="border-t border-line pt-3 space-y-2">
-                    <p className="text-[11px] text-dim flex items-center gap-1.5">
-                      <Sparkles className="w-3.5 h-3.5 text-accent" /> AI — works on the code above
-                    </p>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <p className="text-[11px] text-dim flex items-center gap-1.5">
+                        <Sparkles className="w-3.5 h-3.5 text-accent" /> AI — works on the code above
+                      </p>
+                      {/* Free/strong path: route through the local OmniRoute. */}
+                      <label className="ml-auto flex items-center gap-1.5 text-[10px] text-dim cursor-pointer" title="Route generation through your local OmniRoute (free, strong models). Falls back to the cloud if unreachable.">
+                        <input type="checkbox" checked={!!omniCfg.enabled}
+                          onChange={(e) => { const c = setOmniConfig({ enabled: e.target.checked }); setOmniCfg(c); if (e.target.checked) pingOmni(); }}
+                          className="accent-current" />
+                        Local OmniRoute
+                        {omniCfg.enabled && (
+                          <span className={cn("w-1.5 h-1.5 rounded-full",
+                            omniStatus === "ok" ? "bg-up" : omniStatus === "down" ? "bg-down" : "bg-line")} />
+                        )}
+                      </label>
+                    </div>
+                    {omniCfg.enabled && (
+                      <div className="flex items-center gap-1.5">
+                        <input value={omniCfg.url || "http://localhost:3000/v1"}
+                          onChange={(e) => { const c = setOmniConfig({ url: e.target.value }); setOmniCfg(c); }}
+                          placeholder="http://localhost:3000/v1" className="input-base flex-1 !py-1 text-[10px] font-mono" />
+                        <input value={omniCfg.model || "auto/best-coding"}
+                          onChange={(e) => { const c = setOmniConfig({ model: e.target.value }); setOmniCfg(c); }}
+                          placeholder="model" className="input-base w-32 !py-1 text-[10px] font-mono" />
+                        <button onClick={pingOmni} className="chip chip-idle !text-[10px]">
+                          {omniStatus === "checking" ? "…" : "test"}
+                        </button>
+                      </div>
+                    )}
+                    {omniCfg.enabled && omniStatus === "down" && (
+                      <p className="text-[10px] text-down">OmniRoute unreachable — the AI will use the cloud fallback. Check it's running + allows CORS for this origin.</p>
+                    )}
                     <textarea
                       value={aiPrompt}
                       onChange={(e) => setAiPrompt(e.target.value)}

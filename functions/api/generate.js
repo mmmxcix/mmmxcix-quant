@@ -303,6 +303,19 @@ export async function onRequest({ request, env }) {
   // Cheap auth check (no AI call) — legacy probe, kept for compatibility.
   if (body?.validate === true) return json({ ok: true });
 
+  // postProcess: the client ran the prompts through its OWN model (its local
+  // OmniRoute) and hands back the raw text for the SAME server-side extraction
+  // the provider chain would apply — so a browser-side/local generation is
+  // finished identically (fence stripping, strategy() wrap, verdict parsing) and
+  // no free/local model bypasses the post-processing. No AI call is made here.
+  if (body?.postProcess && typeof body.postProcess.text === "string") {
+    const { text, language, isCritique, review } = body.postProcess;
+    if (isCritique) return json({ critique: parseVerdict(text) });
+    if (review) return json({ review: String(text).trim().slice(0, 4000) });
+    const out = extractCode(text);
+    return json({ code: language === "python" ? out : ensureStrategyFn(out), language: language === "python" ? "python" : "js" });
+  }
+
   // Four modes share the provider chain below:
   //  • repair:   fix code that failed to compile (bounded by code length, not the
   //              user-prompt cap, since generated code can be longer than a prompt).
