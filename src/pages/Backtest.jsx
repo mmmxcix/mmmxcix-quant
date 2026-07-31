@@ -8,6 +8,7 @@ import MonteCarloPanel from "@/components/MonteCarloPanel";
 import ValidationPanel from "@/components/ValidationPanel";
 import { fetchCandles, fetchFunding, MARKETS, INTERVALS, rangesFor, INTERVAL_SECONDS } from "@/lib/data";
 import OptimizerPanel from "@/components/OptimizerPanel";
+import CodeOptimizerPanel from "@/components/CodeOptimizerPanel";
 import { fetchLseCandles } from "@/lib/lse";
 import { runBacktest, compileStrategy } from "@/lib/backtest";
 import { runPythonSignals, signalsToFn, PYTHON_TEMPLATE } from "@/lib/pyRunner";
@@ -943,7 +944,9 @@ export default function Backtest() {
                 </span>
               </div>
 
-              {/* Parameter optimizer — builder strategies only (needs a param space) */}
+              {/* Parameter optimizer — builder strategies sweep their params via the
+                  fast builder; hand-written code uses the async panel that sweeps the
+                  constants it detects (JS or Python). Always available after a run. */}
               {mode === "builder" && strategy && result.candles?.length > 100 && (
                 <OptimizerPanel
                   strategy={strategy}
@@ -953,6 +956,18 @@ export default function Backtest() {
                   positionPct={positionPct}
                   leverage={leverage}
                   onApply={(p) => setParamValues({ ...p })}
+                />
+              )}
+              {mode !== "builder" && result.candles?.length > 100 && (
+                <CodeOptimizerPanel
+                  code={code}
+                  language={lang}
+                  candles={result.candles}
+                  capital={capital}
+                  feeBps={feeBps}
+                  positionPct={positionPct}
+                  leverage={leverage}
+                  onApply={(newCode) => { setPrevCode(code); setCode(newCode); setPresetDirty(true); }}
                 />
               )}
 
