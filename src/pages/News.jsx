@@ -6,6 +6,14 @@ import { distinctSymbols } from '@/lib/portfolio';
 // Sources selectable for the digest, with their access tier (matches
 // functions/api/news.js). "partial" sources are hidden when free-only is on.
 const DIGEST_SOURCES = [
+  // Tier 1 — official / wire-grade
+  { name: 'Federal Reserve', access: 'free' },
+  { name: 'SEC', access: 'free' },
+  { name: 'BLS', access: 'free' },
+  { name: 'BBC Business', access: 'free' },
+  { name: 'The Guardian', access: 'free' },
+  { name: 'NPR Business', access: 'free' },
+  // Tier 2 — fast media
   { name: 'CNBC', access: 'free' },
   { name: 'Yahoo Finance', access: 'free' },
   { name: 'CoinDesk', access: 'free' },
@@ -319,8 +327,59 @@ function OsintFeed() {
   );
 }
 
+// Freshness monitor — per-feed health from /api/news meta. A feed that quietly
+// dies (down) or stops publishing (stale) is visible here instead of silently
+// vanishing from the aggregate. Tier-1 = official/wire, Tier-2 = fast media.
+function FreshnessMonitor({ meta }) {
+  const [open, setOpen] = useState(false);
+  if (!meta?.feeds?.length) return null;
+  const dot = (s) => (s === 'live' ? 'bg-up' : s === 'stale' ? 'bg-warn' : 'bg-down');
+  const label = (s) => (s === 'live' ? 'text-up' : s === 'stale' ? 'text-warn' : 'text-down');
+  const ageStr = (f) => {
+    if (!f.ok) return f.error || 'down';
+    if (f.newestAgeMin == null) return 'no dates';
+    const m = f.newestAgeMin;
+    return m < 60 ? `${m}m` : m < 1440 ? `${Math.round(m / 60)}h` : `${Math.round(m / 1440)}d`;
+  };
+  const allGood = meta.live === meta.total;
+  return (
+    <div className="rounded-xl border border-line lg-glass overflow-hidden">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-2 px-3 py-2 text-left"
+        title="Live health of every news feed in the pipeline"
+      >
+        <Radio size={14} className={allGood ? 'text-up' : 'text-warn'} />
+        <span className="text-xs font-medium text-text">Feed health</span>
+        <span className="text-[11px] text-dim">
+          {meta.live}/{meta.total} live
+        </span>
+        <div className="ml-2 hidden sm:flex items-center gap-1">
+          {meta.feeds.map((f) => (
+            <span key={f.source} className={cn('w-1.5 h-1.5 rounded-full', dot(f.status))} title={`${f.source}: ${f.status}`} />
+          ))}
+        </div>
+        <ChevronDown size={14} className={cn('ml-auto text-dim transition-transform', open && 'rotate-180')} />
+      </button>
+      {open && (
+        <div className="border-t border-line px-3 py-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-1">
+          {meta.feeds.map((f) => (
+            <div key={f.source} className="flex items-center gap-2 text-xs font-mono">
+              <span className={cn('w-1.5 h-1.5 rounded-full shrink-0', dot(f.status))} />
+              <span className="text-text truncate">{f.source}</span>
+              {f.tier === 1 && <span className="text-[9px] text-accent uppercase">T1</span>}
+              <span className={cn('ml-auto', label(f.status))}>{ageStr(f)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function News() {
   const [items, setItems] = useState([]);
+  const [meta, setMeta] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [sourceFilter, setSourceFilter] = useState('All');
@@ -336,6 +395,7 @@ export default function News() {
       const res = await fetch('/api/news');
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
+      setMeta(data.meta || null);
       if (data.error || !Array.isArray(data.items)) throw new Error('feeds_unavailable');
       setItems(data.items);
     } catch {
@@ -398,6 +458,8 @@ export default function News() {
           Refresh
         </button>
       </div>
+
+      <FreshnessMonitor meta={meta} />
 
       <OsintFeed />
 

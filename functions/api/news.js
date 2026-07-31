@@ -3,47 +3,104 @@
 
 // category: "markets" | "crypto" | "business"
 // access: "free" | "partial-paywall"
+// tier: 1 = wire services + official/government sources (authoritative, slow);
+//       2 = mainstream finance media (fast, secondary). The freshness monitor
+//       reports per-feed health so a source that quietly dies is visible, not
+//       silently dropped.
 const FEEDS = [
+  // ── Tier 1: official / government + wire-grade mainstream (primary). Reuters
+  // and AP no longer publish public RSS, so the wire tier here is the official
+  // government sources (Fed / SEC / BLS — the actual market-movers) plus the
+  // highest-credibility mainstream desks that still offer open feeds. ──
+  {
+    source: 'Federal Reserve',
+    url: 'https://www.federalreserve.gov/feeds/press_all.xml',
+    category: 'business',
+    access: 'free',
+    tier: 1,
+  },
+  {
+    source: 'SEC',
+    url: 'https://www.sec.gov/news/pressreleases.rss',
+    category: 'business',
+    access: 'free',
+    tier: 1,
+  },
+  {
+    source: 'BLS',
+    url: 'https://www.bls.gov/feed/bls_latest.rss',
+    category: 'business',
+    access: 'free',
+    tier: 1,
+  },
+  {
+    source: 'BBC Business',
+    url: 'https://feeds.bbci.co.uk/news/business/rss.xml',
+    category: 'business',
+    access: 'free',
+    tier: 1,
+  },
+  {
+    source: 'The Guardian',
+    url: 'https://www.theguardian.com/business/rss',
+    category: 'business',
+    access: 'free',
+    tier: 1,
+  },
+  {
+    source: 'NPR Business',
+    url: 'https://feeds.npr.org/1006/rss.xml',
+    category: 'business',
+    access: 'free',
+    tier: 1,
+  },
+  // ── Tier 2: mainstream finance media (fast, secondary) ──
   {
     source: 'CNBC',
     url: 'https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10000664',
     category: 'business',
     access: 'free',
+    tier: 2,
   },
   {
     source: 'Yahoo Finance',
     url: 'https://finance.yahoo.com/news/rssindex',
     category: 'markets',
     access: 'free',
+    tier: 2,
   },
   {
     source: 'CoinDesk',
     url: 'https://www.coindesk.com/arc/outboundfeeds/rss/',
     category: 'crypto',
     access: 'free',
+    tier: 2,
   },
   {
     source: 'MarketWatch',
     url: 'https://feeds.content.dowjones.io/public/rss/mw_topstories',
     category: 'markets',
     access: 'partial-paywall',
+    tier: 2,
   },
   {
     source: 'Investing.com',
     url: 'https://www.investing.com/rss/news.rss',
     category: 'markets',
     access: 'free',
+    tier: 2,
   },
   {
     source: 'Cointelegraph',
     url: 'https://cointelegraph.com/rss',
     category: 'crypto',
     access: 'free',
+    tier: 2,
   },
 ];
 
 const FEED_TIMEOUT_MS = 10000;
-const MAX_ITEMS = 90;
+const MAX_ITEMS = 120;
 const DESC_MAX = 240;
 
 function stripCdata(str) {
@@ -109,6 +166,7 @@ function parseFeed(xml, feed) {
       source: feed.source,
       category: feed.category,
       access: feed.access,
+      tier: feed.tier || 2,
       pubDate,
       description,
     });
@@ -117,6 +175,9 @@ function parseFeed(xml, feed) {
   return items;
 }
 
+// Returns a structured result per feed (never throws) so the freshness monitor
+// can report which sources are live and how fresh — a dead feed shows up as
+// { ok: false } instead of being silently dropped from the aggregate.
 async function fetchFeed(feed) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FEED_TIMEOUT_MS);
@@ -124,18 +185,32 @@ async function fetchFeed(feed) {
     const res = await fetch(feed.url, {
       signal: controller.signal,
       headers: {
+        // SEC and some gov feeds require a declared, contactable UA.
         'user-agent':
-          'Mozilla/5.0 (compatible; mmmxcix-quant-news/1.0; +https://mmmxcix.com)',
+          'mmmxcix-quant-news/1.0 (admin@mmmxcix.com) Mozilla/5.0 (compatible; +https://mmmxcix.com)',
         accept: 'application/rss+xml, application/xml, text/xml, */*',
       },
       cf: { cacheTtl: 300, cacheEverything: true },
     });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) return { feed, ok: false, items: [], error: `HTTP ${res.status}` };
     const xml = await res.text();
-    return parseFeed(xml, feed);
+    const items = parseFeed(xml, feed);
+    return { feed, ok: true, items, error: items.length ? null : 'no_items' };
+  } catch (e) {
+    return { feed, ok: false, items: [], error: String(e?.name === 'AbortError' ? 'timeout' : (e?.message || e)).slice(0, 60) };
   } finally {
     clearTimeout(timer);
   }
+}
+
+// Age (minutes) of the newest item in a feed, or null if none have a date.
+function newestAgeMin(items) {
+  let newest = 0;
+  for (const it of items) {
+    const t = it.pubDate ? Date.parse(it.pubDate) : 0;
+    if (Number.isFinite(t) && t > newest) newest = t;
+  }
+  return newest ? Math.max(0, Math.round((Date.now() - newest) / 60000)) : null;
 }
 
 export async function onRequest(context) {
@@ -159,27 +234,52 @@ export async function onRequest(context) {
     // caches.default unavailable (e.g. local dev) — continue without cache.
   }
 
-  const results = await Promise.allSettled(FEEDS.map(fetchFeed));
+  const results = await Promise.all(FEEDS.map(fetchFeed));
 
   const items = [];
   let successes = 0;
-  for (const result of results) {
-    if (result.status === 'fulfilled') {
-      successes++;
-      items.push(...result.value);
-    }
+  const feedHealth = [];
+  for (const r of results) {
+    if (r.ok) { successes++; items.push(...r.items); }
+    feedHealth.push({
+      source: r.feed.source,
+      category: r.feed.category,
+      tier: r.feed.tier || 2,
+      ok: r.ok,
+      items: r.items.length,
+      newestAgeMin: newestAgeMin(r.items),
+      error: r.error || null,
+    });
   }
+  // Freshness monitor: a live feed is one that returned items AND whose newest
+  // headline is recent (Tier-1 official feeds move slowly, so their window is
+  // wider than fast media). "stale" = returned but nothing fresh; "down" = fetch
+  // failed. Surfaced in meta so the UI can flag a rotting pipeline.
+  const STALE_AFTER_MIN = { 1: 60 * 24 * 3, 2: 60 * 12 }; // tier-1 3d, tier-2 12h
+  for (const f of feedHealth) {
+    f.status = !f.ok ? 'down'
+      : f.newestAgeMin == null ? 'stale'
+      : f.newestAgeMin > (STALE_AFTER_MIN[f.tier] || STALE_AFTER_MIN[2]) ? 'stale'
+      : 'live';
+  }
+
+  const meta = {
+    fetchedAt: Date.now(),
+    feeds: feedHealth.sort((a, b) => (a.tier - b.tier) || a.source.localeCompare(b.source)),
+    live: feedHealth.filter((f) => f.status === 'live').length,
+    total: feedHealth.length,
+  };
 
   let body;
   if (successes === 0) {
-    body = { items: [], error: 'feeds_unavailable' };
+    body = { items: [], error: 'feeds_unavailable', meta };
   } else {
     items.sort((a, b) => {
       const ta = a.pubDate ? Date.parse(a.pubDate) : 0;
       const tb = b.pubDate ? Date.parse(b.pubDate) : 0;
       return tb - ta;
     });
-    body = { items: items.slice(0, MAX_ITEMS) };
+    body = { items: items.slice(0, MAX_ITEMS), meta };
   }
 
   const response = new Response(JSON.stringify(body), {
