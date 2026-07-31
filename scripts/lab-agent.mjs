@@ -135,6 +135,7 @@ function applyTarget(ps, target, price, feeBps, positionPct) {
       side: ps.position, entryPrice: ps.entryPrice, exitPrice: price,
       pnl: +(finalEq - ps.entryEquity).toFixed(2),
       pnlPct: ps.entryEquity > 0 ? +(((finalEq - ps.entryEquity) / ps.entryEquity) * 100).toFixed(2) : 0,
+      openedAt: ps.openedAt ?? null, // when this position was entered (for the trade log)
       closedAt: Date.now(),
     };
     ps.equity = finalEq;
@@ -390,7 +391,7 @@ for (const s of published) {
       local.day.byProfile[pid] = (local.day.byProfile[pid] || 0) + 1;
     }
     if (trade) {
-      ps.trades = [...(ps.trades || []), trade].slice(-10);
+      ps.trades = [...(ps.trades || []), trade].slice(-30);
       ps.tradeTotal = (ps.tradeTotal || 0) + 1;
       console.log(`${s.name}: ${trade.side} closed ${trade.pnlPct}%`);
     }
@@ -444,8 +445,14 @@ for (const s of published) {
       profile: pid, regime, volTarget: volInfo, rotation: rotInfo,
       position: ps.position, equity: ps.markEquity,
       returnPct: +(((ps.markEquity / START_EQUITY) - 1) * 100).toFixed(2),
-      tradeCount: (ps.trades || []).length,
+      tradeCount: ps.tradeTotal || (ps.trades || []).length,
       lastTrade: (ps.trades || [])[ps.trades.length - 1] || null,
+      // Recent trade log (entry+exit times) so the UI can show exactly when this
+      // strategy bought and sold — like Argus. Currently-open leg reported too.
+      trades: (ps.trades || []).slice(-12),
+      open: ps.position !== "flat"
+        ? { position: ps.position, entryPrice: ps.entryPrice, openedAt: ps.openedAt ?? null, markEquity: ps.markEquity }
+        : null,
       price,
       ibkr: ibkrResult,
       incubation,
