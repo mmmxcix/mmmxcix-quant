@@ -9,6 +9,7 @@ import ValidationPanel from "@/components/ValidationPanel";
 import { fetchCandles, fetchFunding, MARKETS, INTERVALS, rangesFor, INTERVAL_SECONDS } from "@/lib/data";
 import OptimizerPanel from "@/components/OptimizerPanel";
 import CodeOptimizerPanel from "@/components/CodeOptimizerPanel";
+import MarketScanPanel from "@/components/MarketScanPanel";
 import { fetchLseCandles } from "@/lib/lse";
 import { runBacktest, compileStrategy } from "@/lib/backtest";
 import { runPythonSignals, signalsToFn, PYTHON_TEMPLATE } from "@/lib/pyRunner";
@@ -968,6 +969,22 @@ export default function Backtest() {
                   positionPct={positionPct}
                   leverage={leverage}
                   onApply={(newCode) => { setPrevCode(code); setCode(newCode); setPresetDirty(true); }}
+                />
+              )}
+
+              {/* Find best market — scan this strategy across the whole universe. */}
+              {result.candles?.length > 100 && (
+                <MarketScanPanel
+                  code={code}
+                  language={lang}
+                  capital={capital}
+                  feeBps={feeBps}
+                  positionPct={positionPct}
+                  leverage={leverage}
+                  onLoad={({ market: m, symbol: s, interval: iv, range: rg }) => {
+                    setMarket(m); setSymbol(s); setIntervalId(iv); if (rg) setRange(rg);
+                    window.scrollTo({ top: 0, behavior: "smooth" });
+                  }}
                 />
               )}
 
