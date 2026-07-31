@@ -20,10 +20,11 @@ if (!TOKEN) { console.error("LAB_TOKEN is not set."); process.exit(1); }
 const HEAT_CAP = +(process.env.LAB_ARGUS_HEAT || 0.06);
 const BASE_RISK = +(process.env.LAB_ARGUS_RISK || 0.02);
 // Capital gate: committed MARGIN across all open trades ≤ equity. Since margin =
-// notional / leverage, that means total open notional ≤ MAX_LEVERAGE × equity. A
-// single trade may use the whole budget (all-in), and leverage can be high — the
-// per-trade STOP still caps the loss at ~2%. Tunable (LAB_ARGUS_MAX_LEVERAGE).
-const MAX_LEVERAGE = +(process.env.LAB_ARGUS_MAX_LEVERAGE || 10);
+// notional / leverage, that means total open notional ≤ MAX_LEVERAGE × equity —
+// e.g. 6× on a 10k account = up to 60k of positions, using ~10k of margin. A
+// single trade may use the whole budget (all-in); the per-trade STOP still caps
+// the loss at ~2%. Tunable (LAB_ARGUS_MAX_LEVERAGE).
+const MAX_LEVERAGE = +(process.env.LAB_ARGUS_MAX_LEVERAGE || 6);
 const DAILY_STOP = +(process.env.LAB_ARGUS_DAILY_STOP || 0.04);
 const EQUITY0 = +(process.env.LAB_ARGUS_EQUITY || 10000);
 // Phase-1 event channel: LLM reads the alt-data briefing and proposes directional
