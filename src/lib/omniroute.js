@@ -43,6 +43,19 @@ export async function omniPing(url = omniUrl()) {
   } catch { return false; }
 }
 
+/** List the model ids the endpoint actually serves (from /models), so the builder
+ *  can offer the REAL models (e.g. cc/claude-opus-4-8) instead of a guessed alias
+ *  like "auto/best-coding" that a given OmniRoute may not have configured. */
+export async function omniModels(url = omniUrl()) {
+  try {
+    const r = await fetch(`${url}/models`, { signal: AbortSignal.timeout(4000) });
+    if (!r.ok) return [];
+    const j = await r.json();
+    const arr = Array.isArray(j?.data) ? j.data : Array.isArray(j?.models) ? j.models : [];
+    return arr.map((m) => (typeof m === "string" ? m : m?.id || m?.name)).filter(Boolean);
+  } catch { return []; }
+}
+
 /**
  * Run one generation through OmniRoute. Returns the SAME shape as /api/generate
  * ({ code, language } | { review } | { critique }) or null on any failure (so the

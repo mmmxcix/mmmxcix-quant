@@ -29,7 +29,7 @@ export function detectLang(src) {
 const LANG_LABEL = { js: "JavaScript", python: "Python", pine: "Pine Script" };
 import { saveEntry } from "@/lib/registry";
 import { windowProfile } from "@/lib/windowProfile";
-import { omniEnabled, omniGenerate, omniConfig, setOmniConfig, omniPing, cliEnabled, cliUrl, cliModel } from "@/lib/omniroute";
+import { omniEnabled, omniGenerate, omniConfig, setOmniConfig, omniPing, omniModels, cliEnabled, cliUrl, cliModel } from "@/lib/omniroute";
 import { cn, fmtNum, fmtPct } from "@/lib/utils";
 
 const DEFAULT_SYMBOL = { crypto: "BTCUSDT", stock: "SPY" };
@@ -118,8 +118,23 @@ export default function Backtest() {
   const [aiNote, setAiNote] = useState(null);        // status line for the improve flow
   const [omniCfg, setOmniCfg] = useState(() => omniConfig()); // local OmniRoute + CLI settings
   const [omniStatus, setOmniStatus] = useState(null); // null | "checking" | "ok" | "down"
+  const [omniModelList, setOmniModelList] = useState([]); // models discovered from /models
   const [cliStatus, setCliStatus] = useState(null);
-  const pingOmni = async () => { setOmniStatus("checking"); setOmniStatus((await omniPing()) ? "ok" : "down"); };
+  const pingOmni = async () => {
+    setOmniStatus("checking");
+    const ok = await omniPing();
+    setOmniStatus(ok ? "ok" : "down");
+    // Discover the real model ids so the user can pick Claude (cc/claude-opus-4-8)
+    // instead of a guessed alias. Auto-select a Claude/Opus model if none set.
+    if (ok) {
+      const models = await omniModels();
+      setOmniModelList(models);
+      if (models.length && (!omniCfg.model || !models.includes(omniCfg.model))) {
+        const pick = models.find((m) => /claude.*opus|opus.*4-8|opus-4/i.test(m)) || models.find((m) => /claude/i.test(m)) || models[0];
+        if (pick) { const c = setOmniConfig({ model: pick }); setOmniCfg(c); }
+      }
+    }
+  };
   const pingCli = async () => { setCliStatus("checking"); setCliStatus((await omniPing(cliUrl())) ? "ok" : "down"); };
   useEffect(() => { if (omniCfg.enabled) pingOmni(); if (omniCfg.cliEnabled) pingCli(); /* eslint-disable-next-line */ }, []);
   const [copied, setCopied] = useState(false);
@@ -756,16 +771,25 @@ export default function Backtest() {
                         <input value={omniCfg.url || "http://localhost:3000/v1"}
                           onChange={(e) => { const c = setOmniConfig({ url: e.target.value }); setOmniCfg(c); }}
                           placeholder="http://localhost:3000/v1" className="input-base flex-1 !py-1 text-[10px] font-mono" />
-                        <input value={omniCfg.model || "auto/best-coding"}
+                        <input value={omniCfg.model || ""} list="omni-model-list"
                           onChange={(e) => { const c = setOmniConfig({ model: e.target.value }); setOmniCfg(c); }}
-                          placeholder="model" className="input-base w-32 !py-1 text-[10px] font-mono" />
-                        <button onClick={pingOmni} className="chip chip-idle !text-[10px]">
+                          placeholder="model (e.g. cc/claude-opus-4-8)" className="input-base w-40 !py-1 text-[10px] font-mono" />
+                        <datalist id="omni-model-list">
+                          {omniModelList.map((m) => <option key={m} value={m} />)}
+                        </datalist>
+                        <button onClick={pingOmni} className="chip chip-idle !text-[10px]" title="Test + load the models your OmniRoute serves">
                           {omniStatus === "checking" ? "…" : "test"}
                         </button>
                       </div>
                     )}
+                    {omniCfg.enabled && omniStatus === "ok" && omniModelList.length > 0 && (
+                      <p className="text-[10px] text-dim">
+                        {omniModelList.length} models available — Claude:{" "}
+                        <span className="text-text font-mono">{omniModelList.filter((m) => /claude|opus|sonnet|haiku/i.test(m)).slice(0, 4).join(", ") || "none found"}</span>. Pick one in the model box.
+                      </p>
+                    )}
                     {((omniCfg.cliEnabled && cliStatus === "down") || (omniCfg.enabled && omniStatus === "down")) && (
-                      <p className="text-[10px] text-down">A local endpoint is unreachable — the AI falls through (CLI → OmniRoute → cloud). Check it's running + allows CORS for this origin.</p>
+                      <p className="text-[10px] text-down">A local endpoint is unreachable — the AI falls through (CLI → OmniRoute → cloud). Check it's running + allows CORS for <span className="font-mono">{typeof window !== "undefined" ? window.location.origin : "this origin"}</span> (OmniRoute → CORS settings).</p>
                     )}
                     <textarea
                       value={aiPrompt}
