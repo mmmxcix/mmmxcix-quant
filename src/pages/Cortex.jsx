@@ -21,8 +21,8 @@ export default function Cortex() {
       eyebrow="Cortex"
       extra={<AlwaysOnSwitch />}
       tabs={[
-        { id: "registry", label: "Registry", icon: Boxes, el: <Registry /> },
         { id: "lab", label: "Lab agent", icon: Cpu, el: <LabStatus /> },
+        { id: "registry", label: "Registry", icon: Boxes, el: <Registry /> },
         { id: "paper", label: "Paper", icon: Dices, el: <Lab /> },
         { id: "riskgate", label: "RiskGate", icon: Shield, el: <RiskGate /> },
         { id: "brain", label: "Brain Vault", icon: Network, el: <BrainVault /> },

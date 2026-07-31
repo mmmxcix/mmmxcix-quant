@@ -79,7 +79,7 @@ export default function App() {
                 <Route path="/account" element={<Account />} />
 
                 {/* Cortex hub (Registry · Paper · RiskGate · Brain Vault) — dev only */}
-                <Route path="/cortex" element={<Redir to="/cortex/registry" replace />} />
+                <Route path="/cortex" element={<Redir to="/cortex/lab" replace />} />
                 <Route path="/cortex/:tab" element={<RequireAdmin><Cortex /></RequireAdmin>} />
                 <Route path="/registry" element={<Redir to="/cortex/registry" replace />} />
                 <Route path="/lab" element={<Redir to="/cortex/lab" replace />} />
