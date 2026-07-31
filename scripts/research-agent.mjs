@@ -43,6 +43,18 @@ import { extractCode, ensureStrategyFn, parseVerdict } from "../functions/_lib/c
 // fall back to the classic strategy(ctx) path.
 const RESEARCH_LANG = String(process.env.LAB_RESEARCH_LANG || "python").toLowerCase() === "js" ? "js" : "python";
 
+// Cortex picks the language that FITS each idea rather than always writing Python
+// (both run in the same engine and both now support stop/target brackets). Rule-
+// stateful, session/intraday, order-flow and bracket-driven strategies are more
+// natural as the stateful strategy(ctx) form (JS); vectorised statistical/factor
+// ideas read best as pandas signals(df) (Python). LAB_RESEARCH_LANG pins it.
+const INTRADAY_HINT = /\bintraday\b|\bsession\b|opening[-\s]?range|\borb\b|scalp|microstructur|order[-\s]?flow|\btick\b|\bvwap\b|\bbreakout\b|\d+[-\s]?min|1s\b|\bhft\b|high[-\s]?frequency/i;
+function pickLang(item) {
+  if (process.env.LAB_RESEARCH_LANG) return RESEARCH_LANG; // explicit pin wins
+  const hay = `${item?.title || ""} ${(item?.topics || []).join(" ")} ${item?.abstract || ""}`;
+  return INTRADAY_HINT.test(hay) ? "js" : "python";
+}
+
 // Quality bar (both tunable): a promoted market must beat buy&hold Sharpe by at
 // least BH_SHARPE_MARGIN (not merely tie it), and its RECENT tail (last 30%) must
 // be genuinely profitable — profitFactor ≥ HOLDOUT_MIN_PF and a positive return —
@@ -272,15 +284,16 @@ async function generateStrategy(item) {
   const text = (item.fullText && item.fullText.length > item.abstract.length)
     ? item.fullText
     : item.abstract;
+  const language = pickLang(item); // Cortex chooses JS vs Python per idea
   const payload = {
     token: TOKEN,
-    language: RESEARCH_LANG,
+    language,
     research: { title: item.title.slice(0, 200), kind: item.kind || "document", text },
   };
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
       const out = await aiCall(payload);
-      if (out.code) return { code: out.code, language: out.language || RESEARCH_LANG };
+      if (out.code) return { code: out.code, language: out.language || language };
       throw new Error("no code in reply");
     } catch (e) {
       if (e.skip && attempt < 3) { console.log(`  rate-limited, retry ${attempt}/2 in ${attempt * 45}s…`); await sleep(attempt * 45000); continue; }
