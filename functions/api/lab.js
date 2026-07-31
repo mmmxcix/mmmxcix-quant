@@ -15,6 +15,7 @@
 // ADMIN session cookie. Reads are gated too: the lab state is private data.
 
 import { isAdminRequest } from "../_lib/auth.mjs";
+import { cleanStrategyName } from "../_lib/strategyName.js";
 
 const MAX_STATE_BYTES = 64 * 1024;
 // The "Deckel", now per profile: prop and private are two separate books, so a
@@ -64,6 +65,17 @@ function dedupeByCode(items) {
     if (prev.auto && !s.auto) out[idx] = s;
   }
   return out;
+}
+
+// Replace legacy source-title / "[research]" clickbait names with clean mechanism
+// names derived from the code — retroactively fixing entries named before the
+// generator learned to name by mechanism. Preserves already-good names.
+function cleanNames(items) {
+  return items.map((s) => {
+    if (!s || !s.code) return s;
+    const cleaned = cleanStrategyName(s.name, s.code);
+    return cleaned && cleaned !== s.name ? { ...s, name: cleaned } : s;
+  });
 }
 
 function json(body, status = 200) {
@@ -118,15 +130,16 @@ export async function onRequest({ request, env, waitUntil }) {
     if (!raw) return json({ ok: true, [field]: null });
     try {
       const parsed = JSON.parse(raw);
-      // Self-heal: collapse any duplicate published strategies already stored, so
-      // both the agent (which reads this every cycle) and the UI see the list
-      // without dupes — and persist the cleaned list back when it actually shrank.
+      // Self-heal: collapse duplicate published strategies AND clean legacy
+      // clickbait names already stored, so both the agent (which reads this every
+      // cycle) and the UI see a deduped, well-named list — persisted back when it
+      // actually changed.
       if (field === "strategies" && Array.isArray(parsed?.items)) {
-        const cleaned = dedupeByCode(parsed.items);
-        if (cleaned.length !== parsed.items.length) {
+        const cleaned = cleanNames(dedupeByCode(parsed.items));
+        if (JSON.stringify(cleaned) !== JSON.stringify(parsed.items)) {
           parsed.items = cleaned;
-          if (waitUntil) waitUntil(env.SUBSCRIBERS.put("lab:strategies", JSON.stringify({ items: cleaned, publishedAt: Date.now() })));
-          else await env.SUBSCRIBERS.put("lab:strategies", JSON.stringify({ items: cleaned, publishedAt: Date.now() }));
+          const write = env.SUBSCRIBERS.put("lab:strategies", JSON.stringify({ items: cleaned, publishedAt: Date.now() }));
+          if (waitUntil) waitUntil(write); else await write;
         }
       }
       return json({ ok: true, [field]: parsed });
@@ -167,7 +180,7 @@ export async function onRequest({ request, env, waitUntil }) {
     const manual = body.strategies.map((s) => ({ ...s, auto: false }));
     const byId = new Map();
     for (const s of [...manual, ...existingAuto]) if (s && s.id && !byId.has(s.id)) byId.set(s.id, s);
-    const items = dedupeByCode([...byId.values()]);
+    const items = cleanNames(dedupeByCode([...byId.values()]));
     const payload = JSON.stringify({ items, publishedAt: Date.now() });
     if (payload.length > MAX_STATE_BYTES) return json({ error: "strategies_too_large", max: MAX_STATE_BYTES }, 413);
     await env.SUBSCRIBERS.put("lab:strategies", payload);
@@ -202,7 +215,7 @@ export async function onRequest({ request, env, waitUntil }) {
       if (perProfile[p] <= capFor(p)) autoItems.push(s);
     }
 
-    const items = dedupeByCode([...manual, ...autoItems]);
+    const items = cleanNames(dedupeByCode([...manual, ...autoItems]));
     const payload = JSON.stringify({ items, publishedAt: Date.now() });
     if (payload.length > MAX_STATE_BYTES) return json({ error: "strategies_too_large", max: MAX_STATE_BYTES }, 413);
     await env.SUBSCRIBERS.put("lab:strategies", payload);

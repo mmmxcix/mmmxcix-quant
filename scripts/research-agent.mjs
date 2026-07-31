@@ -30,6 +30,7 @@ import { harvestAll, fullTextOf, topicsOf, RELEVANCE, JUNK } from "./sources.mjs
 import { loadUniverse } from "./marketdata.mjs";
 import { UNIVERSE, MENTIONABLE, byId, costFor, effectiveTrials, describeMarkets } from "../src/lib/markets.js";
 import { initPy, compilePyStrategy, pyCompileCheck } from "./pyRunnerNode.mjs";
+import { cleanStrategyName } from "../functions/_lib/strategyName.js";
 import { mineAnomalies } from "./mining.mjs";
 import { plateauProbe } from "./optimizer.mjs";
 import { extractCode, ensureStrategyFn, parseVerdict } from "../functions/_lib/codegen.mjs";
@@ -822,8 +823,9 @@ for (const paper of fresh) {
         id: `rc_${Date.now().toString(36)}`,
         // Name it after what the RULE does, not after the article it came from —
         // "Bitcoin looks like Google did in its early days" told you nothing about
-        // the strategy. Falls back to the source title when the model omits it.
-        name: (parseThesis(code).name || paper.title).slice(0, 70),
+        // the strategy. cleanStrategyName rejects source-title / clickbait names
+        // and derives a mechanism name (indicators + direction) from the code.
+        name: cleanStrategyName(parseThesis(code).name, code, parseThesis(code).edge),
         paper: paper.link,
         source: paper.source,
         kind: paper.kind,
@@ -925,7 +927,9 @@ if (improvePool.length && datasets.length && !(UNTIL_HIT && newCandidates.length
       if (verdict.pass) {
         const cand = {
           id: `ri_${Date.now().toString(36)}`,
-          name: `improved · ${g.title}`.slice(0, 70),
+          // Name from the improved CODE's mechanism, not the source title `g.title`
+          // (which was the clickbait headline). Keep the "improved ·" provenance.
+          name: `improved · ${cleanStrategyName(parseThesis(code).name, code, parseThesis(code).edge)}`.slice(0, 70),
           paper: g.link, source: g.source, kind: "improve",
           improvedFrom: g.title, topics: g.topics,
           code, language,
