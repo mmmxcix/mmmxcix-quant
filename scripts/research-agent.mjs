@@ -32,6 +32,7 @@ import { UNIVERSE, MENTIONABLE, byId, costFor, effectiveTrials, describeMarkets 
 import { initPy, compilePyStrategy, pyCompileCheck } from "./pyRunnerNode.mjs";
 import { cleanStrategyName } from "../functions/_lib/strategyName.js";
 import { mineAnomalies } from "./mining.mjs";
+import { intradayTemplates } from "./intraday.mjs";
 import { plateauProbe } from "./optimizer.mjs";
 import { extractCode, ensureStrategyFn, parseVerdict } from "../functions/_lib/codegen.mjs";
 
@@ -1032,6 +1033,67 @@ if (ALWAYS_ON && datasets.length && MINE_PER_RUN > 0 && !(UNTIL_HIT && newCandid
   save(st);
 }
 
+// ── intraday-template channel ───────────────────────────────────────────────
+// Seed the gauntlet with the classic INTRADAY archetypes a day-trader runs —
+// opening-range breakout, ADX trend (with the short side), VWAP reclaim, RSI-2
+// in-trend, Supertrend, Donchian — so Cortex actively searches short-timeframe
+// alpha and not just daily literature. Each template is tried ONCE (pass or
+// fail), one per run, and is charged to the trial window like any other attempt.
+let intradayThisRun = 0;
+const INTRADAY_PER_RUN = Math.max(0, +(process.env.LAB_INTRADAY_PER_RUN ?? 1));
+if (ALWAYS_ON && datasets.length && INTRADAY_PER_RUN > 0 && !(UNTIL_HIT && newCandidates.length)) {
+  st.intradayKeys = st.intradayKeys || [];
+  const pending = intradayTemplates(new Set(st.intradayKeys));
+  if (pending.length) console.log(`intraday: ${pending.length} template(s) not yet tried`);
+  for (const tpl of pending) {
+    if (intradayThisRun >= INTRADAY_PER_RUN) break;
+    st.intradayKeys = [...st.intradayKeys, tpl.key].slice(-100); // tried once, pass or fail
+    try {
+      compileCheckFor(tpl.code, "js");
+      st.attempts++;
+      st.attemptLog = [...(st.attemptLog || []), Date.now()].slice(-5000);
+      const verdict = gauntlet(tpl.code, datasets, windowTrials(st), "js");
+      intradayThisRun++;
+      let code = tpl.code;
+      if (verdict.pass) {
+        const plat = applyPlateau(code, "js", verdict, st, datasets);
+        if (!plat.ok) { verdict.pass = false; verdict.reason = `parameter knife-edge (${plat.summary})`; }
+        else {
+          if (plat.optimized) console.log(`  🔧 optimizer: adopted neighbor ${plat.optimized}`);
+          code = plat.code;
+          Object.assign(verdict, plat.verdict, { plateau: plat.summary, optimized: plat.optimized });
+        }
+      }
+      if (verdict.pass) {
+        const cand = {
+          id: `rt_${Date.now().toString(36)}`,
+          name: tpl.name.slice(0, 70),
+          paper: null, source: "intraday-template", kind: "intraday",
+          topics: ["intraday", "template"],
+          code, language: "js",
+          thesis: parseThesis(code),
+          byMarket: verdict.byMarket, markets: verdict.markets,
+          bestMarket: verdict.bestMarket, marketsTested: verdict.marketsTested,
+          trialsUsed: verdict.trials, dsr: verdict.dsr,
+          profiles: verdict.qualified, trialsAtPass: st.attempts, foundAt: Date.now(),
+        };
+        console.log(`✓ INTRADAY → CANDIDATE: ${cand.name} (DSR ${cand.dsr}% on ${cand.bestMarket})`);
+        cand.committee = await committeeReview(code, cand);
+        st.candidates = [cand, ...st.candidates].slice(0, 30);
+        newCandidates.push(cand);
+        queuePromotions(cand, verdict);
+      } else {
+        st.graveyard = [{ title: tpl.name.slice(0, 70), reason: verdict.reason, source: "intraday-template", topics: ["intraday"], code, language: "js", improveTries: 0, at: Date.now() }, ...st.graveyard].slice(0, 200);
+        console.log(`✗ intraday → graveyard: ${tpl.name.slice(0, 50)} — ${verdict.reason}`);
+      }
+    } catch (e) {
+      console.log(`✗ intraday template broken (${String(e.message || "").slice(0, 50)}) — skipped`);
+    }
+  }
+  st.intraday = (st.intraday || 0) + intradayThisRun;
+  save(st);
+}
+
 // Read the current lab state ONCE — used both to gate promotion on portfolio
 // health (RiskGate) and to preserve paper state when we merge our summary in.
 const cur = await (await fetch(`${SITE}/api/lab`, { headers: { "x-lab-token": TOKEN } })).json().catch(() => ({}));
@@ -1100,6 +1162,7 @@ const state = { ...(cur?.state || {}), research: {
   autoPromoted: st.autoPromoted || 0,
   improved: st.improved || 0,
   mined: st.mined || 0,
+  intraday: st.intraday || 0,
   alwaysOn: ALWAYS_ON,
   sources: brainSources(st),
   // What each source actually yielded this run — makes a quietly dead feed

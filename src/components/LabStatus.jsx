@@ -403,6 +403,11 @@ function LabStatus() {
                     mined <span className="text-text">{data.research.mined}</span>
                   </span>
                 )}
+                {data.research.intraday > 0 && (
+                  <span className="text-dim" title="Intraday-template channel: classic short-timeframe archetypes (opening-range breakout, ADX trend, VWAP, RSI-2, Supertrend, Donchian) run through the gauntlet — each counts as one attempt">
+                    intraday <span className="text-text">{data.research.intraday}</span>
+                  </span>
+                )}
               </div>
               {data.research.sourceYield && (
                 <p className="text-[10px] text-dim/80 mt-1.5">
