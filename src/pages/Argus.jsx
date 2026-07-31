@@ -159,8 +159,9 @@ export default function Argus() {
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
         <Stat label="Paper equity" value={state ? fmtNum(state.equity, 0) : "–"} big />
         <Stat label="Open theses" value={theses.length} sub={state ? `${(state.forming ?? 0)} forming` : ""} />
-        <Stat label="Portfolio heat" value={state ? `${(state.heatPct * 100).toFixed(1)}%` : "–"} sub="of 6% cap"
-          tone={state && state.heatPct > 0.05 ? "text-down" : "text-text"} />
+        <Stat label="Portfolio heat" value={state ? `${(state.heatPct * 100).toFixed(1)}%` : "–"}
+          sub={state && state.heatCapPct ? `of ${(state.heatCapPct * 100).toFixed(0)}% cap` : "of 10–20% cap"}
+          tone={state && state.heatCapPct && state.heatPct > state.heatCapPct * 0.85 ? "text-down" : "text-text"} />
         <Stat label="Today's P/L" value={state ? money(state.dayPnl || 0) : "–"} tone={state && state.dayPnl < 0 ? "text-down" : "text-up"} />
         <Stat label="Track record" value={stats.n ? `${(stats.winRate * 100).toFixed(0)}% · ${stats.avgR >= 0 ? "+" : ""}${stats.avgR.toFixed(2)}R` : "–"}
           sub={stats.n ? `${stats.n} closed · ${money(stats.pnl)}` : "no closed trades yet"}
@@ -396,7 +397,8 @@ export default function Argus() {
 
       <p className="text-xs text-dim leading-relaxed">
         Argus scans several timeframes for technical setups, sizes each trade under a portfolio-heat
-        risk model (max 6% total at risk, ~2% per trade, stop-defined), and paper-trades them. An
+        risk model (10% total at risk, rising toward 20% when the open positions are uncorrelated;
+        ~2% per trade, stop-defined), and paper-trades them. An
         event channel reads the live alt-data briefing — news, conflicts, disasters and shipping
         chokepoints — and proposes directional biases; a trade only opens when price confirms the
         catalyst, never on the spike itself. Every R-multiple and the win rate are shown honestly.

@@ -10,6 +10,7 @@ import { scan } from "../src/lib/argus/scanners.js";
 import { buildBrief, diffBrief, renderBrief, parseFearGreed } from "../src/lib/argus/brief.js";
 import { deriveLessons, adjustment, sessionOf } from "../src/lib/argus/learn.js";
 import { marketOpen } from "../src/lib/argus/hours.js";
+import { effectiveHeatCap } from "../src/lib/argus/correlation.js";
 import { buildReflectionMessages, parseReflection, crystallise, skillsFor } from "../src/lib/argus/reflect.js";
 import { callArgusLLM, chatOnce } from "../src/lib/argus/llm.js";
 
@@ -17,7 +18,11 @@ const SITE = process.env.LAB_SITE || "https://quant.mmmxcix.com";
 const TOKEN = process.env.LAB_TOKEN;
 if (!TOKEN) { console.error("LAB_TOKEN is not set."); process.exit(1); }
 
-const HEAT_CAP = +(process.env.LAB_ARGUS_HEAT || 0.06);
+// Heat = max total risk. Base 10%, rising toward MAX_HEAT (20%) when the open
+// positions are UNCORRELATED (a crypto + gold + bond spread diversifies, so a
+// bigger risk budget is warranted; three correlated crypto longs stay at base).
+const HEAT_CAP = +(process.env.LAB_ARGUS_HEAT || 0.10);
+const MAX_HEAT = +(process.env.LAB_ARGUS_MAX_HEAT || 0.20);
 const BASE_RISK = +(process.env.LAB_ARGUS_RISK || 0.02);
 // Capital gate: committed MARGIN across all open trades ≤ equity. Since margin =
 // notional / leverage, that means total open notional ≤ MAX_LEVERAGE × equity —
@@ -209,9 +214,12 @@ function tryOpen(inst, setup, halted) {
   }
   const riskPct = BASE_RISK * adj.mult;
 
+  // Diversification-aware heat: more total risk allowed when this trade is
+  // uncorrelated with what's already open.
+  const heatCap = effectiveHeatCap(open.map((o) => o.symbol), inst.symbol, HEAT_CAP, MAX_HEAT);
   const th = openThesis(
     { ...setup, symbol: inst.symbol, market: inst.asset },
-    { equity, openRisk: openRisk(), openNotional: openNotional(), asset: inst.asset, heatCap: HEAT_CAP, baseRiskPct: riskPct, maxLeverage: MAX_LEVERAGE },
+    { equity, openRisk: openRisk(), openNotional: openNotional(), asset: inst.asset, heatCap, baseRiskPct: riskPct, maxLeverage: MAX_LEVERAGE },
   );
   if (th) {
     if (bias && bias.side === th.side) { // enrich a confirmed setup with its catalyst
@@ -340,7 +348,7 @@ async function persist(ledgerAdd, extra) {
     .map(([symbol, v]) => ({ symbol, side: v.side, thesis: v.thesis, confidence: v.confidence, horizon: v.horizon, at: v.at, model: v.model }));
   const body = {
     token: TOKEN,
-    state: { equity, open: open.length, forming: forming.length, heatPct: openRisk() / equity, dayPnl: extra.dailyPnl, halted: extra.halted, universe: activeUniverse().length, events, fng: eventFng, skills: skills.slice(0, 8), lessons: lessons.slice(0, 8).map((l) => ({ text: l.text, verdict: l.verdict, n: l.n })) },
+    state: { equity, open: open.length, forming: forming.length, heatPct: openRisk() / equity, heatCapPct: effectiveHeatCap(open.map((o) => o.symbol), null, HEAT_CAP, MAX_HEAT), heatBasePct: HEAT_CAP, heatMaxPct: MAX_HEAT, dayPnl: extra.dailyPnl, halted: extra.halted, universe: activeUniverse().length, events, fng: eventFng, skills: skills.slice(0, 8), lessons: lessons.slice(0, 8).map((l) => ({ text: l.text, verdict: l.verdict, n: l.n })) },
     theses: open,
     ledgerAdd,
     journal: journal.slice(0, 60),   // Hermes post-mortems (newest first)
