@@ -1,21 +1,32 @@
 import { Fragment, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Cpu, RefreshCw, Loader2, ChevronRight, Layers } from "lucide-react";
+import { Cpu, RefreshCw, Loader2, ChevronRight, Layers, Briefcase, Shield } from "lucide-react";
 import { fmtPrice, cn } from "@/lib/utils";
 import { strategyToCode } from "@/lib/strategyCode";
+import { PROFILE_IDS, getProfile, DEFAULT_PROFILE } from "@/lib/profiles";
 import CopyButton from "@/components/CopyButton";
 import Skeleton from "@/components/Skeleton";
 
 // LabStatus — live status of the local lab agent (the 24/7 process on the user's
 // PC that pushes its state to /api/lab): research-loop counters, combined paper
-// equity and the per-strategy table. It now lives on its own page (/lab) so the
-// list of what the agent is ACTUALLY trading isn't buried inside the Paper tab.
+// equity and the per-strategy tables. It lives on its own Cortex tab (/lab) so
+// the list of what the agent is ACTUALLY trading isn't buried under Paper.
 //
-// Two upgrades over the old embedded panel:
+// Three things the panel does beyond a flat list:
+//   • Two books — strategies are split into the PRIVATE and the PROP-FIRM
+//     portfolios, each with its own equity, so you see the two mandates apart.
 //   • Deduplication — the same strategy republished under a different name is
-//     collapsed into ONE row (matched by generated CODE, not name), and flagged.
+//     collapsed into ONE row per book (matched by generated CODE, not name).
 //   • Clickable rows — expand a strategy to see exactly when it bought and sold
 //     (its trade log with entry/exit times), the same way Argus's trades open.
+
+const START_EQUITY = 10000; // per-strategy paper start (mirrors lab-agent START_EQUITY)
+
+// Book order + look: private first (the main mandate), then prop firm.
+const BOOKS = [
+  { id: "private", icon: Briefcase },
+  { id: "prop", icon: Shield },
+].filter((b) => PROFILE_IDS.includes(b.id));
 
 function dayPnl(combined) {
   const hist = combined?.history;
@@ -52,6 +63,25 @@ function fmtWhen(ts) {
   return new Date(ts).toLocaleString(undefined, {
     month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
   });
+}
+
+// Group a book's strategies by generated CODE (same symbol+interval+logic), so a
+// republished duplicate shows once. Returns [{ key, rep, members }] with the rep
+// = the longest-lived copy (most trades). `published` maps id → registry entry.
+function dedupe(strategies, published) {
+  const groups = [];
+  const byKey = new Map();
+  for (const s of strategies) {
+    if (s.error) { groups.push({ key: s.id, rep: s, members: [s] }); continue; }
+    const entry = published[s.id];
+    const sig = entry ? codeSig(strategyToCode(entry)) : null;
+    const key = sig ? `${s.symbol}|${s.interval}|${sig}` : `id:${s.id}`;
+    let g = byKey.get(key);
+    if (!g) { g = { key, rep: s, members: [] }; byKey.set(key, g); groups.push(g); }
+    g.members.push(s);
+    if ((s.tradeCount || 0) > (g.rep.tradeCount || 0)) g.rep = s;
+  }
+  return groups;
 }
 
 // Expanded detail for one strategy: its currently-open leg (if any) and the
@@ -112,12 +142,168 @@ function TradeLog({ strat, members }) {
   );
 }
 
+// One portfolio book (private OR prop): a header with the book's equity, then the
+// de-duplicated strategy table. Rows expand to their trade log.
+function StrategyBook({ id, icon: Icon, strategies, published, openRow, setOpenRow }) {
+  const label = getProfile(id).label;
+  const groups = dedupe(strategies, published);
+  const live = groups.filter((g) => !g.rep.error);
+  const dupCount = groups.reduce((a, g) => a + Math.max(0, g.members.length - 1), 0);
+  const bookEquity = live.reduce((a, g) => a + (g.rep.equity || 0), 0);
+  const bookStart = live.length * START_EQUITY;
+  const bookRet = bookStart > 0 ? ((bookEquity / bookStart) - 1) * 100 : 0;
+
+  return (
+    <div className="rounded-lg border border-line/60 bg-bg/20 p-3">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mb-2">
+        <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-text">
+          {Icon && <Icon className="w-3.5 h-3.5 text-accent" />}{label}
+        </span>
+        {live.length > 0 && (
+          <span className="font-mono text-sm">
+            <span className="text-text font-semibold">{fmtPrice(bookEquity)}</span>{" "}
+            <span className={bookRet >= 0 ? "text-up" : "text-down"}>
+              {bookRet >= 0 ? "+" : ""}{bookRet.toFixed(2)}%
+            </span>
+          </span>
+        )}
+        <span className="inline-flex items-center gap-1.5 text-[10px] text-dim">
+          <Layers className="w-3 h-3" />
+          {live.length} unique {live.length === 1 ? "strategy" : "strategies"}
+        </span>
+        {dupCount > 0 && (
+          <span className="text-[10px] text-warn" title="The same strategy is published more than once in this book under different names. Each duplicate runs its own paper book — the agent now un-publishes the extras automatically; the collapsed count shows what's pending.">
+            {dupCount} duplicate {dupCount === 1 ? "copy" : "copies"} collapsed
+          </span>
+        )}
+        <span className="text-[10px] text-dim/60 ml-auto">click a row for its trade log</span>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs font-mono">
+          <thead>
+            <tr className="text-left text-dim border-b border-line">
+              <th className="py-1.5 pr-2 w-4"></th>
+              <th className="py-1.5 pr-3 font-medium font-sans">Strategy</th>
+              <th className="py-1.5 pr-3 font-medium font-sans">Symbol</th>
+              <th className="py-1.5 pr-3 font-medium font-sans">Incubation</th>
+              <th className="py-1.5 pr-3 font-medium font-sans">Position</th>
+              <th className="py-1.5 pr-3 font-medium font-sans text-right">Equity</th>
+              <th className="py-1.5 pr-3 font-medium font-sans text-right">Return</th>
+              <th className="py-1.5 pr-3 font-medium font-sans text-right">Trades</th>
+              <th className="py-1.5 font-medium font-sans text-right">Code</th>
+            </tr>
+          </thead>
+          <tbody>
+            {groups.map((g) => {
+              const s = g.rep;
+              const entry = published[s.id];
+              const code = entry ? strategyToCode(entry) : null;
+              const pyCode = entry ? strategyToCode(entry, "python") : null;
+              const rowKey = `${id}:${g.key}`;
+              const isOpen = openRow === rowKey;
+              const dup = g.members.length > 1;
+              return (
+                <Fragment key={rowKey}>
+                  <tr
+                    onClick={() => setOpenRow(isOpen ? null : rowKey)}
+                    className="border-b border-line/40 last:border-0 cursor-pointer hover:bg-bg/40"
+                  >
+                    <td className="py-1.5 pr-2">
+                      <ChevronRight className={cn("w-3 h-3 text-dim transition-transform", isOpen && "rotate-90")} />
+                    </td>
+                    <td className="py-1.5 pr-3 text-text">
+                      {s.name}
+                      {dup && (
+                        <span
+                          className="ml-1.5 inline-flex items-center rounded-full bg-warn/10 text-warn px-1.5 py-0.5 text-[9px] font-semibold"
+                          title={`Identical code, also published as: ${g.members.filter((m) => m.id !== s.id).map((m) => m.name).join(", ")}`}
+                        >
+                          ⧉ ×{g.members.length}
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-1.5 pr-3 text-dim">
+                      <div>{s.symbol} · {s.interval}</div>
+                      {(s.regime || s.volTarget) && (
+                        <div className="mt-0.5 flex items-center gap-1.5 text-[10px]">
+                          {s.regime && (
+                            <span
+                              className={s.regime === "Bull" ? "text-up" : s.regime === "Bear" ? "text-down" : "text-dim"}
+                              title="HMM market regime (which way)"
+                            >
+                              {s.regime}
+                            </span>
+                          )}
+                          {s.volTarget && (
+                            <span className="text-dim" title="GARCH vol-target sizing (how much)">
+                              vol ×{s.volTarget.weight} · {s.volTarget.sizedPct}%
+                            </span>
+                          )}
+                          {s.rotation && s.rotation.weight < 1 && (
+                            <span className="text-warn" title={`Regime rotation: losing in the current ${s.rotation.regime} regime on its own live history (${s.rotation.samples} samples) — de-risked`}>
+                              rot ×{s.rotation.weight}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </td>
+                    <td className="py-1.5 pr-3">
+                      {s.incubation ? (
+                        <span
+                          title={`${s.incubation.reason}${s.incubation.expDdPct != null ? ` · dd ${s.incubation.liveDdPct}% (budget from backtest ${s.incubation.expDdPct}%)` : ""}`}
+                          className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${
+                            s.incubation.verdict === "confirmed" ? "bg-up/10 text-up"
+                            : s.incubation.verdict === "diverged" ? "bg-down/10 text-down"
+                            : s.incubation.verdict === "watch" ? "bg-accent/10 text-accent"
+                            : "bg-line/50 text-dim"
+                          }`}
+                        >
+                          {s.incubation.verdict === "diverged" ? "quarantined" : s.incubation.verdict}
+                        </span>
+                      ) : <span className="text-dim/40 text-[10px]">—</span>}
+                    </td>
+                    <td className="py-1.5 pr-3">
+                      {s.error
+                        ? <span className="text-down" title={s.error}>error</span>
+                        : <span className={s.position === "long" ? "text-up" : s.position === "short" ? "text-down" : "text-dim"}>{s.position}</span>}
+                    </td>
+                    <td className="py-1.5 pr-3 text-right text-text">{s.error ? "–" : fmtPrice(s.equity)}</td>
+                    <td className={`py-1.5 pr-3 text-right ${s.returnPct >= 0 ? "text-up" : "text-down"}`}>
+                      {s.error ? "–" : `${s.returnPct >= 0 ? "+" : ""}${s.returnPct}%`}
+                    </td>
+                    <td className="py-1.5 pr-3 text-right text-dim">{s.error ? "–" : s.tradeCount}</td>
+                    <td className="py-1.5 text-right" onClick={(e) => e.stopPropagation()}>
+                      {code ? (
+                        <span className="inline-flex items-center gap-1">
+                          <CopyButton text={code} label={entry?.language === "python" ? "PY" : "Copy"} />
+                          {pyCode && pyCode !== code && <CopyButton text={pyCode} label="PY" />}
+                        </span>
+                      ) : <span className="text-dim/40 text-[10px]">—</span>}
+                    </td>
+                  </tr>
+                  {isOpen && !s.error && (
+                    <tr className="border-b border-line/40">
+                      <td colSpan={9} className="p-0">
+                        <TradeLog strat={s} members={g.members} />
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 // Live status of the local lab agent (the 24/7 process on the user's PC that
 // pushes its state to /api/lab). Private: reads with the dev token / admin cookie.
 function LabStatus() {
   const [data, setData] = useState(undefined); // undefined=loading, null=none
   const [busy, setBusy] = useState(false);
-  const [openRow, setOpenRow] = useState(null); // group key of the expanded strategy
+  const [openRow, setOpenRow] = useState(null); // "<profile>:<groupKey>" of the expanded strategy
   // id -> published strategy entry (carries code / builder id), so every program
   // the agent runs is copyable AND comparable for de-duplication. The state
   // summaries don't carry the source, so we pull the published list and match by id.
@@ -207,8 +393,6 @@ function LabStatus() {
                 {data.research.autoPromoted > 0 && (
                   <span className="text-dim">auto-promoted <span className="text-accent">{data.research.autoPromoted}</span></span>
                 )}
-                {/* why attempts > papers: every improve-iteration and every
-                    mined anomaly is its own attempt — variants, not re-tests */}
                 {data.research.improved > 0 && (
                   <span className="text-dim" title="Improve loop: near-misses iterated with the failure fed back — each try is a NEW variant and counts as one attempt">
                     improved <span className="text-text">{data.research.improved}</span>
@@ -220,8 +404,6 @@ function LabStatus() {
                   </span>
                 )}
               </div>
-              {/* Per-source yield: a feed that quietly went dead shows up here
-                  instead of only in the 3am log. */}
               {data.research.sourceYield && (
                 <p className="text-[10px] text-dim/80 mt-1.5">
                   last harvest: {Object.entries(data.research.sourceYield).map(([s, n]) => `${s} ${n}`).join(" · ")}
@@ -264,181 +446,59 @@ function LabStatus() {
             </div>
           )}
 
-          {/* Portfolio HQ — paper strategies actually executed by the agent,
-              de-duplicated by generated code and expandable to their trade logs */}
-          {data.mode === "paper" && data.strategies?.length > 0 && (() => {
-            // Collapse strategies whose generated CODE is identical (same symbol +
-            // interval + logic) into one row so a republished duplicate shows once.
-            const groups = [];
-            const byKey = new Map();
-            for (const s of data.strategies) {
-              if (s.error) { groups.push({ key: s.id, rep: s, members: [s] }); continue; }
-              const entry = published[s.id];
-              const sig = entry ? codeSig(strategyToCode(entry)) : null;
-              const key = sig ? `${s.symbol}|${s.interval}|${sig}` : `id:${s.id}`;
-              let g = byKey.get(key);
-              if (!g) { g = { key, rep: s, members: [] }; byKey.set(key, g); groups.push(g); }
-              g.members.push(s);
-              // representative = the copy with the longest-lived book (most trades)
-              if ((s.tradeCount || 0) > (g.rep.tradeCount || 0)) g.rep = s;
-            }
-            const dupCount = groups.reduce((a, g) => a + Math.max(0, g.members.length - 1), 0);
-            return (
-              <div className="mt-3 border-t border-line pt-3">
-                {data.combined && (
-                  <div className="flex flex-wrap items-center gap-x-6 gap-y-1 mb-2 text-sm font-mono">
-                    <span className="text-dim text-xs font-medium font-sans">Combined equity</span>
-                    <span className="text-text font-semibold">{fmtPrice(data.combined.equity)}</span>
-                    <span className={data.combined.returnPct >= 0 ? "text-up" : "text-down"}>
-                      {data.combined.returnPct >= 0 ? "+" : ""}{data.combined.returnPct}% <span className="text-dim">all-time</span>
-                    </span>
-                    {(() => {
-                      const d = dayPnl(data.combined);
-                      if (!d) return null;
-                      const up = d.abs >= 0;
-                      return (
-                        <span
-                          className={up ? "text-up" : "text-down"}
-                          title={d.partial ? "Since the first snapshot today (history doesn't reach back to midnight yet)" : "Change since the start of today (your local time)"}
-                        >
-                          {up ? "+" : "−"}{fmtPrice(Math.abs(d.abs))} ({up ? "+" : ""}{d.pct.toFixed(2)}%) <span className="text-dim">today{d.partial ? "*" : ""}</span>
-                        </span>
-                      );
-                    })()}
-                    <span className="text-[10px] text-dim font-sans">virtual money · paper trading</span>
-                  </div>
-                )}
-                <div className="flex items-center gap-2 mb-1.5 text-[10px]">
-                  <Layers className="w-3 h-3 text-dim" />
-                  <span className="text-dim">
-                    {groups.length} unique {groups.length === 1 ? "strategy" : "strategies"} actually trading
+          {/* Portfolio HQ — two books (private + prop firm), each de-duplicated by
+              code and expandable to each strategy's trade log */}
+          {data.mode === "paper" && data.strategies?.length > 0 && (
+            <div className="mt-3 border-t border-line pt-3 space-y-4">
+              {data.combined && (
+                <div className="flex flex-wrap items-center gap-x-6 gap-y-1 text-sm font-mono">
+                  <span className="text-dim text-xs font-medium font-sans">Combined equity</span>
+                  <span className="text-text font-semibold">{fmtPrice(data.combined.equity)}</span>
+                  <span className={data.combined.returnPct >= 0 ? "text-up" : "text-down"}>
+                    {data.combined.returnPct >= 0 ? "+" : ""}{data.combined.returnPct}% <span className="text-dim">all-time</span>
                   </span>
-                  {dupCount > 0 && (
-                    <span className="text-warn" title="The same strategy is published more than once under different names. Each duplicate runs its own paper book — un-publish the extras in the Registry to stop double-trading.">
-                      · {dupCount} duplicate {dupCount === 1 ? "copy" : "copies"} collapsed
-                    </span>
-                  )}
-                  <span className="text-dim/60 ml-auto">click a row for its trade log</span>
+                  {(() => {
+                    const d = dayPnl(data.combined);
+                    if (!d) return null;
+                    const up = d.abs >= 0;
+                    return (
+                      <span
+                        className={up ? "text-up" : "text-down"}
+                        title={d.partial ? "Since the first snapshot today (history doesn't reach back to midnight yet)" : "Change since the start of today (your local time)"}
+                      >
+                        {up ? "+" : "−"}{fmtPrice(Math.abs(d.abs))} ({up ? "+" : ""}{d.pct.toFixed(2)}%) <span className="text-dim">today{d.partial ? "*" : ""}</span>
+                      </span>
+                    );
+                  })()}
+                  <span className="text-[10px] text-dim font-sans">virtual money · paper trading · two books</span>
                 </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-xs font-mono">
-                    <thead>
-                      <tr className="text-left text-dim border-b border-line">
-                        <th className="py-1.5 pr-2 w-4"></th>
-                        <th className="py-1.5 pr-3 font-medium font-sans">Strategy</th>
-                        <th className="py-1.5 pr-3 font-medium font-sans">Symbol</th>
-                        <th className="py-1.5 pr-3 font-medium font-sans">Incubation</th>
-                        <th className="py-1.5 pr-3 font-medium font-sans">Position</th>
-                        <th className="py-1.5 pr-3 font-medium font-sans text-right">Equity</th>
-                        <th className="py-1.5 pr-3 font-medium font-sans text-right">Return</th>
-                        <th className="py-1.5 pr-3 font-medium font-sans text-right">Trades</th>
-                        <th className="py-1.5 font-medium font-sans text-right">Code</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {groups.map((g) => {
-                        const s = g.rep;
-                        const entry = published[s.id];
-                        const code = entry ? strategyToCode(entry) : null;
-                        const pyCode = entry ? strategyToCode(entry, "python") : null;
-                        const isOpen = openRow === g.key;
-                        const dup = g.members.length > 1;
-                        return (
-                        <Fragment key={g.key}>
-                          <tr
-                            onClick={() => setOpenRow(isOpen ? null : g.key)}
-                            className="border-b border-line/40 last:border-0 cursor-pointer hover:bg-bg/40"
-                          >
-                            <td className="py-1.5 pr-2">
-                              <ChevronRight className={cn("w-3 h-3 text-dim transition-transform", isOpen && "rotate-90")} />
-                            </td>
-                            <td className="py-1.5 pr-3 text-text">
-                              {s.name}
-                              {dup && (
-                                <span
-                                  className="ml-1.5 inline-flex items-center rounded-full bg-warn/10 text-warn px-1.5 py-0.5 text-[9px] font-semibold"
-                                  title={`Identical code, also published as: ${g.members.filter((m) => m.id !== s.id).map((m) => m.name).join(", ")}`}
-                                >
-                                  ⧉ ×{g.members.length}
-                                </span>
-                              )}
-                            </td>
-                            <td className="py-1.5 pr-3 text-dim">
-                              <div>{s.symbol} · {s.interval}</div>
-                              {(s.regime || s.volTarget) && (
-                                <div className="mt-0.5 flex items-center gap-1.5 text-[10px]">
-                                  {s.regime && (
-                                    <span
-                                      className={s.regime === "Bull" ? "text-up" : s.regime === "Bear" ? "text-down" : "text-dim"}
-                                      title="HMM market regime (which way)"
-                                    >
-                                      {s.regime}
-                                    </span>
-                                  )}
-                                  {s.volTarget && (
-                                    <span className="text-dim" title="GARCH vol-target sizing (how much)">
-                                      vol ×{s.volTarget.weight} · {s.volTarget.sizedPct}%
-                                    </span>
-                                  )}
-                                  {s.rotation && s.rotation.weight < 1 && (
-                                    <span className="text-warn" title={`Regime rotation: losing in the current ${s.rotation.regime} regime on its own live history (${s.rotation.samples} samples) — de-risked`}>
-                                      rot ×{s.rotation.weight}
-                                    </span>
-                                  )}
-                                </div>
-                              )}
-                            </td>
-                            <td className="py-1.5 pr-3">
-                              {/* Incubation verdict — live paper vs backtest expectation */}
-                              {s.incubation ? (
-                                <span
-                                  title={`${s.incubation.reason}${s.incubation.expDdPct != null ? ` · dd ${s.incubation.liveDdPct}% (budget from backtest ${s.incubation.expDdPct}%)` : ""}`}
-                                  className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${
-                                    s.incubation.verdict === "confirmed" ? "bg-up/10 text-up"
-                                    : s.incubation.verdict === "diverged" ? "bg-down/10 text-down"
-                                    : s.incubation.verdict === "watch" ? "bg-accent/10 text-accent"
-                                    : "bg-line/50 text-dim"
-                                  }`}
-                                >
-                                  {s.incubation.verdict === "diverged" ? "quarantined" : s.incubation.verdict}
-                                </span>
-                              ) : <span className="text-dim/40 text-[10px]">—</span>}
-                            </td>
-                            <td className="py-1.5 pr-3">
-                              {s.error
-                                ? <span className="text-down" title={s.error}>error</span>
-                                : <span className={s.position === "long" ? "text-up" : s.position === "short" ? "text-down" : "text-dim"}>{s.position}</span>}
-                            </td>
-                            <td className="py-1.5 pr-3 text-right text-text">{s.error ? "–" : fmtPrice(s.equity)}</td>
-                            <td className={`py-1.5 pr-3 text-right ${s.returnPct >= 0 ? "text-up" : "text-down"}`}>
-                              {s.error ? "–" : `${s.returnPct >= 0 ? "+" : ""}${s.returnPct}%`}
-                            </td>
-                            <td className="py-1.5 pr-3 text-right text-dim">{s.error ? "–" : s.tradeCount}</td>
-                            <td className="py-1.5 text-right" onClick={(e) => e.stopPropagation()}>
-                              {code ? (
-                                <span className="inline-flex items-center gap-1">
-                                  <CopyButton text={code} label={entry?.language === "python" ? "PY" : "Copy"} />
-                                  {pyCode && pyCode !== code && <CopyButton text={pyCode} label="PY" />}
-                                </span>
-                              ) : <span className="text-dim/40 text-[10px]">—</span>}
-                            </td>
-                          </tr>
-                          {isOpen && !s.error && (
-                            <tr className="border-b border-line/40">
-                              <td colSpan={9} className="p-0">
-                                <TradeLog strat={s} members={g.members} />
-                              </td>
-                            </tr>
-                          )}
-                        </Fragment>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            );
-          })()}
+              )}
+              {BOOKS.map((b) => {
+                const strats = data.strategies.filter((s) => (s.profile || DEFAULT_PROFILE) === b.id);
+                if (!strats.length) return null;
+                return (
+                  <StrategyBook
+                    key={b.id} id={b.id} icon={b.icon}
+                    strategies={strats} published={published}
+                    openRow={openRow} setOpenRow={setOpenRow}
+                  />
+                );
+              })}
+              {/* strategies with an unknown profile (older pushes) — fold under a catch-all */}
+              {(() => {
+                const known = new Set(BOOKS.map((b) => b.id));
+                const orphans = data.strategies.filter((s) => !known.has(s.profile || DEFAULT_PROFILE));
+                if (!orphans.length) return null;
+                return (
+                  <StrategyBook
+                    key="other" id={DEFAULT_PROFILE} icon={Briefcase}
+                    strategies={orphans} published={published}
+                    openRow={openRow} setOpenRow={setOpenRow}
+                  />
+                );
+              })()}
+            </div>
+          )}
         </>
       )}
     </div>

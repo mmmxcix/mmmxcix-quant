@@ -33,6 +33,39 @@ async function readStrategyItems(env) {
   try { return JSON.parse((await env.SUBSCRIBERS.get("lab:strategies")) || "{}").items || []; } catch { return []; }
 }
 
+// A stable signature for a published strategy: its instrument + its normalized
+// source code (comments/whitespace stripped). Two strategies with the same sig
+// are THE SAME strategy republished under different names.
+function stratSig(s) {
+  const code = String(s?.code || "")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\/\/[^\n]*/g, "")
+    .replace(/\s+/g, "")
+    .toLowerCase();
+  return `${String(s?.symbol || "").toUpperCase()}|${s?.interval || ""}|${code}`;
+}
+
+// Collapse duplicate published strategies (identical instrument + code) to one
+// entry — the SOURCE fix for "the same strat is in the list 2×". Keeps the best
+// copy per signature: a manual publish beats an auto-promotion, and among equals
+// the one already in the list (earliest) wins, so ids stay stable across runs.
+// Entries with no code (can't be compared) are always kept. Order is preserved.
+function dedupeByCode(items) {
+  const kept = new Map(); // sig -> index in out
+  const out = [];
+  for (const s of items) {
+    if (!s || !s.id) continue;
+    if (!s.code) { out.push(s); continue; } // uncomparable → keep
+    const sig = stratSig(s);
+    if (!kept.has(sig)) { kept.set(sig, out.length); out.push(s); continue; }
+    const idx = kept.get(sig);
+    const prev = out[idx];
+    // A manual entry supersedes an auto duplicate; otherwise drop the newcomer.
+    if (prev.auto && !s.auto) out[idx] = s;
+  }
+  return out;
+}
+
 function json(body, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -51,7 +84,7 @@ function safeEqual(a, b) {
   return diff === 0;
 }
 
-export async function onRequest({ request, env }) {
+export async function onRequest({ request, env, waitUntil }) {
   if (request.method === "OPTIONS") {
     return new Response(null, {
       headers: {
@@ -84,7 +117,19 @@ export async function onRequest({ request, env }) {
     const raw = await env.SUBSCRIBERS.get(`lab:${field}`);
     if (!raw) return json({ ok: true, [field]: null });
     try {
-      return json({ ok: true, [field]: JSON.parse(raw) });
+      const parsed = JSON.parse(raw);
+      // Self-heal: collapse any duplicate published strategies already stored, so
+      // both the agent (which reads this every cycle) and the UI see the list
+      // without dupes — and persist the cleaned list back when it actually shrank.
+      if (field === "strategies" && Array.isArray(parsed?.items)) {
+        const cleaned = dedupeByCode(parsed.items);
+        if (cleaned.length !== parsed.items.length) {
+          parsed.items = cleaned;
+          if (waitUntil) waitUntil(env.SUBSCRIBERS.put("lab:strategies", JSON.stringify({ items: cleaned, publishedAt: Date.now() })));
+          else await env.SUBSCRIBERS.put("lab:strategies", JSON.stringify({ items: cleaned, publishedAt: Date.now() }));
+        }
+      }
+      return json({ ok: true, [field]: parsed });
     } catch {
       return json({ ok: true, [field]: null });
     }
@@ -122,7 +167,7 @@ export async function onRequest({ request, env }) {
     const manual = body.strategies.map((s) => ({ ...s, auto: false }));
     const byId = new Map();
     for (const s of [...manual, ...existingAuto]) if (s && s.id && !byId.has(s.id)) byId.set(s.id, s);
-    const items = [...byId.values()];
+    const items = dedupeByCode([...byId.values()]);
     const payload = JSON.stringify({ items, publishedAt: Date.now() });
     if (payload.length > MAX_STATE_BYTES) return json({ error: "strategies_too_large", max: MAX_STATE_BYTES }, 413);
     await env.SUBSCRIBERS.put("lab:strategies", payload);
@@ -146,15 +191,18 @@ export async function onRequest({ request, env }) {
     for (const s of [...incoming, ...existing.filter((s) => s && s.auto)]) {
       if (s.id && !byId.has(s.id)) byId.set(s.id, { ...s, profile: s.profile || DEFAULT_PROFILE });
     }
+    // De-dupe by code BEFORE the cap so identical strategies never occupy two of
+    // the (few) auto slots — one good strategy, not the same one twice.
+    const deduped = dedupeByCode([...byId.values()]);
     const perProfile = {};
     const autoItems = [];
-    for (const s of byId.values()) {
+    for (const s of deduped) {
       const p = s.profile;
       perProfile[p] = (perProfile[p] || 0) + 1;
       if (perProfile[p] <= capFor(p)) autoItems.push(s);
     }
 
-    const items = [...manual, ...autoItems];
+    const items = dedupeByCode([...manual, ...autoItems]);
     const payload = JSON.stringify({ items, publishedAt: Date.now() });
     if (payload.length > MAX_STATE_BYTES) return json({ error: "strategies_too_large", max: MAX_STATE_BYTES }, 413);
     await env.SUBSCRIBERS.put("lab:strategies", payload);
