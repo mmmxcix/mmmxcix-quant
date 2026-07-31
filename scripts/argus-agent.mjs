@@ -19,12 +19,11 @@ if (!TOKEN) { console.error("LAB_TOKEN is not set."); process.exit(1); }
 
 const HEAT_CAP = +(process.env.LAB_ARGUS_HEAT || 0.06);
 const BASE_RISK = +(process.env.LAB_ARGUS_RISK || 0.02);
-// Exposure caps — the risk gate for NOTIONAL, not just risk. A tight stop turns a
-// tiny $risk into a huge position; without these a 10k account carried ~60k of
-// positions. Per-trade leverage ≤ MAX_LEVERAGE× equity; total open notional ≤
-// MAX_EXPOSURE× equity. Tunable; conservative day-trader defaults.
-const MAX_LEVERAGE = +(process.env.LAB_ARGUS_MAX_LEVERAGE || 3);
-const MAX_EXPOSURE = +(process.env.LAB_ARGUS_MAX_EXPOSURE || 3);
+// Capital gate: committed MARGIN across all open trades ≤ equity. Since margin =
+// notional / leverage, that means total open notional ≤ MAX_LEVERAGE × equity. A
+// single trade may use the whole budget (all-in), and leverage can be high — the
+// per-trade STOP still caps the loss at ~2%. Tunable (LAB_ARGUS_MAX_LEVERAGE).
+const MAX_LEVERAGE = +(process.env.LAB_ARGUS_MAX_LEVERAGE || 10);
 const DAILY_STOP = +(process.env.LAB_ARGUS_DAILY_STOP || 0.04);
 const EQUITY0 = +(process.env.LAB_ARGUS_EQUITY || 10000);
 // Phase-1 event channel: LLM reads the alt-data briefing and proposes directional
@@ -75,6 +74,7 @@ let pendingCommands = []; // raw dev commands drained this cycle, acked once han
 let lastPersistSig = ""; // skip redundant KV writes on the fast loop (write budget)
 
 const openRisk = () => open.reduce((a, t) => a + t.riskAmt, 0);
+const openNotional = () => open.reduce((a, t) => a + (t.size * t.entry || 0), 0);
 const isCore = (sym) => UNIVERSE.some((u) => u.symbol === sym);
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -210,7 +210,7 @@ function tryOpen(inst, setup, halted) {
 
   const th = openThesis(
     { ...setup, symbol: inst.symbol, market: inst.asset },
-    { equity, openRisk: openRisk(), openNotional: openNotional(), asset: inst.asset, heatCap: HEAT_CAP, baseRiskPct: riskPct, maxLeverage: MAX_LEVERAGE, maxExposure: MAX_EXPOSURE },
+    { equity, openRisk: openRisk(), openNotional: openNotional(), asset: inst.asset, heatCap: HEAT_CAP, baseRiskPct: riskPct, maxLeverage: MAX_LEVERAGE },
   );
   if (th) {
     if (bias && bias.side === th.side) { // enrich a confirmed setup with its catalyst
