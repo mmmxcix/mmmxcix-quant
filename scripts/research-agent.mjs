@@ -669,20 +669,35 @@ const improvePool = ALWAYS_ON
       !NOT_IMPROVABLE.test(g.reason || "") && IMPROVABLE.test(g.reason || ""))
   : [];
 
+// Always-improve: keep polishing CURRENT candidates until one can't be beaten,
+// then declare it maxed out (👑). Round-robin (oldest-polished first), small
+// budget per run so it never starves fresh research or the LLM pool.
+const IMPROVE_MARGIN = +(process.env.LAB_IMPROVE_MARGIN || 3); // DSR points a rewrite must add to count as better
+const POLISH_PER_RUN = Math.max(0, +(process.env.LAB_POLISH_PER_RUN ?? 1));
+const polishPool = (ALWAYS_ON && POLISH_PER_RUN > 0)
+  ? (st.candidates || [])
+      .filter((c) => c.code && !c.maxed && (c.improveTries || 0) < MAX_IMPROVE_TRIES)
+      .sort((a, b) => (a.lastPolishedAt || 0) - (b.lastPolishedAt || 0))
+  : [];
+
 // The full universe: crypto, equity index, single names, forex, across
 // timeframes from 15m to daily. A strategy only has to work SOMEWHERE.
-const datasets = (fresh.length || improvePool.length) ? await loadUniverse(UNIVERSE) : [];
+const datasets = (fresh.length || improvePool.length || polishPool.length) ? await loadUniverse(UNIVERSE) : [];
 
 // Boot the Python runtime once, up front, if Cortex is writing Python and there
 // is work to do — the whole gauntlet then runs signals(df) synchronously through
 // this one Pyodide instance (numpy + pandas). ~3s, amortised over every backtest.
-if (RESEARCH_LANG === "python" && (fresh.length || improvePool.length)) {
+const needPy = RESEARCH_LANG === "python"
+  ? (fresh.length || improvePool.length || polishPool.length)
+  : polishPool.some((c) => c.language === "python"); // polishing a Python candidate needs Pyodide too
+if (needPy) {
   const t = Date.now();
   await initPy((m) => console.log(`  ${m}`));
-  console.log(`Python runtime ready in ${((Date.now() - t) / 1000).toFixed(1)}s — Cortex will write & validate in Python`);
+  console.log(`Python runtime ready in ${((Date.now() - t) / 1000).toFixed(1)}s`);
 }
 
 const newCandidates = [];
+const touchedCandidates = []; // existing candidates the polish phase upgraded or maxed
 const toPromote = [];
 
 // Auto-promote per profile AND per winning market: a strategy that works on
@@ -963,6 +978,66 @@ if (improvePool.length && datasets.length && !(UNTIL_HIT && newCandidates.length
 }
 save(st);
 
+// ── always-on POLISH phase: keep improving CURRENT candidates until maxed ────
+// "Cortex should always try to improve all current strats; only when it sees it
+// probably reached the best possible version can it give up." Each run re-opens
+// one candidate, asks for a STRICTLY better version, and either upgrades it in
+// place (higher DSR) or, after MAX_IMPROVE_TRIES misses, crowns it MAXED OUT so
+// it's left alone. Every attempt is charged to the trial window.
+let polishedThisRun = 0;
+if (polishPool.length && datasets.length) {
+  console.log(`polish: ${polishPool.length} candidate(s) still improvable`);
+  for (const cand of polishPool) {
+    if (polishedThisRun >= POLISH_PER_RUN) break;
+    cand.lastPolishedAt = Date.now();
+    const baseDsr = cand.dsr ?? 0;
+    try {
+      const { code, language } = await improveStrategy({
+        code: cand.code, title: cand.name, language: cand.language,
+        reason: `already validated (DSR ${baseDsr}% on ${cand.bestMarket}); find a STRICTLY better version — higher risk-adjusted return and/or lower drawdown — WITHOUT changing the core edge`,
+      });
+      try { compileCheckFor(code, language); } catch { cand.improveTries = (cand.improveTries || 0) + 1; continue; }
+      st.attempts++;
+      st.attemptLog = [...(st.attemptLog || []), Date.now()].slice(-5000);
+      const verdict = gauntlet(code, datasets, windowTrials(st), language);
+      polishedThisRun++;
+      let finalCode = code;
+      if (verdict.pass) {
+        const plat = applyPlateau(code, language, verdict, st, datasets);
+        if (!plat.ok) verdict.pass = false;
+        else { finalCode = plat.code; Object.assign(verdict, plat.verdict, { plateau: plat.summary }); }
+      }
+      if (verdict.pass && (verdict.dsr ?? 0) >= baseDsr + IMPROVE_MARGIN) {
+        // A genuinely better version — replace the candidate in place and re-promote.
+        Object.assign(cand, {
+          code: finalCode, language, dsr: verdict.dsr, byMarket: verdict.byMarket,
+          markets: verdict.markets, bestMarket: verdict.bestMarket, marketsTested: verdict.marketsTested,
+          profiles: verdict.qualified, improveTries: 0, thesis: parseThesis(finalCode),
+        });
+        cand.name = cleanStrategyName(parseThesis(finalCode).name, finalCode) || cand.name;
+        console.log(`⬆ POLISHED: ${cand.name} — DSR ${baseDsr}% → ${cand.dsr}%`);
+        touchedCandidates.push(cand);
+        queuePromotions(cand, verdict);
+      } else {
+        cand.improveTries = (cand.improveTries || 0) + 1;
+        if (cand.improveTries >= MAX_IMPROVE_TRIES) {
+          cand.maxed = true;
+          touchedCandidates.push(cand);
+          console.log(`👑 MAXED OUT: ${cand.name} — no better version after ${cand.improveTries} tries (DSR ${baseDsr}%)`);
+        } else {
+          console.log(`· polish miss ${cand.improveTries}/${MAX_IMPROVE_TRIES}: ${cand.name}`);
+        }
+      }
+    } catch (e) {
+      if (e.skip) { console.log("~ polish paused (rate-limited)"); break; }
+      cand.improveTries = (cand.improveTries || 0) + 1;
+      console.log(`✗ polish failed: ${String(e.message || "").slice(0, 50)}`);
+    }
+  }
+  st.polished = (st.polished || 0) + polishedThisRun;
+  save(st);
+}
+
 // ── always-on DATA-MINING phase (the second alpha channel) ──────────────────
 // Papers are literature-driven; this channel scans OUR OWN market data for
 // statistically robust anomalies (weekday / lag-1 autocorr / turn-of-month,
@@ -1098,11 +1173,14 @@ if (ALWAYS_ON && datasets.length && INTRADAY_PER_RUN > 0 && !(UNTIL_HIT && newCa
 // health (RiskGate) and to preserve paper state when we merge our summary in.
 const cur = await (await fetch(`${SITE}/api/lab`, { headers: { "x-lab-token": TOKEN } })).json().catch(() => ({}));
 
-// candidates always accumulate on the site
-if (newCandidates.length) {
+// candidates always accumulate on the site — include the ones the polish phase
+// upgraded or crowned (maxed) so their new code / 👑 flag reaches the Registry.
+const pushCandidates = [...newCandidates];
+for (const c of touchedCandidates) if (!pushCandidates.some((x) => x.id === c.id)) pushCandidates.push(c);
+if (pushCandidates.length) {
   const r = await fetch(`${SITE}/api/lab`, {
     method: "POST", headers: { "content-type": "application/json" },
-    body: JSON.stringify({ token: TOKEN, candidates: newCandidates }),
+    body: JSON.stringify({ token: TOKEN, candidates: pushCandidates }),
   });
   console.log(`candidates pushed: ${(await r.json().catch(() => ({}))).stored ?? "?"} stored on site`);
 }
@@ -1163,6 +1241,8 @@ const state = { ...(cur?.state || {}), research: {
   improved: st.improved || 0,
   mined: st.mined || 0,
   intraday: st.intraday || 0,
+  polished: st.polished || 0,
+  maxed: (st.candidates || []).filter((c) => c.maxed).length,
   alwaysOn: ALWAYS_ON,
   sources: brainSources(st),
   // What each source actually yielded this run — makes a quietly dead feed

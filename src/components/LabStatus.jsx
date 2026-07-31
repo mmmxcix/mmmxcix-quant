@@ -436,6 +436,16 @@ function LabStatus() {
                     intraday <span className="text-text">{data.research.intraday}</span>
                   </span>
                 )}
+                {data.research.polished > 0 && (
+                  <span className="text-dim" title="Polish loop: Cortex re-opens current strategies and tries to find a strictly better version">
+                    polished <span className="text-text">{data.research.polished}</span>
+                  </span>
+                )}
+                {data.research.maxed > 0 && (
+                  <span className="text-dim" title="Maxed out 👑 — candidates Cortex couldn't improve further; they're the best version and left alone">
+                    maxed <span className="text-yellow-400">👑 {data.research.maxed}</span>
+                  </span>
+                )}
               </div>
               {data.research.sourceYield && (
                 <p className="text-[10px] text-dim/80 mt-1.5">

@@ -140,6 +140,38 @@ function AgentCandidates() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items, autoPromote, autoDsr]);
 
+  // Auto-progression + crown sync: keep the pipeline reflecting REALITY. A Cortex
+  // entry advances Factory → Validated once its candidate has been re-validated,
+  // and → Paper once it's actually trading in the live paper book (lab:strategies).
+  // Forward-only — a manual move is never dragged backward. And a candidate Cortex
+  // maxed out gets its 👑 crown even if it was imported earlier.
+  useEffect(() => {
+    if (!Array.isArray(items)) return;
+    let alive = true;
+    (async () => {
+      const tradingIds = new Set();
+      try {
+        const out = await (await fetch("/api/lab?what=strategies")).json();
+        for (const s of out?.strategies?.items || []) if (s.candidateId) tradingIds.add(s.candidateId);
+      } catch { /* offline — skip the paper step this pass */ }
+      if (!alive) return;
+      const byCand = new Map(items.map((c) => [c.id, c]));
+      const order = { factory: 0, validated: 1, paper: 2 };
+      for (const e of getEntries()) {
+        if (!e.candidateId || e.status === "graveyard") continue;
+        const c = byCand.get(e.candidateId);
+        if (c?.maxed && !e.crowned) setCrowned(e.id, true);
+        if (!autoPromote) continue;
+        let target = null;
+        if (tradingIds.has(e.candidateId)) target = "paper";
+        else if (c?.revalidatedDsr != null) target = "validated";
+        if (target && (order[target] ?? -1) > (order[e.status] ?? -1)) setStatus(e.id, target);
+      }
+    })();
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, autoPromote]);
+
   // The candidate FEED is gone — new finds auto-import into the library below.
   // This renders only the small ingestion control (auto-add + DSR bar).
   return (
