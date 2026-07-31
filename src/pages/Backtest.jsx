@@ -704,7 +704,8 @@ export default function Backtest() {
                     <code className="text-accent">-1</code> short. <code>df</code> has columns{" "}
                     <code>open/high/low/close/volume</code>; <code>numpy</code> + <code>pandas</code> available.
                     Runs real CPython (Pyodide, ~6 MB, loads on first run) — the signals feed the same fill
-                    engine as JS, so fees and no-look-ahead are identical. No intrabar brackets in Python yet.
+                    engine as JS, so fees and no-look-ahead are identical. For stop/target brackets, return a
+                    <code className="text-accent"> DataFrame</code> with <code>signal</code>/<code>stop</code>/<code>target</code> columns.
                   </p>
                 ) : (
                   <p className="text-[11px] text-dim leading-relaxed">

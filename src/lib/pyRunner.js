@@ -69,6 +69,10 @@ export async function runPythonSignals(code, candles, onProgress) {
   // The user code defines signals(df); we build df, call it, and normalise the
   // result to a plain list of -1/0/1 ints the JS engine can read. The strategy
   // contract is documented in the editor template.
+  // signals(df) may return a Series/array of -1/0/1 (signal-only) OR a DataFrame
+  // with a 'signal' column plus optional 'stop'/'target' columns (intrabar bracket
+  // orders — the same {signal,stop,target} the JS engine supports). Always yields
+  // { signal:int[], stop, target } with stop/target float|None per bar.
   const wrapper =
     "import numpy as np\n" +
     "import pandas as pd\n" +
@@ -76,19 +80,25 @@ export async function runPythonSignals(code, candles, onProgress) {
     code + "\n" +
     "def _run():\n" +
     "    s = signals(_df)\n" +
-    "    arr = np.asarray(s).astype(float)\n" +
-    "    arr = np.nan_to_num(arr, nan=0.0)\n" +
-    "    arr = np.clip(np.sign(arr), -1, 1)\n" + // any positive→long, negative→short, 0→flat
-    "    if len(arr) != len(_df):\n" +
-    "        raise ValueError(f'signals returned {len(arr)} values for {len(_df)} bars')\n" +
-    "    return [int(x) for x in arr]\n" +
+    "    n = len(_df)\n" +
+    "    if isinstance(s, pd.DataFrame):\n" +
+    "        sig = np.asarray(s['signal']).astype(float) if 'signal' in s.columns else np.zeros(n)\n" +
+    "        stop = np.asarray(s['stop']).astype(float) if 'stop' in s.columns else np.full(n, np.nan)\n" +
+    "        target = np.asarray(s['target']).astype(float) if 'target' in s.columns else np.full(n, np.nan)\n" +
+    "    else:\n" +
+    "        sig = np.asarray(s).astype(float); stop = np.full(n, np.nan); target = np.full(n, np.nan)\n" +
+    "    sig = np.clip(np.sign(np.nan_to_num(sig, nan=0.0)), -1, 1)\n" +
+    "    if len(sig) != n:\n" +
+    "        raise ValueError(f'signals returned {len(sig)} values for {n} bars')\n" +
+    "    clean = lambda a: [None if (a[i] is None or np.isnan(a[i])) else float(a[i]) for i in range(n)]\n" +
+    "    return {'signal': [int(x) for x in sig], 'stop': clean(stop), 'target': clean(target)}\n" +
     "_result = _run()\n";
 
   let result;
   try {
     py.runPython(wrapper);
     const proxy = py.globals.get("_result");
-    result = Array.from(proxy.toJs());
+    result = proxy.toJs({ dict_converter: Object.fromEntries });
     proxy.destroy?.();
   } catch (e) {
     // Pyodide surfaces the Python traceback in the message — keep the last line.
@@ -100,16 +110,29 @@ export async function runPythonSignals(code, candles, onProgress) {
   return result;
 }
 
-/** Map a Python signal array to the JS engine's per-bar signalFn contract. */
+/** Map a Python signals result to the JS engine's per-bar signalFn contract.
+ *  Accepts the legacy array shape OR the { signal, stop, target } bracket shape. */
 export function signalsToFn(signals) {
   const M = { 1: "long", 0: "flat", "-1": "short" };
-  return (ctx) => M[signals[ctx.index]] ?? "flat";
+  if (Array.isArray(signals)) return (ctx) => M[signals[ctx.index]] ?? "flat"; // legacy signal-only
+  const { signal, stop, target } = signals || {};
+  return (ctx) => {
+    const i = ctx.index;
+    const sig = M[signal?.[i]] ?? "flat";
+    const s = stop?.[i], t = target?.[i];
+    return (s != null || t != null) ? { signal: sig, stop: s ?? undefined, target: t ?? undefined } : sig;
+  };
 }
 
 /** The starter Python shown in the editor when the user switches to Python. */
 export const PYTHON_TEMPLATE = `# Python strategy — define signals(df) returning one value per bar:
 #   1 = long, 0 = flat, -1 = short.  No look-ahead: row i may only use rows <= i.
 # df columns: open, high, low, close, volume  (pandas DataFrame). numpy + pandas available.
+#
+# For intrabar STOP/TARGET brackets, return a DataFrame instead of a Series:
+#   return pd.DataFrame({'signal': sig, 'stop': stop_px, 'target': target_px})
+# NaN in stop/target = no bracket that side. The engine fills the stop first if
+# both sit inside one bar, exactly like the JS engine.
 import numpy as np
 import pandas as pd
 

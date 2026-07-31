@@ -52,21 +52,35 @@ export function pyReady() { return !!_py; }
 // browser runner's normalisation exactly: sign() so any positive→long,
 // negative→short; NaN→0 (warm-up); and a hard length check so a mis-shaped
 // Series is a loud failure, never a silent misalignment.
+// signals(df) may return EITHER a Series/array of -1/0/1 (signal-only, the
+// original contract) OR a DataFrame with a 'signal' column plus optional 'stop'
+// and 'target' columns — intrabar bracket orders, the same {signal,stop,target}
+// the JS engine already supports. Always returns { signal:int[], stop, target }
+// where stop/target are float|None per bar (None = no bracket that side).
+const PY_WRAPPER_BODY =
+  "def _run():\n" +
+  "    s = signals(_df)\n" +
+  "    n = len(_df)\n" +
+  "    if isinstance(s, pd.DataFrame):\n" +
+  "        sig = np.asarray(s['signal']).astype(float) if 'signal' in s.columns else np.zeros(n)\n" +
+  "        stop = np.asarray(s['stop']).astype(float) if 'stop' in s.columns else np.full(n, np.nan)\n" +
+  "        target = np.asarray(s['target']).astype(float) if 'target' in s.columns else np.full(n, np.nan)\n" +
+  "    else:\n" +
+  "        sig = np.asarray(s).astype(float); stop = np.full(n, np.nan); target = np.full(n, np.nan)\n" +
+  "    sig = np.clip(np.sign(np.nan_to_num(sig, nan=0.0)), -1, 1)\n" +
+  "    if len(sig) != n:\n" +
+  "        raise ValueError(f'signals returned {len(sig)} values for {n} bars')\n" +
+  "    clean = lambda a: [None if (a[i] is None or np.isnan(a[i])) else float(a[i]) for i in range(n)]\n" +
+  "    return {'signal': [int(x) for x in sig], 'stop': clean(stop), 'target': clean(target)}\n" +
+  "_result = _run()\n";
+
 function buildWrapper(code) {
   return (
     "import numpy as np\n" +
     "import pandas as pd\n" +
     "_df = pd.DataFrame({'open': list(_o), 'high': list(_h), 'low': list(_l), 'close': list(_c), 'volume': list(_v)})\n" +
     code + "\n" +
-    "def _run():\n" +
-    "    s = signals(_df)\n" +
-    "    arr = np.asarray(s).astype(float)\n" +
-    "    arr = np.nan_to_num(arr, nan=0.0)\n" +
-    "    arr = np.clip(np.sign(arr), -1, 1)\n" +
-    "    if len(arr) != len(_df):\n" +
-    "        raise ValueError(f'signals returned {len(arr)} values for {len(_df)} bars')\n" +
-    "    return [int(x) for x in arr]\n" +
-    "_result = _run()\n"
+    PY_WRAPPER_BODY
   );
 }
 
@@ -76,7 +90,7 @@ function buildWrapper(code) {
  * last line on any error (compile, runtime, or wrong length).
  * @param {string} code
  * @param {Array}  candles [{time,open,high,low,close,volume}]
- * @returns {number[]} one signal per bar: 1 / 0 / -1
+ * @returns {{signal:number[],stop:(number|null)[],target:(number|null)[]}}
  */
 export function pyStrategySignals(code, candles) {
   if (!_py) throw new Error("Pyodide not initialised — await initPy() first.");
@@ -89,7 +103,7 @@ export function pyStrategySignals(code, candles) {
   try {
     py.runPython(buildWrapper(code));
     const proxy = py.globals.get("_result");
-    const out = Array.from(proxy.toJs());
+    const out = proxy.toJs({ dict_converter: Object.fromEntries });
     proxy.destroy?.();
     return out;
   } catch (e) {
@@ -123,11 +137,16 @@ export function compilePyStrategy(code) {
   if (!/\bdef\s+signals\s*\(/.test(code)) {
     throw new Error('Python strategy must define a function named "signals", e.g. `def signals(df): ...`.');
   }
-  const cache = new WeakMap(); // candle array → signal array (one Python run per array)
+  const cache = new WeakMap(); // candle array → { signal, stop, target } (one Python run per array)
   return (ctx) => {
-    let sigs = cache.get(ctx.candles);
-    if (!sigs) { sigs = pyStrategySignals(code, ctx.candles); cache.set(ctx.candles, sigs); }
-    return SIGMAP[sigs[ctx.index]] ?? "flat";
+    let out = cache.get(ctx.candles);
+    if (!out) { out = pyStrategySignals(code, ctx.candles); cache.set(ctx.candles, out); }
+    const i = ctx.index;
+    const sig = SIGMAP[out.signal[i]] ?? "flat";
+    const stop = out.stop?.[i], target = out.target?.[i];
+    // Emit a bracket only when the strategy set one; otherwise the plain signal
+    // (identical to the old signal-only behaviour).
+    return (stop != null || target != null) ? { signal: sig, stop: stop ?? undefined, target: target ?? undefined } : sig;
   };
 }
 
