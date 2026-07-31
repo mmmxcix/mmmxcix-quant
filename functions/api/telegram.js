@@ -31,6 +31,17 @@ function json(body, status = 200, extraHeaders = {}) {
   });
 }
 
+function safeEqual(a, b) {
+  const enc = new TextEncoder();
+  const ab = enc.encode(String(a)), bb = enc.encode(String(b));
+  if (ab.length !== bb.length) return false;
+  let d = 0;
+  for (let i = 0; i < ab.length; i++) d |= ab[i] ^ bb[i];
+  return d === 0;
+}
+
+const PUSH_FRESH_MS = 10 * 60_000; // MTProto store counts as live for 10 min
+
 function decodeEntities(s) {
   return String(s)
     .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
@@ -77,7 +88,36 @@ async function fetchChannel({ user, tag }) {
 }
 
 export async function onRequest(context) {
-  const { request } = context;
+  const { request, env } = context;
+  const db = env.DB;
+
+  // POST — the local MTProto poller (scripts/telegram-mtproto.mjs) pushes messages
+  // it read via Telegram's native protocol (catches image-caption channels like
+  // FirstSquawk/DeItaone that the t.me/s/ scrape can't). Token-gated, stored in D1.
+  if (request.method === "POST") {
+    let body;
+    try { body = await request.json(); } catch { return json({ error: "bad_json" }, 400); }
+    if (!env.DEV_ACCESS_TOKEN || !safeEqual(body.token || "", env.DEV_ACCESS_TOKEN)) return json({ error: "unauthorized" }, 401);
+    if (db && Array.isArray(body.items)) {
+      try {
+        await db.prepare("INSERT INTO argus_kv (key, data, updated_at) VALUES ('telegram', ?, ?) ON CONFLICT(key) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at")
+          .bind(JSON.stringify(body.items.slice(0, 150)), Date.now()).run();
+      } catch (e) { return json({ error: "db_write_failed", detail: String(e?.message || e) }, 503); }
+    }
+    return json({ ok: true, stored: body.items?.length || 0 });
+  }
+
+  // GET — prefer the MTProto-pushed store when it's fresh (richer, faster), else
+  // fall back to the public t.me/s/ scrape below.
+  if (db) {
+    try {
+      const row = await db.prepare("SELECT data, updated_at FROM argus_kv WHERE key = 'telegram'").first();
+      if (row && Date.now() - row.updated_at < PUSH_FRESH_MS) {
+        return json({ ok: true, items: JSON.parse(row.data), source: "mtproto", note: "OSINT — unverified, fast (MTProto)." }, 200, { "cache-control": "public, max-age=30" });
+      }
+    } catch { /* fall through to scrape */ }
+  }
+
   const cacheKey = new Request(new URL(request.url).origin + "/api/telegram", request);
   let cache = null;
   try {
