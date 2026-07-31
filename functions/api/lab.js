@@ -35,34 +35,100 @@ async function readStrategyItems(env) {
 }
 
 // A stable signature for a published strategy: its instrument + its normalized
-// source code (comments/whitespace stripped). Two strategies with the same sig
-// are THE SAME strategy republished under different names.
+// source code (comments/whitespace stripped — so a differing "// NAME:" comment
+// does NOT count). Two strategies with the same sig are THE SAME strategy
+// republished under different names.
 function stratSig(s) {
   const code = String(s?.code || "")
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/\/\/[^\n]*/g, "")
+    .replace(/#[^\n]*/g, "")           // python comments too
     .replace(/\s+/g, "")
     .toLowerCase();
   return `${String(s?.symbol || "").toUpperCase()}|${s?.interval || ""}|${code}`;
 }
 
-// Collapse duplicate published strategies (identical instrument + code) to one
-// entry — the SOURCE fix for "the same strat is in the list 2×". Keeps the best
-// copy per signature: a manual publish beats an auto-promotion, and among equals
-// the one already in the list (earliest) wins, so ids stay stable across runs.
-// Entries with no code (can't be compared) are always kept. Order is preserved.
+// A NAME-based identity: instrument + the strategy's base name with provenance
+// decoration stripped ("[research] ", "🤖 ", "improved · ", trailing "· SYM tf").
+// Catches duplicates the code-sig misses — e.g. a broken/truncated "[research]"
+// twin whose code differs from its working promotion but is plainly the same
+// strategy by name.
+function nameKey(s) {
+  let n = String(s?.name || "").toLowerCase()
+    .replace(/^\s*\[[^\]]*\]\s*/g, "")                 // [research]
+    .replace(/^\s*(?:🤖|✨|📈|🔥|⭐|🚀)\s*/gu, "")        // emoji badge
+    .replace(/^\s*(?:improved|variant|mined)\s*·\s*/g, "") // provenance
+    .replace(/\s*·\s*[^·]*\b(?:daily|weekly|\d+\s*(?:m|min|h|d|w))\s*$/g, "") // "· BTC/USDT daily"
+    .replace(/\s+/g, " ").trim();
+  return `${String(s?.symbol || "").toUpperCase()}|${s?.interval || ""}|${n}`;
+}
+
+// Does the code actually define a runnable strategy? An entry whose code can't
+// even define strategy()/signals() errors every single cycle and is invariably a
+// broken twin of a working promotion — safe (and correct) to delete.
+function codeIsRunnable(s) {
+  const c = String(s?.code || "");
+  if (!c) return true; // builder / no-code entries — not our concern
+  return /function\s+strategy\b|(?:const|let|var)\s+strategy\s*=|\bstrategy\s*=\s*(?:function|\(|async)|def\s+(?:signals|strategy)\s*\(/.test(c);
+}
+
+// Fix a wrong/missing `language` tag by INFERRING it from the code. Several
+// legacy entries carry Python code (`def signals(df)`) with an empty language,
+// so the agent compiled them as JS and they errored every cycle. Setting the
+// right language makes them RUN instead of getting deleted.
+function normalizeLanguage(s) {
+  if (!s || !s.code) return s;
+  const c = String(s.code);
+  const isPy = /def\s+(?:signals|strategy)\s*\(/.test(c) && !/function\s+strategy\b/.test(c);
+  const isJs = /function\s+strategy\b|(?:const|let|var)\s+strategy\s*=/.test(c);
+  const want = isPy ? "python" : isJs ? "js" : s.language;
+  return (want && want !== s.language) ? { ...s, language: want } : s;
+}
+
+// The full tidy pass applied wherever lab:strategies is written or self-healed:
+// fix languages first (so dedupe/runnability see the truth), collapse duplicates,
+// then clean legacy names.
+function tidyStrategies(items) {
+  return cleanNames(dedupeByCode((items || []).map(normalizeLanguage)));
+}
+
+// Among two duplicates, which to KEEP: a runnable entry beats a broken one, a
+// manual publish beats an auto-promotion, a clean name beats a "[research]" one,
+// and otherwise the incumbent (earliest) wins so ids stay stable across runs.
+function preferKeep(incumbent, challenger) {
+  const ir = codeIsRunnable(incumbent), cr = codeIsRunnable(challenger);
+  if (ir !== cr) return ir ? incumbent : challenger;
+  if (!!incumbent.auto !== !!challenger.auto) return incumbent.auto ? challenger : incumbent;
+  const iBad = /^\s*\[/.test(incumbent.name || ""), cBad = /^\s*\[/.test(challenger.name || "");
+  if (iBad !== cBad) return iBad ? challenger : incumbent;
+  return incumbent;
+}
+
+// Delete duplicate published strategies — the SOURCE fix for "the same strat is
+// in the list 2×". First DROP entries whose code can't run at all (they error
+// forever and are always a broken duplicate), then collapse the rest by code
+// signature OR name identity, keeping the best copy of each. Order preserved.
 function dedupeByCode(items) {
-  const kept = new Map(); // sig -> index in out
+  const runnable = items.filter((s) => s && s.id && codeIsRunnable(s));
+  const byCode = new Map(); // sig -> index in out
+  const byName = new Map(); // nameKey -> index in out
   const out = [];
-  for (const s of items) {
-    if (!s || !s.id) continue;
-    if (!s.code) { out.push(s); continue; } // uncomparable → keep
-    const sig = stratSig(s);
-    if (!kept.has(sig)) { kept.set(sig, out.length); out.push(s); continue; }
-    const idx = kept.get(sig);
-    const prev = out[idx];
-    // A manual entry supersedes an auto duplicate; otherwise drop the newcomer.
-    if (prev.auto && !s.auto) out[idx] = s;
+  for (const s of runnable) {
+    const cs = s.code ? stratSig(s) : null;
+    const ns = nameKey(s);
+    let idx = (cs != null && byCode.has(cs)) ? byCode.get(cs)
+            : (byName.has(ns) ? byName.get(ns) : -1);
+    if (idx === -1) {
+      idx = out.length; out.push(s);
+      if (cs != null) byCode.set(cs, idx);
+      byName.set(ns, idx);
+      continue;
+    }
+    // duplicate of out[idx] — keep the better of the two, re-point its sigs
+    const keep = preferKeep(out[idx], s);
+    out[idx] = keep;
+    if (keep.code) byCode.set(stratSig(keep), idx);
+    byName.set(nameKey(keep), idx);
   }
   return out;
 }
@@ -135,7 +201,7 @@ export async function onRequest({ request, env, waitUntil }) {
       // cycle) and the UI see a deduped, well-named list — persisted back when it
       // actually changed.
       if (field === "strategies" && Array.isArray(parsed?.items)) {
-        const cleaned = cleanNames(dedupeByCode(parsed.items));
+        const cleaned = tidyStrategies(parsed.items);
         if (JSON.stringify(cleaned) !== JSON.stringify(parsed.items)) {
           parsed.items = cleaned;
           const write = env.SUBSCRIBERS.put("lab:strategies", JSON.stringify({ items: cleaned, publishedAt: Date.now() }));
@@ -180,7 +246,7 @@ export async function onRequest({ request, env, waitUntil }) {
     const manual = body.strategies.map((s) => ({ ...s, auto: false }));
     const byId = new Map();
     for (const s of [...manual, ...existingAuto]) if (s && s.id && !byId.has(s.id)) byId.set(s.id, s);
-    const items = cleanNames(dedupeByCode([...byId.values()]));
+    const items = tidyStrategies([...byId.values()]);
     const payload = JSON.stringify({ items, publishedAt: Date.now() });
     if (payload.length > MAX_STATE_BYTES) return json({ error: "strategies_too_large", max: MAX_STATE_BYTES }, 413);
     await env.SUBSCRIBERS.put("lab:strategies", payload);
@@ -215,7 +281,7 @@ export async function onRequest({ request, env, waitUntil }) {
       if (perProfile[p] <= capFor(p)) autoItems.push(s);
     }
 
-    const items = cleanNames(dedupeByCode([...manual, ...autoItems]));
+    const items = tidyStrategies([...manual, ...autoItems]);
     const payload = JSON.stringify({ items, publishedAt: Date.now() });
     if (payload.length > MAX_STATE_BYTES) return json({ error: "strategies_too_large", max: MAX_STATE_BYTES }, 413);
     await env.SUBSCRIBERS.put("lab:strategies", payload);
