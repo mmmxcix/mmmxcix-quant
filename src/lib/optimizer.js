@@ -7,6 +7,77 @@
 // reproducible. See docs (Video-5 optimization stack: Grid/Bayesian/Genetic,
 // selectable objective, walk-forward over-fit check).
 
+// ── custom-code parameter detection ─────────────────────────────────────────
+// So the optimizer works on ANY strategy, not just the builder presets: detect
+// the tunable UPPER_CASE numeric constants at the top of a hand-written strategy
+// (JS or Python) — both single (`RANGE_BARS = 6`) and tuple (`A, B, C = 1, 2, 3`)
+// assignments — and expose them as a param space plus a substitution helper.
+
+const TUPLE_RE = /^(\s*(?:const\s+|let\s+|var\s+)?)([A-Z][A-Z0-9_]*(?:\s*,\s*[A-Z][A-Z0-9_]*)+)(\s*=\s*)(.+?)(\s*;?\s*)$/;
+const SINGLE_RE = /^(\s*(?:const\s+|let\s+|var\s+)?)([A-Z][A-Z0-9_]*)(\s*=\s*)(-?\d+(?:\.\d+)?)(\s*;?\s*)$/;
+const NUM = /^-?\d+(?:\.\d+)?$/;
+
+// Parse the tunable constants out of code → { consts:{KEY:num}, assigns:[…] }.
+function parseConstants(code) {
+  const lines = String(code || "").split("\n");
+  const consts = {};
+  const assigns = [];
+  lines.forEach((ln, i) => {
+    let m = ln.match(TUPLE_RE);
+    if (m) {
+      const names = m[2].split(",").map((s) => s.trim());
+      const vals = m[4].split(",").map((s) => s.trim());
+      if (names.length >= 2 && names.length === vals.length && vals.every((v) => NUM.test(v))) {
+        names.forEach((n, k) => { consts[n] = +vals[k]; });
+        assigns.push({ line: i, names, kind: "tuple" });
+        return;
+      }
+    }
+    m = ln.match(SINGLE_RE);
+    if (m) { consts[m[2]] = +m[4]; assigns.push({ line: i, names: [m[2]], kind: "single" }); }
+  });
+  return { consts, assigns, lines };
+}
+
+// A sensible sweep range around a value, scaled to its magnitude. Period-like
+// positive integers never go ≤ 0.
+function rangeFor(v) {
+  const a = Math.abs(v);
+  let step;
+  if (Number.isInteger(v)) step = a >= 100 ? 10 : a >= 20 ? 5 : a >= 5 ? 2 : 1;
+  else step = a >= 1 ? 0.5 : a >= 0.1 ? 0.05 : 0.005;
+  let min = v - 5 * step, max = v + 5 * step;
+  if (v > 0) min = Math.max(step, min);
+  return { min: +min.toFixed(6), max: +max.toFixed(6), step, integer: Number.isInteger(v) };
+}
+
+/** Param space [{key,default,min,max,step,integer}] from a code string, or []. */
+export function codeParamSpace(code) {
+  const { consts } = parseConstants(code);
+  return Object.entries(consts).map(([key, v]) => ({ key, default: v, ...rangeFor(v) }));
+}
+
+/** Return a copy of `code` with the detected constants set to `values` (a
+ *  {KEY:num} map). Assignments not present in `values` are left untouched. */
+export function substituteConstants(code, values) {
+  const { assigns, lines } = parseConstants(code);
+  const out = [...lines];
+  for (const a of assigns) {
+    const ln = lines[a.line];
+    if (a.kind === "single") {
+      const nv = values[a.names[0]];
+      if (nv != null) out[a.line] = ln.replace(SINGLE_RE, `$1$2$3${nv}$5`);
+    } else {
+      const m = ln.match(TUPLE_RE);
+      if (m) {
+        const rhs = a.names.map((n) => (values[n] != null ? values[n] : parseConstants(ln).consts[n])).join(", ");
+        out[a.line] = `${m[1]}${m[2]}${m[3]}${rhs}${m[5]}`;
+      }
+    }
+  }
+  return out.join("\n");
+}
+
 // ── deterministic RNG (mulberry32) ──────────────────────────────────────────
 function mulberry32(seed) {
   let a = seed >>> 0;
