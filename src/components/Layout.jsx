@@ -6,6 +6,7 @@ import DitherBackground from "@/components/DitherBackground";
 import CommandPalette from "@/components/CommandPalette";
 import { authClient, useSession, signOut } from "@/lib/authClient";
 import { THEME_MODES, applyThemeMode, getThemeMode, storeThemeMode } from "@/lib/theme";
+import { syncFromServer as syncPrefs, restoreBackups } from "@/lib/portfolio";
 
 // ⌘ on macOS, Ctrl elsewhere — shown in the quick-nav affordance.
 const KBD_HINT = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform) ? "⌘K" : "Ctrl K";
@@ -220,6 +221,13 @@ function LegalLinks({ small }) {
 export default function Layout({ children }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const location = useLocation();
+
+  // Durability: recover any locally-backed-up watchlist/portfolio entries, then
+  // merge with the server copy so a localStorage clear can never lose them.
+  useEffect(() => {
+    restoreBackups();
+    syncPrefs();
+  }, []);
 
   // Close the mobile drawer on route change and lock body scroll while open.
   useEffect(() => { setDrawerOpen(false); }, [location.pathname]);

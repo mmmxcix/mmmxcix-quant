@@ -30,6 +30,8 @@ export const STATUS_META = {
   graveyard: { label: "Graveyard", hint: "Buried — kept as a record of what failed" },
 };
 
+const BACKUP_KEY = KEY + "_backup";
+
 function read() {
   try {
     const raw = localStorage.getItem(KEY);
@@ -41,8 +43,61 @@ function read() {
 }
 
 function write(list) {
-  try { localStorage.setItem(KEY, JSON.stringify(list)); } catch { /* private mode / quota */ }
+  try {
+    // SHRINK GUARD: never let a write silently destroy strategies. If the new
+    // list has fewer entries than what's stored, stash the current version in a
+    // backup first, so an accidental overwrite / bad sync is always recoverable
+    // (restoreBackup / auto-restore on next load). This is the safety net that
+    // makes losing your library impossible.
+    const prevRaw = localStorage.getItem(KEY);
+    if (prevRaw) {
+      const prev = JSON.parse(prevRaw);
+      if (Array.isArray(prev) && prev.length > (Array.isArray(list) ? list.length : 0)) {
+        localStorage.setItem(BACKUP_KEY, prevRaw);
+      }
+    }
+    localStorage.setItem(KEY, JSON.stringify(list));
+  } catch { /* private mode / quota */ }
   listeners.forEach((fn) => fn());
+}
+
+/** The last pre-shrink snapshot, if any — strategies that were dropped by a
+ *  write can be recovered from here. */
+export function readBackup() {
+  try {
+    const raw = localStorage.getItem(BACKUP_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    return Array.isArray(arr) ? arr : [];
+  } catch { return []; }
+}
+
+/** Restore any strategies present in the backup but missing from the live
+ *  library (union — never removes current ones). Returns how many came back. */
+export function restoreBackup() {
+  const backup = readBackup();
+  if (!backup.length) return 0;
+  const cur = read();
+  const have = new Set(cur.map((e) => e.id));
+  const missing = backup.filter((e) => e && e.id && !have.has(e.id));
+  if (missing.length) {
+    const merged = [...cur, ...missing];
+    write(merged);
+    push({ bulkUpsert: missing });
+  }
+  return missing.length;
+}
+
+// Merge two entry lists by id — union, keeping the NEWER copy of any duplicate
+// (by statusAt / createdAt). Never drops an entry that exists on either side.
+function mergeById(a, b) {
+  const by = new Map();
+  const stamp = (e) => Math.max(e?.statusAt || 0, e?.createdAt || 0);
+  for (const e of [...a, ...b]) {
+    if (!e || !e.id) continue;
+    const cur = by.get(e.id);
+    if (!cur || stamp(e) >= stamp(cur)) by.set(e.id, e);
+  }
+  return [...by.values()];
 }
 
 // ── Server sync (D1-backed /api/library, admin-gated) ────────────────────────
@@ -69,11 +124,17 @@ export async function syncFromServer() {
     const j = await r.json();
     if (!j.ok || !Array.isArray(j.entries)) return false;
     const local = read();
-    if (j.entries.length === 0 && local.length > 0) {
-      await push({ bulkUpsert: local }); // migrate this browser's library to the server
-      return true;
-    }
-    write(j.entries); // server is the source of truth
+    // NON-DESTRUCTIVE: union local + server by id (newer wins). The server is a
+    // MIRROR, not a replacement — a strategy that only exists locally (saved while
+    // the D1 push was offline) is NEVER destroyed by a sync. This is the bug that
+    // wiped self-found strategies: `write(j.entries)` blindly overwrote local.
+    const merged = mergeById(local, j.entries);
+    write(merged);
+    // Push anything the server is missing back UP, so a future localStorage clear
+    // can't lose it — the library becomes durable across devices and resets.
+    const serverIds = new Set(j.entries.map((e) => e.id));
+    const localOnly = local.filter((e) => e && e.id && !serverIds.has(e.id));
+    if (localOnly.length) push({ bulkUpsert: localOnly });
     return true;
   } catch { return false; }
 }

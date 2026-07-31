@@ -54,8 +54,100 @@ function readArray(key) {
 }
 
 function writeArray(key, arr) {
+  // SHRINK GUARD: if this write would drop entries, stash the current version to
+  // a backup first so an accidental wipe is recoverable (restoreBackups on load).
+  const prev = readArray(key);
+  if (Array.isArray(prev) && prev.length > (Array.isArray(arr) ? arr.length : 0)) {
+    safeSet(key + "_backup", JSON.stringify(prev));
+  }
   safeSet(key, JSON.stringify(arr));
+  pushToServer(key, arr); // durable server copy — survives a localStorage clear
   emit();
+}
+
+// ── Durable server mirror (/api/prefs → D1) ──────────────────────────────────
+// localStorage is fast but fragile (a browser clear wiped the watchlist &
+// portfolio once). Every write is mirrored to the server, and syncFromServer()
+// merges the two on load — NON-destructively, union by identity, so nothing is
+// ever lost from either side.
+const SERVER_NAME = { [WATCHLIST_KEY]: "watchlist", [PORTFOLIO_KEY]: "portfolio" };
+
+async function pushToServer(key, arr) {
+  const name = SERVER_NAME[key];
+  if (!name || typeof fetch === "undefined") return;
+  try {
+    await fetch("/api/prefs", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ key: name, data: arr }), keepalive: true,
+    });
+  } catch { /* offline — local copy still holds it, retried on next write/sync */ }
+}
+
+function mergeWatchlist(a, b) {
+  const by = new Map();
+  for (const e of [...a, ...b]) {
+    if (!e || !e.market || !e.symbol) continue;
+    by.set(`${e.market}|${String(e.symbol).toUpperCase()}`, e);
+  }
+  return [...by.values()];
+}
+
+function mergePortfolio(a, b) {
+  const by = new Map();
+  const stamp = (e) => Math.max(e?.sellDate || 0, e?.buyDate || 0, e?.addedAt || 0);
+  for (const e of [...a, ...b]) {
+    if (!e || !e.id) continue;
+    const cur = by.get(e.id);
+    if (!cur || stamp(e) >= stamp(cur)) by.set(e.id, e);
+  }
+  return [...by.values()];
+}
+
+/** Pull watchlist + portfolio from the server and MERGE with local (union, newer
+ *  wins). Never destroys local-only entries; pushes the merged truth back up. */
+export async function syncFromServer() {
+  if (typeof fetch === "undefined") return false;
+  let changed = false;
+  for (const [key, merge] of [[WATCHLIST_KEY, mergeWatchlist], [PORTFOLIO_KEY, mergePortfolio]]) {
+    try {
+      const r = await fetch(`/api/prefs?key=${SERVER_NAME[key]}`);
+      if (!r.ok) continue;
+      const j = await r.json();
+      const server = Array.isArray(j.data) ? j.data : [];
+      const local = readArray(key);
+      const merged = merge(local, server);
+      if (merged.length !== local.length || merged.length !== server.length) {
+        safeSet(key, JSON.stringify(merged));
+        pushToServer(key, merged);
+        changed = true;
+      }
+    } catch { /* offline */ }
+  }
+  if (changed) emit();
+  return changed;
+}
+
+/** Recover watchlist/portfolio entries a bad write may have dropped, from the
+ *  shrink-guard backup. Union — never removes current entries. */
+export function restoreBackups() {
+  let recovered = 0;
+  for (const [key, merge] of [[WATCHLIST_KEY, mergeWatchlist], [PORTFOLIO_KEY, mergePortfolio]]) {
+    const raw = safeGet(key + "_backup");
+    if (!raw) continue;
+    try {
+      const backup = JSON.parse(raw);
+      if (!Array.isArray(backup) || !backup.length) continue;
+      const cur = readArray(key);
+      const merged = merge(cur, backup);
+      if (merged.length > cur.length) {
+        recovered += merged.length - cur.length;
+        safeSet(key, JSON.stringify(merged));
+        pushToServer(key, merged);
+      }
+    } catch { /* ignore corrupt backup */ }
+  }
+  if (recovered) emit();
+  return recovered;
 }
 
 // ── Pub/sub ──────────────────────────────────────────────────────────────────

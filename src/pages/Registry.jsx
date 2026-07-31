@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Boxes, Trash2, Skull, ShieldCheck, FlaskConical, Rocket, Grid3x3, Info, Send, Loader2, Check, Scale, Wrench, Search, Crown } from "lucide-react";
 import {
-  getEntries, subscribeRegistry, setStatus, setCrowned, removeEntry, STATUS_META, correlationMatrix, saveEntry, syncFromServer,
+  getEntries, subscribeRegistry, setStatus, setCrowned, removeEntry, STATUS_META, correlationMatrix, saveEntry, syncFromServer, restoreBackup,
 } from "@/lib/registry";
 import { cn, fmtPct, fmtNum } from "@/lib/utils";
 import { PROFILES } from "@/lib/profiles";
@@ -552,10 +552,18 @@ function PublishToAgent({ entries }) {
 
 export default function Registry() {
   const [entries, setEntries] = useState(getEntries());
+  const [banner, setBanner] = useState(null);
   useEffect(() => subscribeRegistry(() => setEntries(getEntries())), []);
   // Pull the shared server library on mount so the same strategies show on every
   // device (self-found + Cortex-found), then keep syncing while the tab is open.
+  // First recover anything a previous bad write may have dropped (shrink-guard
+  // backup), so a wiped library heals itself on the next visit.
   useEffect(() => {
+    const recovered = restoreBackup();
+    if (recovered > 0) {
+      setBanner(`Recovered ${recovered} strateg${recovered === 1 ? "y" : "ies"} from a local backup.`);
+      setTimeout(() => setBanner(null), 8000);
+    }
     syncFromServer();
     const id = setInterval(() => { if (!document.hidden) syncFromServer(); }, 60_000);
     return () => clearInterval(id);
@@ -612,6 +620,9 @@ export default function Registry() {
 
   return (
     <div className="max-w-6xl">
+      {banner && (
+        <div className="mb-4 rounded-xl border border-up/40 bg-up/5 px-3 py-2 text-xs text-up">{banner}</div>
+      )}
       <p className="text-[10px] tracking-[0.3em] text-dim uppercase mb-1">Strategy Lab</p>
       <div className="flex items-center gap-2 mb-2">
         <Boxes className="w-6 h-6 text-accent" />
