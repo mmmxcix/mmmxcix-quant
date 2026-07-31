@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Boxes, Trash2, Skull, ShieldCheck, FlaskConical, Rocket, Grid3x3, Info, Send, Loader2, Check, Scale, Wrench, Search } from "lucide-react";
+import { Boxes, Trash2, Skull, ShieldCheck, FlaskConical, Rocket, Grid3x3, Info, Send, Loader2, Check, Scale, Wrench, Search, Crown } from "lucide-react";
 import {
-  getEntries, subscribeRegistry, setStatus, removeEntry, STATUS_META, correlationMatrix, saveEntry, syncFromServer,
+  getEntries, subscribeRegistry, setStatus, setCrowned, removeEntry, STATUS_META, correlationMatrix, saveEntry, syncFromServer,
 } from "@/lib/registry";
 import { cn, fmtPct, fmtNum } from "@/lib/utils";
 import { PROFILES } from "@/lib/profiles";
@@ -108,6 +108,7 @@ function AgentCandidates() {
       validation: { wf: "pass", dsr: "pass", noise: "pass" }, // it survived the agent's gauntlet
       status,
       candidateId: c.id,
+      crowned: !!c.maxed, // Cortex plateaued on it → maxed out (👑)
       // Carry the full research context so the library card shows the thesis,
       // committee verdict, DSR, markets and source — the old feed's richness.
       research: {
@@ -166,6 +167,7 @@ const COLS = [
   { id: "validated", icon: ShieldCheck, tone: "text-up" },
   { id: "paper", icon: Rocket, tone: "text-blue-400" },
   { id: "improve", icon: Wrench, tone: "text-amber-400" },
+  { id: "maxed", icon: Crown, tone: "text-yellow-400" },
   { id: "graveyard", icon: Skull, tone: "text-dim" },
 ];
 
@@ -225,7 +227,9 @@ function Card({ e, rich = false }) {
               e.minedFrom ? "bg-amber-400/15 text-amber-400" : e.candidateId ? "bg-accent/15 text-accent" : "bg-up/15 text-up")}>
               {e.minedFrom ? "Mined" : e.candidateId ? "Cortex" : "You"}
             </span>
-            <p className="text-sm font-medium text-text truncate">{e.name}</p>
+            <p className="text-sm font-medium text-text truncate">
+              {e.crowned && <span title="Maxed out — Cortex reached its best version">👑 </span>}{e.name}
+            </p>
             {rich && r?.dsr != null && (
               <span className="text-[10px] font-mono text-dim ml-1">
                 DSR {r.dsr}%{r.revalidatedDsr != null && r.revalidatedDsr !== r.dsr && <span className={r.revalidatedDsr >= r.dsr ? "text-up" : "text-dim"}> → {r.revalidatedDsr}%</span>}
@@ -357,6 +361,57 @@ function Card({ e, rich = false }) {
             {label}
           </button>
         ))}
+        {e.status !== "graveyard" && (
+          <button onClick={() => setCrowned(e.id, !e.crowned)}
+            title={e.crowned ? "Remove the maxed-out crown" : "Mark as maxed out (best version)"}
+            className={cn("chip !text-[10px] !py-0.5 flex items-center gap-1", e.crowned ? "chip-active" : "chip-idle hover:text-accent")}>
+            <Crown className="w-3 h-3" /> {e.crowned ? "Maxed" : "Max"}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// The Paper column grows without bound as strategies get promoted, so show only
+// the ones added most recently ("new") and tuck the rest behind an "Old" toggle.
+const PAPER_NEW_COUNT = 4;
+function PaperColumn({ col, list, query }) {
+  const [showOld, setShowOld] = useState(false);
+  const Icon = col.icon;
+  const sorted = useMemo(
+    () => [...list].sort((a, b) => (b.statusAt || b.createdAt || 0) - (a.statusAt || a.createdAt || 0)),
+    [list]
+  );
+  const fresh = sorted.slice(0, PAPER_NEW_COUNT);
+  const old = sorted.slice(PAPER_NEW_COUNT);
+  return (
+    <div className="rounded-xl border border-line lg-glass p-3">
+      <div className="flex items-center gap-2 mb-3 px-1">
+        <Icon className={cn("w-4 h-4", col.tone)} />
+        <p className={cn("text-sm font-semibold", col.tone)}>{STATUS_META[col.id].label}</p>
+        <span className="text-xs font-mono text-dim ml-auto">{list.length}</span>
+      </div>
+      <p className="text-[10px] text-dim px-1 mb-2">{STATUS_META[col.id].hint}</p>
+      <div className="space-y-2">
+        {list.length === 0 ? (
+          <p className="text-[11px] text-dim px-1 py-4 text-center">{query ? "no match" : "empty"}</p>
+        ) : (
+          <>
+            {fresh.map((e) => <Card key={e.id} e={e} />)}
+            {old.length > 0 && (
+              <>
+                <button
+                  onClick={() => setShowOld((v) => !v)}
+                  className="chip chip-idle !text-[10px] w-full justify-center hover:text-accent"
+                >
+                  {showOld ? "Hide older" : `Old (${old.length})`}
+                </button>
+                {showOld && old.map((e) => <Card key={e.id} e={e} />)}
+              </>
+            )}
+          </>
+        )}
       </div>
     </div>
   );
@@ -488,7 +543,9 @@ export default function Registry() {
   // Graveyard stays out unless you toggle it on or filter to it explicitly.
   const library = useMemo(() => entries.filter((e) => {
     if (e.status === "graveyard" && !showGraveyard) return false;
-    if (stageFilter !== "all" && e.status !== stageFilter) return false;
+    // "maxed" is a flag, not a status — the Maxed-out stage chip is the 👑 filter.
+    if (stageFilter === "maxed") { if (!e.crowned) return false; }
+    else if (stageFilter !== "all" && e.status !== stageFilter) return false;
     if (sourceFilter === "you" && e.candidateId) return false;
     if (sourceFilter === "cortex" && !e.candidateId) return false;
     return matches(e);
@@ -496,8 +553,14 @@ export default function Registry() {
   }), [entries, query, sourceFilter, stageFilter, showGraveyard]);
 
   const byStatus = useMemo(() => {
-    const g = { factory: [], validated: [], paper: [], improve: [], graveyard: [] };
-    for (const e of entries) if (matches(e)) (g[e.status] || g.factory).push(e);
+    const g = { factory: [], validated: [], paper: [], improve: [], maxed: [], graveyard: [] };
+    for (const e of entries) {
+      if (!matches(e)) continue;
+      // A crowned (maxed-out) strategy lives in the Maxed column, not its stage
+      // column — one place per strategy. It still trades if its stage is paper.
+      if (e.crowned && e.status !== "graveyard") g.maxed.push(e);
+      else (g[e.status] || g.factory).push(e);
+    }
     return g;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entries, query]);
@@ -584,10 +647,13 @@ export default function Registry() {
           <div className="flex items-center gap-2 mb-2">
             <p className="text-xs font-semibold text-dim uppercase tracking-wide">Pipeline · where each strategy is</p>
           </div>
-          <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
+          <div className="grid md:grid-cols-2 xl:grid-cols-5 gap-4 mb-6">
             {activeCols.map((col) => {
               const Icon = col.icon;
               const list = byStatus[col.id];
+              // Paper can grow without bound — show only what was added most
+              // recently and hide the rest behind an "old" toggle (see PaperColumn).
+              if (col.id === "paper") return <PaperColumn key={col.id} col={col} list={list} query={query} />;
               return (
                 <div key={col.id} className="rounded-xl border border-line lg-glass p-3">
                   <div className="flex items-center gap-2 mb-3 px-1">

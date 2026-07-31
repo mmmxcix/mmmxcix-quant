@@ -23,6 +23,10 @@ export const STATUS_META = {
   validated: { label: "Validated", hint: "Survived the validation pipeline" },
   paper: { label: "Paper", hint: "Promoted for paper trading" },
   improve: { label: "Improve", hint: "Salvageable — a known flaw worth fixing" },
+  // "maxed" is not a status but a cross-cutting FLAG (e.crowned). It gets its own
+  // pipeline column + filter so you can find the strategies Cortex has decided
+  // are as good as they'll get. Meta lives here so the column/label reuse works.
+  maxed: { label: "Maxed out", hint: "Cortex can't improve it further — its best version 👑" },
   graveyard: { label: "Graveyard", hint: "Buried — kept as a record of what failed" },
 };
 
@@ -148,10 +152,11 @@ export function correlationMatrix(entries) {
  * @param {Object} p
  * @returns {Object} the created entry
  */
-export function saveEntry({ name, market, symbol, interval, range, mode, strategyId, params, code, positionPct, feeBps, metrics, equity, tradeReturns, validation, status = "factory", candidateId = null, language = null, windowProfile = null, failureReason = null, research = null }) {
+export function saveEntry({ name, market, symbol, interval, range, mode, strategyId, params, code, positionPct, feeBps, metrics, equity, tradeReturns, validation, status = "factory", candidateId = null, language = null, windowProfile = null, failureReason = null, research = null, crowned = false }) {
   const entry = {
     id: newId(),
     createdAt: Date.now(),
+    crowned: !!crowned, // "maxed out" — Cortex reached its best version (👑)
     // Which research candidate this came from — lets auto-promotion recognise
     // what it has already imported instead of adding a copy on every poll.
     candidateId,
@@ -182,8 +187,22 @@ export function saveEntry({ name, market, symbol, interval, range, mode, strateg
 
 export function setStatus(id, status) {
   if (!STATUSES.includes(status)) return;
-  write(read().map((e) => (e.id === id ? { ...e, status } : e)));
-  push({ setStatus: { id, status } });
+  // Stamp WHEN it entered this stage so the UI can show "newly added to Paper".
+  const next = read().map((e) => (e.id === id ? { ...e, status, statusAt: Date.now() } : e));
+  write(next);
+  const updated = next.find((e) => e.id === id);
+  if (updated) push({ upsert: updated });
+}
+
+// Crown / uncrown a strategy — the "maxed out" mark (Cortex reached its best
+// version, or you decided it's done). A flag, not a status: a crowned strategy
+// keeps its pipeline stage (a crowned Paper strat still trades) and also shows in
+// the Maxed-out column and the 👑 filter.
+export function setCrowned(id, crowned = true) {
+  const next = read().map((e) => (e.id === id ? { ...e, crowned: !!crowned } : e));
+  write(next);
+  const updated = next.find((e) => e.id === id);
+  if (updated) push({ upsert: updated });
 }
 
 export function attachValidation(id, validation) {
