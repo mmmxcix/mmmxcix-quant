@@ -386,7 +386,9 @@ async function runCommandsFast() {
       for (const th of open.filter((o) => forceClose.has(o.id))) {
         let price = th.entry;
         try {
-          const ds = await loadMarket({ id: th.symbol, asset: th.asset, symbol: th.symbol, interval: "1m", bars: 2, range: "1d" });
+          // loadMarket needs ≥400 bars, so pull 500× 1m (one call) and take the
+          // last close as the live price.
+          const ds = await loadMarket({ id: th.symbol, asset: th.asset, symbol: th.symbol, interval: "1m", bars: 500, range: "1d" });
           const last = ds?.candles?.[ds.candles.length - 1];
           if (last) price = last.close;
         } catch { /* fall back to entry */ }

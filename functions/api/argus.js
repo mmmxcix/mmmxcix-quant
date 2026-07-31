@@ -1,9 +1,9 @@
 // /api/argus — state for the Argus day-trading agent (see docs/DAYTRADER_AGENT.md).
-// KV keys under "argus:":
-//   argus:state    agent → site   heartbeat, equity, heat, bias summary
-//   argus:theses   agent → site   the current OPEN theses (overwritten each loop)
-//   argus:ledger   agent → site   closed theses (appended, merged by id, capped)
-// GET is public (paper-trading display, educational). POST is token-gated.
+// Stored in Cloudflare D1 (env.DB, table argus_kv) — NOT KV — because a 24/7 agent
+// persists every couple of minutes and KV's free tier allows only 1,000 writes/day
+// (which it exhausted, freezing the public display). D1 allows 100,000 writes/day.
+// Keys in argus_kv: "snapshot" (state+theses+ledger+journal+skills) and "commands".
+// GET is public (paper-trading display, educational). POST is token/admin-gated.
 
 import { isAdminRequest } from "../_lib/auth.mjs";
 
@@ -26,22 +26,31 @@ function safeEqual(a, b) {
 const LEDGER_CAP = 500;
 
 export async function onRequest({ request, env }) {
-  const kv = env.SUBSCRIBERS;
-  if (!kv) return json({ error: "kv_not_bound" }, 503);
+  const db = env.DB;
+  const kv = env.SUBSCRIBERS; // legacy, read-only fallback for the one-time migration
+  if (!db) return json({ error: "db_not_bound" }, 503);
+
+  const read = async (key) => {
+    try { const row = await db.prepare("SELECT data FROM argus_kv WHERE key = ?").bind(key).first(); return row ? JSON.parse(row.data) : null; }
+    catch { return null; }
+  };
+  const write = (key, obj) => db.prepare(
+    "INSERT INTO argus_kv (key, data, updated_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at"
+  ).bind(key, JSON.stringify(obj), Date.now()).run();
+  // Snapshot with a one-time fallback to the old KV copy, so open theses carry
+  // over the migration until the agent's next persist rewrites it into D1.
+  const readSnap = async () => {
+    const d = await read("snapshot");
+    if (d) return d;
+    if (kv) { try { const s = JSON.parse((await kv.get("argus:snapshot")) || "null"); if (s) return s; } catch { /* none */ } }
+    return null;
+  };
 
   if (request.method === "GET") {
     const what = new URL(request.url).searchParams.get("what") || "all";
-    const read = async (k) => { try { return JSON.parse((await kv.get(`argus:${k}`)) || "null"); } catch { return null; } };
     if (what === "all") {
-      // One consolidated key now (see POST) — 5× fewer KV reads/writes than the
-      // old five-key layout. Fall back to the legacy keys until the next persist
-      // rewrites everything into the snapshot.
-      const snap = await read("snapshot");
-      if (snap) return json({ ok: true, state: snap.state || null, theses: snap.theses || [], ledger: snap.ledger || [], journal: snap.journal || [], skills: snap.skills || [] });
-      const [state, theses, ledger, journal, skills] = await Promise.all([
-        read("state"), read("theses"), read("ledger"), read("journal"), read("skills"),
-      ]);
-      return json({ ok: true, state, theses: theses || [], ledger: ledger || [], journal: journal || [], skills: skills || [] });
+      const snap = await readSnap();
+      return json({ ok: true, state: snap?.state || null, theses: snap?.theses || [], ledger: snap?.ledger || [], journal: snap?.journal || [], skills: snap?.skills || [] });
     }
     return json({ ok: true, [what]: await read(what) });
   }
@@ -50,10 +59,9 @@ export async function onRequest({ request, env }) {
     let body;
     try { body = await request.json(); } catch { return json({ error: "bad_json" }, 400); }
 
-    // Dev command channel — the human (admin session, NOT the machine token)
-    // queues an instruction the agent acts on next cycle: force-close an open
-    // thesis, or cancel a forming/planned setup. Queued in KV; the agent drains
-    // it. Session-gated exactly like /api/generate, so the dev UI needs no token.
+    // Dev command channel — the human (admin session, NOT the machine token) queues
+    // an instruction the agent acts on next cycle: force-close an open thesis, or
+    // cancel a forming/planned setup. Session-gated like /api/generate.
     if (body.command) {
       if (!(await isAdminRequest(env, request))) return json({ error: "unauthorized" }, 401);
       const c = body.command;
@@ -61,13 +69,12 @@ export async function onRequest({ request, env }) {
       const id = typeof c?.id === "string" ? c.id.slice(0, 64) : null;
       if (!type || !id) return json({ error: "bad_command" }, 400);
       try {
-        let q = [];
-        try { q = JSON.parse((await kv.get("argus:commands")) || "[]"); } catch { /* fresh */ }
+        let q = (await read("commands")) || [];
         q = q.filter((x) => !(x.id === id && x.type === type)); // de-dupe
         q.push({ type, id, at: Date.now() });
-        await kv.put("argus:commands", JSON.stringify(q.slice(-50)));
+        await write("commands", q.slice(-50));
       } catch (e) {
-        return json({ error: "kv_write_failed", detail: String(e?.message || e) }, 503);
+        return json({ error: "db_write_failed", detail: String(e?.message || e) }, 503);
       }
       return json({ ok: true, queued: { type, id } });
     }
@@ -76,39 +83,26 @@ export async function onRequest({ request, env }) {
     // The agent drains the command queue by acking the ids it has handled.
     if (Array.isArray(body.commandAck) && body.commandAck.length) {
       try {
-        let q = [];
-        try { q = JSON.parse((await kv.get("argus:commands")) || "[]"); } catch { /* fresh */ }
+        const q = (await read("commands")) || [];
         const done = new Set(body.commandAck);
-        await kv.put("argus:commands", JSON.stringify(q.filter((x) => !done.has(x.id))));
+        await write("commands", q.filter((x) => !done.has(x.id)));
       } catch { /* best effort */ }
     }
 
-    // Full reset — wipe state, open theses and the closed ledger. The ledger is
-    // append-only by design (merged by id), so clearing it needs an explicit
-    // action: used when the paper record was made under conditions we no longer
-    // want to judge the agent by.
+    // Full reset — wipe the snapshot + command queue.
     if (body.reset === true) {
       try {
-        await Promise.all([kv.delete("argus:snapshot"), kv.delete("argus:state"), kv.delete("argus:theses"), kv.delete("argus:ledger"), kv.delete("argus:journal"), kv.delete("argus:skills"), kv.delete("argus:commands")]);
+        await db.prepare("DELETE FROM argus_kv").run();
+        if (kv) { try { await Promise.all([kv.delete("argus:snapshot"), kv.delete("argus:commands")]); } catch { /* legacy */ } }
       } catch (e) {
-        return json({ error: "kv_reset_failed", detail: String(e?.message || e) }, 503);
+        return json({ error: "db_reset_failed", detail: String(e?.message || e) }, 503);
       }
       return json({ ok: true, reset: true });
     }
 
-    // Persist the whole agent state as ONE key (argus:snapshot) instead of up to
-    // five separate puts per cycle — the old layout was the main consumer of the
-    // free-tier daily WRITE budget (~5 writes every 2-15 min). Now it's exactly
-    // one write per persist. KV writes can be rejected once the budget is spent;
-    // surface that as a clean 503 (the agent retries next cycle).
+    // Persist the whole agent state as ONE row.
     try {
-      let snap = await read("snapshot");
-      if (!snap) { // one-time migration from the legacy keys
-        const [state, theses, ledger, journal, skills] = await Promise.all([
-          read("state"), read("theses"), read("ledger"), read("journal"), read("skills"),
-        ]);
-        snap = { state: state || null, theses: theses || [], ledger: ledger || [], journal: journal || [], skills: skills || [] };
-      }
+      let snap = (await readSnap()) || { state: null, theses: [], ledger: [], journal: [], skills: [] };
       if (body.state) snap.state = { ...body.state, at: Date.now() };
       if (Array.isArray(body.theses)) snap.theses = body.theses.slice(0, 200);
       if (Array.isArray(body.journal)) snap.journal = body.journal.slice(0, 300);
@@ -118,9 +112,9 @@ export async function onRequest({ request, env }) {
         for (const c of body.ledgerAdd) byId.set(c.id, c);
         snap.ledger = [...byId.values()].sort((a, b) => (b.exitAt || 0) - (a.exitAt || 0)).slice(0, LEDGER_CAP);
       }
-      await kv.put("argus:snapshot", JSON.stringify(snap));
+      await write("snapshot", snap);
     } catch (e) {
-      return json({ error: "kv_write_failed", detail: String(e?.message || e) }, 503);
+      return json({ error: "db_write_failed", detail: String(e?.message || e) }, 503);
     }
     return json({ ok: true });
   }
