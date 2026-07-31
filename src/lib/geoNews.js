@@ -55,18 +55,32 @@ export const COUNTRY_PINS = [
  * @returns [{ code, name, lat, lon, items: [{title, link, source, pubDate}] }]
  */
 export async function fetchNewsPins() {
-  const res = await fetch("/api/news");
-  if (!res.ok) throw new Error(`news HTTP ${res.status}`);
-  const j = await res.json();
-  const items = Array.isArray(j) ? j : j.items || [];
-  const byCode = new Map();
-  for (const item of items) {
-    const title = item.title || "";
-    const pin = COUNTRY_PINS.find((c) => c.re.test(title));
-    if (!pin) continue;
-    if (!byCode.has(pin.code)) byCode.set(pin.code, { ...pin, items: [] });
-    const b = byCode.get(pin.code);
-    if (b.items.length < 8) b.items.push({ title, link: item.link, source: item.source, pubDate: item.pubDate });
+  // Pull the RSS news AND the Telegram OSINT feed, geo-locate BOTH by country
+  // mention, and pin them together — so the fast OSINT layer lands on the map,
+  // not just in Argus. OSINT items carry an `osint` flag so the UI can mark them.
+  const [newsRes, tgRes] = await Promise.allSettled([fetch("/api/news"), fetch("/api/telegram")]);
+  const rows = [];
+  if (newsRes.status === "fulfilled" && newsRes.value.ok) {
+    const j = await newsRes.value.json();
+    for (const item of (Array.isArray(j) ? j : j.items || [])) {
+      rows.push({ text: item.title || "", link: item.link, source: item.source, pubDate: item.pubDate, osint: false });
+    }
   }
-  return [...byCode.values()];
+  if (tgRes.status === "fulfilled" && tgRes.value.ok) {
+    const j = await tgRes.value.json();
+    for (const it of (j.items || [])) {
+      rows.push({ text: it.text || "", link: it.url, source: `@${it.channel}`, pubDate: it.time, osint: true, tag: it.tag });
+    }
+  }
+  const byCode = new Map();
+  for (const r of rows) {
+    const pin = COUNTRY_PINS.find((c) => c.re.test(r.text));
+    if (!pin) continue;
+    if (!byCode.has(pin.code)) byCode.set(pin.code, { ...pin, items: [], osintCount: 0 });
+    const b = byCode.get(pin.code);
+    if (r.osint) b.osintCount++;
+    if (b.items.length < 10) b.items.push({ title: r.text.slice(0, 160), link: r.link, source: r.source, pubDate: r.pubDate, osint: r.osint, tag: r.tag });
+  }
+  // Freshest country first (an OSINT-heavy country is likely where things move).
+  return [...byCode.values()].sort((a, b) => b.osintCount - a.osintCount || b.items.length - a.items.length);
 }

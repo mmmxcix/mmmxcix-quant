@@ -1676,11 +1676,12 @@ export default function WorldMap() {
                 {sel.data.items.map((it, i) => (
                   <a key={i} href={it.link} target="_blank" rel="noreferrer"
                     className="block leading-snug hover:text-accent transition-colors">
+                    {it.osint && <span className="text-[9px] uppercase tracking-wide font-semibold text-accent mr-1.5">OSINT</span>}
                     {it.title}
                     <span className="block text-[10px] text-dim mt-0.5">{it.source}</span>
                   </a>
                 ))}
-                <p className="text-[10px] text-dim pt-1">Headline keyword matching — first country named wins. Not NLP.</p>
+                <p className="text-[10px] text-dim pt-1">RSS + Telegram OSINT, keyword-matched to the first country named. Not NLP.</p>
               </div>
             )}
 

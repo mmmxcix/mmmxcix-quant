@@ -13,6 +13,7 @@
 const CHANNELS = [
   { user: "WatcherGuru", tag: "crypto" },
   { user: "cointelegraph", tag: "crypto" },
+  { user: "financialjuice", tag: "finance" },
   { user: "disclosetv", tag: "breaking" },
   { user: "insiderpaper", tag: "breaking" },
   { user: "clashreport", tag: "geopolitics" },
