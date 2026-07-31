@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ChevronDown, ExternalLink, Mail, RefreshCw, Search } from 'lucide-react';
+import { ChevronDown, ExternalLink, Mail, RefreshCw, Search, Radio } from 'lucide-react';
+import { cn } from '@/lib/utils';
 import { distinctSymbols } from '@/lib/portfolio';
 
 // Sources selectable for the digest, with their access tier (matches
@@ -280,6 +281,44 @@ function SkeletonRow() {
   );
 }
 
+// OSINT / breaking feed from public Telegram channels (crypto + geopolitics) —
+// the "faster than TV" layer, unverified. Polls /api/telegram (Cache-API backed).
+function OsintFeed() {
+  const [items, setItems] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    const load = () => fetch('/api/telegram').then((r) => (r.ok ? r.json() : null)).then((j) => { if (alive) setItems(j?.items || []); }).catch(() => { if (alive) setItems([]); });
+    load();
+    const id = setInterval(() => { if (!document.hidden) load(); }, 120000);
+    return () => { alive = false; clearInterval(id); };
+  }, []);
+  const ago = (t) => { const s = Math.max(0, (Date.now() - t) / 1000); return s < 90 ? `${Math.round(s)}s` : s < 5400 ? `${Math.round(s / 60)}m` : `${Math.round(s / 3600)}h`; };
+  const TONE = { crypto: 'text-accent', breaking: 'text-down', geopolitics: 'text-amber-400' };
+  if (items && items.length === 0) return null;
+  return (
+    <div className="rounded-xl border border-line lg-glass p-3">
+      <div className="flex items-center gap-2 mb-2 px-1">
+        <Radio size={14} className="text-accent" />
+        <p className="text-sm font-semibold">OSINT · breaking</p>
+        <span className="text-[10px] text-dim uppercase tracking-wide">Telegram — fast, unverified</span>
+      </div>
+      <div className="space-y-1.5 max-h-72 overflow-y-auto">
+        {(items || Array.from({ length: 4 })).map((it, i) => it ? (
+          <a key={i} href={it.url} target="_blank" rel="noopener noreferrer"
+            className="block rounded-lg border border-line/50 bg-bg/40 px-2.5 py-1.5 hover:border-accent/40 transition-colors">
+            <div className="flex items-center gap-2 text-[10px] mb-0.5">
+              <span className={cn('uppercase tracking-wide font-semibold', TONE[it.tag] || 'text-dim')}>{it.tag}</span>
+              <span className="text-dim">@{it.channel}</span>
+              <span className="text-dim ml-auto">{ago(it.time)}</span>
+            </div>
+            <p className="text-[11px] text-text/90 leading-snug">{it.text}</p>
+          </a>
+        ) : <div key={i} className="h-10 rounded-lg bg-line/20 animate-pulse" />)}
+      </div>
+    </div>
+  );
+}
+
 export default function News() {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -359,6 +398,8 @@ export default function News() {
           Refresh
         </button>
       </div>
+
+      <OsintFeed />
 
       <div className="rounded-xl border border-line lg-glass p-3 space-y-3">
         <div className="flex flex-col sm:flex-row sm:items-center gap-3">

@@ -14,7 +14,10 @@ const LLM_URL = (process.env.LAB_LLM_URL || "http://localhost:3000/v1").replace(
 // model is rate-limited the event channel just skips a cycle (best-effort).
 const MODEL_CHAIN = [
   process.env.LAB_ARGUS_MODEL || "groq/llama-3.3-70b-versatile",
-  ...(process.env.LAB_ARGUS_FALLBACKS || "auto/best-fast").split(",").map((s) => s.trim()),
+  // Fallbacks default to EMPTY — no `auto/*` route at all, so an agent can never
+  // resolve to your Claude Code subscription in OmniRoute. Add explicit FREE
+  // models via LAB_ARGUS_FALLBACKS if you want more resilience.
+  ...(process.env.LAB_ARGUS_FALLBACKS || "").split(",").map((s) => s.trim()),
 ].filter(Boolean).filter((m, i, a) => a.indexOf(m) === i);
 
 /** Robustly pull a JSON array of theses out of an LLM reply (fences, prose). */

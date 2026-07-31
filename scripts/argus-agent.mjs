@@ -100,9 +100,9 @@ async function runEventChannel() {
     const get = async (p) => { try { const r = await fetch(SITE + p); return r.ok ? await r.json() : null; } catch { return null; } };
     // Crypto Fear & Greed (alternative.me) — a sentiment input the LLM factors in.
     const fngRaw = await fetch("https://api.alternative.me/fng/?limit=1").then((r) => (r.ok ? r.json() : null)).catch(() => null);
-    const [world, conflicts, disasters, news] = await Promise.all([get("/api/world"), get("/api/conflicts"), get("/api/disasters"), get("/api/news")]);
+    const [world, conflicts, disasters, news, telegram] = await Promise.all([get("/api/world"), get("/api/conflicts"), get("/api/disasters"), get("/api/news"), get("/api/telegram")]);
     eventFng = parseFearGreed(fngRaw);
-    const brief = buildBrief({ world, conflicts: conflicts?.conflicts, disasters: disasters?.disasters, news, fng: eventFng });
+    const brief = buildBrief({ world, conflicts: conflicts?.conflicts, disasters: disasters?.disasters, news, fng: eventFng, osint: telegram?.items });
     brief.deltas = diffBrief(prevBrief, brief);
     prevBrief = brief;
     const ctx = { universe: [...UNIVERSE.map((u) => u.symbol), ...EVENT_TICKERS], open: open.map((o) => o.symbol) };

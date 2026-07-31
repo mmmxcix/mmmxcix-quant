@@ -77,6 +77,7 @@ export function buildBrief(raw, now = Date.now()) {
     disasters: summarizeDisasters(raw.disasters || []),
     chokepoints: chokepointCongestion(raw.world?.ships || []),
     fearGreed: raw.fng || null, // { value 0-100, classification } — crypto sentiment
+    osint: Array.isArray(raw.osint) ? raw.osint.slice(0, 10) : [], // Telegram OSINT — fast, unverified
   };
 }
 
@@ -112,6 +113,7 @@ export function diffBrief(prev, cur) {
 /** Compact text the LLM reads. Signal, not volume. */
 export function renderBrief(brief) {
   const L = [];
+  if (brief.osint?.length) L.push("OSINT / BREAKING (Telegram — fast, unverified, minutes ahead of wires):\n" + brief.osint.slice(0, 8).map((o) => `- [${o.tag || o.channel}] ${o.text.replace(/\s+/g, " ").slice(0, 160)}`).join("\n"));
   if (brief.fearGreed) L.push(`CRYPTO MARKET SENTIMENT:\n- Fear & Greed index: ${brief.fearGreed.value}/100 (${brief.fearGreed.classification}) — extreme fear can mark capitulation lows, extreme greed froth tops.`);
   if (brief.deltas?.length) L.push("CHANGED SINCE LAST CHECK:\n" + brief.deltas.map((d) => `- [${d.kind}] ${d.text}`).join("\n"));
   L.push("TOP HEADLINES:\n" + brief.headlines.slice(0, 8).map((h) => `- ${h.title} (${h.source})`).join("\n"));
