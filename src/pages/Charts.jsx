@@ -284,9 +284,37 @@ export default function Charts() {
     return [{ time: trade.at, side: trade.side === "long" ? "buy" : "sell", text: `Argus ${trade.side}` }];
   }, [trade]);
 
+  // A Lab-agent STRATEGY's full trade log handed over (click a strategy row):
+  // a buy/sell arrow at every entry AND exit, so you see exactly when it longed
+  // or shorted and when it closed. Compact param tTrades = [{a,x,s,e,p}] with
+  // a=entry time, x=exit time (unix SECONDS), s=side, e/p=entry/exit price.
+  const stratName = params.get("tName") || "";
+  const stratTrades = useMemo(() => {
+    const raw = params.get("tTrades");
+    if (!raw) return null;
+    try { const arr = JSON.parse(raw); return Array.isArray(arr) && arr.length ? arr : null; }
+    catch { return null; }
+  }, [params]);
+
+  const stratMarkers = useMemo(() => {
+    if (!stratTrades) return [];
+    const out = [];
+    for (const t of stratTrades) {
+      const long = t.s !== "short";
+      if (t.a) out.push({ time: t.a, side: long ? "buy" : "sell", text: long ? "Long" : "Short" });
+      if (t.x) out.push({ time: t.x, side: long ? "sell" : "buy", text: "Close" });
+    }
+    return out.sort((a, b) => a.time - b.time);
+  }, [stratTrades]);
+
+  const allMarkers = useMemo(
+    () => (stratMarkers.length ? stratMarkers : tradeMarkers),
+    [stratMarkers, tradeMarkers]
+  );
+
   const clearTrade = () => {
     const next = new URLSearchParams(params);
-    ["tEntry", "tStop", "tTarget", "tSide", "tAt", "tReason", "tLabel", "tOutcome"].forEach((k) => next.delete(k));
+    ["tEntry", "tStop", "tTarget", "tSide", "tAt", "tReason", "tLabel", "tOutcome", "tTrades", "tName"].forEach((k) => next.delete(k));
     setParams(next);
   };
 
@@ -603,6 +631,20 @@ export default function Charts() {
         </div>
       )}
 
+      {/* A handed-over Lab strategy's trade log — every entry/exit as an arrow. */}
+      {stratTrades && (
+        <div className="rounded-xl border border-accent/40 bg-accent/5 px-4 py-2.5 flex flex-wrap items-center gap-x-4 gap-y-1">
+          <span className="text-[11px] uppercase tracking-wide text-accent font-semibold flex items-center gap-1.5">
+            <Radio className="w-3.5 h-3.5" /> Lab strategy
+          </span>
+          {stratName && <span className="text-xs text-text font-medium">{stratName}</span>}
+          <span className="font-mono text-xs text-dim">
+            {stratTrades.length} trade{stratTrades.length === 1 ? "" : "s"} · ▲ long/open ▼ short/close
+          </span>
+          <button onClick={clearTrade} className="text-dim hover:text-text ml-auto" aria-label="Clear strategy overlay"><X className="w-4 h-4" /></button>
+        </div>
+      )}
+
       <div className="rounded-xl border border-line lg-glass p-3">
         {!error && candles && <PriceHeader candles={candles} livePrice={livePrice} />}
         {error ? (
@@ -617,7 +659,7 @@ export default function Charts() {
               candles={candles}
               chartType={chartType}
               overlays={overlays}
-              markers={tradeMarkers}
+              markers={allMarkers}
               height={chartHeight()}
               magnet={magnet}
               livePrice={livePrice}

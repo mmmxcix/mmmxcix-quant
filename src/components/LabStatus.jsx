@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Cpu, RefreshCw, Loader2, ChevronRight, Layers, Briefcase, Shield } from "lucide-react";
+import { Cpu, RefreshCw, Loader2, ChevronRight, Layers, Briefcase, Shield, LineChart } from "lucide-react";
 import { fmtPrice, cn } from "@/lib/utils";
 import { strategyToCode } from "@/lib/strategyCode";
 import { PROFILE_IDS, getProfile, DEFAULT_PROFILE } from "@/lib/profiles";
@@ -65,6 +65,23 @@ function fmtWhen(ts) {
   });
 }
 
+// Build a Charts deep-link for a strategy: its symbol + timeframe, plus its full
+// trade log (tTrades = [{a,x,s,e,p}] in unix SECONDS) so Charts draws a buy/sell
+// arrow at every entry and exit — exactly when it longed/shorted and closed.
+function chartHrefFor(s) {
+  const sym = String(s.symbol || "");
+  const market = /USDT$|USDC$/.test(sym.toUpperCase()) ? "crypto" : "stock";
+  const secs = (ms) => (ms ? Math.round(ms / 1000) : null);
+  const trades = (s.trades || []).map((t) => ({
+    a: secs(t.openedAt), x: secs(t.closedAt), s: t.side, e: t.entryPrice, p: t.exitPrice,
+  }));
+  if (s.open?.openedAt) trades.push({ a: secs(s.open.openedAt), s: s.open.position, e: s.open.entryPrice });
+  const p = new URLSearchParams({ market, symbol: sym, interval: s.interval || "1d" });
+  if (s.name) p.set("tName", s.name);
+  if (trades.length) p.set("tTrades", JSON.stringify(trades));
+  return `/charts?${p.toString()}`;
+}
+
 // Group a book's strategies by generated CODE (same symbol+interval+logic), so a
 // republished duplicate shows once. Returns [{ key, rep, members }] with the rep
 // = the longest-lived copy (most trades). `published` maps id → registry entry.
@@ -92,6 +109,17 @@ function TradeLog({ strat, members }) {
   const aliases = members.filter((m) => m.id !== strat.id);
   return (
     <div className="px-3 py-3 bg-bg/40 text-xs">
+      <div className="flex items-center gap-2 mb-2">
+        <span className="text-[10px] text-dim">{strat.symbol} · {strat.interval}</span>
+        <Link
+          to={chartHrefFor(strat)}
+          onClick={(e) => e.stopPropagation()}
+          className="ml-auto inline-flex items-center gap-1 text-[11px] text-accent hover:underline"
+          title="Open this strategy on the chart — every entry and exit marked"
+        >
+          <LineChart className="w-3 h-3" /> Open in Charts →
+        </Link>
+      </div>
       {aliases.length > 0 && (
         <p className="text-[10px] text-warn mb-2">
           Also published as: {aliases.map((a) => a.name).join(", ")} — identical code, separate paper books.
