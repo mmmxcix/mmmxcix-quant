@@ -25,6 +25,7 @@ import { riskRulesFor, PROFILE_IDS, DEFAULT_PROFILE, getProfile } from "../src/l
 import { currentRegime } from "../src/lib/hmmRegime.js";
 import { volTargetWeight } from "../src/lib/volTarget.js";
 import { initPy, compilePyStrategy } from "./pyRunnerNode.mjs";
+import { compileCppStrategy, compileQStrategy } from "./nativeRun.mjs";
 import * as ibkr from "./ibkrPaper.mjs";
 
 const SITE = process.env.LAB_SITE || "https://quant.mmmxcix.com";
@@ -92,9 +93,10 @@ function buildSignalFn(s) {
   // Python strategies (Cortex writes these) go through Pyodide — the same
   // vectorised signals(df) the gauntlet validated, so the paper fill matches the
   // backtest exactly. Requires initPy() to have run (done at startup below).
-  return s.language === "python"
-    ? compilePyStrategy(s.code || "")
-    : compileStrategy(s.code || "");
+  if (s.language === "python") return compilePyStrategy(s.code || "");
+  if (s.language === "cpp") return compileCppStrategy(s.code || ""); // g++ compiles once, runs per candle array
+  if (s.language === "q") return compileQStrategy(s.code || "");
+  return compileStrategy(s.code || "");
 }
 
 // Run the real engine over the window; if a position was still open on the

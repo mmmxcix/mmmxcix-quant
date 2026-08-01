@@ -30,7 +30,12 @@ import { harvestAll, fullTextOf, topicsOf, RELEVANCE, JUNK } from "./sources.mjs
 import { loadUniverse } from "./marketdata.mjs";
 import { UNIVERSE, MENTIONABLE, byId, costFor, effectiveTrials, describeMarkets } from "../src/lib/markets.js";
 import { initPy, compilePyStrategy, pyCompileCheck } from "./pyRunnerNode.mjs";
+import { compileCppStrategy, compileQStrategy, detectTools } from "./nativeRun.mjs";
 import { cleanStrategyName } from "../functions/_lib/strategyName.js";
+
+// Which native toolchains this machine has — decides whether Cortex may write C++
+// or q (it won't generate a language it can't validate here).
+const NATIVE_TOOLS = detectTools();
 import { mineAnomalies } from "./mining.mjs";
 import { intradayTemplates } from "./intraday.mjs";
 import { plateauProbe } from "./optimizer.mjs";
@@ -48,10 +53,17 @@ const RESEARCH_LANG = String(process.env.LAB_RESEARCH_LANG || "python").toLowerC
 // stateful, session/intraday, order-flow and bracket-driven strategies are more
 // natural as the stateful strategy(ctx) form (JS); vectorised statistical/factor
 // ideas read best as pandas signals(df) (Python). LAB_RESEARCH_LANG pins it.
-const INTRADAY_HINT = /\bintraday\b|\bsession\b|opening[-\s]?range|\borb\b|scalp|microstructur|order[-\s]?flow|\btick\b|\bvwap\b|\bbreakout\b|\d+[-\s]?min|1s\b|\bhft\b|high[-\s]?frequency/i;
+const INTRADAY_HINT = /\bintraday\b|\bsession\b|opening[-\s]?range|\borb\b|scalp|\bvwap\b|\bbreakout\b|\d+[-\s]?min/i;
+// Latency-sensitive / low-level ideas earn C++ when g++ is installed; explicit
+// kdb/q ideas earn q when the q binary is present. Otherwise: intraday → JS,
+// everything else → Python. Cortex never writes a language it can't validate.
+const HFT_HINT = /\bhft\b|high[-\s]?frequency|latency|microsecond|nanosecond|tick[-\s]?level|order[-\s]?book|market[-\s]?making|microstructur|order[-\s]?flow/i;
+const Q_HINT = /\bkdb\b|kdb\+|\bq\/kdb|columnar|time[-\s]?series database/i;
 function pickLang(item) {
   if (process.env.LAB_RESEARCH_LANG) return RESEARCH_LANG; // explicit pin wins
   const hay = `${item?.title || ""} ${(item?.topics || []).join(" ")} ${item?.abstract || ""}`;
+  if (NATIVE_TOOLS.q && Q_HINT.test(hay)) return "q";
+  if (HFT_HINT.test(hay)) return NATIVE_TOOLS.cpp ? "cpp" : "js";
   return INTRADAY_HINT.test(hay) ? "js" : "python";
 }
 
@@ -72,11 +84,22 @@ const MIN_SHARPE = +(process.env.LAB_MIN_SHARPE || 1.0);
 // noise and delay probe below funnels through here, so the gauntlet itself never
 // has to know which language it's judging.
 function compileFor(code, lang) {
-  return lang === "python" ? compilePyStrategy(code) : compileStrategy(code);
+  if (lang === "python") return compilePyStrategy(code);
+  if (lang === "cpp") return compileCppStrategy(code); // g++ compiles once, runs per candle array
+  if (lang === "q") return compileQStrategy(code);
+  return compileStrategy(code);
 }
+// Small synthetic series to force one evaluation in the compile check (so a
+// runtime error surfaces cheaply, before the gauntlet spends trials).
+const _CHK_CANDLES = (() => {
+  const o = []; let p = 100, t = 1_600_000_000;
+  for (let i = 0; i < 240; i++) { p *= 1 + Math.sin(i / 11) * 0.01; o.push({ time: t + i * 3600, open: p * 0.999, high: p * 1.003, low: p * 0.997, close: p, volume: 1000 }); }
+  return o;
+})();
 // Throwing compile+run check — the language-aware twin of `try { compileStrategy }`.
 function compileCheckFor(code, lang) {
   if (lang === "python") return pyCompileCheck(code);
+  if (lang === "cpp" || lang === "q") { compileFor(code, lang)({ candles: _CHK_CANDLES, index: 0 }); return true; }
   compileStrategy(code);
   return true;
 }
@@ -260,7 +283,9 @@ async function aiCall(payload) {
         const text = await callLocalRouter(p.system || "", p.user, p.isCritique ? LLM_CRITIQUE_MODEL : LLM_MODEL);
         if (p.isCritique) return { critique: parseVerdict(text) };
         const out = extractCode(text);
-        return { code: p.language === "python" ? out : ensureStrategyFn(out), language: p.language };
+        // ensureStrategyFn wraps JS only; python/cpp/q pass through untouched.
+        const wrap = !["python", "cpp", "q"].includes(String(p.language));
+        return { code: wrap ? ensureStrategyFn(out) : out, language: p.language };
       }
     } catch (e) {
       console.log(`  ~ local router failed (${String(e.message || "").slice(0, 50)}) — falling back to site AI`);

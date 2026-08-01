@@ -92,6 +92,38 @@ Rules:
 - Return 0 during warm-up (NaN indicator values) — fill NaNs with 0.
 - Concise English comments. Keep it a single self-contained function plus its helpers.`;
 
+const CPP_SYSTEM_PROMPT = `You are a quant strategy generator for a backtester that compiles and runs C++ natively (g++, -std=c++17).
+Respond with C++ code ONLY — no markdown fences, no prose before or after.
+
+The code MUST define exactly:
+  struct Bar { double open, high, low, close, volume; };
+  std::vector<int> signals(const std::vector<Bar>& bars);
+returning one value per bar: 1 = long, 0 = flat, -1 = short (result size == bars.size()).
+
+Rules:
+- Standard headers only (<vector>, <cmath>, <deque>, etc.) — NO file/network/thread access, no main().
+- No look-ahead: signal[i] may use only bars[0..i]. Compute indicators in a single forward pass where possible (this is the C++/HFT advantage — O(n), stateful, no re-scan).
+- The signal at bar i is executed at bar i+1's open by the engine; do not model fills.
+- Prefer a MULTI-FACTOR rule (a regime/volatility filter + an entry trigger) over a single indicator.
+- Fill warm-up bars with 0. Keep it self-contained and O(n). Concise // comments.`;
+
+const Q_SYSTEM_PROMPT = `You are a quant strategy generator for a backtester that runs kdb+/q natively.
+Respond with q code ONLY — no markdown fences, no prose before or after.
+
+The code MUST define exactly:  signals:{[t] ... }
+where t is a table with columns \`open\`high\`low\`close\`volume (one row per bar, ascending by time),
+returning a list of one value per row: 1 = long, 0 = flat, -1 = short (count matches count t).
+
+Rules:
+- Pure q/kdb+ (vector/columnar). No file/system access. Use moving windows (mavg, msum, prev, etc.).
+- No look-ahead: row i may use only rows <= i (use prev/xprev and running aggregations, never next).
+- The signal at row i is executed at row i+1's open by the engine; do not model fills.
+- Prefer a multi-factor rule (a regime/volatility filter + an entry trigger). Fill warm-up rows with 0.
+- Keep it a single self-contained function. Concise / comments.`;
+
+// System prompt per target language.
+const SYS_FOR = { js: SYSTEM_PROMPT, python: PYTHON_SYSTEM_PROMPT, cpp: CPP_SYSTEM_PROMPT, q: Q_SYSTEM_PROMPT };
+
 // ── The quant knowledge every generation/improvement channel carries ────────
 // Prepended to the improve/review prompts. Without it the model rewrites from
 // vibes — that is how an "improvement" asked to CUT drawdown came back having
@@ -313,7 +345,10 @@ export async function onRequest({ request, env }) {
     if (isCritique) return json({ critique: parseVerdict(text) });
     if (review) return json({ review: String(text).trim().slice(0, 4000) });
     const out = extractCode(text);
-    return json({ code: language === "python" ? out : ensureStrategyFn(out), language: language === "python" ? "python" : "js" });
+    // ensureStrategyFn only makes sense for JS; python/cpp/q are returned as-is.
+    const pl = String(language || "").toLowerCase();
+    const native = pl === "python" || pl === "cpp" || pl === "q";
+    return json({ code: native ? out : ensureStrategyFn(out), language: native ? pl : "js" });
   }
 
   // Four modes share the provider chain below:
@@ -341,6 +376,14 @@ export async function onRequest({ request, env }) {
   // — a Python strategy that won't compile must be repaired AS Python, never
   // rewritten as JS. Critique returns a prose verdict, so language doesn't apply.
   const isPython = String(body?.language || "").toLowerCase() === "python" && !isCritique;
+  // Full target language (js | python | cpp | q). C++/q run only on the native
+  // executor; the system prompt + contract switch on this.
+  const targetLang = isCritique ? "js" : (SYS_FOR[String(body?.language || "").toLowerCase()] ? String(body.language).toLowerCase() : "js");
+  const isNative = targetLang === "cpp" || targetLang === "q";
+  const langWord = targetLang === "cpp" ? "C++" : targetLang === "q" ? "q" : targetLang === "python" ? "Python" : "JavaScript";
+  const contractLine = targetLang === "cpp"
+    ? "define `std::vector<int> signals(const std::vector<Bar>& bars)` returning one value per bar (1 long / 0 flat / -1 short)"
+    : "define `signals:{[t] ... }` returning one value per row of t (1 long / 0 flat / -1 short)";
   let userMsg;
   if (isCritique) {
     const code = critique.code.slice(0, 6000);
@@ -366,7 +409,17 @@ export async function onRequest({ request, env }) {
     const title = String(research.title || "untitled").slice(0, 200);
     const kind = String(research.kind || "document").slice(0, 20);
     const head = `Source ${kind}: "${title}"\n\n--- BEGIN SOURCE ---\n${doc}\n--- END SOURCE ---\n\n`;
-    userMsg = isPython
+    userMsg = isNative
+      ? head +
+        `Act as a hedge-fund quant. Turn the systematic idea in this source into ONE robust, testable ${langWord} strategy ` +
+        `that follows the system-prompt contract EXACTLY (${contractLine}). Make it MULTI-FACTOR — a regime/volatility ` +
+        "filter deciding WHEN to be active PLUS an entry trigger, never a single indicator. Hard requirements: it must beat " +
+        "buy & hold risk-adjusted; NO look-ahead (bar i uses only bars <= i); it must survive being executed one bar late; " +
+        "up to 5 hardcoded parameters; long and/or short. Begin with 4 comment lines describing the RULE " +
+        (targetLang === "cpp" ? "(`// NAME:` `// EDGE:` `// WORKS:` `// BREAKS:`)" : "(`/ NAME:` `/ EDGE:` `/ WORKS:` `/ BREAKS:`)") +
+        " — name the MECHANISM, never the source article. Prefer a rule the source actually states over one you invent. " +
+        `Output ONLY the ${langWord} code.`
+      : isPython
       // Python: the strategy is VECTORISED — signals(df) returns one position per
       // bar (1/0/-1), no bracket orders (the engine handles fills), so the exit is
       // expressed as the signal returning to 0 or flipping, not a stop/target object.
@@ -431,7 +484,13 @@ export async function onRequest({ request, env }) {
       "  - The edge must survive being executed one bar late (no dependence on an exact single-bar fill).\n" +
       "  - It must actually TRADE: entries AND exits trigger regularly on normal price data.\n" +
       "  - Up to 5 parameters, hardcoded. Long and/or short. No look-ahead.\n\n";
-    userMsg = isPython
+    userMsg = isNative
+      ? `A previously generated ${langWord} strategy ("${title}") FAILED validation:\n${facts}\n\n` +
+        "```\n" + baseCode + "\n```\n\n" +
+        "Improve it: KEEP the core idea/edge, fix the specific weakness above. " + hardReqs +
+        `Keep the ${langWord} contract (${contractLine}); no look-ahead. Update the NAME/EDGE/WORKS/BREAKS header to match. ` +
+        `Return ONLY the corrected ${langWord}, no prose.`
+      : isPython
       ? `A previously generated Python strategy ("${title}") FAILED validation:\n${facts}\n\n` +
         "```python\n" + baseCode + "\n```\n\n" +
         "Improve it: KEEP the core idea/edge, fix the specific weakness above. " + hardReqs +
@@ -447,7 +506,12 @@ export async function onRequest({ request, env }) {
   } else if (repair && typeof repair.code === "string") {
     const brokenCode = repair.code.slice(0, 8000);
     const err = String(repair.error || "unknown error").slice(0, 300);
-    userMsg = isPython
+    userMsg = isNative
+      ? `The following ${langWord} strategy failed with this error:\n"${err}"\n\n` +
+        `Return a corrected version that MUST ${contractLine}. Change as little as possible and keep the original ` +
+        `trading logic; return ONLY the corrected ${langWord}, no prose.\n\n` +
+        "```\n" + brokenCode + "\n```"
+      : isPython
       ? `The following Python strategy failed with this error:\n"${err}"\n\n` +
         "Return a corrected version that satisfies ALL the rules above — in particular it MUST define " +
         "`def signals(df):` returning one value per row (1 long / 0 flat / -1 short), length == len(df), NaNs filled with 0. " +
@@ -491,10 +555,10 @@ export async function onRequest({ request, env }) {
     ? "You are a senior quantitative researcher reviewing backtest strategy code. You are candid, concrete and brief. " +
       "You never rewrite the code — you explain and advise.\n" + QUANT_KNOWLEDGE
     : improve
-      ? (isPython ? PYTHON_SYSTEM_PROMPT : SYSTEM_PROMPT) +
+      ? SYS_FOR[targetLang] +
         "\n\nYou are a senior systematic researcher improving an existing strategy. Apply this knowledge:\n" + QUANT_KNOWLEDGE +
         "\nKeep the core idea. Change the fewest things that raise risk-adjusted return, and state nothing you did not actually implement."
-      : (isPython ? PYTHON_SYSTEM_PROMPT : SYSTEM_PROMPT);
+      : SYS_FOR[targetLang];
 
   // promptOnly: hand the fully composed prompts to the caller instead of
   // executing them. The local research agent uses this to run generation
@@ -504,7 +568,7 @@ export async function onRequest({ request, env }) {
   // NOTE: the agent post-processes with functions/_lib/codegen.mjs — kept in
   // sync with extractCode/ensureStrategyFn/parseVerdict below.
   if (body?.promptOnly) {
-    return json({ system, user: userMsg, isCritique: !!isCritique, language: isPython ? "python" : "js" });
+    return json({ system, user: userMsg, isCritique: !!isCritique, language: targetLang });
   }
 
   // Fixed priority chain — best code model first, each falling through to the
@@ -542,7 +606,7 @@ export async function onRequest({ request, env }) {
   if (review) return json({ review: text.trim().slice(0, 4000) });
   // Python is returned as-is (the JS strategy(ctx) auto-wrap doesn't apply).
   const out = extractCode(text);
-  return json({ code: isPython ? out : ensureStrategyFn(out), language: isPython ? "python" : "js" });
+  return json({ code: targetLang === "js" ? ensureStrategyFn(out) : out, language: targetLang });
 }
 
 // Pull the committee verdict JSON out of a model reply. Returns a normalised

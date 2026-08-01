@@ -105,6 +105,70 @@ function qSignals(code, candles) {
 const M = { 1: "long", 0: "flat", "-1": "short" };
 const arrToFn = (signals) => (ctx) => M[signals[ctx.index]] ?? "flat";
 
+// ── compile-once signalFns for the gauntlet (drop-ins for compileStrategy) ────
+// The research gauntlet calls compileFor(code, lang) many times (per market /
+// k-fold / noise). So we compile the C++ binary ONCE per code (cached), then run
+// it per candle array (signals memoised per array) — exactly like Pyodide's
+// compilePyStrategy. A missing toolchain throws with .toolMissing so the caller
+// can skip cleanly.
+const _cppBins = new Map(); // code → { exe } | Error
+
+function ensureCppBinary(code) {
+  const cached = _cppBins.get(code);
+  if (cached) { if (cached instanceof Error) throw cached; return cached; }
+  if (spawnSync(GPP, ["--version"], { timeout: 5000 }).error) {
+    const e = new Error("g++ not installed"); e.toolMissing = "g++"; _cppBins.set(code, e); throw e;
+  }
+  const dir = mkdtempSync(join(tmpdir(), "cppc-"));
+  const src = join(dir, "strat.cpp");
+  const exe = join(dir, process.platform === "win32" ? "strat.exe" : "strat.out");
+  writeFileSync(src, `#include <vector>\n#include <cmath>\n${code}\n${CPP_HARNESS}`);
+  const comp = spawnSync(GPP, ["-O2", "-std=c++17", "-o", exe, src], { encoding: "utf8", timeout: 60000 });
+  if (comp.status !== 0) {
+    try { rmSync(dir, { recursive: true, force: true }); } catch { /* noop */ }
+    const e = new Error("compile: " + (comp.stderr || "unknown").split("\n").filter(Boolean).slice(0, 4).join(" | ").slice(0, 400));
+    _cppBins.set(code, e); throw e;
+  }
+  const v = { exe }; _cppBins.set(code, v); return v;
+}
+
+function runCppBinary(exe, candles) {
+  const run = spawnSync(exe, [], { input: candlesCsv(candles), encoding: "utf8", maxBuffer: 128 * 1024 * 1024, timeout: 60000 });
+  if (run.status !== 0) throw new Error("runtime: " + (run.stderr || `exit ${run.status}`).slice(0, 300));
+  const sig = run.stdout.trim().split("\n").filter((x) => x !== "").map((x) => parseInt(x, 10) || 0);
+  if (sig.length !== candles.length) throw new Error(`C++ returned ${sig.length} signals for ${candles.length} bars`);
+  return sig;
+}
+
+/** Compile C++ strategy → a candle-agnostic signalFn (compiled once, run per array). */
+export function compileCppStrategy(code) {
+  const { exe } = ensureCppBinary(code); // compiles once; throws (with .toolMissing) on failure
+  const cache = new WeakMap();
+  return (ctx) => {
+    let sigs = cache.get(ctx.candles);
+    if (!sigs) { sigs = runCppBinary(exe, ctx.candles); cache.set(ctx.candles, sigs); }
+    return M[sigs[ctx.index]] ?? "flat";
+  };
+}
+
+/** Compile q strategy → a candle-agnostic signalFn (interpreted; run per array). */
+export function compileQStrategy(code) {
+  if (spawnSync(QBIN, ["-q"], { timeout: 5000, input: "exit 0" }).error) {
+    const e = new Error("q not installed"); e.toolMissing = "q"; throw e;
+  }
+  const cache = new WeakMap();
+  return (ctx) => {
+    let sigs = cache.get(ctx.candles);
+    if (!sigs) {
+      const r = qSignals(code, ctx.candles);
+      if (r.toolMissing) { const e = new Error("q not installed"); e.toolMissing = "q"; throw e; }
+      if (r.error) throw new Error(r.error);
+      sigs = r.signals; cache.set(ctx.candles, sigs);
+    }
+    return M[sigs[ctx.index]] ?? "flat";
+  };
+}
+
 /**
  * Run a backtest natively. Returns the SAME shape as runBacktest plus { ok }, or
  * { ok:false, error|toolMissing } so the caller can report it cleanly.
