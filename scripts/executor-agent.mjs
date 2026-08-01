@@ -40,7 +40,9 @@ async function runJob(job) {
   let candles = Array.isArray(s.candles) ? s.candles : null;
   if (!candles && s.symbol) {
     const asset = s.market === "crypto" ? "crypto" : "stock";
-    candles = await loadMarket({ asset, symbol: s.symbol, interval: s.interval || "1d", bars: s.bars || 6000, range: s.range || "5y" }).catch(() => null);
+    // loadMarket returns { name, market, candles } — pull the array out.
+    const md = await loadMarket({ id: s.symbol, asset, symbol: s.symbol, interval: s.interval || "1d", bars: s.bars || 6000, range: s.range || "5y" }).catch(() => null);
+    candles = md?.candles || null;
   }
   if (!candles?.length) return { id: job.id, ok: false, error: "no market data for that symbol/interval" };
   const res = await nativeBacktest({
