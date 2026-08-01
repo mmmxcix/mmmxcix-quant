@@ -10,6 +10,7 @@ import { fetchCandles, fetchFunding, MARKETS, INTERVALS, rangesFor, INTERVAL_SEC
 import OptimizerPanel from "@/components/OptimizerPanel";
 import CodeOptimizerPanel from "@/components/CodeOptimizerPanel";
 import MarketScanPanel from "@/components/MarketScanPanel";
+import NativeRunPanel from "@/components/NativeRunPanel";
 import { fetchLseCandles } from "@/lib/lse";
 import { runBacktest, compileStrategy } from "@/lib/backtest";
 import { runPythonSignals, signalsToFn, PYTHON_TEMPLATE } from "@/lib/pyRunner";
@@ -23,6 +24,9 @@ import { strategyToCode } from "@/lib/strategyCode";
 // run in this engine (TradingView only) — say so instead of failing cryptically.
 export function detectLang(src) {
   const c = String(src || "");
+  // C++ and kdb+/q run only on the native executor (your PC), not in the browser.
+  if (/std::vector\s*<\s*int\s*>\s*signals|#include\s*<|std::vector<Bar>/.test(c)) return "cpp";
+  if (/signals\s*:\s*\{\s*\[\s*t\s*\]|\bxcol\b|0:\s*`\$/.test(c)) return "q";
   if (/\bdef\s+signals\s*\(/.test(c)) return "python";
   if (/function\s+strategy\s*\(|=>\s*\{?\s*(?:"long"|"short"|"flat")|ctx\.(candles|indicators|position)/.test(c)) return "js";
   if (/\/\/@version\s*=|\bta\.\w+|strategy\.(entry|close|exit)\s*\(|\bplot(shape)?\s*\(/.test(c)) return "pine";
@@ -381,6 +385,12 @@ export default function Backtest() {
     // Say that plainly instead of failing inside the compiler.
     if (lang === "pine") {
       setError("That's Pine Script — it runs on TradingView, not in this engine. Paste JavaScript or Python here, or use a preset and copy it as Pine.");
+      return;
+    }
+    // C++ and kdb+/q can't run in the browser — they go to the native executor on
+    // your PC. Point there instead of failing inside the JS compiler.
+    if (lang === "cpp" || lang === "q") {
+      setError(`That's ${LANG_LABEL[lang]} — it runs natively on your PC, not in the browser. Use “Run natively on my PC” below.`);
       return;
     }
     setRunning(true);
@@ -895,6 +905,15 @@ export default function Backtest() {
             <Play className="w-4 h-4" />
             {running ? "Running…" : "Run backtest"}
           </button>
+
+          {isDev && (
+            <NativeRunPanel
+              spec={{
+                code, language: lang, market, symbol, interval, range,
+                capital, feeBps, positionPct, leverage,
+              }}
+            />
+          )}
 
           {error && (
             <div className="rounded-xl border border-down/40 bg-down/10 p-3 text-sm text-down flex gap-2">
