@@ -348,7 +348,7 @@ export default function Argus() {
 
       {/* Hermes journal — a post-mortem per closed trade, and the rules that
           repeated often enough to become binding. */}
-      {(data.skills?.length > 0 || data.journal?.length > 0) && (
+      {(data.skills?.length > 0 || (data.journal?.length > 0 && stats.n > 0)) && (
         <div className="grid lg:grid-cols-2 gap-3">
           {data.skills?.length > 0 && (
             <div className="rounded-xl border border-line lg-glass p-4">
@@ -368,7 +368,10 @@ export default function Argus() {
               </div>
             </div>
           )}
-          {data.journal?.length > 0 && (
+          {/* Post-mortems describe CLOSED trades, so they only ever show when the
+              track record has some — this keeps the header count and this list from
+              contradicting each other (e.g. after a reset clears the ledger). */}
+          {data.journal?.length > 0 && stats.n > 0 && (
             <div className="rounded-xl border border-line lg-glass p-4">
               <p className="text-xs text-dim font-medium mb-2 flex items-center gap-1.5">
                 <Newspaper className="w-3.5 h-3.5" /> Trade post-mortems

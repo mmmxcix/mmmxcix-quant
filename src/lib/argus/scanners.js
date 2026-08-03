@@ -8,11 +8,14 @@ import { atr, vwap, priorHigh, priorLow } from "./core.js";
 
 const R_TARGET = 2; // reward:risk on the initial target
 
-function longSetup(kind, entry, stop, strength, reason) {
-  return { state: "triggered", kind, side: "long", entry, stop, target: entry + R_TARGET * (entry - stop), strength, reason };
+// `retest` (optional) = the level that was broken/reclaimed. A momentum entry taken
+// at the close is often a chase; the agent may instead wait for price to pull back
+// to this level for a better fill (see tryOpen's "wait for better entry").
+function longSetup(kind, entry, stop, strength, reason, retest) {
+  return { state: "triggered", kind, side: "long", entry, stop, target: entry + R_TARGET * (entry - stop), strength, reason, retest };
 }
-function shortSetup(kind, entry, stop, strength, reason) {
-  return { state: "triggered", kind, side: "short", entry, stop, target: entry - R_TARGET * (stop - entry), strength, reason };
+function shortSetup(kind, entry, stop, strength, reason, retest) {
+  return { state: "triggered", kind, side: "short", entry, stop, target: entry - R_TARGET * (stop - entry), strength, reason, retest };
 }
 
 /** Higher-timeframe bias from a fast/slow SMA stack. */
@@ -32,8 +35,8 @@ export function breakout(candles, { n = 20, atrPeriod = 14 } = {}) {
   const A = atr(candles, atrPeriod);
   if (!(A > 0)) return null;
   const hi = priorHigh(candles, n), lo = priorLow(candles, n);
-  if (c.close > hi) return longSetup("breakout", c.close, Math.min(lo, c.close - 1.5 * A), Math.min(1, (c.close - hi) / A), `Close broke ${n}-bar high ${hi.toFixed(4)}`);
-  if (c.close < lo) return shortSetup("breakout", c.close, Math.max(hi, c.close + 1.5 * A), Math.min(1, (lo - c.close) / A), `Close broke ${n}-bar low ${lo.toFixed(4)}`);
+  if (c.close > hi) return longSetup("breakout", c.close, Math.min(lo, c.close - 1.5 * A), Math.min(1, (c.close - hi) / A), `Close broke ${n}-bar high ${hi.toFixed(4)}`, hi);
+  if (c.close < lo) return shortSetup("breakout", c.close, Math.max(hi, c.close + 1.5 * A), Math.min(1, (lo - c.close) / A), `Close broke ${n}-bar low ${lo.toFixed(4)}`, lo);
   if (hi - c.close > 0 && hi - c.close < 0.35 * A) return { state: "forming", kind: "breakout", side: "long", trigger: hi, reason: `Approaching ${n}-bar high ${hi.toFixed(4)}` };
   if (c.close - lo > 0 && c.close - lo < 0.35 * A) return { state: "forming", kind: "breakout", side: "short", trigger: lo, reason: `Approaching ${n}-bar low ${lo.toFixed(4)}` };
   return null;
@@ -46,8 +49,8 @@ export function vwapReclaim(candles, { bars = 60, atrPeriod = 14 } = {}) {
   const A = atr(candles, atrPeriod);
   if (!(A > 0)) return null;
   const V = vwap(candles, bars), Vp = vwap(candles.slice(0, -1), bars);
-  if (prev.close < Vp && c.close > V) return longSetup("vwap-reclaim", c.close, Math.min(c.low, c.close - 1.2 * A), 0.6, `Reclaimed VWAP ${V.toFixed(4)}`);
-  if (prev.close > Vp && c.close < V) return shortSetup("vwap-reclaim", c.close, Math.max(c.high, c.close + 1.2 * A), 0.6, `Lost VWAP ${V.toFixed(4)}`);
+  if (prev.close < Vp && c.close > V) return longSetup("vwap-reclaim", c.close, Math.min(c.low, c.close - 1.2 * A), 0.6, `Reclaimed VWAP ${V.toFixed(4)}`, V);
+  if (prev.close > Vp && c.close < V) return shortSetup("vwap-reclaim", c.close, Math.max(c.high, c.close + 1.2 * A), 0.6, `Lost VWAP ${V.toFixed(4)}`, V);
   if (c.close < V && V - c.close < 0.3 * A) return { state: "forming", kind: "vwap-reclaim", side: "long", trigger: V, reason: `Testing VWAP ${V.toFixed(4)} from below` };
   if (c.close > V && c.close - V < 0.3 * A) return { state: "forming", kind: "vwap-reclaim", side: "short", trigger: V, reason: `Testing VWAP ${V.toFixed(4)} from above` };
   return null;

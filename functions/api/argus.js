@@ -50,7 +50,7 @@ export async function onRequest({ request, env }) {
     const what = new URL(request.url).searchParams.get("what") || "all";
     if (what === "all") {
       const snap = await readSnap();
-      return json({ ok: true, state: snap?.state || null, theses: snap?.theses || [], ledger: snap?.ledger || [], journal: snap?.journal || [], skills: snap?.skills || [] });
+      return json({ ok: true, state: snap?.state || null, theses: snap?.theses || [], ledger: snap?.ledger || [], journal: snap?.journal || [], skills: snap?.skills || [], retainedSkills: snap?.retainedSkills || [] });
     }
     return json({ ok: true, [what]: await read(what) });
   }
@@ -108,6 +108,9 @@ export async function onRequest({ request, env }) {
       if (Array.isArray(body.theses)) snap.theses = body.theses.slice(0, 200);
       if (Array.isArray(body.journal)) snap.journal = body.journal.slice(0, 300);
       if (Array.isArray(body.skills)) snap.skills = body.skills.slice(0, 50);
+      // retainedSkills = knowledge crystallised before a reset that must survive the
+      // journal being cleared (the fresh journal starts empty after a reset).
+      if (Array.isArray(body.retainedSkills)) snap.retainedSkills = body.retainedSkills.slice(0, 50);
       // ledgerReplace REPLACES the closed-trade ledger (used by the reset to clear
       // the book); ledgerAdd merges new closes into it (the normal path).
       if (Array.isArray(body.ledgerReplace)) {

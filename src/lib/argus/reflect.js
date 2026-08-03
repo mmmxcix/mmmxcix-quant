@@ -123,6 +123,20 @@ export function crystallise(journal, { minTimes = 3, minConfidence = 0.5 } = {})
     .sort((a, b) => b.times - a.times || Math.abs(b.avgR) - Math.abs(a.avgR));
 }
 
+/**
+ * Merge two skill lists, de-duping by scope+lesson. Used to keep RETAINED skills
+ * (crystallised before a reset) alongside skills freshly re-derived from a journal
+ * that was cleared on that reset — so the agent keeps its technical knowledge even
+ * though its per-trade post-mortems were wiped to match the fresh track record.
+ * `retained` wins on a tie.
+ */
+export function unionSkills(retained = [], fresh = []) {
+  const key = (s) => `${keyOf({ applies: s.scope })}::${norm(s.lesson).slice(0, 60)}`;
+  const m = new Map();
+  for (const s of [...(fresh || []), ...(retained || [])]) if (s?.lesson) m.set(key(s), s);
+  return [...m.values()].sort((a, b) => b.times - a.times || Math.abs(b.avgR) - Math.abs(a.avgR));
+}
+
 /** Skills that apply to a proposed setup — what the agent should read before entering. */
 export function skillsFor(skills, setup) {
   return (skills || []).filter((s) => {

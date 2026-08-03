@@ -41,18 +41,37 @@ export function priorLow(candles, n) {
 
 const MAINT = 0.05; // maintenance-margin + fee buffer used for leverage/liquidation
 
+// Per-asset-class leverage ceiling. Crypto is NOISY (wide spreads, mini-wicks) —
+// so 100× there gets liquidated by noise before a stop matters; forex moves in
+// tiny pips so high leverage is safe; stocks/futures gap. Tunable ceilings.
+export const ASSET_MAX_LEV = { crypto: 20, forex: 100, futures: 25, stock: 15, etf: 15, index: 20 };
+
+// Minimum stop distance as a fraction of price, per asset — a stop tighter than
+// this is just market noise (a 0.017% BTC stop liquidates on the spread). Argus
+// widens a too-tight stop to at least this before sizing.
+export const MIN_STOP_FRAC = { crypto: 0.004, forex: 0.0006, futures: 0.0015, stock: 0.002, etf: 0.002, index: 0.002 };
+
 /**
- * Leverage Argus chooses for a trade. Bounded so the STOP is always hit BEFORE
- * liquidation — a tighter stop safely allows more leverage; a wider stop forces
- * less. Conviction scales within that safe band. Hard-capped at `maxTradeLev`
- * (100×). This is what a real leveraged day-trader does: never post so much
- * leverage that a normal stop-out becomes a liquidation.
+ * Leverage Argus chooses for a trade — bounded on THREE sides so it's never
+ * reckless: (1) the STOP must fire before liquidation (safeMax from entry/stop),
+ * (2) an ASSET-class ceiling (crypto low, forex high), (3) CONFIDENCE scaling
+ * (a routine setup uses a small fraction of the ceiling; a high-conviction one
+ * uses most). This is dynamic, not a flat 100×.
  */
-export function chooseLeverage(entry, stopDist, { conviction = 0.5, maxTradeLev = 100 } = {}) {
+export function chooseLeverage(entry, stopDist, { conviction = 0.5, maxTradeLev = 100, asset = "crypto" } = {}) {
   if (!(stopDist > 0) || !(entry > 0)) return 1;
-  const safeMax = Math.max(1, Math.floor((entry / stopDist) * (1 - MAINT)));
-  const frac = 0.4 + 0.6 * Math.max(0, Math.min(1, conviction)); // 0.4 … 1.0
-  return Math.max(1, Math.min(maxTradeLev, safeMax, Math.floor(safeMax * frac)));
+  const safeMax = Math.max(1, Math.floor((entry / stopDist) * (1 - MAINT)));       // stop before liquidation
+  const assetCap = Math.min(maxTradeLev, ASSET_MAX_LEV[asset] ?? 15);              // asset-class ceiling
+  const c = Math.max(0, Math.min(1, conviction));
+  const frac = c >= 0.85 ? 1.0 : c >= 0.75 ? 0.7 : c >= 0.6 ? 0.45 : 0.25;         // confidence scaling
+  return Math.max(1, Math.min(assetCap, safeMax, Math.round(assetCap * frac)));
+}
+
+/** Widen a stop that's tighter than the asset's noise floor, keeping direction. */
+export function enforceMinStop(entry, stop, side, asset = "crypto") {
+  const minDist = (MIN_STOP_FRAC[asset] ?? 0.002) * entry;
+  if (Math.abs(entry - stop) >= minDist) return stop;
+  return side === "long" ? entry - minDist : entry + minDist;
 }
 
 /** Liquidation price for a leveraged position (approx, incl. a maintenance buffer). */
@@ -75,7 +94,7 @@ export function liquidationPrice(entry, side, leverage) {
  * @returns {null | { size, riskAmt, leverage, margin, notional, liqPrice }}
  */
 export function sizePosition({
-  equity, entry, stop, side = "long",
+  equity, entry, stop, side = "long", asset = "crypto",
   openRisk = 0, openMargin = 0, openNotional = 0,
   heatCap = 0.06, baseRiskPct = 0.02,
   maxTradeLev = 100, portfolioLevCap, maxLeverage, conviction = 0.5,
@@ -90,8 +109,9 @@ export function sizePosition({
   if (riskAmt0 <= equity * 0.0005) return null;          // no meaningful heat room → wait
   let size = riskAmt0 / stopDist;
 
-  // 2) Argus's leverage for this trade (bounded by the stop, capped at 100×).
-  const leverage = chooseLeverage(entry, stopDist, { conviction, maxTradeLev });
+  // 2) Argus's leverage — dynamic by asset class + conviction, and never so high
+  //    that a stop-out becomes a liquidation.
+  const leverage = chooseLeverage(entry, stopDist, { conviction, maxTradeLev, asset });
 
   // 3) Capital gates — the tightest wins.
   const notionalRoom = Math.max(0, levCap * equity - openNotional);      // portfolio exposure ceiling
@@ -141,10 +161,17 @@ export function newId() {
  * Open a thesis from a validated setup: fills the entry, sizes it, computes the
  * cash risk. Returns null if there's no heat room (caller keeps it forming).
  */
-export function openThesis(setup, { equity, openRisk, openMargin = 0, openNotional = 0, asset, heatCap, baseRiskPct, maxTradeLev, portfolioLevCap, maxLeverage, conviction, now = Date.now() }) {
+export function openThesis(setup, { equity, openRisk, openMargin = 0, openNotional = 0, asset, heatCap, baseRiskPct, maxTradeLev, portfolioLevCap, maxLeverage, conviction, minPlannedR = 0.8, now = Date.now() }) {
   const fillEntry = fillPrice(setup.entry, setup.side, "entry", asset);
+  // Widen an absurdly tight stop to the asset's noise floor BEFORE sizing, so the
+  // stop is meaningful (not liquidated by the spread) and risk/size stay coherent.
+  const stop = enforceMinStop(fillEntry, setup.stop, setup.side, asset);
+  // Widening the stop lowers reward:risk — if it drops below the floor, the trade
+  // isn't worth taking (skip, let it re-form).
+  const rr = plannedRR(setup.side, fillEntry, stop, setup.target);
+  if (rr < minPlannedR) return null;
   const sized = sizePosition({
-    equity, entry: fillEntry, stop: setup.stop, side: setup.side,
+    equity, entry: fillEntry, stop, side: setup.side, asset,
     openRisk, openMargin, openNotional, heatCap, baseRiskPct,
     maxTradeLev, portfolioLevCap, maxLeverage,
     conviction: conviction ?? setup.conviction ?? 0.5,
@@ -157,10 +184,10 @@ export function openThesis(setup, { equity, openRisk, openMargin = 0, openNotion
     bias: setup.bias ?? null, // higher-TF regime at entry — carried into the ledger for learning
     state: "open",
     reason: setup.reason, evidence: setup.evidence || [],
-    entry: fillEntry, stop: setup.stop, target: setup.target,
+    entry: fillEntry, stop, target: setup.target,
     size: sized.size, riskAmt: sized.riskAmt,
     leverage: sized.leverage, margin: sized.margin, notional: sized.notional, liqPrice: sized.liqPrice,
-    plannedR: plannedRR(setup.side, fillEntry, setup.stop, setup.target),
+    plannedR: rr,
     openedAt: now, lastPoll: now,
   };
 }

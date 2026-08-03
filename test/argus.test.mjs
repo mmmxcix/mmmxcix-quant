@@ -2,7 +2,7 @@
 // logic, run with `npm test`.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { sizePosition, fillPrice, openThesis, evaluateExit, ledgerStats, closeThesisAt, chooseLeverage, liquidationPrice, plannedRR } from "../src/lib/argus/core.js";
+import { sizePosition, fillPrice, openThesis, evaluateExit, ledgerStats, closeThesisAt, chooseLeverage, liquidationPrice, plannedRR, enforceMinStop } from "../src/lib/argus/core.js";
 import { breakout, meanReversion, scan } from "../src/lib/argus/scanners.js";
 
 const bar = (o, h, l, c, v = 1000, t = 0) => ({ time: t, open: o, high: h, low: l, close: c, volume: v });
@@ -34,17 +34,30 @@ test("capital gate: committed margin (total notional / leverage) stays ≤ equit
   assert.equal(full, null, "capital fully committed → null");
 });
 
-test("leverage is bounded by the stop (tighter stop → more leverage), capped at 100x", () => {
-  // stop 2% away → safe leverage ≈ 1/0.02 ≈ 47 (with buffer); never liquidate before the stop.
-  const wide = chooseLeverage(100, 2, { conviction: 1, maxTradeLev: 100 });
-  assert.ok(wide <= Math.floor(100 / 2) && wide >= 1, "wide stop → modest leverage");
-  // stop 0.2% away → could be ~475, but hard-capped at 100.
-  const tight = chooseLeverage(100, 0.2, { conviction: 1, maxTradeLev: 100 });
-  assert.equal(tight, 100, "tight stop leverage hits the 100x cap");
-  // liquidation sits BEYOND the stop for a long (below entry, but further than the stop side).
-  const lev = chooseLeverage(100, 2, { conviction: 0.5 });
+test("leverage is dynamic: bounded by stop, asset class, and confidence", () => {
+  // Crypto is capped low (noise) — even a tight stop + max conviction stays ≤ 20x.
+  const cryptoTight = chooseLeverage(100, 0.2, { conviction: 1, asset: "crypto" });
+  assert.ok(cryptoTight <= 20, `crypto tight/high-conviction ≤ 20x (got ${cryptoTight})`);
+  // Forex allows high leverage (tiny pips) — tight stop + high conviction → up to 100x.
+  const fxTight = chooseLeverage(100, 0.05, { conviction: 1, asset: "forex", maxTradeLev: 100 });
+  assert.ok(fxTight > 20 && fxTight <= 100, `forex tight/high-conviction goes high (got ${fxTight})`);
+  // Confidence scaling: a routine crypto setup uses far less than the ceiling.
+  const routine = chooseLeverage(100, 0.2, { conviction: 0.5, asset: "crypto" });
+  assert.ok(routine < cryptoTight, "low conviction → less leverage than high conviction");
+  // Never leverage so a wider stop's liquidation precedes the stop.
+  const lev = chooseLeverage(100, 2, { conviction: 0.5, asset: "crypto" });
   const liq = liquidationPrice(100, "long", lev);
-  assert.ok(liq < 100 && liq < 98, "liq is below entry and beyond a 98 stop");
+  assert.ok(liq < 100 && liq < 98, "liq below entry and beyond a 98 stop");
+});
+
+test("enforceMinStop widens an absurdly tight stop to the asset noise floor", () => {
+  // A 0.017% BTC stop is noise → widened to ≥ 0.4% (crypto floor).
+  const s = enforceMinStop(63563, 63552.65, "long", "crypto");
+  assert.ok(63563 - s >= 63563 * 0.004 - 1e-6, "crypto stop widened to ≥ 0.4%");
+  // A wide-enough stop is left alone.
+  assert.equal(enforceMinStop(100, 98, "long", "crypto"), 98, "healthy stop untouched");
+  // Short side widens upward.
+  assert.ok(enforceMinStop(100, 100.01, "short", "crypto") > 100, "short tight stop widened up");
 });
 
 test("margin ≤ equity, portfolio-notional ceiling, and per-trade leverage returned", () => {
@@ -82,6 +95,25 @@ test("thesis: open, hit target → positive R; hit stop → −1R", () => {
   assert.equal(loss.outcome, "stop"); assert.ok(loss.R < -0.9 && loss.R > -1.2, "≈−1R loss");
 });
 
+test("Bug 1: displayed risk equals size × |entry − stop| on the SAME stop, and stop clears the noise floor", () => {
+  // An absurdly tight crypto stop (0.017%) like the BTCUSDT report — openThesis must
+  // widen it to the noise floor and keep risk = size × |entry − stop| on THAT stop.
+  const setup = { symbol: "BTCUSDT", market: "crypto", side: "long", kind: "breakout", timeframe: "5m", entry: 63563.45, stop: 63552.65, target: 64000, reason: "t" };
+  const th = openThesis(setup, { equity: 10000, openRisk: 0, asset: "crypto", heatCap: 0.10, baseRiskPct: 0.02 });
+  assert.ok(th, "thesis opens on a widened stop");
+  assert.ok(th.entry - th.stop >= th.entry * 0.004 - 1e-6, "stop widened to ≥ 0.4% noise floor");
+  assert.ok(Math.abs(th.riskAmt - th.size * Math.abs(th.entry - th.stop)) < 1e-6, "risk = size × |entry − stop| on the stored stop");
+  // Liquidation must sit BEYOND the stop (margin safeguard) for a long: stop first.
+  assert.ok(th.liqPrice < th.stop, "liquidation is further from entry than the stop");
+});
+
+test("openThesis skips a setup whose reward:risk collapses once the stop is widened", () => {
+  // Target only a hair above entry → widening the stop makes R:R < floor → no trade.
+  const setup = { symbol: "ETHUSDT", market: "crypto", side: "long", kind: "breakout", timeframe: "5m", entry: 3000, stop: 2999.5, target: 3002, reason: "t" };
+  const th = openThesis(setup, { equity: 10000, openRisk: 0, asset: "crypto", heatCap: 0.10, baseRiskPct: 0.02 });
+  assert.equal(th, null, "poor R:R after min-stop → skipped");
+});
+
 test("ledger stats aggregate win rate + R-expectancy", () => {
   const s = ledgerStats([{ pnl: 200, R: 2 }, { pnl: -100, R: -1 }, { pnl: -100, R: -1 }, { pnl: 300, R: 3 }]);
   assert.equal(s.n, 4); assert.equal(s.wins, 2); assert.equal(s.winRate, 0.5);
@@ -100,6 +132,12 @@ test("mean-reversion fades a stretch far below VWAP", () => {
   const r = meanReversion(candles, { bars: 60, atrPeriod: 14, mult: 2.2 });
   assert.ok(r && r.side === "long" && r.kind === "mean-reversion", "long fade");
   assert.ok(r.target > r.entry && r.stop < r.entry, "target = mean, stop below");
+});
+
+test("breakout carries a retest level below the entry — the 'better entry' the agent may wait for", () => {
+  const candles = [...flat(40, 100), bar(100, 103.2, 100, 103)];
+  const r = breakout(candles, { n: 20, atrPeriod: 14 });
+  assert.ok(Number.isFinite(r.retest) && r.retest < r.entry, "retest = broken high, below the chase entry");
 });
 
 test("scan gates trend setups by higher-timeframe bias", () => {
@@ -194,7 +232,7 @@ test("adjustment clamps to [0.5,1.25] and only matching, well-sampled buckets ac
 });
 
 // ── Phase-3: Hermes reflection loop ─────────────────────────────────────────
-import { describeTrade, parseReflection, crystallise, skillsFor } from "../src/lib/argus/reflect.js";
+import { describeTrade, parseReflection, crystallise, skillsFor, unionSkills } from "../src/lib/argus/reflect.js";
 
 const closedTrade = (over = {}) => ({
   id: "t1", symbol: "SOLUSDT", asset: "crypto", kind: "mean-reversion", side: "short",
@@ -230,6 +268,18 @@ test("crystallise promotes a lesson only after it repeats, and skillsFor matches
   assert.ok(skills[0].avgR < 0);
   assert.equal(skillsFor(skills, { kind: "mean-reversion", symbol: "SOLUSDT", side: "short" }).length, 1, "applies to the matching setup");
   assert.equal(skillsFor(skills, { kind: "breakout", symbol: "SOLUSDT", side: "long" }).length, 0, "not to a different setup");
+});
+
+test("unionSkills keeps retained knowledge across a reset that cleared the journal (Bug 2)", () => {
+  const one = parseReflection('{"verdict":"bad-process","cause":"c","mistake":"m","lesson":"skip mean-reversion shorts in an uptrend","applies":{"kind":"mean-reversion","side":"short"},"confidence":0.8}', closedTrade());
+  const retained = crystallise([one, one, one]); // a skill earned BEFORE the reset
+  // After the reset the journal is empty → crystallise([]) is []; retained must survive.
+  const merged = unionSkills(retained, crystallise([]));
+  assert.equal(merged.length, 1, "retained skill kept even though the journal is empty");
+  // A fresh, different lesson is added alongside the retained one (no dupes).
+  const other = parseReflection('{"verdict":"good-process","cause":"c","mistake":"none","lesson":"take breakout longs with the 1h trend","applies":{"kind":"breakout","side":"long"},"confidence":0.8}', closedTrade());
+  const merged2 = unionSkills(retained, crystallise([other, other, other]));
+  assert.equal(merged2.length, 2, "retained + fresh, de-duped");
 });
 
 test("closeThesisAt force-closes at a reference price, tagged manual", () => {

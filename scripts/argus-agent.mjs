@@ -5,13 +5,13 @@
 // Paper only. Persists to /api/argus. Env: LAB_TOKEN (req), LAB_SITE,
 // LAB_ARGUS_EQUITY (paper start, default 10000).
 import { loadMarket } from "./marketdata.mjs";
-import { openThesis, evaluateExit, closeThesisAt, plannedRR } from "../src/lib/argus/core.js";
+import { openThesis, evaluateExit, closeThesisAt, plannedRR, fillPrice, enforceMinStop, MIN_STOP_FRAC } from "../src/lib/argus/core.js";
 import { scan } from "../src/lib/argus/scanners.js";
 import { buildBrief, diffBrief, renderBrief, parseFearGreed } from "../src/lib/argus/brief.js";
 import { deriveLessons, adjustment, sessionOf } from "../src/lib/argus/learn.js";
 import { marketOpen } from "../src/lib/argus/hours.js";
 import { effectiveHeatCap } from "../src/lib/argus/correlation.js";
-import { buildReflectionMessages, parseReflection, crystallise, skillsFor } from "../src/lib/argus/reflect.js";
+import { buildReflectionMessages, parseReflection, crystallise, skillsFor, unionSkills } from "../src/lib/argus/reflect.js";
 import { callArgusLLM, chatOnce } from "../src/lib/argus/llm.js";
 
 const SITE = process.env.LAB_SITE || "https://quant.mmmxcix.com";
@@ -31,6 +31,12 @@ const BASE_RISK = +(process.env.LAB_ARGUS_RISK || 0.02);
 // ceiling on gross exposure). Both tunable.
 const MAX_TRADE_LEV = +(process.env.LAB_ARGUS_MAX_TRADE_LEV || 100);
 const PORTFOLIO_LEV_CAP = +(process.env.LAB_ARGUS_PORTFOLIO_LEV || 20);
+// "Wait for a better entry": rather than chase a momentum setup at the close,
+// Argus may park a LIMIT at the retest of the broken level and enter there — but
+// only when a pullback is plausible and entering now is a mediocre R:R. A limit
+// that isn't filled within this window is stale and abandoned.
+const GOOD_RR = +(process.env.LAB_ARGUS_GOOD_RR || 1.6);
+const LIMIT_TTL_MS = +(process.env.LAB_ARGUS_LIMIT_TTL_MIN || 45) * 60000;
 const DAILY_STOP = +(process.env.LAB_ARGUS_DAILY_STOP || 0.04);
 const EQUITY0 = +(process.env.LAB_ARGUS_EQUITY || 10000);
 // Phase-1 event channel: LLM reads the alt-data briefing and proposes directional
@@ -98,6 +104,7 @@ let prevBrief = null;
 let eventFng = null; // latest crypto Fear & Greed reading (shown on the Argus page)
 let journal = [];       // Hermes post-mortems, newest first
 let skills = [];        // lessons crystallised from repeats — consulted before a trade
+let retainedSkills = []; // knowledge kept across a reset (journal cleared, skills survive)
 let reflectQueue = [];  // closed trades awaiting their post-mortem
 let forceClose = new Set(); // thesis ids the dev asked to close now (drained each cycle)
 let forceCloseReason = new Map(); // thesis id → the dev's reason for closing early (fed to the post-mortem)
@@ -220,8 +227,10 @@ async function runReflections(max = 3) {
     } catch { reflectQueue.unshift(trade); break; }
   }
   // CRYSTALLISE: a lesson written down repeatedly for the same situation becomes
-  // a rule the agent obeys before its next trade of that kind.
-  skills = crystallise(journal);
+  // a rule the agent obeys before its next trade of that kind. Union with skills
+  // retained across a reset (whose journal entries were cleared) so kept knowledge
+  // isn't wiped by a freshly-empty journal.
+  skills = unionSkills(retainedSkills, crystallise(journal));
 }
 
 const clamp01 = (x) => Math.max(0, Math.min(1, x));
@@ -289,6 +298,40 @@ function tryOpen(inst, setup, halted) {
   // not a binary). Real signals dominate (0.7 weight); the bias only leans it.
   const conviction = clamp01(0.7 * convictionOf(setup) + 0.3 * (0.5 + 0.5 * (evented ? biasConf : opposes ? -biasConf : 0)));
 
+  // WAIT FOR A BETTER ENTRY (user request): rather than chase a momentum setup at
+  // the close — where the entry sits right on top of the stop and gets shaken out
+  // on noise — Argus may park a LIMIT at the retest of the level it just broke and
+  // enter THERE, for a better price and a cleaner R:R. Only when a pullback is
+  // plausible: there's a retest level on the favourable side, conviction isn't
+  // urgent (a high-conviction setup enters now rather than risk missing it), and
+  // entering at the current price is only a mediocre R:R. Otherwise: enter directly.
+  if (!setup._fromLimit && Number.isFinite(setup.retest) && conviction < 0.85) {
+    const fillNow = fillPrice(setup.entry, setup.side, "entry", inst.asset);
+    const stopNow = enforceMinStop(fillNow, setup.stop, setup.side, inst.asset);
+    const rrNow = plannedRR(setup.side, fillNow, stopNow, setup.target);
+    const favourable = setup.side === "long" ? setup.retest < fillNow : setup.retest > fillNow;
+    if (rrNow < GOOD_RR && favourable) {
+      const limit = setup.retest;
+      const stopAtLimit = enforceMinStop(limit, setup.stop, setup.side, inst.asset);
+      const rrLimit = plannedRR(setup.side, limit, stopAtLimit, setup.target);
+      const bufferOk = Math.abs(limit - stopAtLimit) >= (MIN_STOP_FRAC[inst.asset] ?? 0.002) * limit;
+      // Only worth waiting if the retest clearly improves R:R, keeps a real buffer,
+      // and is within one stop-distance (a pullback that far is realistic, further is a miss).
+      const reachable = Math.abs(fillNow - limit) <= Math.abs(fillNow - stopNow);
+      if (rrLimit >= GOOD_RR && bufferOk && reachable) {
+        forming = forming.filter((f) => f.symbol !== inst.symbol);
+        forming.push({
+          symbol: inst.symbol, asset: inst.asset, side: setup.side, kind: setup.kind,
+          limit, stop: setup.stop, target: setup.target, bias: setup.bias ?? null,
+          evidence: setup.evidence || [], conviction, reason: setup.reason,
+          expiresAt: Date.now() + LIMIT_TTL_MS, pending: true,
+        });
+        console.log(`[${new Date().toISOString()}] WAIT ${inst.symbol} ${setup.side} ${setup.kind} — limit @${limit.toFixed(4)} (now ${rrNow.toFixed(2)}R → retest ${rrLimit.toFixed(2)}R): ${setup.reason}`);
+        return;
+      }
+    }
+  }
+
   // Diversification-aware heat: more total risk allowed when this trade is
   // uncorrelated with what's already open.
   const heatCap = effectiveHeatCap(open.map((o) => o.symbol), inst.symbol, HEAT_CAP, MAX_HEAT);
@@ -313,6 +356,30 @@ function tryOpen(inst, setup, halted) {
     // no heat room → park as forming so it's re-checked on the fast loop
     if (!forming.some((f) => f.symbol === inst.symbol)) forming.push({ symbol: inst.symbol, asset: inst.asset, side: setup.side, kind: setup.kind, reason: "waiting for heat: " + setup.reason });
   }
+}
+
+/** A parked LIMIT order (from "wait for a better entry"): if price has pulled back
+ *  to the retest level, enter there; if it never came within the window, abandon it.
+ *  Returns true when this symbol had a pending limit (so the caller skips a fresh
+ *  scan for it — the limit governs the entry until it fills or expires). */
+function checkLimits(inst, candle, halted) {
+  const idx = forming.findIndex((f) => f.symbol === inst.symbol && f.pending && Number.isFinite(f.limit));
+  if (idx < 0) return false;
+  const f = forming[idx];
+  if (halted || Date.now() > f.expiresAt || open.some((o) => o.symbol === inst.symbol)) {
+    forming.splice(idx, 1);
+    if (!halted && !open.some((o) => o.symbol === inst.symbol)) console.log(`[${new Date().toISOString()}] EXPIRE-LIMIT ${inst.symbol} ${f.side} ${f.kind} @${f.limit.toFixed(4)} — no pullback`);
+    return true;
+  }
+  // Filled if the bar traded through the limit (low ≤ limit for a long, high ≥ for a short).
+  const hit = f.side === "long" ? (candle.low ?? candle.close) <= f.limit : (candle.high ?? candle.close) >= f.limit;
+  if (!hit) return true; // still waiting
+  forming.splice(idx, 1);
+  tryOpen(inst, {
+    symbol: inst.symbol, side: f.side, kind: f.kind, entry: f.limit, stop: f.stop, target: f.target,
+    bias: f.bias, evidence: f.evidence, conviction: f.conviction, reason: `retest fill — ${f.reason}`, _fromLimit: true,
+  }, halted);
+  return true;
 }
 
 /** Conflict handler (Bug 5A): a fresh, confident OPPOSING catalyst on a symbol we
@@ -408,9 +475,12 @@ async function cycle(fullScan) {
       try { tf = await loadTF(inst); } catch { continue; }
       if (!tf.c5 || tf.c5.length < 40) continue;
       manageExits(inst, tf.c5[tf.c5.length - 1], ledgerAdd);
+      // A parked limit ("wait for a better entry") governs this symbol until it
+      // fills or expires — if one is pending, don't also open a fresh market entry.
+      const limitPending = checkLimits(inst, tf.c5[tf.c5.length - 1], halted);
       // Scan for new / re-check forming: both use the same scan; the fast loop
       // catches a forming setup the moment it triggers ("watch until entry").
-      if (tf.c15 && tf.c1h) {
+      if (!limitPending && tf.c15 && tf.c1h) {
         const { triggered } = scan(tf);
         for (const s of triggered) tryOpen(inst, s, halted);
       }
@@ -465,6 +535,7 @@ async function persist(ledgerAdd, extra) {
     ledgerAdd,
     journal: journal.slice(0, 60),   // Hermes post-mortems (newest first)
     skills,                          // rules crystallised from repeated lessons
+    retainedSkills,                  // knowledge kept across a reset (survives an empty journal)
   };
   try {
     const r = await fetch(`${SITE}/api/argus`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
@@ -485,6 +556,7 @@ async function hydrate() {
     }
     if (Array.isArray(j.journal)) journal = j.journal.slice(0, 300);
     if (Array.isArray(j.skills)) skills = j.skills;
+    if (Array.isArray(j.retainedSkills)) retainedSkills = j.retainedSkills;
     for (const e of j.state?.events || []) { // restore fresh event biases across restarts
       if (Date.now() - (e.at || 0) < EVENT_TTL) eventBias.set(e.symbol, { side: e.side, thesis: e.thesis, confidence: e.confidence, evidence: [], horizon: e.horizon, at: e.at, model: e.model });
     }
@@ -504,14 +576,20 @@ if (process.env.LAB_ARGUS_RESET === "1") {
   const b = { j: journal.length, s: skills.length };
   const BIAS_TIED = /\bbias\b|\bevent\b|catalyst|regime|higher.?time|\bhtf\b|overlap|timeframe/i;
   const keep = (e) => !BIAS_TIED.test(`${e?.lesson || ""} ${e?.cause || ""} ${e?.mistake || ""} ${e?.text || ""}`) && e?.applies?.source !== "event";
-  journal = journal.filter(keep);
-  skills = crystallise(journal); // re-derive skills from the pruned journal
+  // Keep the technical KNOWLEDGE, drop the bias-tied lessons: crystallise skills
+  // from the non-bias journal and RETAIN them, then clear the journal itself so the
+  // per-trade post-mortems match the freshly-cleared track record (Gemini Bug 2 —
+  // header ledger and post-mortems must agree). Retained skills survive the empty
+  // journal via unionSkills in the reflect loop.
+  retainedSkills = crystallise(journal.filter(keep));
+  journal = [];
+  skills = retainedSkills.slice();
   equity = EQUITY0; equityDayStart = EQUITY0;
   open = []; forming = []; closedAll = []; closedToday = []; reflectQueue = [];
   lessons = deriveLessons(closedAll, { minSample: LEARN_MIN });
   eventBias = new Map();
-  console.log(`[${new Date().toISOString()}] RESET → ${EQUITY0}: kept ${journal.length}/${b.j} journal + ${skills.length}/${b.s} skills (dropped bias-tied), cleared book + ledger`);
-  await persist([], { dailyPnl: 0, halted: false }); // writes reset state + theses:[] + filtered journal/skills
+  console.log(`[${new Date().toISOString()}] RESET → ${EQUITY0}: cleared ${b.j} journal + ${b.s} skills, retained ${retainedSkills.length} technical skills (dropped bias-tied), cleared book + ledger`);
+  await persist([], { dailyPnl: 0, halted: false }); // writes reset state + theses:[] + empty journal + retained skills
   // Clear the stored ledger too (persist only appends) so the fresh track record starts at 0.
   try {
     await fetch(`${SITE}/api/argus`, {
