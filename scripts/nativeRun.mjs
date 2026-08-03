@@ -40,6 +40,14 @@ const candlesCsv = (candles) =>
 // ── C++ ──────────────────────────────────────────────────────────────────────
 // The user code defines `struct Bar` + `signals(bars)` (exactly the C++ export).
 // We append a main() that reads candle CSV from stdin and prints one signal/line.
+// Assemble the full translation unit: headers, a Bar struct (only if the code
+// doesn't already define one — the C++ export does, a bare signals() may not),
+// the user's code, then the stdin/stdout main().
+function cppSource(code) {
+  const bar = /struct\s+Bar\b/.test(code) ? "" : "struct Bar { double open, high, low, close, volume; };\n";
+  return `#include <vector>\n#include <cmath>\n#include <deque>\n#include <algorithm>\n${bar}${code}\n${CPP_HARNESS}`;
+}
+
 const CPP_HARNESS = `
 #include <iostream>
 #include <string>
@@ -65,7 +73,7 @@ function cppSignals(code, candles) {
   try {
     const src = join(dir, "strat.cpp");
     const exe = join(dir, process.platform === "win32" ? "strat.exe" : "strat.out");
-    writeFileSync(src, `#include <vector>\n#include <cmath>\n${code}\n${CPP_HARNESS}`);
+    writeFileSync(src, cppSource(code));
     const comp = spawnSync(GPP, ["-O2", "-std=c++17", "-o", exe, src], { encoding: "utf8", timeout: 60000 });
     if (comp.status !== 0) return { error: "compile: " + (comp.stderr || "unknown").split("\n").filter(Boolean).slice(0, 4).join(" | ").slice(0, 400) };
     const run = spawnSync(exe, [], { input: candlesCsv(candles), encoding: "utf8", maxBuffer: 128 * 1024 * 1024, timeout: 60000 });
@@ -122,7 +130,7 @@ function ensureCppBinary(code) {
   const dir = mkdtempSync(join(tmpdir(), "cppc-"));
   const src = join(dir, "strat.cpp");
   const exe = join(dir, process.platform === "win32" ? "strat.exe" : "strat.out");
-  writeFileSync(src, `#include <vector>\n#include <cmath>\n${code}\n${CPP_HARNESS}`);
+  writeFileSync(src, cppSource(code));
   const comp = spawnSync(GPP, ["-O2", "-std=c++17", "-o", exe, src], { encoding: "utf8", timeout: 60000 });
   if (comp.status !== 0) {
     try { rmSync(dir, { recursive: true, force: true }); } catch { /* noop */ }
