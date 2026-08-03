@@ -2,7 +2,7 @@
 // logic, run with `npm test`.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { sizePosition, fillPrice, openThesis, evaluateExit, ledgerStats, closeThesisAt } from "../src/lib/argus/core.js";
+import { sizePosition, fillPrice, openThesis, evaluateExit, ledgerStats, closeThesisAt, chooseLeverage, liquidationPrice, plannedRR } from "../src/lib/argus/core.js";
 import { breakout, meanReversion, scan } from "../src/lib/argus/scanners.js";
 
 const bar = (o, h, l, c, v = 1000, t = 0) => ({ time: t, open: o, high: h, low: l, close: c, volume: v });
@@ -32,6 +32,38 @@ test("capital gate: committed margin (total notional / leverage) stays ≤ equit
   // Budget full → null.
   const full = sizePosition({ equity: 10000, entry: 100, stop: 98, openNotional: 100000, maxLeverage: 10 });
   assert.equal(full, null, "capital fully committed → null");
+});
+
+test("leverage is bounded by the stop (tighter stop → more leverage), capped at 100x", () => {
+  // stop 2% away → safe leverage ≈ 1/0.02 ≈ 47 (with buffer); never liquidate before the stop.
+  const wide = chooseLeverage(100, 2, { conviction: 1, maxTradeLev: 100 });
+  assert.ok(wide <= Math.floor(100 / 2) && wide >= 1, "wide stop → modest leverage");
+  // stop 0.2% away → could be ~475, but hard-capped at 100.
+  const tight = chooseLeverage(100, 0.2, { conviction: 1, maxTradeLev: 100 });
+  assert.equal(tight, 100, "tight stop leverage hits the 100x cap");
+  // liquidation sits BEYOND the stop for a long (below entry, but further than the stop side).
+  const lev = chooseLeverage(100, 2, { conviction: 0.5 });
+  const liq = liquidationPrice(100, "long", lev);
+  assert.ok(liq < 100 && liq < 98, "liq is below entry and beyond a 98 stop");
+});
+
+test("margin ≤ equity, portfolio-notional ceiling, and per-trade leverage returned", () => {
+  const s = sizePosition({ equity: 10000, entry: 100, stop: 99.5, openRisk: 0, portfolioLevCap: 20, maxTradeLev: 100 });
+  assert.ok(s.margin <= 10000 + 1e-6, "margin never exceeds equity");
+  assert.ok(s.notional <= 20 * 10000 + 1e-6, "notional within the portfolio ceiling");
+  assert.ok(s.leverage >= 1 && s.leverage <= 100, "sane leverage");
+  assert.ok(Math.abs(s.margin - s.notional / s.leverage) < 1e-6, "margin = notional / leverage");
+  // Margin budget already used up → new trade can't post margin → null (via notional room 0 or margin 0).
+  const capped = sizePosition({ equity: 10000, entry: 100, stop: 98, openMargin: 10000, openNotional: 200000, portfolioLevCap: 20 });
+  assert.equal(capped, null, "no margin/notional room → null");
+});
+
+test("plannedRR is side-aware and matches the levels (Bug 3)", () => {
+  // SOLUSDT example: entry 74.1545, target 75.05, stop 73.141 → real R ≈ 0.88, not 1.9.
+  const r = plannedRR("long", 74.1545, 73.141, 75.05);
+  assert.ok(Math.abs(r - 0.884) < 0.01, `long R ≈ 0.88 (got ${r.toFixed(3)})`);
+  const rs = plannedRR("short", 100, 102, 96); // risk 2, reward 4 → 2R
+  assert.ok(Math.abs(rs - 2) < 1e-9, "short R = 2");
 });
 
 test("fill price moves against the trader on entry and exit", () => {

@@ -108,7 +108,11 @@ export async function onRequest({ request, env }) {
       if (Array.isArray(body.theses)) snap.theses = body.theses.slice(0, 200);
       if (Array.isArray(body.journal)) snap.journal = body.journal.slice(0, 300);
       if (Array.isArray(body.skills)) snap.skills = body.skills.slice(0, 50);
-      if (Array.isArray(body.ledgerAdd) && body.ledgerAdd.length) {
+      // ledgerReplace REPLACES the closed-trade ledger (used by the reset to clear
+      // the book); ledgerAdd merges new closes into it (the normal path).
+      if (Array.isArray(body.ledgerReplace)) {
+        snap.ledger = body.ledgerReplace.slice(0, LEDGER_CAP);
+      } else if (Array.isArray(body.ledgerAdd) && body.ledgerAdd.length) {
         const byId = new Map((snap.ledger || []).map((c) => [c.id, c]));
         for (const c of body.ledgerAdd) byId.set(c.id, c);
         snap.ledger = [...byId.values()].sort((a, b) => (b.exitAt || 0) - (a.exitAt || 0)).slice(0, LEDGER_CAP);

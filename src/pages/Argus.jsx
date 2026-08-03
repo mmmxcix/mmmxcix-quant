@@ -165,13 +165,19 @@ export default function Argus() {
         );
       })()}
 
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-        <Stat label="Paper equity" value={state ? fmtNum(state.equity, 0) : "–"} big />
+      <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
+        <Stat label="Paper equity" value={state ? fmtNum(state.markEquity ?? state.equity, 0) : "–"} big
+          sub={state && state.unrealized ? `${money(state.equity)} + ${money(state.unrealized)} floating` : "mark-to-market"} />
         <Stat label="Open theses" value={theses.length} sub={state ? `${(state.forming ?? 0)} forming` : ""} />
         <Stat label="Portfolio heat" value={state ? `${(state.heatPct * 100).toFixed(1)}%` : "–"}
           sub={state && state.heatCapPct ? `of ${(state.heatCapPct * 100).toFixed(0)}% cap` : "of 10–20% cap"}
           tone={state && state.heatCapPct && state.heatPct > state.heatCapPct * 0.85 ? "text-down" : "text-text"} />
-        <Stat label="Today's P/L" value={state ? money(state.dayPnl || 0) : "–"} tone={state && state.dayPnl < 0 ? "text-down" : "text-up"} />
+        <Stat label="Portfolio leverage" value={state && state.portfolioLev != null ? `${state.portfolioLev.toFixed(2)}×` : "–"}
+          sub={state && state.portfolioLevCap ? `of ${state.portfolioLevCap}× cap · margin ${state.marginPct != null ? (state.marginPct * 100).toFixed(0) : "–"}%` : "gross exposure"}
+          tone={state && state.portfolioLevCap && state.portfolioLev > state.portfolioLevCap * 0.85 ? "text-down" : "text-text"} />
+        <Stat label="Today's P/L" value={state ? money(state.dayPnlTotal ?? state.dayPnl ?? 0) : "–"}
+          sub={state && state.unrealized ? `${money(state.dayPnl || 0)} real · ${money(state.unrealized)} float` : "realized + floating"}
+          tone={state && (state.dayPnlTotal ?? state.dayPnl) < 0 ? "text-down" : "text-up"} />
         <Stat label="Track record" value={stats.n ? `${(stats.winRate * 100).toFixed(0)}% · ${stats.avgR >= 0 ? "+" : ""}${stats.avgR.toFixed(2)}R` : "–"}
           sub={stats.n ? `${stats.n} closed · ${money(stats.pnl)}` : "no closed trades yet"}
           tone={stats.expectancy > 0 ? "text-up" : stats.expectancy < 0 ? "text-down" : "text-text"} />
@@ -194,29 +200,51 @@ export default function Argus() {
                   <span className="text-[11px] text-dim">{t.kind} · {t.timeframe}</span>
                   <span className="ml-auto text-[11px] text-dim">{ago(t.openedAt)} ago</span>
                 </div>
-                <div className="grid grid-cols-4 gap-x-3 gap-y-1 font-mono text-xs">
-                  <span className="text-dim">Entry</span><span className="text-dim">Stop</span><span className="text-dim">Target</span><span className="text-dim">Plan</span>
-                  <span>{fmtNum(t.entry, 4)}</span>
-                  <span className="text-down">{fmtNum(t.stop, 4)}</span>
-                  <span className="text-up">{fmtNum(t.target, 4)}</span>
-                  <span>{t.plannedR?.toFixed(1)}R</span>
-                </div>
                 {(() => {
-                  // How much Argus actually committed, and whether that implies
-                  // leverage (notional > available equity → >1x exposure).
-                  const notional = Number.isFinite(t.size) && Number.isFinite(t.entry) ? t.size * t.entry : null;
-                  const exposure = notional && state?.equity ? notional / state.equity : null;
-                  const levered = exposure != null && exposure > 1.05;
+                  // R from the CURRENT levels (side-aware) so it always matches
+                  // entry/stop/target even after a trailing/event adjustment (Bug 3).
+                  const risk = t.side === "long" ? t.entry - t.stop : t.stop - t.entry;
+                  const reward = t.side === "long" ? t.target - t.entry : t.entry - t.target;
+                  const rr = risk > 0 ? reward / risk : null;
+                  return (
+                    <div className="grid grid-cols-4 gap-x-3 gap-y-1 font-mono text-xs">
+                      <span className="text-dim">Entry</span><span className="text-dim">Stop</span><span className="text-dim">Target</span><span className="text-dim">Plan</span>
+                      <span>{fmtNum(t.entry, 4)}</span>
+                      <span className="text-down">{fmtNum(t.stop, 4)}</span>
+                      <span className="text-up">{fmtNum(t.target, 4)}</span>
+                      <span>{rr != null ? `${rr.toFixed(2)}R` : "–"}</span>
+                    </div>
+                  );
+                })()}
+                {/* Live price + floating (unrealized) P&L — updates every scan (Bug 4). */}
+                {Number.isFinite(t.currentPrice) && (
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-2 text-[11px] font-mono">
+                    <span className="text-dim">now <span className="text-text">{fmtNum(t.currentPrice, 4)}</span></span>
+                    <span className={cn("font-semibold", (t.unrealizedPnl || 0) >= 0 ? "text-up" : "text-down")}>
+                      {(t.unrealizedPnl || 0) >= 0 ? "+" : ""}{fmtNum(t.unrealizedPnl || 0, 0)}
+                      {Number.isFinite(t.unrealizedR) && <span className="text-dim"> ({t.unrealizedR >= 0 ? "+" : ""}{t.unrealizedR.toFixed(2)}R)</span>}
+                    </span>
+                    <span className="text-dim/70">floating</span>
+                  </div>
+                )}
+                {(() => {
+                  // What Argus actually committed: per-trade leverage (notional ÷
+                  // margin — NOT notional ÷ total equity), the margin it ties up,
+                  // and the cash at risk. Liquidation shown when it's leveraged.
+                  const notional = Number.isFinite(t.notional) ? t.notional : (Number.isFinite(t.size) && Number.isFinite(t.entry) ? t.size * t.entry : null);
+                  const lev = Number.isFinite(t.leverage) ? t.leverage : (t.margin ? notional / t.margin : null);
                   return (
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-2 text-[11px] font-mono">
-                      {notional != null && <span className="text-dim">placed <span className="text-text">{fmtNum(notional, 0)}</span></span>}
-                      {exposure != null && (
+                      {notional != null && <span className="text-dim">notional <span className="text-text">{fmtNum(notional, 0)}</span></span>}
+                      {lev != null && (
                         <span className={cn("inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold",
-                          levered ? "bg-down/10 text-down" : "bg-line/40 text-dim")}>
-                          {exposure.toFixed(1)}× {levered ? "leverage" : "no leverage"}
+                          lev > 3 ? "bg-down/10 text-down" : lev > 1.1 ? "bg-accent/10 text-accent" : "bg-line/40 text-dim")}>
+                          {lev.toFixed(lev >= 10 ? 0 : 1)}× lev
                         </span>
                       )}
+                      {Number.isFinite(t.margin) && <span className="text-dim">margin <span className="text-text">{fmtNum(t.margin, 0)}</span></span>}
                       <span className="text-dim">risk <span className="text-text">{fmtNum(t.riskAmt, 0)}</span></span>
+                      {Number.isFinite(t.liqPrice) && <span className="text-dim/70">liq {fmtNum(t.liqPrice, 4)}</span>}
                     </div>
                   );
                 })()}

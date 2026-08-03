@@ -39,37 +39,88 @@ export function priorLow(candles, n) {
 
 // ── portfolio-heat position sizing ──────────────────────────────────────────
 
+const MAINT = 0.05; // maintenance-margin + fee buffer used for leverage/liquidation
+
 /**
- * Size a trade under the portfolio-heat model. Per-trade risk is `baseRiskPct`
- * of equity, but never enough to push total open risk past `heatCap` of equity —
- * so late trades auto-shrink and, when heat is full, sizing returns null (the
- * caller parks the setup in watch-mode). Stop distance sets the size; the % only
- * sets how much cash is at risk. No fixed-% stops.
- * @returns {null | { size, riskAmt }}
+ * Leverage Argus chooses for a trade. Bounded so the STOP is always hit BEFORE
+ * liquidation — a tighter stop safely allows more leverage; a wider stop forces
+ * less. Conviction scales within that safe band. Hard-capped at `maxTradeLev`
+ * (100×). This is what a real leveraged day-trader does: never post so much
+ * leverage that a normal stop-out becomes a liquidation.
  */
-export function sizePosition({ equity, entry, stop, openRisk = 0, openNotional = 0, heatCap = 0.06, baseRiskPct = 0.02, maxLeverage = 10 }) {
+export function chooseLeverage(entry, stopDist, { conviction = 0.5, maxTradeLev = 100 } = {}) {
+  if (!(stopDist > 0) || !(entry > 0)) return 1;
+  const safeMax = Math.max(1, Math.floor((entry / stopDist) * (1 - MAINT)));
+  const frac = 0.4 + 0.6 * Math.max(0, Math.min(1, conviction)); // 0.4 … 1.0
+  return Math.max(1, Math.min(maxTradeLev, safeMax, Math.floor(safeMax * frac)));
+}
+
+/** Liquidation price for a leveraged position (approx, incl. a maintenance buffer). */
+export function liquidationPrice(entry, side, leverage) {
+  if (!(leverage > 1)) return null;
+  const move = (1 - MAINT) / leverage;
+  return side === "short" ? entry * (1 + move) : entry * (1 - move);
+}
+
+/**
+ * Size a trade. Position size is set by RISK (`baseRiskPct` of equity, capped by
+ * the remaining heat budget) — exactly like a real day-trader risking a fixed %
+ * per trade. Argus then chooses a per-trade leverage (≤ `maxTradeLev`), which
+ * decides the MARGIN it ties up (margin = notional / leverage). Three capital
+ * gates then bound the size, whichever is tightest:
+ *   • heat:      Σ stop-risk ≤ heatCap × equity
+ *   • margin:    Σ margin     ≤ equity            (can't post more margin than you have)
+ *   • portfolio: Σ notional   ≤ portfolioLevCap × equity   (hard aggregate-exposure ceiling)
+ * Returns null when there's no room (caller parks the setup in watch-mode).
+ * @returns {null | { size, riskAmt, leverage, margin, notional, liqPrice }}
+ */
+export function sizePosition({
+  equity, entry, stop, side = "long",
+  openRisk = 0, openMargin = 0, openNotional = 0,
+  heatCap = 0.06, baseRiskPct = 0.02,
+  maxTradeLev = 100, portfolioLevCap, maxLeverage, conviction = 0.5,
+}) {
   const stopDist = Math.abs(entry - stop);
-  if (!(stopDist > 0) || !(equity > 0)) return null;
-  const room = heatCap * equity - openRisk;              // risk budget still allowed
-  const riskAmt0 = Math.min(baseRiskPct * equity, room);
-  if (riskAmt0 <= equity * 0.0005) return null;          // no meaningful risk room → wait
+  if (!(stopDist > 0) || !(equity > 0) || !(entry > 0)) return null;
+  const levCap = portfolioLevCap ?? maxLeverage ?? 20; // aggregate-exposure ceiling (×equity)
+
+  // 1) Risk-based size.
+  const riskRoom = heatCap * equity - openRisk;
+  const riskAmt0 = Math.min(baseRiskPct * equity, riskRoom);
+  if (riskAmt0 <= equity * 0.0005) return null;          // no meaningful heat room → wait
   let size = riskAmt0 / stopDist;
-  // The constraint is CAPITAL (margin), not notional: committed margin =
-  // total notional / maxLeverage must stay ≤ equity, i.e. total open notional ≤
-  // maxLeverage × equity. One trade may use the WHOLE budget (all-in); leverage
-  // can be high because the STOP already caps the loss at baseRiskPct. Only the
-  // remaining budget bounds a new position.
-  const notionalRoom = Math.max(0, maxLeverage * equity - openNotional);
-  const maxSize = entry > 0 ? notionalRoom / entry : 0;
-  if (maxSize <= 0) return null;                          // capital fully committed → wait
+
+  // 2) Argus's leverage for this trade (bounded by the stop, capped at 100×).
+  const leverage = chooseLeverage(entry, stopDist, { conviction, maxTradeLev });
+
+  // 3) Capital gates — the tightest wins.
+  const notionalRoom = Math.max(0, levCap * equity - openNotional);      // portfolio exposure ceiling
+  const marginRoom = Math.max(0, equity - openMargin);                    // margin budget
+  const sizeFromNotional = notionalRoom / entry;
+  const sizeFromMargin = (marginRoom * leverage) / entry;                 // margin = size*entry/lev ≤ marginRoom
+  const maxSize = Math.min(sizeFromNotional, sizeFromMargin);
+  if (maxSize <= 0) return null;                                          // capital fully committed → wait
   if (size > maxSize) size = maxSize;
-  return { size, riskAmt: size * stopDist };              // risk follows the (possibly capped) size
+
+  const notional = size * entry;
+  return {
+    size, riskAmt: size * stopDist, leverage,
+    margin: notional / leverage, notional,
+    liqPrice: liquidationPrice(entry, side, leverage),
+  };
+}
+
+/** Planned reward:risk from levels (side-aware). Positive for a coherent setup. */
+export function plannedRR(side, entry, stop, target) {
+  const risk = side === "long" ? entry - stop : stop - entry;
+  const reward = side === "long" ? target - entry : entry - target;
+  return risk > 0 ? reward / risk : 0;
 }
 
 // ── realistic paper fills ───────────────────────────────────────────────────
 
 // Round-trip-ish cost per asset class, in basis points applied to each fill.
-const SLIP_BPS = { crypto: 6, stock: 3, etf: 3, forex: 1.5, index: 3 };
+const SLIP_BPS = { crypto: 6, stock: 3, etf: 3, forex: 1.5, futures: 2, index: 3 };
 
 /** Fill price with spread/slippage against the trader (worse price on entry+exit). */
 export function fillPrice(refPrice, side, action, asset = "stock") {
@@ -90,9 +141,14 @@ export function newId() {
  * Open a thesis from a validated setup: fills the entry, sizes it, computes the
  * cash risk. Returns null if there's no heat room (caller keeps it forming).
  */
-export function openThesis(setup, { equity, openRisk, openNotional = 0, asset, heatCap, baseRiskPct, maxLeverage, now = Date.now() }) {
+export function openThesis(setup, { equity, openRisk, openMargin = 0, openNotional = 0, asset, heatCap, baseRiskPct, maxTradeLev, portfolioLevCap, maxLeverage, conviction, now = Date.now() }) {
   const fillEntry = fillPrice(setup.entry, setup.side, "entry", asset);
-  const sized = sizePosition({ equity, entry: fillEntry, stop: setup.stop, openRisk, openNotional, heatCap, baseRiskPct, maxLeverage });
+  const sized = sizePosition({
+    equity, entry: fillEntry, stop: setup.stop, side: setup.side,
+    openRisk, openMargin, openNotional, heatCap, baseRiskPct,
+    maxTradeLev, portfolioLevCap, maxLeverage,
+    conviction: conviction ?? setup.conviction ?? 0.5,
+  });
   if (!sized) return null;
   return {
     id: newId(),
@@ -103,7 +159,8 @@ export function openThesis(setup, { equity, openRisk, openNotional = 0, asset, h
     reason: setup.reason, evidence: setup.evidence || [],
     entry: fillEntry, stop: setup.stop, target: setup.target,
     size: sized.size, riskAmt: sized.riskAmt,
-    plannedR: Math.abs(setup.target - fillEntry) / Math.abs(fillEntry - setup.stop),
+    leverage: sized.leverage, margin: sized.margin, notional: sized.notional, liqPrice: sized.liqPrice,
+    plannedR: plannedRR(setup.side, fillEntry, setup.stop, setup.target),
     openedAt: now, lastPoll: now,
   };
 }
@@ -111,9 +168,15 @@ export function openThesis(setup, { equity, openRisk, openNotional = 0, asset, h
 /** Given the latest candle, decide if an open thesis exits, and how. */
 export function evaluateExit(th, candle, { now = Date.now(), maxHoldMs = 3 * 864e5 } = {}) {
   const hi = candle.high, lo = candle.low;
+  // Liquidation: with leverage chosen so the stop sits inside the liq price, a
+  // normal stop-out fires first — but if a bar GAPS past the stop to the liq
+  // level, the position is liquidated there (a bigger, honest loss). Checked
+  // first only when it's actually closer than the stop (gap-through).
+  const hitLiq = th.liqPrice != null && (th.side === "long" ? lo <= th.liqPrice : hi >= th.liqPrice);
   const hitStop = th.side === "long" ? lo <= th.stop : hi >= th.stop;
   const hitTarget = th.side === "long" ? hi >= th.target : lo <= th.target;
-  // If a bar spans both, assume the stop hit first (conservative).
+  if (hitLiq && !hitStop) return finalize(th, th.liqPrice, "liquidation", now); // gapped through the stop
+  // If a bar spans both stop and target, assume the stop hit first (conservative).
   if (hitStop) return finalize(th, th.stop, "stop", now);
   if (hitTarget) return finalize(th, th.target, "target", now);
   if (now - th.openedAt > maxHoldMs) return finalize(th, candle.close, "timeout", now);

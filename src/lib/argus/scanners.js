@@ -86,11 +86,14 @@ export function scan({ c5, c15, c1h }) {
     const r = fn(c5);
     if (!r) continue;
     const isRev = r.kind === "mean-reversion";
-    // Trend setups need higher-TF agreement; mean-reversion is allowed to fade.
+    // The higher-TF bias is carried, NOT used as a hard gate. A real day-trader
+    // considers counter-trend signals too — so we emit every coherent setup and
+    // tag whether it aligns with the 1h bias; the agent folds that into conviction
+    // (lower leverage against the trend) and its learning can veto losing buckets.
     const aligned = isRev || (r.side === "long" && bias !== "down") || (r.side === "short" && bias !== "up");
-    if (!aligned) continue;
-    if (r.state === "triggered") triggered.push({ ...r, timeframe: "5m", bias });
-    else forming.push({ ...r, timeframe: "5m", bias });
+    const setup = { ...r, timeframe: "5m", bias, aligned };
+    if (r.state === "triggered") triggered.push(setup);
+    else forming.push(setup);
   }
   return { triggered, forming, bias };
 }

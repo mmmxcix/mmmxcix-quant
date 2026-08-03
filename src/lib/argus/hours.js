@@ -56,11 +56,13 @@ export function marketOpen(inst, now = new Date()) {
 
   const { weekday, minutes, dateKey } = nyParts(now);
 
-  if (asset === "forex") {
+  if (asset === "forex" || asset === "futures") {
+    // FX + CME futures: Sun ~17:00 ET → Fri ~17:00 ET, closed over the weekend.
+    // (Futures take a short daily maintenance break we ignore — harmless for paper.)
     if (weekday === 6) return false;               // Saturday — closed
     if (weekday === 0) return minutes >= FX_ROLL_MIN; // Sunday opens 17:00 ET
     if (weekday === 5) return minutes < FX_ROLL_MIN;  // Friday closes 17:00 ET
-    return true;                                   // Mon–Thu — 24h
+    return true;                                   // Mon–Thu — ~24h
   }
 
   // stocks / ETFs (and any unknown asset) → US regular session.

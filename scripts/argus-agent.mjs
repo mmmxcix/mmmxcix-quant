@@ -5,7 +5,7 @@
 // Paper only. Persists to /api/argus. Env: LAB_TOKEN (req), LAB_SITE,
 // LAB_ARGUS_EQUITY (paper start, default 10000).
 import { loadMarket } from "./marketdata.mjs";
-import { openThesis, evaluateExit, closeThesisAt } from "../src/lib/argus/core.js";
+import { openThesis, evaluateExit, closeThesisAt, plannedRR } from "../src/lib/argus/core.js";
 import { scan } from "../src/lib/argus/scanners.js";
 import { buildBrief, diffBrief, renderBrief, parseFearGreed } from "../src/lib/argus/brief.js";
 import { deriveLessons, adjustment, sessionOf } from "../src/lib/argus/learn.js";
@@ -24,12 +24,13 @@ if (!TOKEN) { console.error("LAB_TOKEN is not set."); process.exit(1); }
 const HEAT_CAP = +(process.env.LAB_ARGUS_HEAT || 0.10);
 const MAX_HEAT = +(process.env.LAB_ARGUS_MAX_HEAT || 0.20);
 const BASE_RISK = +(process.env.LAB_ARGUS_RISK || 0.02);
-// Capital gate: committed MARGIN across all open trades ≤ equity. Since margin =
-// notional / leverage, that means total open notional ≤ MAX_LEVERAGE × equity —
-// e.g. 6× on a 10k account = up to 60k of positions, using ~10k of margin. A
-// single trade may use the whole budget (all-in); the per-trade STOP still caps
-// the loss at ~2%. Tunable (LAB_ARGUS_MAX_LEVERAGE).
-const MAX_LEVERAGE = +(process.env.LAB_ARGUS_MAX_LEVERAGE || 6);
+// Leverage: Argus chooses its OWN leverage per trade (bounded so the stop fires
+// before liquidation — core.chooseLeverage), hard-capped at MAX_TRADE_LEV (100×).
+// Two aggregate gates then bound total exposure: committed MARGIN across all open
+// trades ≤ equity, AND total open NOTIONAL ≤ PORTFOLIO_LEV_CAP × equity (a hard
+// ceiling on gross exposure). Both tunable.
+const MAX_TRADE_LEV = +(process.env.LAB_ARGUS_MAX_TRADE_LEV || 100);
+const PORTFOLIO_LEV_CAP = +(process.env.LAB_ARGUS_PORTFOLIO_LEV || 20);
 const DAILY_STOP = +(process.env.LAB_ARGUS_DAILY_STOP || 0.04);
 const EQUITY0 = +(process.env.LAB_ARGUS_EQUITY || 10000);
 // Phase-1 event channel: LLM reads the alt-data briefing and proposes directional
@@ -44,20 +45,43 @@ const LEARN_MIN = +(process.env.LAB_ARGUS_LEARN_MIN || 20);
 // (reaching the same target with a tighter stop = more exposure) over long swing
 // holds that hinge on news. The cap is the backstop, not the goal. Tunable.
 const MAX_HOLD_MS = +(process.env.LAB_ARGUS_MAX_HOLD_H || 72) * 3600_000;
-// News-reachable tickers Argus may trade if a catalyst clearly names them.
-const EVENT_TICKERS = ["USO", "XLE", "ITA", "GLD", "UNG", "XOP", "SLV", "TLT", "UUP"];
+// News-reachable tickers Argus may trade if a catalyst clearly names them, and a
+// stock→sector-ETF map so the event channel routes a named single-name catalyst
+// to the RIGHT sector (fixes AEP, a UTILITY, being mapped to XLE/energy).
+const EVENT_TICKERS = ["USO", "XLE", "XLU", "XLF", "XLK", "XLV", "XLI", "XLP", "XLY", "SMH", "ITA", "GLD", "UNG", "XOP", "SLV", "TLT", "UUP", "GDX"];
+const SECTOR_ETF = {
+  // utilities
+  AEP: "XLU", DUK: "XLU", SO: "XLU", NEE: "XLU", D: "XLU", EXC: "XLU", XEL: "XLU",
+  // energy
+  XOM: "XLE", CVX: "XLE", COP: "XLE", SLB: "XLE", OXY: "XLE", EOG: "XLE",
+  // financials
+  JPM: "XLF", BAC: "XLF", WFC: "XLF", GS: "XLF", MS: "XLF", C: "XLF",
+  // tech / semis
+  AAPL: "XLK", MSFT: "XLK", NVDA: "SMH", AMD: "SMH", AVGO: "SMH", TSM: "SMH", INTC: "SMH", MU: "SMH", QCOM: "SMH",
+  // healthcare
+  UNH: "XLV", LLY: "XLV", JNJ: "XLV", PFE: "XLV", MRK: "XLV", ABBV: "XLV",
+};
 
-// Phase-0 universe: instruments with solid free intraday data (crypto = Binance,
-// stocks/ETFs = Yahoo). Forex intraday is added once a data source is wired.
-const UNIVERSE = [
-  { id: "BTCUSDT", asset: "crypto", symbol: "BTCUSDT" },
-  { id: "ETHUSDT", asset: "crypto", symbol: "ETHUSDT" },
-  { id: "SOLUSDT", asset: "crypto", symbol: "SOLUSDT" },
-  { id: "SPY", asset: "stock", symbol: "SPY" },
-  { id: "QQQ", asset: "stock", symbol: "QQQ" },
-  { id: "NVDA", asset: "stock", symbol: "NVDA" },
-  { id: "AAPL", asset: "stock", symbol: "AAPL" },
+// Tradeable universe — Argus decides what looks good across asset classes:
+// crypto (Binance, 24/7), US stocks + ETFs (Yahoo, RTH) and futures (Yahoo
+// continuous =F, ~23h). Options are intentionally excluded (no chain/greeks/fill
+// model yet). Tune LAB_ARGUS_UNIVERSE=crypto,stock,etf,futures to narrow it.
+const UNIVERSE_ALL = [
+  // crypto
+  ...["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "DOGEUSDT", "AVAXUSDT", "LINKUSDT", "ADAUSDT", "LTCUSDT"]
+    .map((s) => ({ id: s, asset: "crypto", symbol: s, cls: "crypto" })),
+  // stocks
+  ...["AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "META", "GOOGL", "AMD", "NFLX", "AVGO", "JPM", "COIN"]
+    .map((s) => ({ id: s, asset: "stock", symbol: s, cls: "stock" })),
+  // ETFs (Yahoo, same hours/asset as stocks)
+  ...["SPY", "QQQ", "IWM", "GLD", "SLV", "USO", "TLT", "XLE", "XLF", "XLK", "XLU", "SMH"]
+    .map((s) => ({ id: s, asset: "stock", symbol: s, cls: "etf" })),
+  // futures (Yahoo continuous; nearly 24h)
+  ...["ES=F", "NQ=F", "YM=F", "CL=F", "GC=F", "SI=F", "NG=F"]
+    .map((s) => ({ id: s, asset: "futures", symbol: s, cls: "futures" })),
 ];
+const UNIVERSE_CLASSES = (process.env.LAB_ARGUS_UNIVERSE || "crypto,stock,etf,futures").split(",").map((s) => s.trim());
+const UNIVERSE = UNIVERSE_ALL.filter((u) => UNIVERSE_CLASSES.includes(u.cls));
 
 let equity = EQUITY0;
 let open = [];          // open theses
@@ -81,7 +105,8 @@ let pendingCommands = []; // raw dev commands drained this cycle, acked once han
 let lastPersistSig = ""; // skip redundant KV writes on the fast loop (write budget)
 
 const openRisk = () => open.reduce((a, t) => a + t.riskAmt, 0);
-const openNotional = () => open.reduce((a, t) => a + (t.size * t.entry || 0), 0);
+const openNotional = () => open.reduce((a, t) => a + (t.notional || t.size * t.entry || 0), 0);
+const openMargin = () => open.reduce((a, t) => a + (t.margin || (t.size * t.entry) / (t.leverage || 1) || 0), 0);
 const isCore = (sym) => UNIVERSE.some((u) => u.symbol === sym);
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -111,7 +136,7 @@ async function runEventChannel() {
     const brief = buildBrief({ world, conflicts: conflicts?.conflicts, disasters: disasters?.disasters, news, fng: eventFng, osint: telegram?.items });
     brief.deltas = diffBrief(prevBrief, brief);
     prevBrief = brief;
-    const ctx = { universe: [...UNIVERSE.map((u) => u.symbol), ...EVENT_TICKERS], open: open.map((o) => o.symbol) };
+    const ctx = { universe: [...UNIVERSE.map((u) => u.symbol), ...EVENT_TICKERS], open: open.map((o) => o.symbol), sectors: SECTOR_ETF };
     const out = await callArgusLLM(renderBrief(brief), ctx);
     const now = Date.now();
     for (const [k, v] of eventBias) if (now - v.at > EVENT_TTL) eventBias.delete(k); // prune stale
@@ -163,6 +188,14 @@ function manageExits(inst, last5, ledgerAdd) {
       reflectQueue.push(res); // Hermes: every closed trade earns a post-mortem
       if (closedAll.length > 600) closedAll = closedAll.slice(-600);
       console.log(`[${new Date().toISOString()}] CLOSE ${res.symbol} ${res.side} ${res.outcome} R=${res.R.toFixed(2)} pnl=${res.pnl.toFixed(2)} eq=${equity.toFixed(0)}`);
+    } else {
+      // Still open — stamp the live price + floating (unrealized) P&L so the UI can
+      // show current price and the running gain/loss per position (Bug 4).
+      const dir = th.side === "long" ? 1 : -1;
+      th.currentPrice = last5.close;
+      th.unrealizedPnl = (last5.close - th.entry) * th.size * dir;
+      th.unrealizedR = th.riskAmt > 0 ? th.unrealizedPnl / th.riskAmt : 0;
+      th.lastPoll = Date.now();
     }
   }
 }
@@ -191,19 +224,48 @@ async function runReflections(max = 3) {
   skills = crystallise(journal);
 }
 
+const clamp01 = (x) => Math.max(0, Math.min(1, x));
+
+// How convinced Argus is of a TECHNICAL setup, before the bias tilts it — from
+// the reward:risk and multi-timeframe alignment the scanner already found. This
+// drives leverage (higher conviction ⇒ Argus leans in harder, within the caps).
+function convictionOf(setup) {
+  let c = 0.5;
+  const rr = Number.isFinite(setup.plannedR) ? setup.plannedR
+    : (setup.entry && setup.stop && setup.target ? plannedRR(setup.side, setup.entry, setup.stop, setup.target) : 1);
+  if (rr >= 2.5) c += 0.2; else if (rr >= 1.8) c += 0.1; else if (rr < 1) c -= 0.1;
+  if (setup.bias) { // higher-TF regime the scanner tagged
+    const aligned = (setup.side === "long" && setup.bias === "up") || (setup.side === "short" && setup.bias === "down");
+    const against = (setup.side === "long" && setup.bias === "down") || (setup.side === "short" && setup.bias === "up");
+    if (aligned) c += 0.15; else if (against) c -= 0.1;
+  }
+  return clamp01(c);
+}
+
 function tryOpen(inst, setup, halted) {
   if (halted) return;
   if (!marketOpen(inst)) return;                          // never open a closed market
   if (open.some((o) => o.symbol === inst.symbol)) return; // one position per instrument
   const bias = eventBias.get(inst.symbol);
-  // Event-only tickers (added purely because news named them) trade only with a
-  // matching-direction catalyst — price alone isn't enough to justify them.
-  if (!isCore(inst.symbol) && (!bias || bias.side !== setup.side)) return;
+
+  // Bias is NOT a gate. Argus trades the TECHNICAL setup on its own merits like a
+  // real day-trader; the event bias is just ONE weighted input, taken in its parts
+  // (side + confidence), not "green good / red bad". It only VETOES on a strong,
+  // high-confidence DISAGREEMENT (don't fight a clear fundamental catalyst); a
+  // weak or absent bias is effectively ignored. (Even event-named tickers now need
+  // only a coherent technical setup, not a bias-matching one.)
+  const biasSide = bias?.side; // "long" | "short" | undefined
+  const biasConf = clamp01(bias?.confidence ?? 0);
+  const opposes = biasSide && biasSide !== setup.side;
+  if (opposes && biasConf >= 0.7) {
+    console.log(`[${new Date().toISOString()}] SKIP ${inst.symbol} ${setup.side} ${setup.kind} — strong opposing catalyst (${(biasConf * 100) | 0}%): ${(bias.thesis || "").slice(0, 60)}`);
+    return;
+  }
 
   // Hermes learning: nudge (or veto) sizing from what the ledger has taught us
   // about this kind of setup. Gentle by construction — mult is hard-clamped and
   // only buckets with ≥ LEARN_MIN closed trades count.
-  const evented = bias && bias.side === setup.side;
+  const evented = biasSide && biasSide === setup.side;
   const adj = adjustment(lessons, {
     kind: setup.kind, symbol: inst.symbol, side: setup.side,
     session: sessionOf(Date.now()), source: evented ? "event" : "technical", bias: setup.bias,
@@ -223,12 +285,17 @@ function tryOpen(inst, setup, halted) {
   }
   const riskPct = BASE_RISK * adj.mult;
 
+  // Conviction = technical setup quality, tilted by an ALIGNED bias (its parts,
+  // not a binary). Real signals dominate (0.7 weight); the bias only leans it.
+  const conviction = clamp01(0.7 * convictionOf(setup) + 0.3 * (0.5 + 0.5 * (evented ? biasConf : opposes ? -biasConf : 0)));
+
   // Diversification-aware heat: more total risk allowed when this trade is
   // uncorrelated with what's already open.
   const heatCap = effectiveHeatCap(open.map((o) => o.symbol), inst.symbol, HEAT_CAP, MAX_HEAT);
   const th = openThesis(
-    { ...setup, symbol: inst.symbol, market: inst.asset },
-    { equity, openRisk: openRisk(), openNotional: openNotional(), asset: inst.asset, heatCap, baseRiskPct: riskPct, maxLeverage: MAX_LEVERAGE },
+    { ...setup, symbol: inst.symbol, market: inst.asset, conviction },
+    { equity, openRisk: openRisk(), openMargin: openMargin(), openNotional: openNotional(), asset: inst.asset,
+      heatCap, baseRiskPct: riskPct, maxTradeLev: MAX_TRADE_LEV, portfolioLevCap: PORTFOLIO_LEV_CAP, conviction },
   );
   if (th) {
     if (bias && bias.side === th.side) { // enrich a confirmed setup with its catalyst
@@ -245,6 +312,21 @@ function tryOpen(inst, setup, halted) {
   } else {
     // no heat room → park as forming so it's re-checked on the fast loop
     if (!forming.some((f) => f.symbol === inst.symbol)) forming.push({ symbol: inst.symbol, asset: inst.asset, side: setup.side, kind: setup.kind, reason: "waiting for heat: " + setup.reason });
+  }
+}
+
+/** Conflict handler (Bug 5A): a fresh, confident OPPOSING catalyst on a symbol we
+ *  already hold closes that position — Argus never holds a long into a clear short
+ *  signal for the same asset (and vice-versa). The dev-close path does the fill. */
+function handleConflicts() {
+  for (const th of open) {
+    const bias = eventBias.get(th.symbol);
+    if (!bias || bias.side === th.side || forceClose.has(th.id)) continue;
+    if (clamp01(bias.confidence ?? 0) >= 0.6) {
+      forceClose.add(th.id);
+      forceCloseReason.set(th.id, `opposing catalyst (${((bias.confidence || 0) * 100) | 0}%): ${(bias.thesis || "").slice(0, 120)}`);
+      console.log(`[${new Date().toISOString()}] CONFLICT ${th.symbol} ${th.side} vs ${bias.side} bias → close`);
+    }
   }
 }
 
@@ -308,6 +390,7 @@ async function cycle(fullScan) {
     // from the closed-thesis ledger so this scan's sizing reflects the latest edge.
     if (fullScan) {
       await runEventChannel();
+      handleConflicts(); // close positions a fresh opposing catalyst now argues against
       await runReflections();
       lessons = deriveLessons(closedAll, { minSample: LEARN_MIN });
     }
@@ -358,7 +441,26 @@ async function persist(ledgerAdd, extra) {
     .map(([symbol, v]) => ({ symbol, side: v.side, thesis: v.thesis, confidence: v.confidence, horizon: v.horizon, at: v.at, model: v.model }));
   const body = {
     token: TOKEN,
-    state: { equity, open: open.length, forming: forming.length, heatPct: openRisk() / equity, heatCapPct: effectiveHeatCap(open.map((o) => o.symbol), null, HEAT_CAP, MAX_HEAT), heatBasePct: HEAT_CAP, heatMaxPct: MAX_HEAT, dayPnl: extra.dailyPnl, halted: extra.halted, universe: activeUniverse().length, events, fng: eventFng, skills: skills.slice(0, 8), lessons: lessons.slice(0, 8).map((l) => ({ text: l.text, verdict: l.verdict, n: l.n })) },
+    state: (() => {
+      const unrealized = open.reduce((a, t) => a + (t.unrealizedPnl || 0), 0);
+      return {
+        equity,                                 // realized cash equity
+        markEquity: equity + unrealized,        // incl. floating P&L on open positions
+        unrealized,                             // total floating P&L right now
+        open: open.length, forming: forming.length,
+        heatPct: openRisk() / equity,           // Σ stop-risk / equity (Bug 2 — the real number)
+        heatCapPct: effectiveHeatCap(open.map((o) => o.symbol), null, HEAT_CAP, MAX_HEAT),
+        heatBasePct: HEAT_CAP, heatMaxPct: MAX_HEAT,
+        portfolioLev: openNotional() / equity,  // Σ notional / equity (Bug 1 — true portfolio leverage)
+        portfolioLevCap: PORTFOLIO_LEV_CAP,
+        marginUsed: openMargin(), marginPct: openMargin() / equity,
+        dayPnl: extra.dailyPnl,                 // realized today
+        dayPnlTotal: extra.dailyPnl + unrealized, // realized + floating (what the top-bar shows)
+        halted: extra.halted, universe: activeUniverse().length, events, fng: eventFng,
+        skills: skills.slice(0, 8),
+        lessons: lessons.slice(0, 8).map((l) => ({ text: l.text, verdict: l.verdict, n: l.n })),
+      };
+    })(),
     theses: open,
     ledgerAdd,
     journal: journal.slice(0, 60),   // Hermes post-mortems (newest first)
@@ -392,6 +494,32 @@ async function hydrate() {
 }
 
 await hydrate();
+
+// One-shot reset (LAB_ARGUS_RESET=1): after this bias/leverage overhaul, wipe the
+// book back to the starting equity and clear the ledger, but KEEP the technical
+// learnings — forgetting only lessons tied to the OLD bias-gating behaviour that
+// no longer exists (bias/event/catalyst/regime/timeframe-alignment). Set the env,
+// restart once, then unset it.
+if (process.env.LAB_ARGUS_RESET === "1") {
+  const b = { j: journal.length, s: skills.length };
+  const BIAS_TIED = /\bbias\b|\bevent\b|catalyst|regime|higher.?time|\bhtf\b|overlap|timeframe/i;
+  const keep = (e) => !BIAS_TIED.test(`${e?.lesson || ""} ${e?.cause || ""} ${e?.mistake || ""} ${e?.text || ""}`) && e?.applies?.source !== "event";
+  journal = journal.filter(keep);
+  skills = crystallise(journal); // re-derive skills from the pruned journal
+  equity = EQUITY0; equityDayStart = EQUITY0;
+  open = []; forming = []; closedAll = []; closedToday = []; reflectQueue = [];
+  lessons = deriveLessons(closedAll, { minSample: LEARN_MIN });
+  eventBias = new Map();
+  console.log(`[${new Date().toISOString()}] RESET → ${EQUITY0}: kept ${journal.length}/${b.j} journal + ${skills.length}/${b.s} skills (dropped bias-tied), cleared book + ledger`);
+  await persist([], { dailyPnl: 0, halted: false }); // writes reset state + theses:[] + filtered journal/skills
+  // Clear the stored ledger too (persist only appends) so the fresh track record starts at 0.
+  try {
+    await fetch(`${SITE}/api/argus`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: TOKEN, ledgerReplace: [] }),
+    });
+  } catch { /* offline — retried on next persist is not possible for replace; harmless */ }
+}
 // Near-instant dev commands: a light 15s loop that drains the queue and closes a
 // commanded position at the LIVE price right away, instead of waiting up to 2 min
 // for the next scan. Shares the cycleRunning mutex so it never races a scan.

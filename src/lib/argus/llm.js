@@ -57,6 +57,11 @@ export function buildMessages(briefText, ctx) {
   const user =
     `BRIEFING:\n${briefText}\n\n` +
     `TRADABLE UNIVERSE (prefer these; you may name another liquid US ticker or major crypto if a catalyst clearly affects it): ${ctx.universe.join(", ")}\n` +
+    (ctx.sectors && Object.keys(ctx.sectors).length
+      // Route a single-stock catalyst to the CORRECT sector ETF (a utility like AEP
+      // → XLU, never XLE/energy). Fixes the sector-hallucination bug.
+      ? `SINGLE-STOCK → SECTOR ETF (if you trade the sector instead of the name, use the RIGHT one): ${Object.entries(ctx.sectors).map(([k, v]) => `${k}→${v}`).join(", ")}\n`
+      : "") +
     `CURRENTLY OPEN (do not duplicate): ${ctx.open.length ? ctx.open.join(", ") : "none"}\n\n` +
     "Return the JSON array now (or [] if nothing qualifies).";
   return [{ role: "system", content: system }, { role: "user", content: user }];
