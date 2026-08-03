@@ -67,11 +67,12 @@ export async function onRequest({ request, env }) {
       const c = body.command;
       const type = c?.type === "cancel" ? "cancel" : c?.type === "close" ? "close" : null;
       const id = typeof c?.id === "string" ? c.id.slice(0, 64) : null;
+      const reason = typeof c?.reason === "string" ? c.reason.slice(0, 200) : "";
       if (!type || !id) return json({ error: "bad_command" }, 400);
       try {
         let q = (await read("commands")) || [];
         q = q.filter((x) => !(x.id === id && x.type === type)); // de-dupe
-        q.push({ type, id, at: Date.now() });
+        q.push({ type, id, reason, at: Date.now() });
         await write("commands", q.slice(-50));
       } catch (e) {
         return json({ error: "db_write_failed", detail: String(e?.message || e) }, 503);

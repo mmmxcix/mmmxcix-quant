@@ -76,6 +76,7 @@ let journal = [];       // Hermes post-mortems, newest first
 let skills = [];        // lessons crystallised from repeats — consulted before a trade
 let reflectQueue = [];  // closed trades awaiting their post-mortem
 let forceClose = new Set(); // thesis ids the dev asked to close now (drained each cycle)
+let forceCloseReason = new Map(); // thesis id → the dev's reason for closing early (fed to the post-mortem)
 let pendingCommands = []; // raw dev commands drained this cycle, acked once handled
 let lastPersistSig = ""; // skip redundant KV writes on the fast loop (write budget)
 
@@ -144,8 +145,16 @@ async function loadTF(inst) {
 function manageExits(inst, last5, ledgerAdd) {
   for (const th of open.filter((o) => o.symbol === inst.symbol)) {
     // Dev "close now" takes priority over the normal stop/target check.
-    const res = forceClose.has(th.id) ? closeThesisAt(th, last5.close) : evaluateExit(th, last5, { maxHoldMs: MAX_HOLD_MS });
+    const devClosed = forceClose.has(th.id);
+    const res = devClosed ? closeThesisAt(th, last5.close) : evaluateExit(th, last5, { maxHoldMs: MAX_HOLD_MS });
     if (res) {
+      if (devClosed) {
+        // Carry the dev's "why" into the post-mortem so Argus learns from the
+        // judgement call, not just the P&L of an early close.
+        res.devClose = true;
+        res.devCloseReason = forceCloseReason.get(th.id) || "";
+        forceCloseReason.delete(th.id);
+      }
       open = open.filter((o) => o.id !== th.id);
       equity += res.pnl;
       closedToday.push(res);
@@ -168,7 +177,7 @@ async function runReflections(max = 3) {
   for (let i = 0; i < max && reflectQueue.length; i++) {
     const trade = reflectQueue.shift();
     try {
-      const out = await chatOnce(buildReflectionMessages(trade, { recentLessons }), { maxTokens: 420 });
+      const out = await chatOnce(buildReflectionMessages(trade, { recentLessons, devCloseReason: trade.devCloseReason }), { maxTokens: 420 });
       if (!out.ok) { reflectQueue.unshift(trade); break; } // LLM down — retry next cycle
       const entry = parseReflection(out.text, trade);
       if (!entry) continue;
@@ -250,6 +259,7 @@ async function drainCommands() {
   for (const c of pendingCommands) {
     if (c.type === "close") {
       forceClose.add(c.id);
+      if (c.reason) forceCloseReason.set(c.id, String(c.reason).slice(0, 200));
     } else if (c.type === "cancel") {
       const before = forming.length;
       forming = forming.filter((f) => f.symbol !== c.id);

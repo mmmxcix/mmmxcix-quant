@@ -80,12 +80,21 @@ export default function Argus() {
   // Session-gated server-side (admin cookie), so no token travels from the client.
   const command = async (type, id, label) => {
     if (!isDev || cmdBusy) return;
-    if (!window.confirm(`${type === "close" ? "Close" : "Cancel"} ${label}? Argus will act on its next scan.`)) return;
+    let reason = "";
+    if (type === "close") {
+      // Ask WHY you're closing early — Argus feeds this into its post-mortem so it
+      // learns from your judgement, not just the number. Cancel the prompt to abort.
+      const r = window.prompt(`Close ${label} early — why? (Argus learns from this; leave blank if it's just a manual close)`, "");
+      if (r === null) return; // prompt cancelled
+      reason = r.slice(0, 200);
+    } else if (!window.confirm(`Cancel ${label}? Argus will act on its next scan.`)) {
+      return;
+    }
     setCmdBusy(id);
     try {
       const r = await fetch("/api/argus", {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ command: { type, id } }),
+        body: JSON.stringify({ command: { type, id, reason } }),
       });
       if (!r.ok) throw new Error();
     } catch { /* surfaced by the button staying enabled */ } finally { setCmdBusy(null); }

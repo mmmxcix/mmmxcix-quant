@@ -44,8 +44,16 @@ export function buildReflectionMessages(trade, ctx = {}) {
     'or "none" if the process was right. `lesson` = a REUSABLE rule for future trades, phrased as an instruction ' +
     '("skip mean-reversion shorts while the 1h bias is up"), or "" when this trade teaches nothing. ' +
     "`applies` = which dimensions the lesson is about; omit a field that isn't specific. No prose outside the JSON.";
+  const devReason = String(ctx.devCloseReason || "").trim();
   const user =
     `CLOSED TRADE:\n${describeTrade(trade, ctx)}\n\n` +
+    (devReason
+      // The human closed this trade EARLY and said why. Treat that as the primary
+      // signal: extract the reusable rule behind their judgement (e.g. "they cut a
+      // range short before a red-folder news event").
+      ? `IMPORTANT — the human dev closed this trade EARLY and gave this reason:\n"${devReason}"\n` +
+        "Take their reasoning seriously and turn it into a reusable lesson the agent can apply itself next time.\n\n"
+      : "") +
     (ctx.recentLessons?.length
       ? `Lessons already learned (do not repeat them; say if this trade CONTRADICTS one):\n- ${ctx.recentLessons.slice(0, 8).join("\n- ")}\n\n`
       : "") +
@@ -70,6 +78,8 @@ export function parseReflection(text, trade) {
     symbol: trade?.symbol, kind: trade?.kind, side: trade?.side,
     outcome: trade?.outcome, R: Number.isFinite(trade?.R) ? +trade.R.toFixed(2) : null,
     verdict,
+    // Preserve that the human closed it early + why, so the journal shows the origin.
+    devCloseReason: trade?.devCloseReason ? String(trade.devCloseReason).slice(0, 200) : undefined,
     cause: String(o.cause || "").slice(0, 300),
     mistake: String(o.mistake || "").slice(0, 300),
     lesson: String(o.lesson || "").slice(0, 300),
