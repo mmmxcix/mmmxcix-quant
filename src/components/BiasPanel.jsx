@@ -1,24 +1,14 @@
-import { useEffect, useMemo, useState } from "react";
 import {
-  Scale, TrendingUp, TrendingDown, MinusCircle, AlertTriangle, ShieldAlert,
-  RefreshCw, Clock, Loader2,
+  AlertTriangle, TrendingUp, TrendingDown, MinusCircle, RefreshCw, Clock, Loader2,
 } from "lucide-react";
-import { computeBias, estimateHorizon } from "@/lib/tradeBias";
-import { fetchCandles } from "@/lib/data";
+import { estimateHorizon } from "@/lib/tradeBias";
 import { cn, fmtPrice, fmtNum } from "@/lib/utils";
 
-// Multi-timeframe, rule-based bias readout. Every timeframe is evaluated on
-// the SAME fixed lookback (the last 300 candles of freshly fetched data), so
-// the verdicts are comparable — the chart's own array (which can carry weeks
-// of scrolled-in history) is deliberately NOT used. Timeframes may still
-// legitimately disagree: a 15m pullback inside a 4h uptrend is real structure,
-// and the confluence line says how aligned the picture is.
+// Detailed rule-based readout for ONE (the selected) timeframe. The multi-timeframe
+// data and the selector now live in BiasSection's shared timeframe row (each chip
+// carries its verdict), so this is a pure renderer of the chosen timeframe's bias.
 
-const LOOKBACK = 300;
 const TF_SECONDS = { "1s": 1, "1m": 60, "5m": 300, "15m": 900, "30m": 1800, "1h": 3600, "2h": 7200, "4h": 14400, "1d": 86400, "1w": 604800, "1M": 2592000 };
-// Range that reliably yields ≥ LOOKBACK candles per interval and source.
-const TF_RANGE = { "1s": "1h", "1m": "5d", "5m": "5d", "15m": "5d", "30m": "5d", "1h": "1mo", "2h": "1mo", "4h": "3mo", "1d": "1y", "1w": "5y", "1M": "max" };
-const BASE_TFS = { crypto: ["15m", "1h", "4h", "1d"], stock: ["1h", "1d", "1w"] };
 
 function fmtDur(sec) {
   if (sec < 3600) return `~${Math.max(1, Math.round(sec / 60))}m`;
@@ -32,88 +22,24 @@ function VoteIcon({ vote }) {
   return <MinusCircle className="w-3.5 h-3.5 text-dim shrink-0" />;
 }
 
-function VerdictChip({ verdict, score }) {
-  const cls = verdict === "long" ? "text-up border-up/40 bg-up/10"
-    : verdict === "short" ? "text-down border-down/40 bg-down/10"
-    : "text-dim border-line bg-bg/40";
-  const Icon = verdict === "long" ? TrendingUp : verdict === "short" ? TrendingDown : MinusCircle;
-  return (
-    <span className={cn("inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide", cls)}>
-      <Icon className="w-3 h-3" /> {verdict} {score > 0 ? `+${score}` : score}
-    </span>
-  );
-}
-
-export default function BiasPanel({ market, symbol, interval, embedded = false, onSelectTf }) {
-  // Timeframe set: the base ladder for this market plus the chart's own
-  // interval, sorted ascending.
-  const tfs = useMemo(() => {
-    const set = new Set(BASE_TFS[market] || BASE_TFS.crypto);
-    if (TF_RANGE[interval]) set.add(interval);
-    return [...set].sort((a, b) => (TF_SECONDS[a] || 0) - (TF_SECONDS[b] || 0));
-  }, [market, interval]);
-
-  const [results, setResults] = useState({}); // tf -> { bias } | { error }
-  const [loading, setLoading] = useState(false);
-  const [selected, setSelected] = useState(interval);
-  const [reloadKey, setReloadKey] = useState(0);
-
-  useEffect(() => { setSelected(TF_RANGE[interval] ? interval : tfs[0]); }, [interval, tfs]);
-
-  useEffect(() => {
-    let alive = true;
-    setLoading(true);
-    setResults({});
-    Promise.allSettled(
-      tfs.map(async (tf) => {
-        const candles = await fetchCandles({ market, symbol, interval: tf, range: TF_RANGE[tf] });
-        return { tf, bias: computeBias(candles.slice(-LOOKBACK)) };
-      })
-    ).then((settled) => {
-      if (!alive) return;
-      const out = {};
-      settled.forEach((r, i) => {
-        out[tfs[i]] = r.status === "fulfilled" && r.value.bias ? { bias: r.value.bias } : { error: true };
-      });
-      setResults(out);
-      setLoading(false);
-    });
-    return () => { alive = false; };
-  }, [market, symbol, tfs, reloadKey]);
-
-  const sel = results[selected]?.bias || null;
-
-  // Confluence across timeframes.
-  const confluence = useMemo(() => {
-    const verdicts = tfs.map((tf) => results[tf]?.bias?.verdict).filter(Boolean);
-    if (!verdicts.length) return null;
-    const longs = verdicts.filter((v) => v === "long").length;
-    const shorts = verdicts.filter((v) => v === "short").length;
-    if (longs === verdicts.length) return { tone: "up", text: `All ${verdicts.length} timeframes lean long — aligned picture.` };
-    if (shorts === verdicts.length) return { tone: "down", text: `All ${verdicts.length} timeframes lean short — aligned picture.` };
-    if (longs > 0 && shorts > 0) return { tone: "mixed", text: `Timeframes disagree (${longs} long · ${shorts} short · ${verdicts.length - longs - shorts} neutral) — often a pullback on the lower timeframe inside the higher timeframe's trend. By the playbook: no trade without alignment.` };
-    return { tone: "neutral", text: `Mostly neutral (${longs} long · ${shorts} short) — the rules see no clear edge right now.` };
-  }, [results, tfs]);
-
+export default function BiasPanel({ selected, bias, loading, reload }) {
+  const sel = bias || null;
   const tfSec = TF_SECONDS[selected] || 3600;
   const h1 = sel?.plan ? estimateHorizon(sel.plan.entry, sel.plan.tp1, sel.plan.atr, tfSec) : null;
   const h2 = sel?.plan ? estimateHorizon(sel.plan.entry, sel.plan.tp2, sel.plan.atr, tfSec) : null;
 
   return (
-    <div className={embedded ? "" : "rounded-xl border border-line lg-glass p-4"}>
+    <div>
       <div className="flex flex-wrap items-center gap-2 mb-3">
-        {!embedded && <Scale className="w-4 h-4 text-accent" />}
-        {!embedded && <h2 className="text-sm font-semibold">Rule-based bias check</h2>}
-        <span className="text-[10px] text-dim uppercase tracking-wide">mechanical, not AI · last {LOOKBACK} candles per timeframe</span>
-        <button onClick={() => setReloadKey((k) => k + 1)} disabled={loading}
-          className="ml-auto flex items-center gap-1.5 chip chip-idle !text-[11px]">
+        <span className="text-[10px] text-dim uppercase tracking-wide">mechanical, not AI · last 300 candles on the {selected} timeframe</span>
+        <button onClick={reload} disabled={loading} className="ml-auto flex items-center gap-1.5 chip chip-idle !text-[11px]">
           {loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />} Refresh
         </button>
       </div>
 
       {sel ? (
         <div className="grid lg:grid-cols-[210px_1fr_280px] gap-4">
-          {/* Verdict card for the selected timeframe (the chart's by default) */}
+          {/* Verdict card for the selected timeframe */}
           <div className={cn("rounded-lg border p-4 flex flex-col items-center justify-center text-center",
             sel.verdict === "long" ? "border-up/40 bg-up/10" : sel.verdict === "short" ? "border-down/40 bg-down/10" : "border-line bg-bg/40")}>
             {sel.verdict === "long" ? <TrendingUp className="w-8 h-8 mb-1 text-up" />
@@ -124,9 +50,7 @@ export default function BiasPanel({ market, symbol, interval, embedded = false, 
               {sel.verdict === "long" ? "Long bias" : sel.verdict === "short" ? "Short bias" : "Neutral"}
             </p>
             <p className="text-xs font-mono text-dim mt-1">score {sel.score > 0 ? "+" : ""}{sel.score} / ±{sel.maxScore}</p>
-            <p className="text-[10px] text-dim font-medium mt-1.5">
-              {selected} timeframe{selected === interval ? " (chart)" : ""}
-            </p>
+            <p className="text-[10px] text-dim font-medium mt-1.5">{selected} timeframe</p>
             {sel.verdict === "neutral" && (
               <p className="text-[11px] text-dim mt-2 leading-relaxed">The rules disagree — by this playbook that means: no trade.</p>
             )}
@@ -139,9 +63,7 @@ export default function BiasPanel({ market, symbol, interval, embedded = false, 
 
           {/* Rules for the selected timeframe */}
           <div className="rounded-lg border border-line bg-bg/30 p-3">
-            <p className="text-[10px] text-dim font-medium mb-2">
-              The rules (fixed if-then, each ±1)
-            </p>
+            <p className="text-[10px] text-dim font-medium mb-2">The rules (fixed if-then, each ±1)</p>
             <div className="grid sm:grid-cols-2 gap-x-4 gap-y-1.5">
               {sel.rules.map((r) => (
                 <div key={r.id} className="flex items-start gap-2 text-xs">
@@ -157,9 +79,7 @@ export default function BiasPanel({ market, symbol, interval, embedded = false, 
 
           {/* Plan + horizon for the selected timeframe */}
           <div className="rounded-lg border border-line bg-bg/30 p-3">
-            <p className="text-[10px] text-dim font-medium mb-2">
-              Suggested levels — {selected} structure
-            </p>
+            <p className="text-[10px] text-dim font-medium mb-2">Suggested levels — {selected} structure</p>
             {sel.plan ? (
               <div className="space-y-1 text-xs font-mono">
                 <div className="flex justify-between"><span className="text-dim">Entry (last)</span><span className="text-text">{fmtPrice(sel.plan.entry)}</span></div>
@@ -209,46 +129,7 @@ export default function BiasPanel({ market, symbol, interval, embedded = false, 
         </div>
       ) : (
         <div className="rounded-lg border border-line bg-bg/30 p-4 text-sm text-dim">
-          {loading ? "Crunching the timeframes…" : "Not enough data for this timeframe."}
-        </div>
-      )}
-
-      {/* Compact multi-timeframe cross-check (click a chip to inspect it above) */}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border border-line bg-bg/30 px-3 py-2 mt-3">
-        <span className="text-[10px] text-dim font-medium">Cross-check</span>
-        {tfs.map((tf) => {
-          const r = results[tf];
-          return (
-            <button key={tf} onClick={() => { setSelected(tf); onSelectTf?.(tf); }}
-              title={`Show the ${tf} breakdown above`}
-              className={cn("flex items-center gap-1.5 rounded-md px-1.5 py-0.5 transition-colors",
-                selected === tf ? "bg-accent/10" : "hover:bg-surface")}>
-              <span className={cn("font-mono text-[11px]", selected === tf ? "text-accent" : "text-dim")}>{tf}</span>
-              {r?.bias ? <VerdictChip verdict={r.bias.verdict} score={r.bias.score} />
-                : r?.error ? <span className="text-[10px] text-dim">n/a</span>
-                : <Loader2 className="w-3 h-3 animate-spin text-dim" />}
-            </button>
-          );
-        })}
-        {confluence && (
-          <span className={cn("text-[11px] leading-relaxed",
-            confluence.tone === "up" ? "text-up" : confluence.tone === "down" ? "text-down"
-              : confluence.tone === "mixed" ? "text-warn" : "text-dim")}>
-            {confluence.text}
-          </span>
-        )}
-      </div>
-
-      {/* Disclaimer — standalone only; BiasSection carries its own when embedded. */}
-      {!embedded && (
-        <div className="flex items-start gap-2 rounded-lg border border-warn/40 bg-warn/10 p-3 mt-3">
-          <ShieldAlert className="w-4 h-4 text-warn shrink-0 mt-0.5" />
-          <p className="text-[11px] text-text/80 leading-relaxed">
-            <span className="font-semibold">This is not investment advice and not a recommendation to buy or sell.</span>{" "}
-            It is a fixed, mechanical checklist applied to past price data for educational purposes. The rules know nothing about
-            news, fundamentals, or your situation; timeframes can legitimately disagree; and past patterns do not predict future
-            results. Any trade you place is your own decision and your own risk.
-          </p>
+          {loading ? "Crunching the timeframe…" : "Not enough data for this timeframe."}
         </div>
       )}
     </div>

@@ -26,6 +26,29 @@ const MODES = [
   { id: "combined", label: "Combined", icon: Layers, hint: "Blends both, weighted by timeframe" },
 ];
 
+// Rule-based technical bias for EVERY timeframe in the ladder — one fetch per TF,
+// shared by the annotated timeframe row (all modes), the rule-based detail panel and
+// the combined blend, so nothing double-fetches.
+function useMultiTfBias(market, symbol) {
+  const [state, setState] = useState({ results: {}, loading: true });
+  const [reloadKey, setReloadKey] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    setState({ results: {}, loading: true });
+    Promise.allSettled(TF_LADDER.map(async (tf) => {
+      const c = await fetchCandles({ market, symbol, interval: tf, range: TF_RANGE[tf] });
+      return { tf, bias: computeBias(c.slice(-300)) };
+    })).then((settled) => {
+      if (!alive) return;
+      const results = {};
+      settled.forEach((r, i) => { results[TF_LADDER[i]] = r.status === "fulfilled" && r.value.bias ? { bias: r.value.bias } : { error: true }; });
+      setState({ results, loading: false });
+    });
+    return () => { alive = false; };
+  }, [market, symbol, reloadKey]);
+  return { ...state, reload: () => setReloadKey((k) => k + 1) };
+}
+
 async function fetchBiasNote(market, symbol, price) {
   try {
     const q = `market=${market}&symbol=${encodeURIComponent(symbol)}${price ? `&price=${price}` : ""}`;
@@ -181,16 +204,8 @@ function DataBiasBody({ market, state, biasTF, live }) {
 }
 
 // ── c) Combined ───────────────────────────────────────────────────────────────
-function CombinedBody({ market, symbol, biasTF, dataState, live }) {
-  const [tech, setTech] = useState(null); // technical bias for the chosen TF
-  useEffect(() => {
-    let alive = true; setTech(null);
-    fetchCandles({ market, symbol, interval: biasTF, range: TF_RANGE[biasTF] || "1mo" })
-      .then((c) => alive && setTech(computeBias(c.slice(-300))))
-      .catch(() => alive && setTech(false));
-    return () => { alive = false; };
-  }, [market, symbol, biasTF]);
-
+// `tech` is the rule-based bias for biasTF from the shared multi-TF hook (no extra fetch).
+function CombinedBody({ biasTF, dataState, live, tech, techLoading }) {
   const { loading, data, note } = dataState;
   const tfSec = TF_SECONDS[biasTF] || 3600;
   const horizon = tfHorizon(tfSec);
@@ -210,7 +225,7 @@ function CombinedBody({ market, symbol, biasTF, dataState, live }) {
     return { ...b, techNorm, dataNorm, techTgt, fundTgt, target };
   }, [tech, data, note, loading, tfSec, horizon]);
 
-  if (tech === null || loading) return <Loading text="Blending technical and fundamental views…" />;
+  if (techLoading || loading) return <Loading text="Blending technical and fundamental views…" />;
   if (!combined) return <div className="rounded-lg border border-line bg-bg/30 p-4 text-sm text-dim">Not enough data to combine on this timeframe.</div>;
 
   const pct = (x) => Math.round(x * 100);
@@ -275,6 +290,21 @@ export default function BiasSection({ market, symbol, interval, price }) {
   useEffect(() => { if (TF_LADDER.includes(interval)) setBiasTF(interval); }, [interval]);
 
   const dataState = useDataBias(market, symbol, price);
+  const multi = useMultiTfBias(market, symbol);
+
+  // Each timeframe chip carries its verdict for the ACTIVE view (this is the old
+  // cross-check, now integrated into the timeframe row): rule → that TF's technical
+  // verdict; news&data → the AI's read for the TF's horizon; combined → the blend.
+  const tfVerdict = (tf) => {
+    if (mode === "data") return dataState.note?.horizon?.[tfHorizon(TF_SECONDS[tf])] || null;
+    const tech = multi.results[tf]?.bias;
+    if (!tech) return null;
+    if (mode === "rule") return tech.verdict;
+    const dN = dataState.data?.hasData
+      ? biasNorm(dataState.data)
+      : verdictNorm(dataState.note?.horizon?.[tfHorizon(TF_SECONDS[tf])], dataState.note?.confidence ?? 0.5);
+    return combineBias(biasNorm(tech), dN, TF_SECONDS[tf]).verdict;
+  };
 
   return (
     <div className="rounded-xl border border-line lg-glass p-4">
@@ -293,21 +323,29 @@ export default function BiasSection({ market, symbol, interval, price }) {
         </div>
       </div>
 
-      {/* Shared timeframe — applies to ALL three modes */}
+      {/* Shared timeframe — applies to ALL three modes, each chip showing its verdict
+          (the old cross-check, now integrated here). */}
       <div className="flex flex-wrap items-center gap-1.5 mb-3">
         <span className="text-[10px] text-dim font-medium mr-1">Timeframe</span>
-        {TF_LADDER.map((tf) => (
-          <button key={tf} onClick={() => setBiasTF(tf)}
-            className={cn("rounded-md px-2 py-0.5 text-[11px] font-mono transition-colors",
-              biasTF === tf ? "bg-accent/15 text-accent" : "text-dim hover:text-text hover:bg-surface")}>
-            {tf}
-          </button>
-        ))}
+        {TF_LADDER.map((tf) => {
+          const v = tfVerdict(tf);
+          return (
+            <button key={tf} onClick={() => setBiasTF(tf)}
+              title={v ? `${tf}: ${v}` : tf}
+              className={cn("flex items-center gap-1.5 rounded-md px-2 py-0.5 text-[11px] font-mono transition-colors",
+                biasTF === tf ? "bg-accent/15 text-accent" : "text-dim hover:text-text hover:bg-surface")}>
+              {tf}
+              <span className={cn("w-1.5 h-1.5 rounded-full shrink-0",
+                v === "long" ? "bg-up" : v === "short" ? "bg-down" : v === "neutral" ? "bg-dim/50" : "bg-transparent border border-line")} />
+            </button>
+          );
+        })}
+        {multi.loading && <Loader2 className="w-3 h-3 animate-spin text-dim" />}
       </div>
 
-      {mode === "rule" && <BiasPanel key={biasTF} market={market} symbol={symbol} interval={biasTF} embedded onSelectTf={setBiasTF} />}
+      {mode === "rule" && <BiasPanel selected={biasTF} bias={multi.results[biasTF]?.bias} loading={multi.loading} reload={multi.reload} />}
       {mode === "data" && <DataBiasBody market={market} state={dataState} biasTF={biasTF} live={price} />}
-      {mode === "combined" && <CombinedBody market={market} symbol={symbol} biasTF={biasTF} dataState={dataState} live={price} />}
+      {mode === "combined" && <CombinedBody biasTF={biasTF} dataState={dataState} live={price} tech={multi.results[biasTF]?.bias || null} techLoading={multi.loading} />}
 
       {/* Disclaimer matches the ACTIVE view, not a generic one. */}
       <div className="flex items-start gap-2 rounded-lg border border-warn/40 bg-warn/10 p-3 mt-3">
