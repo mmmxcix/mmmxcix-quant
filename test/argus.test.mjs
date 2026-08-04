@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { sizePosition, fillPrice, openThesis, evaluateExit, ledgerStats, tradeR, closeThesisAt, chooseLeverage, liquidationPrice, plannedRR, enforceMinStop } from "../src/lib/argus/core.js";
-import { breakout, meanReversion, scan } from "../src/lib/argus/scanners.js";
+import { breakout, meanReversion, scan, fvg, inverseFvg, openingRange, liquiditySweep, SCANNERS } from "../src/lib/argus/scanners.js";
 
 const bar = (o, h, l, c, v = 1000, t = 0) => ({ time: t, open: o, high: h, low: l, close: c, volume: v });
 // A flat range of `n` bars around `mid` with small wicks.
@@ -191,6 +191,53 @@ test("reward:risk is situational, NOT a fixed 2:1 — a decisive breakout target
   // The target actually reflects the chosen R:R.
   const rr = plannedRR(decisive.side, decisive.entry, decisive.stop, decisive.target);
   assert.ok(Math.abs(rr - decisive.rMult) < 1e-9, "target = entry ± rMult × risk");
+});
+
+test("day-trader setups are registered and fire on the right price action", () => {
+  // The scanner set now includes the ICT/day-trader methods, not just breakout/MR.
+  const kinds = SCANNERS.map((f) => f.name);
+  for (const k of ["fvg", "inverseFvg", "openingRange", "liquiditySweep"]) assert.ok(kinds.includes(k), `${k} registered`);
+});
+
+test("liquidity sweep: wick through the prior high that closes back below → short", () => {
+  const candles = [...flat(40, 100, 0.3), bar(100, 101.6, 99.9, 100.05)]; // spikes above ~100.3, closes below
+  const r = liquiditySweep(candles, { n: 20, atrPeriod: 14 });
+  assert.ok(r && r.state === "triggered" && r.side === "short" && r.kind === "liquidity-sweep", "bearish sweep");
+  assert.ok(r.stop > r.entry && r.target < r.entry, "stop above the sweep, target below");
+  // A clean range with no sweep fires nothing.
+  assert.equal(liquiditySweep([...flat(60, 100, 0.3)], { n: 20, atrPeriod: 14 }), null);
+});
+
+test("fair value gap: a bullish 3-candle imbalance retested from above → long", () => {
+  const base = flat(34, 100, 0.2);
+  const a = bar(100, 100.3, 99.8, 100, 1000, 34);        // gap bottom = 100.3
+  const impulse = bar(100.3, 101.6, 100.3, 101.5, 3000, 35);
+  const g = bar(101.5, 101.9, 100.7, 101.6, 2000, 36);   // low 100.7 > 100.3 → gap [100.3,100.7]
+  const pull = bar(101.4, 101.5, 100.9, 101.0, 1200, 37);
+  const retest = bar(100.8, 100.95, 100.5, 100.9, 1500, 38); // dips to 100.5 (into gap), closes 100.9 (held), bullish
+  const r = fvg([...base, a, impulse, g, pull, retest], { lookback: 12, atrPeriod: 14 });
+  assert.ok(r && r.side === "long" && r.kind === "fvg", "bullish FVG long");
+  assert.ok(r.stop < r.entry && r.target > r.entry, "coherent levels");
+  assert.equal(fvg([...flat(60, 100, 0.2)], {}), null, "no gap on a flat range");
+});
+
+test("opening range breakout uses the session's first bars and only within the day", () => {
+  const D = 86400;
+  // Day 1 tail, then a fresh UTC day whose first 6 bars form a 99.5–100.5 range, then a break up.
+  const prevDay = Array.from({ length: 20 }, (_, i) => bar(100, 100.3, 99.7, 100, 1000, (i) * 300));
+  const dayStart = D; // next UTC day
+  const orb = [
+    bar(100, 100.5, 99.5, 100.0, 1000, dayStart + 0),
+    bar(100, 100.4, 99.6, 100.1, 1000, dayStart + 300),
+    bar(100.1, 100.5, 99.8, 100.0, 1000, dayStart + 600),
+    bar(100.0, 100.3, 99.7, 100.1, 1000, dayStart + 900),
+    bar(100.1, 100.4, 99.9, 100.2, 1000, dayStart + 1200),
+    bar(100.2, 100.5, 100.0, 100.3, 1000, dayStart + 1500),
+    bar(100.3, 101.4, 100.3, 101.2, 2000, dayStart + 1800), // breaks the 100.5 opening-range high
+  ];
+  const r = openingRange([...prevDay, ...orb], { orbBars: 6, atrPeriod: 14 });
+  assert.ok(r && r.side === "long" && r.kind === "orb", "ORB long on the break");
+  assert.ok(r.entry > 100.5 && r.stop < r.entry, "entry above range high, stop below");
 });
 
 test("scan gates trend setups by higher-timeframe bias", () => {

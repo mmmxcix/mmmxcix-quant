@@ -494,6 +494,10 @@ async function cycle(fullScan) {
       // catches a forming setup the moment it triggers ("watch until entry").
       if (!limitPending && tf.c15 && tf.c1h) {
         const { triggered } = scan(tf);
+        // Trade only the BEST: several scanners can fire on one instrument — take the
+        // strongest first (quality = setup strength × reward:risk), so if only one
+        // slot opens per symbol, it's the best available, not whichever fired first.
+        triggered.sort((a, b) => ((b.strength ?? 0.5) * (b.rMult ?? 2)) - ((a.strength ?? 0.5) * (a.rMult ?? 2)));
         for (const s of triggered) tryOpen(inst, s, halted);
       }
       if (inst.asset !== "crypto") await sleep(400); // be gentle on Yahoo

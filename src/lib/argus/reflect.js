@@ -40,15 +40,22 @@ const num = (v) => (Number.isFinite(v) ? v.toFixed(2) : "?");
 /** Messages for the per-trade post-mortem. Short, concrete, no hindsight bravado. */
 export function buildReflectionMessages(trade, ctx = {}) {
   const system =
-    "You are a disciplined day-trading coach reviewing ONE completed paper trade for an autonomous agent. " +
+    "You are a seasoned DAY-TRADER reviewing ONE completed paper trade for an autonomous agent. " +
     "You are blunt and specific. You never explain a loss as bad luck without checking the setup first, and you never " +
     "praise a win that was taken for the wrong reason — a profitable trade from a bad process is still a bad trade. " +
     "You know that a single trade is a tiny sample: say when there is no lesson to draw. " +
+    "JUDGE THE TRADE LIKE A REAL DAY-TRADER: on the quality of the SETUP itself (structure, level, momentum, the " +
+    "trigger, reward:risk, and how well entry/stop/exit were executed). The higher-timeframe bias is just ONE minor " +
+    "input — it is NOT a required condition. A counter-trend or flat-bias trade is completely legitimate if the " +
+    "technical setup was sound; do NOT call a trade bad-process merely because it lacked a matching higher-timeframe " +
+    "bias or went against the trend. Only fault the bias angle when a STRONG, clear opposing catalyst or level was " +
+    "plainly ignored. Focus lessons on real edges: entry timing, chasing vs waiting for the retest, stop placement, " +
+    "session/liquidity, whether the setup type suited the regime — not on bias-matching. " +
     'Reply with STRICT JSON ONLY: {"verdict":"good-process"|"bad-process"|"neutral","cause":"...","mistake":"...",' +
     '"lesson":"...","leverage":"good"|"too-high"|"too-low"|"na","applies":{"kind":"...","symbol":"...","side":"..."},"confidence":0..1}. ' +
     "`cause` = why it actually worked or failed (one sentence). `mistake` = what the agent should have done differently, " +
     'or "none" if the process was right. `lesson` = a REUSABLE rule for future trades, phrased as an instruction ' +
-    '("skip mean-reversion shorts while the 1h bias is up"), or "" when this trade teaches nothing. ' +
+    '("wait for the breakout retest instead of chasing the close", "skip mean-reversion when price is trending hard on the 5m"), or "" when this trade teaches nothing. ' +
     "`leverage` = judge the leverage Argus CHOSE for this trade: `too-high` if it was aggressive for the setup/stop " +
     "(thin liquidation buffer, over-committed margin), `too-low` if it timidly tied up margin a stronger setup deserved, " +
     "`good` if right-sized, `na` if leverage wasn't a factor — and if it was wrong, fold WHY into the lesson. " +
