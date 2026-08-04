@@ -27,7 +27,11 @@ const SYSTEM =
   "a days target is normally within a few percent up to ~15% of the current price; a weeks target within ~30%; a months " +
   "target within ~100% even for a volatile name. NEVER return a multiple of the current price over days/weeks — a target " +
   "that is 3x–10x the current price is wrong. If you cannot make a realistic call, null that horizon. " +
-  "In `note`, briefly JUSTIFY the direction AND why price would move toward those levels — concise, one or two sentences. " +
+  "GROUND THE READ IN THE COMPANY'S ACTUAL SITUATION, not generic platitudes: name the concrete drivers a trader would " +
+  "actually cite — the sector's supply/demand dynamics and pricing cycle (e.g. the DRAM/memory cycle for a chipmaker), key " +
+  "competitors and share shifts, supply-chain / shipping / inventory issues, regulation, and the most recent catalysts from " +
+  "the headlines provided. In `note`, briefly JUSTIFY the direction AND why price would move toward those levels using those " +
+  "specifics — concise, one or two sentences. `drivers` should be concrete, situation-specific facts (not 'strong fundamentals'). " +
   "Reply with STRICT JSON ONLY: " +
   '{"shortTerm":"long"|"short"|"neutral","mediumTerm":"long"|"short"|"neutral","longTerm":"long"|"short"|"neutral",' +
   '"confidence":0..1,"note":"one or two plain sentences justifying the read","drivers":["…","…"],' +
@@ -70,7 +74,19 @@ async function fetchHeadlines(origin) {
   } catch { return []; }
 }
 
-function evidence(market, symbol, f, headlines, price) {
+// Company/ticker-SPECIFIC news (Yahoo search) — so the read can cite the actual
+// situation (e.g. the DRAM cycle for MU, supply issues, a competitor move), not just
+// generic macro. Best-effort; degrades to [] if unavailable.
+async function fetchTickerNews(origin, symbol) {
+  try {
+    const r = await fetch(`${origin}/api/yahoo/v1/finance/search?q=${encodeURIComponent(symbol)}&newsCount=8&quotesCount=0&enableFuzzyQuery=false`);
+    if (!r.ok) return [];
+    const d = await r.json();
+    return (d?.news || []).map((x) => x.title).filter(Boolean).slice(0, 6);
+  } catch { return []; }
+}
+
+function evidence(market, symbol, f, headlines, price, tickerNews = []) {
   const L = [`Instrument: ${symbol} (${market})`];
   const px = price ?? f?.price;
   if (px != null) L.push(`Current price: ${px}`);
@@ -87,6 +103,7 @@ function evidence(market, symbol, f, headlines, price) {
   } else {
     L.push("(fundamentals unavailable — use general knowledge)");
   }
+  if (tickerNews.length) L.push(`\nRecent ${symbol}-specific headlines:\n- ${tickerNews.join("\n- ")}`);
   if (headlines.length) L.push(`\nCurrent macro / market headlines:\n- ${headlines.join("\n- ")}`);
   return L.join("\n");
 }
@@ -173,7 +190,7 @@ export async function onRequest({ request, env }) {
   // horizon-bounded targets.
   const priceParamK = Number(url.searchParams.get("price"));
   const bucket = Number.isFinite(priceParamK) && priceParamK > 0 ? Math.round(Math.log10(priceParamK)) : "x";
-  const cacheKey = `biasv3:${market}:${symbol}:${bucket}`;
+  const cacheKey = `biasv4:${market}:${symbol}:${bucket}`; // v4 adds ticker-specific news + concrete sector reasoning
   const read = async () => { try { const row = await db?.prepare("SELECT data FROM argus_kv WHERE key=?").bind(cacheKey).first(); return row ? JSON.parse(row.data) : null; } catch { return null; } };
   const write = (obj) => db?.prepare("INSERT INTO argus_kv (key,data,updated_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at").bind(cacheKey, JSON.stringify(obj), Date.now()).run();
 
@@ -186,13 +203,14 @@ export async function onRequest({ request, env }) {
   if (!hasProvider) return json({ ok: true, hasLLM: false, note: null, market, symbol });
 
   const origin = url.origin;
-  const [f, headlines] = await Promise.all([
+  const [f, headlines, tickerNews] = await Promise.all([
     market === "crypto" ? Promise.resolve(null) : fetchFundamentals(origin, symbol),
     fetchHeadlines(origin),
+    market === "crypto" ? Promise.resolve([]) : fetchTickerNews(origin, symbol),
   ]);
   const priceParam = Number(url.searchParams.get("price"));
   const anchor = Number.isFinite(priceParam) && priceParam > 0 ? priceParam : (f?.price ?? 0);
-  const out = await callLLM(env, evidence(market, symbol, f, headlines, anchor || null));
+  const out = await callLLM(env, evidence(market, symbol, f, headlines, anchor || null, tickerNews));
   const parsed = out ? parseBias(out.text, anchor) : null;
   if (!parsed) return json({ ok: true, hasLLM: !!out, note: null, market, symbol });
 
