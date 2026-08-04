@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Radio, TrendingUp, TrendingDown, Trophy, AlertTriangle, Zap, Newspaper, GraduationCap, LineChart, X, Ban } from "lucide-react";
 import { cn, fmtNum } from "@/lib/utils";
-import { ledgerStats } from "@/lib/argus/core";
+import { ledgerStats, tradeR } from "@/lib/argus/core";
 import { useSession } from "@/lib/authClient";
 import Skeleton from "@/components/Skeleton";
 
@@ -105,6 +105,9 @@ export default function Argus() {
   const { state, theses = [], ledger = [] } = data;
   const stats = ledgerStats(ledger);
   const live = state && Date.now() - state.at < 20 * 60_000; // agent heartbeats each ~15-min full scan
+  // When the daily-loss limit trips, Argus stops opening trades — surface that as a
+  // distinct COOLDOWN state, not "scanning" (it isn't).
+  const paused = !!(live && state?.halted);
 
   return (
     <div className="space-y-5">
@@ -112,8 +115,8 @@ export default function Argus() {
         <div>
           <h1 className="text-xl font-semibold flex items-center gap-2">Argus
             <span className={cn("inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
-              live ? "border-up/40 bg-up/10 text-up" : "border-line bg-bg text-dim")}>
-              <Radio className="w-3 h-3" />{live ? "live" : "offline"}
+              !live ? "border-line bg-bg text-dim" : paused ? "border-warn/40 bg-warn/10 text-warn" : "border-up/40 bg-up/10 text-up")}>
+              <Radio className="w-3 h-3" />{!live ? "offline" : paused ? "cooldown" : "live"}
             </span>
           </h1>
           <p className="text-sm text-dim">24/7 day-trading agent · technical + event channel · <span className="text-dim">paper only — educational, not advice</span></p>
@@ -178,8 +181,8 @@ export default function Argus() {
         <Stat label="Today's P/L" value={state ? money(state.dayPnlTotal ?? state.dayPnl ?? 0) : "–"}
           sub={state && state.unrealized ? `${money(state.dayPnl || 0)} real · ${money(state.unrealized)} float` : "realized + floating"}
           tone={state && (state.dayPnlTotal ?? state.dayPnl) < 0 ? "text-down" : "text-up"} />
-        <Stat label="Track record" value={stats.n ? `${(stats.winRate * 100).toFixed(0)}% · ${stats.avgR >= 0 ? "+" : ""}${stats.avgR.toFixed(2)}R` : "–"}
-          sub={stats.n ? `${stats.n} closed · ${money(stats.pnl)}` : "no closed trades yet"}
+        <Stat label="Track record" value={stats.n ? `${(stats.winRate * 100).toFixed(0)}% · ${stats.avgR >= 0 ? "+" : ""}${stats.avgR.toFixed(2)}R avg` : "–"}
+          sub={stats.n ? `${stats.n} closed · ${money(stats.pnl)} · ${stats.sumR >= 0 ? "+" : ""}${stats.sumR.toFixed(2)}R total` : "no closed trades yet"}
           tone={stats.expectancy > 0 ? "text-up" : stats.expectancy < 0 ? "text-down" : "text-text"} />
       </div>
 
@@ -188,7 +191,11 @@ export default function Argus() {
         <p className="text-xs text-dim font-medium mb-2">Open theses</p>
         {theses.length === 0 ? (
           <div className="rounded-xl border border-line lg-glass p-8 text-center text-sm text-dim">
-            {live ? "No open theses right now — Argus is scanning." : "Argus agent is offline. Start scripts/argus-agent.mjs to begin paper trading."}
+            {!live
+              ? "Argus agent is offline. Start scripts/argus-agent.mjs to begin paper trading."
+              : paused
+                ? "Paused — daily-loss limit reached. Argus is in cooldown and won't open new trades until the session resets."
+                : "No open theses right now — Argus is scanning."}
           </div>
         ) : (
           <div className="grid md:grid-cols-2 gap-3">
@@ -414,7 +421,9 @@ export default function Argus() {
                 </tr>
               </thead>
               <tbody className="font-mono">
-                {ledger.slice(0, 40).map((c) => (
+                {ledger.slice(0, 40).map((c) => {
+                  const r = tradeR(c); // same R the header aggregates — never null
+                  return (
                   <tr key={c.id} className="border-t border-line/40 hover:bg-accent/5">
                     <td className="py-1.5 font-semibold">
                       <Link to={chartHref(c, c.outcome)} className="hover:text-accent flex items-center gap-1">
@@ -424,11 +433,12 @@ export default function Argus() {
                     <td className={c.side === "long" ? "text-up" : "text-down"}>{c.side}</td>
                     <td className="text-dim">{c.kind}</td>
                     <td className={cn(c.outcome === "target" ? "text-up" : c.outcome === "stop" ? "text-down" : "text-dim")}>{c.outcome}</td>
-                    <td className={cn("text-right", c.R >= 0 ? "text-up" : "text-down")}>{c.R >= 0 ? "+" : ""}{c.R?.toFixed(2)}</td>
+                    <td className={cn("text-right", r >= 0 ? "text-up" : "text-down")}>{r >= 0 ? "+" : ""}{r.toFixed(2)}</td>
                     <td className={cn("text-right", c.pnl >= 0 ? "text-up" : "text-down")}>{money(c.pnl)}</td>
                     <td className="text-right text-dim">{c.exitAt ? ago(c.exitAt) : ""}</td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>

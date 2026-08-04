@@ -103,11 +103,21 @@ export function sizePosition({
   if (!(stopDist > 0) || !(equity > 0) || !(entry > 0)) return null;
   const levCap = portfolioLevCap ?? maxLeverage ?? 20; // aggregate-exposure ceiling (×equity)
 
-  // 1) Risk-based size.
+  // Round-trip cost matters: `entry` is already the SLIPPED entry fill, but the
+  // EXIT fill slips too (a stop-out sells below the stop / covers above it). If we
+  // size on the bare stop distance, a stop-out realises MORE than the risk budget
+  // (e.g. crypto ~-1.15R). Size on the effective distance that INCLUDES the exit
+  // spread/fee, so a clean stop-out lands at ≈ -1.00R and riskAmt is the honest,
+  // all-in risk. (Entry slippage is already baked into `entry`, hence `stop`.)
+  const bps = (SLIP_BPS[asset] ?? 4) / 10000;
+  const exitSlipPerUnit = stop * bps;                    // adverse move on the exit fill
+  const effStopDist = stopDist + exitSlipPerUnit;        // all-in risk per unit
+
+  // 1) Risk-based size (against the all-in stop distance).
   const riskRoom = heatCap * equity - openRisk;
   const riskAmt0 = Math.min(baseRiskPct * equity, riskRoom);
   if (riskAmt0 <= equity * 0.0005) return null;          // no meaningful heat room → wait
-  let size = riskAmt0 / stopDist;
+  let size = riskAmt0 / effStopDist;
 
   // 2) Argus's leverage — dynamic by asset class + conviction, and never so high
   //    that a stop-out becomes a liquidation.
@@ -124,7 +134,8 @@ export function sizePosition({
 
   const notional = size * entry;
   return {
-    size, riskAmt: size * stopDist, leverage,
+    // riskAmt is the ALL-IN risk (incl. exit slippage) so a stop-out ≈ -1.00R.
+    size, riskAmt: size * effStopDist, leverage,
     margin: notional / leverage, notional,
     liqPrice: liquidationPrice(entry, side, leverage),
   };
@@ -224,15 +235,25 @@ export function closeThesisAt(th, refPrice, now = Date.now()) {
   return finalize(th, refPrice, "manual", now);
 }
 
-/** Aggregate stats for the closed-thesis ledger. */
+/** One trade's R, recomputed from pnl/riskAmt when the stored R is missing — so a
+ *  legacy/null-R close can never silently dilute the aggregate (0 in the sum but 1
+ *  in the count). The UI and ledgerStats share this so header and rows always agree. */
+export function tradeR(c) {
+  if (Number.isFinite(c?.R)) return c.R;
+  return c && c.riskAmt > 0 && Number.isFinite(c.pnl) ? c.pnl / c.riskAmt : 0;
+}
+
+/** Aggregate stats for the closed-thesis ledger. avgR is the per-trade expectancy;
+ *  sumR is the cumulative R (avgR × n) — both exposed so the header can't be
+ *  misread as one when it shows the other. */
 export function ledgerStats(closed) {
   const n = closed.length;
-  if (!n) return { n: 0, wins: 0, winRate: 0, pnl: 0, avgR: 0, expectancy: 0 };
+  if (!n) return { n: 0, wins: 0, winRate: 0, pnl: 0, sumR: 0, avgR: 0, expectancy: 0 };
   const wins = closed.filter((c) => c.pnl > 0).length;
   const pnl = closed.reduce((a, c) => a + c.pnl, 0);
-  const sumR = closed.reduce((a, c) => a + (c.R || 0), 0);
+  const sumR = closed.reduce((a, c) => a + tradeR(c), 0);
   return {
-    n, wins, winRate: wins / n, pnl,
+    n, wins, winRate: wins / n, pnl, sumR,
     avgR: sumR / n,
     expectancy: sumR / n, // R-expectancy per trade
   };

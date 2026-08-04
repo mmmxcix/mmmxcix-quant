@@ -2,7 +2,7 @@
 // logic, run with `npm test`.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { sizePosition, fillPrice, openThesis, evaluateExit, ledgerStats, closeThesisAt, chooseLeverage, liquidationPrice, plannedRR, enforceMinStop } from "../src/lib/argus/core.js";
+import { sizePosition, fillPrice, openThesis, evaluateExit, ledgerStats, tradeR, closeThesisAt, chooseLeverage, liquidationPrice, plannedRR, enforceMinStop } from "../src/lib/argus/core.js";
 import { breakout, meanReversion, scan } from "../src/lib/argus/scanners.js";
 
 const bar = (o, h, l, c, v = 1000, t = 0) => ({ time: t, open: o, high: h, low: l, close: c, volume: v });
@@ -11,9 +11,11 @@ const flat = (n, mid, wick = 0.3) => Array.from({ length: n }, (_, i) => bar(mid
 
 test("heat sizing: full base risk when empty, shrinks with open risk, null when full", () => {
   const eq = 10000;
-  const a = sizePosition({ equity: eq, entry: 100, stop: 98, openRisk: 0 });      // 2% = $200 risk
-  assert.ok(Math.abs(a.riskAmt - 200) < 1e-6, "first trade risks 2%");
-  assert.ok(Math.abs(a.size - 100) < 1e-6, "size = 200/2");
+  const a = sizePosition({ equity: eq, entry: 100, stop: 98, openRisk: 0 });      // 2% = $200 all-in risk
+  assert.ok(Math.abs(a.riskAmt - 200) < 1e-6, "first trade risks the full 2% budget (all-in)");
+  // Size is set on the EFFECTIVE stop distance (stop dist + exit slippage), so it's
+  // a touch below the naive 200/2 = 100 — that headroom is the exit spread/fee.
+  assert.ok(a.size < 100 && a.size > 96, "size discounted for exit slippage");
   const b = sizePosition({ equity: eq, entry: 100, stop: 98, openRisk: 500 });    // heat 6%=600, room 100
   assert.ok(Math.abs(b.riskAmt - 100) < 1e-6, "late trade shrinks to remaining heat");
   const c = sizePosition({ equity: eq, entry: 100, stop: 98, openRisk: 600 });    // heat full
@@ -95,14 +97,20 @@ test("thesis: open, hit target → positive R; hit stop → −1R", () => {
   assert.equal(loss.outcome, "stop"); assert.ok(loss.R < -0.9 && loss.R > -1.2, "≈−1R loss");
 });
 
-test("Bug 1: displayed risk equals size × |entry − stop| on the SAME stop, and stop clears the noise floor", () => {
+test("Bug 1/B: stop clears the noise floor, risk is all-in, and a clean stop-out realises ≈ -1.00R", () => {
   // An absurdly tight crypto stop (0.017%) like the BTCUSDT report — openThesis must
-  // widen it to the noise floor and keep risk = size × |entry − stop| on THAT stop.
+  // widen it to the noise floor; risk must be the ALL-IN risk (stop dist + exit slip).
   const setup = { symbol: "BTCUSDT", market: "crypto", side: "long", kind: "breakout", timeframe: "5m", entry: 63563.45, stop: 63552.65, target: 64000, reason: "t" };
   const th = openThesis(setup, { equity: 10000, openRisk: 0, asset: "crypto", heatCap: 0.10, baseRiskPct: 0.02 });
   assert.ok(th, "thesis opens on a widened stop");
   assert.ok(th.entry - th.stop >= th.entry * 0.004 - 1e-6, "stop widened to ≥ 0.4% noise floor");
-  assert.ok(Math.abs(th.riskAmt - th.size * Math.abs(th.entry - th.stop)) < 1e-6, "risk = size × |entry − stop| on the stored stop");
+  // riskAmt is the all-in risk: strictly MORE than the bare stop distance × size (the
+  // difference is the exit spread/fee now folded into sizing — Bug B).
+  assert.ok(th.riskAmt > th.size * (th.entry - th.stop), "risk includes exit slippage, not just |entry−stop|");
+  // The real invariant: a bar that trades through the stop closes at ≈ -1.00R, not -1.15R.
+  const stopOut = evaluateExit(th, { high: th.entry, low: th.stop - 1e-9, close: th.stop, open: th.entry }, { now: th.openedAt + 1000 });
+  assert.equal(stopOut.outcome, "stop");
+  assert.ok(Math.abs(stopOut.R + 1) < 0.02, `clean stop-out ≈ -1R (got ${stopOut.R.toFixed(3)})`);
   // Liquidation must sit BEYOND the stop (margin safeguard) for a long: stop first.
   assert.ok(th.liqPrice < th.stop, "liquidation is further from entry than the stop");
 });
@@ -114,10 +122,21 @@ test("openThesis skips a setup whose reward:risk collapses once the stop is wide
   assert.equal(th, null, "poor R:R after min-stop → skipped");
 });
 
-test("ledger stats aggregate win rate + R-expectancy", () => {
+test("ledger stats aggregate win rate + R-expectancy, sumR = avgR × n", () => {
   const s = ledgerStats([{ pnl: 200, R: 2 }, { pnl: -100, R: -1 }, { pnl: -100, R: -1 }, { pnl: 300, R: 3 }]);
   assert.equal(s.n, 4); assert.equal(s.wins, 2); assert.equal(s.winRate, 0.5);
   assert.ok(Math.abs(s.avgR - 0.75) < 1e-9, "avg R = (2-1-1+3)/4");
+  assert.ok(Math.abs(s.sumR - 3) < 1e-9, "cumulative R = 3");
+  assert.ok(Math.abs(s.sumR - s.avgR * s.n) < 1e-9, "header total = avg × n (Bug C: can't be misread)");
+});
+
+test("Bug C: a null-R close is recomputed from pnl/riskAmt, not counted as 0R", () => {
+  // Legacy/liquidation close with no stored R → tradeR fills it from pnl/riskAmt so
+  // it can't silently dilute the header average (0 in the sum but 1 in the count).
+  const c = { pnl: -150, riskAmt: 100 }; // = -1.5R
+  assert.ok(Math.abs(tradeR(c) + 1.5) < 1e-9, "tradeR recomputes -1.5R");
+  const s = ledgerStats([{ pnl: -100, R: -1 }, c]);
+  assert.ok(Math.abs(s.avgR + 1.25) < 1e-9, "avg = (-1 + -1.5)/2, null-R not diluted to 0");
 });
 
 test("breakout scanner triggers long above the range high, with stop<entry<target", () => {
