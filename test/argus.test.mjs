@@ -22,18 +22,18 @@ test("heat sizing: full base risk when empty, shrinks with open risk, null when 
   assert.equal(c, null, "no room → null (park in watch-mode)");
 });
 
-test("capital gate: committed margin (total notional / leverage) stays ≤ equity", () => {
-  // Tiny stop → risk-based size is huge; the account budget (maxLeverage × equity)
-  // caps the notional. One trade may use the WHOLE budget (all-in).
+test("exposure gate: gross notional stays ≤ the portfolio ceiling (all-in on a tiny stop)", () => {
+  // Tiny stop → risk-based size is huge; the gross-exposure ceiling (maxLeverage ×
+  // equity) caps the notional. One trade may use the WHOLE budget (all-in).
   const a = sizePosition({ equity: 10000, entry: 100, stop: 99.9, openRisk: 0, maxLeverage: 10 });
   assert.ok(a.size * 100 <= 10 * 10000 + 1e-6, "notional ≤ maxLeverage × equity");
   assert.ok(a.riskAmt <= 200 + 1e-6, "risk still bounded by the 2% target");
   // Remaining budget: with 90k of 100k already open, only 10k notional room left.
   const b = sizePosition({ equity: 10000, entry: 100, stop: 98, openNotional: 90000, maxLeverage: 10 });
   assert.ok(b.size * 100 <= 10000 + 1e-6, "new notional fits the remaining budget");
-  // Budget full → null.
+  // Ceiling full → null.
   const full = sizePosition({ equity: 10000, entry: 100, stop: 98, openNotional: 100000, maxLeverage: 10 });
-  assert.equal(full, null, "capital fully committed → null");
+  assert.equal(full, null, "gross exposure fully committed → null");
 });
 
 test("leverage is a free, situational choice across 1..100x, capped only by safety", () => {
@@ -66,15 +66,24 @@ test("enforceMinStop widens an absurdly tight stop to the asset noise floor", ()
   assert.ok(enforceMinStop(100, 100.01, "short", "crypto") > 100, "short tight stop widened up");
 });
 
-test("margin ≤ equity, portfolio-notional ceiling, and per-trade leverage returned", () => {
+test("sizePosition returns notional, margin and a per-trade leverage; notional ceiling holds", () => {
   const s = sizePosition({ equity: 10000, entry: 100, stop: 99.5, openRisk: 0, portfolioLevCap: 20, maxTradeLev: 100 });
-  assert.ok(s.margin <= 10000 + 1e-6, "margin never exceeds equity");
   assert.ok(s.notional <= 20 * 10000 + 1e-6, "notional within the portfolio ceiling");
   assert.ok(s.leverage >= 1 && s.leverage <= 100, "sane leverage");
   assert.ok(Math.abs(s.margin - s.notional / s.leverage) < 1e-6, "margin = notional / leverage");
-  // Margin budget already used up → new trade can't post margin → null (via notional room 0 or margin 0).
+  // Gross-notional ceiling reached → null (margin is NOT what gates the book).
   const capped = sizePosition({ equity: 10000, entry: 100, stop: 98, openMargin: 10000, openNotional: 200000, portfolioLevCap: 20 });
-  assert.equal(capped, null, "no margin/notional room → null");
+  assert.equal(capped, null, "no gross-notional room → null");
+});
+
+test("concurrency is RISK-gated: margin no longer caps the book, only heat + gross notional", () => {
+  // Margin already 'over' equity, but heat has room and the notional ceiling isn't hit
+  // → Argus can still open. Margin does not limit how many trades it holds.
+  const ok = sizePosition({ equity: 10000, entry: 100, stop: 99.5, openRisk: 200, openMargin: 15000, openNotional: 50000, portfolioLevCap: 50, asset: "crypto" });
+  assert.ok(ok && ok.size > 0, "opens despite Σmargin > equity (heat + notional room remain)");
+  // Heat IS the gate: once stop-risk fills the cap, no more trades.
+  const heatFull = sizePosition({ equity: 10000, entry: 100, stop: 99.5, openRisk: 1000, heatCap: 0.10, portfolioLevCap: 50 });
+  assert.equal(heatFull, null, "heat cap reached → null (the risk gate)");
 });
 
 test("plannedRR is side-aware and matches the levels (Bug 3)", () => {

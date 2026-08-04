@@ -95,12 +95,13 @@ export function liquidationPrice(entry, side, leverage) {
  * Size a trade. Position size is set by RISK (`baseRiskPct` of equity, capped by
  * the remaining heat budget) — exactly like a real day-trader risking a fixed %
  * per trade. Argus then chooses a per-trade leverage (≤ `maxTradeLev`), which
- * decides the MARGIN it ties up (margin = notional / leverage). Three capital
- * gates then bound the size, whichever is tightest:
- *   • heat:      Σ stop-risk ≤ heatCap × equity
- *   • margin:    Σ margin     ≤ equity            (can't post more margin than you have)
- *   • portfolio: Σ notional   ≤ portfolioLevCap × equity   (hard aggregate-exposure ceiling)
- * Returns null when there's no room (caller parks the setup in watch-mode).
+ * decides the MARGIN it ties up (margin = notional / leverage). CONCURRENCY is
+ * governed by RISK — Argus may hold as many trades as it likes until the heat cap
+ * is reached; margin does NOT limit the book. Two gates bound the size:
+ *   • heat:      Σ stop-risk ≤ heatCap × equity           (the real risk cap — how many trades)
+ *   • portfolio: Σ notional   ≤ portfolioLevCap × equity   (a generous gross-exposure safety)
+ * (margin is still computed/returned for display.) Returns null when there's no
+ * room (caller parks the setup in watch-mode).
  * @returns {null | { size, riskAmt, leverage, margin, notional, liqPrice }}
  */
 export function sizePosition({
@@ -133,14 +134,13 @@ export function sizePosition({
   //    never so high that a stop-out becomes a liquidation.
   const leverage = chooseLeverage(entry, stopDist, { conviction, maxTradeLev, asset, rr });
 
-  // 3) Capital gates — the tightest wins.
-  const notionalRoom = Math.max(0, levCap * equity - openNotional);      // portfolio exposure ceiling
-  const marginRoom = Math.max(0, equity - openMargin);                    // margin budget
-  const sizeFromNotional = notionalRoom / entry;
-  const sizeFromMargin = (marginRoom * leverage) / entry;                 // margin = size*entry/lev ≤ marginRoom
-  const maxSize = Math.min(sizeFromNotional, sizeFromMargin);
-  if (maxSize <= 0) return null;                                          // capital fully committed → wait
-  if (size > maxSize) size = maxSize;
+  // 3) Exposure gate — concurrency is governed by RISK (the heat cap in step 1); the
+  //    ONLY extra bound is a generous gross-notional ceiling so a run of tight-stop
+  //    trades can't build unbounded exposure. Margin does NOT cap the book, so Argus
+  //    can hold as many heat-approved trades as it wants.
+  const sizeFromNotional = Math.max(0, levCap * equity - openNotional) / entry; // portfolio exposure ceiling
+  if (sizeFromNotional <= 0) return null;                                // gross exposure ceiling reached → wait
+  if (size > sizeFromNotional) size = sizeFromNotional;
 
   const notional = size * entry;
   return {

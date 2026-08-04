@@ -26,11 +26,12 @@ const MAX_HEAT = +(process.env.LAB_ARGUS_MAX_HEAT || 0.20);
 const BASE_RISK = +(process.env.LAB_ARGUS_RISK || 0.02);
 // Leverage: Argus chooses its OWN leverage per trade (bounded so the stop fires
 // before liquidation — core.chooseLeverage), hard-capped at MAX_TRADE_LEV (100×).
-// Two aggregate gates then bound total exposure: committed MARGIN across all open
-// trades ≤ equity, AND total open NOTIONAL ≤ PORTFOLIO_LEV_CAP × equity (a hard
-// ceiling on gross exposure). Both tunable.
+// CONCURRENCY is gated by RISK: Argus may open as many trades as it wants until the
+// HEAT cap (Σ stop-risk) is reached — margin does NOT limit the book. A generous
+// gross-NOTIONAL ceiling (PORTFOLIO_LEV_CAP × equity) is the only extra safety so a
+// run of tight-stop trades can't build unbounded exposure. Both tunable.
 const MAX_TRADE_LEV = +(process.env.LAB_ARGUS_MAX_TRADE_LEV || 100);
-const PORTFOLIO_LEV_CAP = +(process.env.LAB_ARGUS_PORTFOLIO_LEV || 20);
+const PORTFOLIO_LEV_CAP = +(process.env.LAB_ARGUS_PORTFOLIO_LEV || 50);
 // "Wait for a better entry": rather than chase a momentum setup at the close,
 // Argus may park a LIMIT at the retest of the broken level and enter there — but
 // only when a pullback is plausible and entering now is a mediocre R:R. A limit
