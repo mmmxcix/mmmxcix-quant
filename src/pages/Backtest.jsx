@@ -33,7 +33,7 @@ export function detectLang(src) {
   if (/\/\/@version\s*=|\bta\.\w+|strategy\.(entry|close|exit)\s*\(|\bplot(shape)?\s*\(/.test(c)) return "pine";
   return "js";
 }
-const LANG_LABEL = { js: "JavaScript", python: "Python", pine: "Pine Script", cpp: "C++", q: "kdb+/q" };
+const LANG_LABEL = { js: "JavaScript", python: "Python", pine: "Pine Script", cpp: "C++", rust: "Rust", q: "kdb+/q" };
 import { saveEntry } from "@/lib/registry";
 import { windowProfile } from "@/lib/windowProfile";
 import { omniEnabled, omniGenerate, omniConfig, setOmniConfig, omniPing, omniModels, cliEnabled, cliUrl, cliModel } from "@/lib/omniroute";
@@ -157,9 +157,9 @@ export default function Backtest() {
   // is only itself — offering a fake translation would be lying, so we say so.
   const copyAs = async (target) => {
     let text = null;
-    // C++ and kdb+/q are REFERENCE exports — a scaffold + the exact source to port.
-    // They work for BOTH a clean preset and edited code (never runnable here).
-    if (target === "cpp" || target === "q") {
+    // C++, Rust and kdb+/q are REFERENCE exports — a scaffold + the exact source to
+    // port. They work for BOTH a clean preset and edited code (never runnable here).
+    if (target === "cpp" || target === "q" || target === "rust") {
       const entry = (!presetDirty && strategy)
         ? { mode: "builder", strategyId, params: effectiveParams, name: strategy.name }
         : { mode: "code", code, language: lang === "python" ? "python" : "js", name: "Custom strategy" };
@@ -704,15 +704,15 @@ export default function Backtest() {
                   </p>
                   <div className="flex items-center gap-2">
                     <span className="text-[10px] text-dim">Copy as</span>
-                    {["python", "js", "pine", "cpp", "q"].map((target) => (
+                    {["python", "js", "pine", "cpp", "rust", "q"].map((target) => (
                       <button key={target}
                         onClick={() => copyAs(target)}
                         title={target === "pine" ? "TradingView Pine Script (presets only)"
-                          : target === "cpp" || target === "q" ? `${LANG_LABEL[target]} reference — not runnable here; a scaffold + the exact source to port to your own engine`
+                          : target === "cpp" || target === "q" || target === "rust" ? `${LANG_LABEL[target]} reference — not runnable here; a scaffold + the exact source to port to your own engine`
                           : `Copy as ${LANG_LABEL[target]}`}
                         className="text-[11px] text-dim hover:text-accent transition-colors">
                         {copied === target ? <Check className="w-3.5 h-3.5 text-up inline" />
-                          : target === "js" ? "JS" : target === "python" ? "PY" : target === "pine" ? "Pine" : target === "cpp" ? "C++" : "q"}
+                          : target === "js" ? "JS" : target === "python" ? "PY" : target === "pine" ? "Pine" : target === "cpp" ? "C++" : target === "rust" ? "Rust" : "q"}
                       </button>
                     ))}
                   </div>

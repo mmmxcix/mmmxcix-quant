@@ -48,6 +48,38 @@ ${commentBlock(source, "    // ")}
 `;
 }
 
+/** Rust reference scaffold: typed constants + the validated source to port. The
+ *  modern low-latency alternative to C++ for HFT execution — memory-safe, no GC. */
+export function toRust({ name, source, sourceLang }) {
+  const params = codeParamSpace(source);
+  const consts = params.length
+    ? params.map((p) => `const ${p.key}: f64 = ${p.default};`).join("\n")
+    : "// (no tunable constants detected in the source)";
+  return `// ${name || "Strategy"} — Rust REFERENCE (not runnable in this tool; port to your engine).
+//
+// Generated from the validated ${srcNote(sourceLang)} source embedded below — that
+// is the exact, backtested logic. Translate it into the loop, using ONLY bars up to
+// index i (no look-ahead). Contract: one value per bar — 1 long, 0 flat, -1 short.
+// HFT hot-path notes: the constants are read ONCE at startup; preallocate \`sig\`,
+// avoid per-bar heap allocation, keep the per-bar branch light.
+#[derive(Clone, Copy)]
+pub struct Bar { pub open: f64, pub high: f64, pub low: f64, pub close: f64, pub volume: f64 }
+
+${consts}
+
+pub fn signals(bars: &[Bar]) -> Vec<i8> {
+    let n = bars.len();
+    let mut sig = vec![0i8; n];
+
+    // ---- PORT THE VALIDATED LOGIC BELOW (${sourceLang}) ----
+${commentBlock(source, "    // ")}
+    // ---- END ----
+
+    sig
+}
+`;
+}
+
 /** kdb+/q reference scaffold: constants + the validated source to port. */
 export function toQ({ name, source, sourceLang }) {
   const params = codeParamSpace(source);

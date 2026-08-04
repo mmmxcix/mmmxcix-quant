@@ -1054,12 +1054,21 @@ if (improvePool.length && datasets.length && !(UNTIL_HIT && newCandidates.length
           profiles: verdict.qualified, trialsAtPass: st.attempts, foundAt: Date.now(),
         };
         console.log(`✓ IMPROVED → CANDIDATE: ${cand.name} (DSR ${cand.dsr}% on ${cand.bestMarket}) · profiles: ${verdict.qualified.join(", ")}`);
-        cand.committee = await committeeReview(code, cand);
-        st.candidates = [cand, ...st.candidates].slice(0, 30);
-        newCandidates.push(cand);
-        queuePromotions(cand, verdict);
-        g.improveTries = MAX_IMPROVE_TRIES; // retire the base idea — it graduated
-        g.reason = `improved → candidate ${cand.id}`;
+        const codeBug = await codeReviewGate(code, cand, language);
+        if (codeBug) {
+          // The improved version has a code bug — treat as a failed improve so the
+          // loop keeps iterating from it rather than publishing a broken strat.
+          g.improveTries = (g.improveTries || 0) + 1;
+          g.code = code; g.language = language; g.reason = codeBug; g.at = Date.now();
+          console.log(`✗ improve produced a code bug (${g.improveTries}/${MAX_IMPROVE_TRIES}): ${codeBug}`);
+        } else {
+          cand.committee = await committeeReview(code, cand);
+          st.candidates = [cand, ...st.candidates].slice(0, 30);
+          newCandidates.push(cand);
+          queuePromotions(cand, verdict);
+          g.improveTries = MAX_IMPROVE_TRIES; // retire the base idea — it graduated
+          g.reason = `improved → candidate ${cand.id}`;
+        }
       } else {
         g.improveTries = (g.improveTries || 0) + 1;
         g.code = code; g.language = language; // iterate from the latest attempt next time
@@ -1190,10 +1199,16 @@ if (ALWAYS_ON && datasets.length && MINE_PER_RUN > 0 && !(UNTIL_HIT && newCandid
           profiles: verdict.qualified, trialsAtPass: st.attempts, foundAt: Date.now(),
         };
         console.log(`✓ MINED → CANDIDATE: ${cand.name} (DSR ${cand.dsr}% on ${cand.bestMarket}) · ${hit.stat}`);
-        cand.committee = await committeeReview(hit.code, cand);
-        st.candidates = [cand, ...st.candidates].slice(0, 30);
-        newCandidates.push(cand);
-        queuePromotions(cand, verdict);
+        const codeBug = await codeReviewGate(hit.code, cand, "js");
+        if (codeBug) {
+          st.graveyard = [{ title: hit.name.slice(0, 70), reason: codeBug, source: "data-mining", topics: ["anomaly"], code: hit.code, language: "js", improveTries: 0, at: Date.now() }, ...st.graveyard].slice(0, 200);
+          console.log(`✗ mined → graveyard (code bug): ${hit.name.slice(0, 50)} — ${codeBug}`);
+        } else {
+          cand.committee = await committeeReview(hit.code, cand);
+          st.candidates = [cand, ...st.candidates].slice(0, 30);
+          newCandidates.push(cand);
+          queuePromotions(cand, verdict);
+        }
       } else {
         st.graveyard = [{ title: hit.name.slice(0, 70), reason: verdict.reason, source: "data-mining", topics: ["anomaly"], code: hit.code, language: "js", improveTries: 0, at: Date.now() }, ...st.graveyard].slice(0, 200);
         console.log(`✗ mined → graveyard: ${hit.name.slice(0, 50)} — ${verdict.reason}`);
@@ -1251,10 +1266,16 @@ if (ALWAYS_ON && datasets.length && INTRADAY_PER_RUN > 0 && !(UNTIL_HIT && newCa
           profiles: verdict.qualified, trialsAtPass: st.attempts, foundAt: Date.now(),
         };
         console.log(`✓ INTRADAY → CANDIDATE: ${cand.name} (DSR ${cand.dsr}% on ${cand.bestMarket})`);
-        cand.committee = await committeeReview(code, cand);
-        st.candidates = [cand, ...st.candidates].slice(0, 30);
-        newCandidates.push(cand);
-        queuePromotions(cand, verdict);
+        const codeBug = await codeReviewGate(code, cand, "js");
+        if (codeBug) {
+          st.graveyard = [{ title: tpl.name.slice(0, 70), reason: codeBug, source: "intraday-template", topics: ["intraday"], code, language: "js", improveTries: 0, at: Date.now() }, ...st.graveyard].slice(0, 200);
+          console.log(`✗ intraday → graveyard (code bug): ${tpl.name.slice(0, 50)} — ${codeBug}`);
+        } else {
+          cand.committee = await committeeReview(code, cand);
+          st.candidates = [cand, ...st.candidates].slice(0, 30);
+          newCandidates.push(cand);
+          queuePromotions(cand, verdict);
+        }
       } else {
         st.graveyard = [{ title: tpl.name.slice(0, 70), reason: verdict.reason, source: "intraday-template", topics: ["intraday"], code, language: "js", improveTries: 0, at: Date.now() }, ...st.graveyard].slice(0, 200);
         console.log(`✗ intraday → graveyard: ${tpl.name.slice(0, 50)} — ${verdict.reason}`);

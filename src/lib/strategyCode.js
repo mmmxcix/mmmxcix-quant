@@ -15,7 +15,7 @@
 // generator's repair channel, or your own tooling.
 
 import { toPineScript } from "./pinescript.js";
-import { toCpp, toQ } from "./exportLangs.js";
+import { toCpp, toQ, toRust } from "./exportLangs.js";
 
 const P = (params, key, dflt) => {
   const v = params?.[key];
@@ -770,9 +770,10 @@ export function strategyToCode(entry, lang = "js") {
   // Pine Script is a third export target; the pinescript module owns dispatch
   // (builder+known id → full script, otherwise an honest commented note).
   if (lang === "pine") return toPineScript(entry);
-  // C++ and kdb+/q are REFERENCE-only exports (not runnable in this tool) — a
-  // scaffold in the target language carrying the exact validated source to port.
-  if (lang === "cpp" || lang === "q") {
+  // C++, Rust and kdb+/q are REFERENCE-only exports (not runnable in this tool) — a
+  // scaffold in the target language carrying the exact validated source to port
+  // (C++/Rust for HFT/low-latency execution, q for tick databases).
+  if (lang === "cpp" || lang === "q" || lang === "rust") {
     let source = "", sourceLang = "js";
     if (entry.mode === "code" || typeof entry.code === "string") {
       source = entry.code || ""; sourceLang = entry.language === "python" ? "python" : "js";
@@ -782,9 +783,8 @@ export function strategyToCode(entry, lang = "js") {
       else { const gen = BUILTIN_SOURCE[entry.strategyId]; source = gen ? gen(entry.params || {}) : ""; sourceLang = "js"; }
     }
     if (!String(source).trim()) return "";
-    return lang === "cpp"
-      ? toCpp({ name: entry.name || entry.strategyId || "Strategy", source, sourceLang })
-      : toQ({ name: entry.name || entry.strategyId || "Strategy", source, sourceLang });
+    const args = { name: entry.name || entry.strategyId || "Strategy", source, sourceLang };
+    return lang === "cpp" ? toCpp(args) : lang === "rust" ? toRust(args) : toQ(args);
   }
   if (entry.mode === "code" || typeof entry.code === "string") {
     // Code entries copy as whatever language they were validated in; asking
