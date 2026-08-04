@@ -44,7 +44,7 @@ function VerdictChip({ verdict, score }) {
   );
 }
 
-export default function BiasPanel({ market, symbol, interval }) {
+export default function BiasPanel({ market, symbol, interval, embedded = false }) {
   // Timeframe set: the base ladder for this market plus the chart's own
   // interval, sorted ascending.
   const tfs = useMemo(() => {
@@ -100,11 +100,11 @@ export default function BiasPanel({ market, symbol, interval }) {
   const h2 = sel?.plan ? estimateHorizon(sel.plan.entry, sel.plan.tp2, sel.plan.atr, tfSec) : null;
 
   return (
-    <div className="rounded-xl border border-line lg-glass p-4">
+    <div className={embedded ? "" : "rounded-xl border border-line lg-glass p-4"}>
       <div className="flex flex-wrap items-center gap-2 mb-3">
-        <Scale className="w-4 h-4 text-accent" />
-        <h2 className="text-sm font-semibold">Rule-based bias check</h2>
-        <span className="text-[10px] text-dim uppercase tracking-wide">· mechanical, not AI · {symbol} · last {LOOKBACK} candles per timeframe</span>
+        {!embedded && <Scale className="w-4 h-4 text-accent" />}
+        {!embedded && <h2 className="text-sm font-semibold">Rule-based bias check</h2>}
+        <span className="text-[10px] text-dim uppercase tracking-wide">mechanical, not AI · last {LOOKBACK} candles per timeframe</span>
         <button onClick={() => setReloadKey((k) => k + 1)} disabled={loading}
           className="ml-auto flex items-center gap-1.5 chip chip-idle !text-[11px]">
           {loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />} Refresh
@@ -239,16 +239,18 @@ export default function BiasPanel({ market, symbol, interval }) {
         )}
       </div>
 
-      {/* Disclaimer — always visible, part of the feature */}
-      <div className="flex items-start gap-2 rounded-lg border border-warn/40 bg-warn/10 p-3 mt-3">
-        <ShieldAlert className="w-4 h-4 text-warn shrink-0 mt-0.5" />
-        <p className="text-[11px] text-text/80 leading-relaxed">
-          <span className="font-semibold">This is not investment advice and not a recommendation to buy or sell.</span>{" "}
-          It is a fixed, mechanical checklist applied to past price data for educational purposes. The rules know nothing about
-          news, fundamentals, or your situation; timeframes can legitimately disagree; and past patterns do not predict future
-          results. Any trade you place is your own decision and your own risk.
-        </p>
-      </div>
+      {/* Disclaimer — standalone only; BiasSection carries its own when embedded. */}
+      {!embedded && (
+        <div className="flex items-start gap-2 rounded-lg border border-warn/40 bg-warn/10 p-3 mt-3">
+          <ShieldAlert className="w-4 h-4 text-warn shrink-0 mt-0.5" />
+          <p className="text-[11px] text-text/80 leading-relaxed">
+            <span className="font-semibold">This is not investment advice and not a recommendation to buy or sell.</span>{" "}
+            It is a fixed, mechanical checklist applied to past price data for educational purposes. The rules know nothing about
+            news, fundamentals, or your situation; timeframes can legitimately disagree; and past patterns do not predict future
+            results. Any trade you place is your own decision and your own risk.
+          </p>
+        </div>
+      )}
     </div>
   );
 }

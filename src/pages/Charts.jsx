@@ -5,7 +5,7 @@ import CandleChart from "@/components/CandleChart";
 import SymbolSearch from "@/components/SymbolSearch";
 import ChartDrawLayer, { DRAW_TOOLS } from "@/components/ChartDrawLayer";
 import AutoAnnotateLayer from "@/components/AutoAnnotateLayer";
-import BiasPanel from "@/components/BiasPanel";
+import BiasSection from "@/components/BiasSection";
 import SymbolInfoPanel from "@/components/SymbolInfoPanel";
 import IndicatorPane from "@/components/IndicatorPane";
 import { fetchCandles, fetchOlderCandles, fetchLatestCandles, MARKETS, INTERVALS, rangesFor } from "@/lib/data";
@@ -700,7 +700,7 @@ export default function Charts() {
 
       {showBias && (
         <div className="mt-4">
-          <BiasPanel market={market} symbol={symbol} interval={interval} />
+          <BiasSection market={market} symbol={symbol} interval={interval} />
         </div>
       )}
     </div>

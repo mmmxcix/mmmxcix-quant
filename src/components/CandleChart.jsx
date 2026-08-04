@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createChart, CrosshairMode } from "lightweight-charts";
 import { toSeriesData } from "@/lib/chartTypes";
+import { priceDecimals } from "@/lib/utils";
 
 // Chart colours are read from the app's theme tokens so the chart matches the
 // light/dark UI. Grid/border pick per-theme neutrals; series colours come from
@@ -214,6 +215,14 @@ export default function CandleChart({
     barCountRef.current = candles.length;
 
     series.setData(toSeriesData(chartType, candles));
+    // Match the price-axis + crosshair precision to the instrument's magnitude, so a
+    // sub-$10 coin (XRP 1.0834) isn't rounded to 1.08. Recomputed on data change
+    // because the chart is only rebuilt on a series-TYPE change, not per symbol.
+    const ref = candles[candles.length - 1]?.close ?? candles[0]?.close;
+    if (ref != null) {
+      const precision = priceDecimals(ref);
+      series.applyOptions({ priceFormat: { type: "price", precision, minMove: 1 / 10 ** precision } });
+    }
     if (volSeriesRef.current) {
       volSeriesRef.current.setData(
         candles.map((c) => ({ time: c.time, value: c.volume, color: c.close >= c.open ? UP + "33" : DOWN + "33" }))
