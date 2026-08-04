@@ -25,6 +25,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { runBacktest, compileStrategy } from "../src/lib/backtest.js";
 import { kFoldCode, noiseTest, deflatedSharpe, equityReturns } from "../src/lib/validation.js";
+import { auditStrategy } from "../src/lib/strategyAudit.js";
 import { qualifyAll, getProfile, PROFILE_IDS } from "../src/lib/profiles.js";
 import { harvestAll, fullTextOf, topicsOf, RELEVANCE, JUNK } from "./sources.mjs";
 import { loadUniverse } from "./marketdata.mjs";
@@ -340,7 +341,8 @@ async function repairStrategy(code, error, language = RESEARCH_LANG) {
 // gets told exactly WHICH weakness to fix, not just "do better".
 function improveFacts(reason) {
   let hint = "";
-  if (/timing-fragile/i.test(reason)) hint = "The edge collapsed when execution was delayed by one bar — remove any dependence on same-bar timing; act on signals CONFIRMED on the previous bar and hold positions longer.";
+  if (/^audit:/i.test(reason)) hint = "The CODE has a validity bug that makes the backtest meaningless — fix the logic itself, not the parameters. If it's a single-asset 'arbitrage'/negative-cycle, abandon that approach entirely and trade one clean mean-reversion or trend signal; if it's look-ahead, only use data up to the current close; if it's a constant signal, make the decision depend on the price.";
+  else if (/timing-fragile/i.test(reason)) hint = "The edge collapsed when execution was delayed by one bar — remove any dependence on same-bar timing; act on signals CONFIRMED on the previous bar and hold positions longer.";
   else if (/k-?fold/i.test(reason)) hint = "Returns came from one lucky window — make the rule consistent across sub-periods (stronger regime filter, fewer/looser parameters).";
   else if (/noise/i.test(reason)) hint = "Tiny price perturbations destroyed it — widen thresholds/bands so entries never depend on exact price levels.";
   else if (/buy\s*&\s*hold/i.test(reason)) hint = "It underperformed simply holding the asset risk-adjusted — trade less often, be active only in the favourable regime, and/or add the short side.";
@@ -479,6 +481,17 @@ function parseThesis(code) {
 
 function gauntlet(code, datasets, globalTrials, lang) {
   try { compileCheckFor(code, lang); } catch (e) { return { pass: false, reason: `compile: ${e.message.slice(0, 80)}` }; }
+
+  // Code-VALIDITY audit BEFORE spending any trials — the statistical gauntlet grades
+  // the results, this reads the CODE for logic defects that make those results a lie
+  // (look-ahead, degenerate single-asset arbitrage that only triggers on float error,
+  // a constant signal). A critical finding is rejected outright; warnings (e.g. no
+  // risk exit) are carried onto the verdict so the survivor can be flagged/fixed.
+  const audit = auditStrategy(code, lang);
+  if (audit.blocked) {
+    const c = audit.findings.find((f) => f.severity === "critical");
+    return { pass: false, reason: `audit: ${c.id} — ${c.msg.slice(0, 90)}` };
+  }
 
   // Pass 1 — cheap: run every market, keep the ones that made money at all.
   const ran = [];
@@ -619,6 +632,9 @@ function gauntlet(code, datasets, globalTrials, lang) {
     qualified: [...qualifiedProfiles],
     trials,
     marketsTested: datasets.length,
+    // Non-fatal code-audit warnings (e.g. no stop-loss) — surfaced on the survivor so
+    // it can be flagged/improved rather than silently shipped.
+    auditWarnings: audit.warnings ? audit.findings.filter((f) => f.severity === "warn").map((f) => f.id) : undefined,
   };
 }
 

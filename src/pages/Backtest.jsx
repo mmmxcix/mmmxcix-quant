@@ -18,6 +18,7 @@ import { useSession } from "@/lib/authClient";
 import CountUp from "@/components/CountUp";
 import { BUILT_IN_STRATEGIES } from "@/lib/strategies";
 import { strategyToCode } from "@/lib/strategyCode";
+import { auditStrategy } from "@/lib/strategyAudit";
 
 // One editor, one source of truth: the language is DETECTED from the code, never
 // picked from a toggle. Pine Script is recognised for export/paste, but it can't
@@ -72,6 +73,9 @@ export default function Backtest() {
     strategyToCode({ mode: "builder", strategyId: BUILT_IN_STRATEGIES[0].id, params: {} }, "python") || PYTHON_TEMPLATE);
   const [pyStatus, setPyStatus] = useState(null); // Pyodide loading/progress text
   const lang = useMemo(() => detectLang(code), [code]);
+  // Code-validity audit — the same check Cortex runs, so a bug (look-ahead,
+  // degenerate arbitrage, no risk exit) is visible right where you write the code.
+  const audit = useMemo(() => auditStrategy(code, lang === "python" ? "python" : "js"), [code, lang]);
   // A clean (unedited) preset still runs through the fast builder implementation;
   // only edited code goes through the JS/Python compiler.
   const mode = presetDirty ? "code" : "builder";
@@ -894,6 +898,22 @@ export default function Backtest() {
                           <button onClick={() => setAiReview(null)} className="text-[10px] text-dim hover:text-text">dismiss</button>
                         </div>
                         <p className="text-[11px] text-dim leading-relaxed whitespace-pre-wrap">{aiReview}</p>
+                      </div>
+                    )}
+                    {mode === "code" && audit.findings.length > 0 && (
+                      <div className={cn("rounded-lg border p-3", audit.blocked ? "border-down/40 bg-down/5" : "border-warn/40 bg-warn/5")}>
+                        <p className={cn("text-[10px] uppercase tracking-wide font-semibold mb-1.5", audit.blocked ? "text-down" : "text-warn")}>
+                          Code audit — {audit.critical ? `${audit.critical} critical bug${audit.critical > 1 ? "s" : ""}` : `${audit.warnings} warning${audit.warnings > 1 ? "s" : ""}`}
+                          {audit.blocked && " · results can't be trusted"}
+                        </p>
+                        <ul className="space-y-1">
+                          {audit.findings.map((f, i) => (
+                            <li key={i} className="text-[11px] leading-relaxed flex gap-1.5">
+                              <span className={cn("shrink-0 font-semibold", f.severity === "critical" ? "text-down" : "text-warn")}>{f.severity === "critical" ? "✕" : "!"}</span>
+                              <span className="text-text/85">{f.msg}</span>
+                            </li>
+                          ))}
+                        </ul>
                       </div>
                     )}
                   </div>

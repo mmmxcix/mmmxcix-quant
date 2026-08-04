@@ -232,6 +232,9 @@ function Card({ e, rich = false }) {
   const val = e.validation || {};
   const r = e.research || null;
   const navigate = useNavigate();
+  // Copyable source in the entry's own language (+ a Python twin when it differs).
+  const nativeCode = strategyToCode(e, e.language === "python" ? "python" : "js");
+  const pyTwin = strategyToCode(e, "python");
 
   // Reproduce this strategy in the Backtester — its own market/window/code (or a
   // specific research market when a chip is clicked). Handed off via sessionStorage.
@@ -274,9 +277,12 @@ function Card({ e, rich = false }) {
           <p className="text-[10px] text-dim font-mono">{e.symbol} · {e.interval} · {e.mode}{e.positionPct != null ? ` · ${e.positionPct}%` : ""}</p>
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
-          <CopyButton text={strategyToCode(e)} label="" />
-                {strategyToCode(e, "python") && strategyToCode(e, "python") !== strategyToCode(e) && (
-                  <CopyButton text={strategyToCode(e, "python")} label="PY" />
+          {/* Copy in the strategy's NATIVE language — forcing "js" returned "" for a
+              Python strat, so its main copy button failed. Show a second button only
+              when a genuinely different Python twin exists. */}
+          <CopyButton text={nativeCode} label={e.language === "python" ? "PY" : ""} />
+                {pyTwin && pyTwin !== nativeCode && (
+                  <CopyButton text={pyTwin} label="PY" />
                 )}
                 {hasPineSource(e) && <CopyButton text={strategyToCode(e, "pine")} label="Pine" />}
           <button onClick={() => removeEntry(e.id)} title="Delete" className="text-dim hover:text-down transition-colors">
