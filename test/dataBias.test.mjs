@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { computeDataBias, biasNorm, horizonWeight, combineBias, verdictNorm } from "../src/lib/dataBias.js";
+import { computeDataBias, biasNorm, horizonWeight, combineBias, verdictNorm, tfHorizon } from "../src/lib/dataBias.js";
 
 const bull = {
   recommendation: "buy", analysts: 30, targetMean: 120, price: 100,
@@ -44,6 +44,15 @@ test("combineBias: short TF follows technical, long TF follows fundamentals (the
   assert.equal(short.verdict, "long", "intraday: technical wins");
   assert.equal(long.verdict, "short", "monthly: fundamentals win");
   assert.ok(short.wTech > short.wData && long.wData > long.wTech);
+});
+
+test("tfHorizon maps the shared timeframe onto days/weeks/months", () => {
+  assert.equal(tfHorizon(900), "short");    // 15m → days
+  assert.equal(tfHorizon(3600), "short");   // 1h → days
+  assert.equal(tfHorizon(14400), "medium"); // 4h → weeks
+  assert.equal(tfHorizon(86400), "medium"); // 1d → weeks
+  assert.equal(tfHorizon(604800), "long");  // 1w → months
+  assert.equal(tfHorizon(2592000), "long"); // 1M → months
 });
 
 test("biasNorm / verdictNorm map to [-1,1]", () => {

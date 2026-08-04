@@ -700,7 +700,7 @@ export default function Charts() {
 
       {showBias && (
         <div className="mt-4">
-          <BiasSection market={market} symbol={symbol} interval={interval} />
+          <BiasSection market={market} symbol={symbol} interval={interval} price={stats?.price} />
         </div>
       )}
     </div>

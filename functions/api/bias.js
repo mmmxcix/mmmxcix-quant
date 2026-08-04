@@ -22,9 +22,13 @@ const SYSTEM =
   "You are a markets analyst writing a SHORT, balanced fundamental + news read for an educational charting tool. " +
   "This is NOT investment advice. Judge the likely directional lean on three horizons — short (days), medium (weeks), " +
   "long (months) — from the fundamentals and current headlines provided plus your general knowledge, and always name the " +
-  "main risk to your view. Reply with STRICT JSON ONLY: " +
+  "main risk to your view. Also give a concrete PRICE TARGET for each horizon: your single best point estimate of where " +
+  "the price could realistically be, in the SAME units as the current price given below, grounded in the fundamentals, " +
+  "analyst targets and headlines (not a wild guess — a considered estimate; null a horizon you genuinely can't call). " +
+  "Reply with STRICT JSON ONLY: " +
   '{"shortTerm":"long"|"short"|"neutral","mediumTerm":"long"|"short"|"neutral","longTerm":"long"|"short"|"neutral",' +
-  '"confidence":0..1,"note":"one or two plain sentences","drivers":["…","…"]}. ' +
+  '"confidence":0..1,"note":"one or two plain sentences","drivers":["…","…"],' +
+  '"targets":{"short":<price|null>,"medium":<price|null>,"long":<price|null>}}. ' +
   "`drivers` = up to 4 terse bullets (the concrete facts behind the read). No prose outside the JSON.";
 
 async function fetchFundamentals(origin, symbol) {
@@ -63,8 +67,10 @@ async function fetchHeadlines(origin) {
   } catch { return []; }
 }
 
-function evidence(market, symbol, f, headlines) {
+function evidence(market, symbol, f, headlines, price) {
   const L = [`Instrument: ${symbol} (${market})`];
+  const px = price ?? f?.price;
+  if (px != null) L.push(`Current price: ${px}`);
   if (market === "crypto") {
     L.push("No company fundamentals (a coin has no earnings). Weigh: macro liquidity & rates, regulation/ETF flows, BTC's lead, on-chain/adoption trends, and the current risk mood.");
   } else if (f) {
@@ -82,7 +88,7 @@ function evidence(market, symbol, f, headlines) {
   return L.join("\n");
 }
 
-function parseBias(text) {
+function parseBias(text, anchor) {
   let t = String(text || "").trim();
   const fence = t.match(/```(?:json)?\s*([\s\S]*?)```/i);
   if (fence) t = fence[1].trim();
@@ -91,11 +97,20 @@ function parseBias(text) {
   let o; try { o = JSON.parse(t.slice(a, b + 1)); } catch { return null; }
   if (!o || typeof o !== "object") return null;
   const dir = (v) => (["long", "short", "neutral"].includes(v) ? v : "neutral");
+  // Accept a target only if it's a sane point estimate near the anchor (reject
+  // hallucinated garbage — a 100× or negative "target" is noise, not analysis).
+  const tgt = (v) => {
+    const n = Number(v);
+    if (!Number.isFinite(n) || n <= 0 || !(anchor > 0)) return null;
+    return n >= anchor * 0.25 && n <= anchor * 4 ? n : null;
+  };
+  const tg = o.targets || {};
   return {
     horizon: { short: dir(o.shortTerm), medium: dir(o.mediumTerm), long: dir(o.longTerm) },
     confidence: Math.max(0, Math.min(1, Number(o.confidence) || 0.5)),
     note: String(o.note || "").slice(0, 400),
     drivers: Array.isArray(o.drivers) ? o.drivers.map((d) => String(d).slice(0, 120)).slice(0, 4) : [],
+    targets: { short: tgt(tg.short), medium: tgt(tg.medium), long: tgt(tg.long) },
   };
 }
 
@@ -148,7 +163,7 @@ export async function onRequest({ request, env }) {
   if (!symbol) return json({ ok: false, error: "no_symbol" }, 400);
 
   const db = env.DB;
-  const cacheKey = `bias:${market}:${symbol}`;
+  const cacheKey = `biasv2:${market}:${symbol}`; // v2 adds price targets — orphan the pre-target cache
   const read = async () => { try { const row = await db?.prepare("SELECT data FROM argus_kv WHERE key=?").bind(cacheKey).first(); return row ? JSON.parse(row.data) : null; } catch { return null; } };
   const write = (obj) => db?.prepare("INSERT INTO argus_kv (key,data,updated_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at").bind(cacheKey, JSON.stringify(obj), Date.now()).run();
 
@@ -165,11 +180,13 @@ export async function onRequest({ request, env }) {
     market === "crypto" ? Promise.resolve(null) : fetchFundamentals(origin, symbol),
     fetchHeadlines(origin),
   ]);
-  const out = await callLLM(env, evidence(market, symbol, f, headlines));
-  const parsed = out ? parseBias(out.text) : null;
+  const priceParam = Number(url.searchParams.get("price"));
+  const anchor = Number.isFinite(priceParam) && priceParam > 0 ? priceParam : (f?.price ?? 0);
+  const out = await callLLM(env, evidence(market, symbol, f, headlines, anchor || null));
+  const parsed = out ? parseBias(out.text, anchor) : null;
   if (!parsed) return json({ ok: true, hasLLM: !!out, note: null, market, symbol });
 
-  const payload = { ok: true, hasLLM: true, market, symbol, ...parsed, model: out.model, at: Date.now() };
+  const payload = { ok: true, hasLLM: true, market, symbol, anchorPrice: anchor || null, ...parsed, model: out.model, at: Date.now() };
   try { await write(payload); } catch { /* cache best-effort */ }
   return json({ ...payload, cached: false }, 200, 600);
 }

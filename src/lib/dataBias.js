@@ -95,6 +95,14 @@ export function combineBias(techNorm, dataNorm, tfSeconds) {
   return { verdict, norm, wData, wTech };
 }
 
+// Which fundamental horizon a chart timeframe corresponds to — so a shared
+// timeframe selector maps onto the news/data view's days/weeks/months targets.
+export function tfHorizon(tfSeconds) {
+  const s = tfSeconds || 3600;
+  return s <= 3600 ? "short" : s <= 86400 ? "medium" : "long";
+}
+export const HORIZON_LABEL = { short: "days", medium: "weeks", long: "months" };
+
 // Map an LLM/verbal verdict to a normalized strength so it can feed combineBias.
 export function verdictNorm(verdict, confidence = 0.6) {
   const c = Math.max(0, Math.min(1, confidence));
