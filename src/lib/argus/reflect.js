@@ -25,8 +25,11 @@ export function describeTrade(t, ctx = {}) {
     `Setup: ${t.kind || "?"} ${dirWord}${t.bias ? `, higher-timeframe bias ${t.bias}` : ""}`,
     `Reason at entry: ${t.reason || "(none recorded)"}`,
     t.catalyst ? `News catalyst: ${t.catalyst}` : null,
-    `Entry ${fmt(t.entry)} · stop ${fmt(t.stop)} · target ${fmt(t.target)} (planned ${num(t.plannedR)}R)`,
+    `Entry ${fmt(t.entry)} · stop ${fmt(t.stop)} · target ${fmt(t.target)} (planned ${num(t.plannedR)}R; stop = 1R by definition)`,
     t.leverage ? `Leverage ${Math.round(t.leverage)}× (Argus's own choice; margin ${num(t.margin)})${liqBufR != null ? `; liquidation sat ${num(liqBufR)}R beyond the stop` : ""}` : null,
+    (t.maxFavR != null || t.maxAdvR != null)
+      ? `Path while open: reached ${num(t.maxFavR ?? 0)}R IN FAVOUR and ${num(t.maxAdvR ?? 0)}R AGAINST before exit — use this to judge whether the target and stop were well placed.`
+      : null,
     `Outcome: ${t.outcome} at ${fmt(t.exit)} → ${num(t.R)}R (${t.pnl >= 0 ? "+" : ""}${num(t.pnl)} on ${num(t.riskAmt)} risked)`,
     held != null ? `Held ${held} min` : null,
     ctx.marketNote ? `Market context: ${ctx.marketNote}` : null,
@@ -51,6 +54,12 @@ export function buildReflectionMessages(trade, ctx = {}) {
     "bias or went against the trend. Only fault the bias angle when a STRONG, clear opposing catalyst or level was " +
     "plainly ignored. Focus lessons on real edges: entry timing, chasing vs waiting for the retest, stop placement, " +
     "session/liquidity, whether the setup type suited the regime — not on bias-matching. " +
+    "ALSO judge the TARGET and STOP placement from the trade's PATH (favourable/adverse excursion), on WINS as well as losses: " +
+    "if it was a LOSS but went well into profit first (favourable >= ~0.8R), the target was too far / it should have trailed or " +
+    "banked partial; if a WIN but favourable ran far past the target, the target was too tight and left money on the table; if " +
+    "the ADVERSE excursion stayed tiny (<= ~0.3R), the stop was wider than needed. Recommend a CONCRETE calibration in the " +
+    "lesson (e.g. 'trail to breakeven after +1R', 'aim 3R when momentum confirms'), but NEVER a tiny target with a huge stop " +
+    "(that is negative expectancy). " +
     'Reply with STRICT JSON ONLY: {"verdict":"good-process"|"bad-process"|"neutral","cause":"...","mistake":"...",' +
     '"lesson":"...","leverage":"good"|"too-high"|"too-low"|"na","applies":{"kind":"...","symbol":"...","side":"..."},"confidence":0..1}. ' +
     "`cause` = why it actually worked or failed (one sentence). `mistake` = what the agent should have done differently, " +

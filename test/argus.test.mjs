@@ -347,6 +347,13 @@ test("describeTrade states the facts a post-mortem needs", () => {
   assert.match(s, /stop/); assert.match(s, /-1\.05R/); assert.match(s, /OPEC cut/);
 });
 
+test("describeTrade surfaces the trade's favourable/adverse path (TP/SL calibration)", () => {
+  // A loss that went deep into profit first — the coach must see it to fault the target.
+  const s = describeTrade(closedTrade({ maxFavR: 0.9, maxAdvR: 1.0, R: -1 }));
+  assert.match(s, /0\.90R IN FAVOUR/);
+  assert.match(s, /1\.00R AGAINST/);
+});
+
 test("parseReflection extracts a journal entry and clamps confidence", () => {
   const reply = '```json\n{"verdict":"bad-process","cause":"faded a strong uptrend","mistake":"ignored the 1h bias",' +
     '"lesson":"skip mean-reversion shorts while the 1h bias is up","applies":{"kind":"mean-reversion","side":"short"},"confidence":1.4}\n```';

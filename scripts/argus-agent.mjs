@@ -177,6 +177,18 @@ async function loadTF(inst) {
 
 function manageExits(inst, last5, ledgerAdd) {
   for (const th of open.filter((o) => o.symbol === inst.symbol)) {
+    // Track the trade's MAX FAVOURABLE / ADVERSE excursion (in R) from the bar's
+    // high/low — so the post-mortem can judge whether the TARGET and STOP were well
+    // placed: e.g. deep in profit before reversing to a loss → target too far / should
+    // have trailed; barely tested before winning → stop wider than needed; ran far
+    // past the target → target too tight. Updated before the exit check so the
+    // closing bar's excursion counts, and carried onto the closed record via ...th.
+    const favMove = th.side === "long" ? last5.high - th.entry : th.entry - last5.low;
+    const advMove = th.side === "long" ? th.entry - last5.low : last5.high - th.entry;
+    if (th.riskAmt > 0) {
+      th.maxFavR = Math.max(th.maxFavR || 0, (Math.max(0, favMove) * th.size) / th.riskAmt);
+      th.maxAdvR = Math.max(th.maxAdvR || 0, (Math.max(0, advMove) * th.size) / th.riskAmt);
+    }
     // Dev "close now" takes priority over the normal stop/target check.
     const devClosed = forceClose.has(th.id);
     const res = devClosed ? closeThesisAt(th, last5.close) : evaluateExit(th, last5, { maxHoldMs: MAX_HOLD_MS });
