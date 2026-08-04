@@ -40,7 +40,7 @@ const NATIVE_TOOLS = detectTools();
 import { mineAnomalies } from "./mining.mjs";
 import { intradayTemplates } from "./intraday.mjs";
 import { plateauProbe } from "./optimizer.mjs";
-import { extractCode, ensureStrategyFn, parseVerdict } from "../functions/_lib/codegen.mjs";
+import { extractCode, ensureStrategyFn, parseVerdict, parseCodeReview } from "../functions/_lib/codegen.mjs";
 
 // Language Cortex writes AND validates in. Python (default) means the model emits
 // a vectorised `signals(df)`, and the ENTIRE gauntlet below runs that Python
@@ -281,8 +281,9 @@ async function aiCall(payload) {
       });
       const p = await pRes.json().catch(() => ({}));
       if (pRes.ok && p.user) {
-        const text = await callLocalRouter(p.system || "", p.user, p.isCritique ? LLM_CRITIQUE_MODEL : LLM_MODEL);
+        const text = await callLocalRouter(p.system || "", p.user, (p.isCritique || p.isCodeReview) ? LLM_CRITIQUE_MODEL : LLM_MODEL);
         if (p.isCritique) return { critique: parseVerdict(text) };
+        if (p.isCodeReview) return { codeReview: parseCodeReview(text) };
         const out = extractCode(text);
         // ensureStrategyFn wraps JS only; python/cpp/q pass through untouched.
         const wrap = !["python", "cpp", "q"].includes(String(p.language));
@@ -297,7 +298,7 @@ async function aiCall(payload) {
     body: JSON.stringify(payload),
   });
   const out = await res.json().catch(() => ({}));
-  if (res.ok && (out.code || out.critique)) return out;
+  if (res.ok && (out.code || out.critique || out.codeReview)) return out;
   const e = new Error(out.error || `generate HTTP ${res.status}`);
   if (res.status === 429 || out.error === "rate_limited") e.skip = true;
   throw e;
@@ -341,7 +342,7 @@ async function repairStrategy(code, error, language = RESEARCH_LANG) {
 // gets told exactly WHICH weakness to fix, not just "do better".
 function improveFacts(reason) {
   let hint = "";
-  if (/^audit:/i.test(reason)) hint = "The CODE has a validity bug that makes the backtest meaningless — fix the logic itself, not the parameters. If it's a single-asset 'arbitrage'/negative-cycle, abandon that approach entirely and trade one clean mean-reversion or trend signal; if it's look-ahead, only use data up to the current close; if it's a constant signal, make the decision depend on the price.";
+  if (/^(audit|code-bug):/i.test(reason)) hint = "The CODE has a validity bug that makes the backtest meaningless — fix the logic itself, not the parameters. If it's a single-asset 'arbitrage'/negative-cycle, abandon that approach entirely and trade one clean mean-reversion or trend signal; if it's look-ahead, only use data up to the current close; if it's a constant signal, make the decision depend on the price; otherwise fix exactly the bug named in the reason.";
   else if (/timing-fragile/i.test(reason)) hint = "The edge collapsed when execution was delayed by one bar — remove any dependence on same-bar timing; act on signals CONFIRMED on the previous bar and hold positions longer.";
   else if (/k-?fold/i.test(reason)) hint = "Returns came from one lucky window — make the rule consistent across sub-periods (stronger regime filter, fewer/looser parameters).";
   else if (/noise/i.test(reason)) hint = "Tiny price perturbations destroyed it — widen thresholds/bands so entries never depend on exact price levels.";
@@ -429,6 +430,38 @@ async function committeeReview(code, cand) {
     if (out.critique) return out.critique;
   } catch (e) {
     console.error(`  committee review failed: ${e.message.slice(0, 50)}`);
+  }
+  return null;
+}
+
+// LLM CODE-review — reads a survivor's SOURCE for correctness bugs the statistical
+// gauntlet cannot see (look-ahead, degenerate/tautological signals like the
+// single-asset Bellman-Ford illusion, wrong indicator math). The deterministic
+// auditStrategy is the cheap regex pre-filter in the gauntlet; this is the smart
+// pass, run only on survivors (rare, cheap). Returns {verdict,bugs,...} or null.
+async function reviewCode(code, cand, lang) {
+  try {
+    const out = await aiCall({ token: TOKEN, language: lang, codeReview: { code: String(code).slice(0, 7000), title: cand.name || cand.title || "strategy", language: lang } });
+    return out.codeReview || null;
+  } catch (e) {
+    console.error(`  code-review failed: ${String(e.message || "").slice(0, 50)}`);
+    return null;
+  }
+}
+
+// Gate a survivor on the LLM code-review: a CRITICAL code bug means its numbers are
+// an artifact (a great result from a broken strategy) — do not publish it. Attaches
+// the review to the candidate for the UI, and returns the bury reason when blocked.
+async function codeReviewGate(code, cand, lang) {
+  const review = await reviewCode(code, cand, lang);
+  if (review) {
+    cand.codeReview = review;
+    const crit = review.bugs.filter((b) => b.severity === "critical");
+    if (crit.length) {
+      console.log(`  🐞 code-review: ${crit.length} CRITICAL — ${crit[0].issue.slice(0, 80)}`);
+      return `code-bug: ${crit[0].issue.slice(0, 90)}`;
+    }
+    if (review.bugs.length) console.log(`  🐞 code-review: ${review.bugs.length} warning(s) noted`);
   }
   return null;
 }
@@ -930,6 +963,17 @@ for (const paper of fresh) {
         `✓ CANDIDATE: ${cand.name} (DSR ${cand.dsr}% on ${cand.bestMarket}) ` +
         `→ works on ${verdict.markets.join(", ")} · profiles: ${verdict.qualified.join(", ")}`
       );
+
+      // CODE-review gate — before crowning a survivor, have the LLM read its source
+      // for correctness bugs the statistics can't see. A great result from broken
+      // code (the Bellman-Ford float-glitch) is buried here, with the bug as the
+      // reason so the improve loop can try to fix it.
+      const codeBug = await codeReviewGate(code, cand, language);
+      if (codeBug) {
+        st.graveyard = [{ title: paper.title.slice(0, 70), reason: codeBug, source: paper.source, link: paper.link, topics: paper.topics, code, language, improveTries: 0, at: Date.now() }, ...st.graveyard].slice(0, 200);
+        console.log(`✗ graveyard (code bug): ${paper.title.slice(0, 50)} — ${codeBug}`);
+        continue;
+      }
 
       // Committee bear case — the qualitative half of the debate. Only survivors
       // reach here, so this is a rare, cheap call. Attaching a written thesis,

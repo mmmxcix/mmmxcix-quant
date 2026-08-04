@@ -341,8 +341,9 @@ export async function onRequest({ request, env }) {
   // finished identically (fence stripping, strategy() wrap, verdict parsing) and
   // no free/local model bypasses the post-processing. No AI call is made here.
   if (body?.postProcess && typeof body.postProcess.text === "string") {
-    const { text, language, isCritique, review } = body.postProcess;
+    const { text, language, isCritique, isCodeReview, review } = body.postProcess;
     if (isCritique) return json({ critique: parseVerdict(text) });
+    if (isCodeReview) return json({ codeReview: parseCodeReview(text) });
     if (review) return json({ review: String(text).trim().slice(0, 4000) });
     const out = extractCode(text);
     // ensureStrategyFn only makes sense for JS; python/cpp/q are returned as-is.
@@ -370,7 +371,9 @@ export async function onRequest({ request, env }) {
   const improve = body?.improve;
   const review = body?.review;
   const critique = body?.critique;
+  const codeReview = body?.codeReview;
   const isCritique = !!(critique && typeof critique.code === "string");
+  const isCodeReview = !!(codeReview && typeof codeReview.code === "string");
   // Language of the generated strategy: Python (Pyodide, def signals(df)) or the
   // default JavaScript (strategy(ctx)). Honoured by generate, research AND repair
   // — a Python strategy that won't compile must be repaired AS Python, never
@@ -404,6 +407,24 @@ export async function onRequest({ request, env }) {
       '"regime":"<the market regime it depends on, e.g. trending / mean-reverting / high-vol>",' +
       '"invalidations":["<concrete condition to pull it, e.g. 3-month rolling Sharpe < 0>","<another>"]}\n' +
       "Be skeptical. A high confidence must be earned. Return ONLY the JSON object.";
+  } else if (isCodeReview) {
+    const code = codeReview.code.slice(0, 7000);
+    const title = String(codeReview.title || "a strategy").slice(0, 200);
+    const cl = String(codeReview.language || "js").toLowerCase();
+    const lw = cl === "python" ? "python" : cl === "cpp" ? "cpp" : cl === "q" ? "q" : cl === "rust" ? "rust" : "javascript";
+    userMsg =
+      "You are a meticulous quant CODE AUDITOR. Review this backtest strategy's CODE for CORRECTNESS bugs — " +
+      "defects that make the result a lie no matter how good the numbers look. Hunt specifically for:\n" +
+      "- LOOK-AHEAD: deciding a fill from the CURRENT bar's close, or reading any future bar/index (arr[i+1], shift(-1)).\n" +
+      "- DEGENERATE / TAUTOLOGICAL signals: a condition that is mathematically ~always true/false or nets to zero, so trades fire on floating-point noise — e.g. a single-asset 'triangular arbitrage' whose log edge-weights CANCEL to 0 (the Bellman-Ford trap), or a 'cross rate' faked from one asset's own past close.\n" +
+      "- WRONG indicator math / off-by-one / warm-up not handled (early bars use garbage).\n" +
+      "- A CONSTANT or near-constant position that isn't really trading.\n" +
+      "- Missing RISK management (no stop / target / exit) for a DIRECTIONAL swing strategy.\n" +
+      "CRUCIAL — judge the code by the strategy's OWN class and language. If it is a market-making / HFT / latency-style snippet (often C++/Rust), the absence of a stop-loss is NORMAL, not a bug — do not flag it. Only report things that are genuinely wrong for what this code is trying to do. Do NOT invent problems.\n\n" +
+      `Strategy: "${title}" (${lw})\n\n\`\`\`${lw}\n${code}\n\`\`\`\n\n` +
+      "Reply with STRICT JSON ONLY, exactly this shape:\n" +
+      '{"verdict":"clean"|"buggy","bugs":[{"severity":"critical"|"warning","issue":"<one sentence: what is wrong>","fix":"<one sentence: how to fix>"}],"confidence":<0-100: how sure the code is CORRECT>,"summary":"<one sentence>"}\n' +
+      "`critical` = the backtest cannot be trusted; `warning` = a real weakness that still lets the result stand. If the code is correct, return an empty bugs array and \"clean\". No prose outside the JSON.";
   } else if (research && typeof research.text === "string") {
     const doc = research.text.slice(0, MAX_RESEARCH_CHARS);
     const title = String(research.title || "untitled").slice(0, 200);
@@ -551,7 +572,9 @@ export async function onRequest({ request, env }) {
   // "reply with code only" system prompt. Both the review and the improve
   // channels carry the quant knowledge — they are the two that JUDGE an existing
   // strategy, which is exactly where domain knowledge decides the outcome.
-  const system = review
+  const system = isCodeReview
+    ? "You are a rigorous quantitative CODE auditor. You find the bugs that invalidate a backtest — look-ahead, degenerate/tautological signals, wrong indicator math — and you never invent problems that aren't there. You judge each strategy by its own class (an HFT/market-making snippet has different norms than a swing strategy).\n" + QUANT_KNOWLEDGE
+    : review
     ? "You are a senior quantitative researcher reviewing backtest strategy code. You are candid, concrete and brief. " +
       "You never rewrite the code — you explain and advise.\n" + QUANT_KNOWLEDGE
     : improve
@@ -568,7 +591,7 @@ export async function onRequest({ request, env }) {
   // NOTE: the agent post-processes with functions/_lib/codegen.mjs — kept in
   // sync with extractCode/ensureStrategyFn/parseVerdict below.
   if (body?.promptOnly) {
-    return json({ system, user: userMsg, isCritique: !!isCritique, language: targetLang });
+    return json({ system, user: userMsg, isCritique: !!isCritique, isCodeReview: !!isCodeReview, language: targetLang });
   }
 
   // Fixed priority chain — best code model first, each falling through to the
@@ -602,6 +625,8 @@ export async function onRequest({ request, env }) {
   // out of the model's reply defensively — models wrap it in prose or fences no
   // matter how firmly you ask them not to.
   if (isCritique) return json({ critique: parseVerdict(text) });
+  // The code-review channel returns structured bugs, not code.
+  if (isCodeReview) return json({ codeReview: parseCodeReview(text) });
   // A review is an assessment, not code — hand back the prose as-is.
   if (review) return json({ review: text.trim().slice(0, 4000) });
   // Python is returned as-is (the JS strategy(ctx) auto-wrap doesn't apply).
@@ -636,5 +661,33 @@ function parseVerdict(text) {
       : [],
     // Keep the raw text when parsing failed entirely, so nothing is silently lost.
     raw: obj ? undefined : text.slice(0, 600),
+  };
+}
+
+// Parse the code-review reply into structured bugs (kept in sync with
+// functions/_lib/codegen.mjs parseCodeReview, which the local-router path uses).
+function parseCodeReview(text) {
+  let t = String(text || "").trim();
+  const fenced = t.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenced) t = fenced[1].trim();
+  const a = t.indexOf("{"), b = t.lastIndexOf("}");
+  let o = null;
+  if (a !== -1 && b > a) { try { o = JSON.parse(t.slice(a, b + 1)); } catch { o = null; } }
+  if (!o) return { verdict: "unknown", bugs: [], confidence: 0, summary: "", raw: text.slice(0, 500) };
+  const bugs = (Array.isArray(o.bugs) ? o.bugs : [])
+    .map((x) => ({
+      severity: x?.severity === "critical" ? "critical" : "warning",
+      issue: String(x?.issue || "").slice(0, 300),
+      fix: String(x?.fix || "").slice(0, 300),
+    }))
+    .filter((x) => x.issue)
+    .slice(0, 8);
+  const hasCrit = bugs.some((x) => x.severity === "critical");
+  const verdict = hasCrit || o.verdict === "buggy" ? "buggy" : bugs.length ? "buggy" : "clean";
+  const conf = Math.round(Number(o.confidence));
+  return {
+    verdict, bugs,
+    confidence: Number.isFinite(conf) ? Math.min(100, Math.max(0, conf)) : 0,
+    summary: String(o.summary || "").slice(0, 300),
   };
 }

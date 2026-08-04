@@ -52,3 +52,32 @@ export function parseVerdict(text) {
     raw: obj ? undefined : text.slice(0, 600),
   };
 }
+
+// Parse the LLM code-review reply into structured bugs. A "critical" bug means the
+// backtest results can't be trusted (look-ahead, degenerate signal, wrong math); a
+// "warning" is a real weakness to fix. Defensive: models wrap JSON in prose/fences.
+export function parseCodeReview(text) {
+  let t = String(text || "").trim();
+  const fenced = t.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenced) t = fenced[1].trim();
+  const a = t.indexOf("{"), b = t.lastIndexOf("}");
+  let o = null;
+  if (a !== -1 && b > a) { try { o = JSON.parse(t.slice(a, b + 1)); } catch { o = null; } }
+  if (!o) return { verdict: "unknown", bugs: [], confidence: 0, summary: "", raw: text.slice(0, 500) };
+  const bugs = (Array.isArray(o.bugs) ? o.bugs : [])
+    .map((x) => ({
+      severity: x?.severity === "critical" ? "critical" : "warning",
+      issue: String(x?.issue || "").slice(0, 300),
+      fix: String(x?.fix || "").slice(0, 300),
+    }))
+    .filter((x) => x.issue)
+    .slice(0, 8);
+  const hasCrit = bugs.some((x) => x.severity === "critical");
+  const verdict = hasCrit || o.verdict === "buggy" ? "buggy" : bugs.length ? "buggy" : "clean";
+  const conf = Math.round(Number(o.confidence));
+  return {
+    verdict, bugs,
+    confidence: Number.isFinite(conf) ? Math.min(100, Math.max(0, conf)) : 0,
+    summary: String(o.summary || "").slice(0, 300),
+  };
+}

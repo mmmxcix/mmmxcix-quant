@@ -122,6 +122,7 @@ export default function Backtest() {
   const [aiLoading, setAiLoading] = useState(false); // false | "new" | "improve" | "review"
   const [aiError, setAiError] = useState(null);
   const [aiReview, setAiReview] = useState(null);    // prose assessment of the current code
+  const [aiBugs, setAiBugs] = useState(null);        // structured code-bug review (look-ahead, degenerate, …)
   const [prevCode, setPrevCode] = useState(null);    // undo target for an AI rewrite
   const [aiCompare, setAiCompare] = useState(null);  // measured before/after of a rewrite
   const [aiRejected, setAiRejected] = useState(null); // a worse attempt we did NOT apply
@@ -228,6 +229,7 @@ export default function Backtest() {
     setAiLoading(action);
     setAiError(null);
     setAiReview(null);
+    setAiBugs(null);
     setAiCompare(null);
     setAiRejected(null);
     setAiNote(null);
@@ -257,13 +259,13 @@ export default function Backtest() {
         // through on any failure or empty result.
         if (cliEnabled()) {
           const viaCli = await omniGenerate(body, { url: cliUrl(), model: cliModel() }).catch(() => null);
-          if (viaCli && (viaCli.code || viaCli.review || viaCli.critique)) {
+          if (viaCli && (viaCli.code || viaCli.review || viaCli.critique || viaCli.codeReview)) {
             return { res: { ok: true, status: 200 }, data: viaCli };
           }
         }
         if (omniEnabled()) {
           const local = await omniGenerate(body).catch(() => null);
-          if (local && (local.code || local.review || local.critique)) {
+          if (local && (local.code || local.review || local.critique || local.codeReview)) {
             return { res: { ok: true, status: 200 }, data: local };
           }
         }
@@ -281,6 +283,12 @@ export default function Backtest() {
         const { res, data } = await callGenerate({ review: { code: src, prompt: p }, language: lang });
         if (!res.ok || !data.review) throw new Error("Review failed — please try again.");
         setAiReview(data.review);
+      } else if (action === "bugs") {
+        // The same code-audit Cortex runs on survivors — reads the SOURCE for
+        // correctness bugs (look-ahead, degenerate signals, wrong math), HFT-aware.
+        const { res, data } = await callGenerate({ codeReview: { code: src, title: presetDirty ? "an edited strategy" : strategy?.name, language: lang }, language: lang });
+        if (!res.ok || !data.codeReview) throw new Error("Audit failed — please try again.");
+        setAiBugs(data.codeReview);
       } else if (action === "new") {
         const { res, data } = await callGenerate({ prompt: p, language: lang });
         if (!res.ok || !data.code) throw new Error("Generation failed — please try again.");
@@ -837,6 +845,11 @@ export default function Backtest() {
                         className="chip chip-idle !text-[11px] flex-1 flex items-center justify-center gap-1.5">
                         {aiLoading === "review" ? <Loader2 className="w-3 h-3 animate-spin" /> : null} Review
                       </button>
+                      <button onClick={() => runAi("bugs")} disabled={!!aiLoading || !code.trim()}
+                        title="The same code-audit Cortex runs — reads the source for correctness bugs (look-ahead, degenerate signals, wrong math). Changes nothing."
+                        className="chip chip-idle !text-[11px] flex-1 flex items-center justify-center gap-1.5">
+                        {aiLoading === "bugs" ? <Loader2 className="w-3 h-3 animate-spin" /> : null} Find bugs
+                      </button>
                       <button onClick={() => runAi("new")} disabled={!!aiLoading || !aiPrompt.trim()}
                         title="Ignore the editor and write a brand-new strategy from your description"
                         className="chip chip-idle !text-[11px] flex-1 flex items-center justify-center gap-1.5">
@@ -898,6 +911,26 @@ export default function Backtest() {
                           <button onClick={() => setAiReview(null)} className="text-[10px] text-dim hover:text-text">dismiss</button>
                         </div>
                         <p className="text-[11px] text-dim leading-relaxed whitespace-pre-wrap">{aiReview}</p>
+                      </div>
+                    )}
+                    {aiBugs && (
+                      <div className={cn("rounded-lg border p-3", aiBugs.bugs.some((b) => b.severity === "critical") ? "border-down/40 bg-down/5" : aiBugs.bugs.length ? "border-warn/40 bg-warn/5" : "border-up/30 bg-up/5")}>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <p className={cn("text-[10px] uppercase tracking-wide font-semibold", aiBugs.bugs.some((b) => b.severity === "critical") ? "text-down" : aiBugs.bugs.length ? "text-warn" : "text-up")}>
+                            AI code audit — {aiBugs.verdict === "clean" ? "no bugs found" : `${aiBugs.bugs.length} issue${aiBugs.bugs.length > 1 ? "s" : ""}`} · {aiBugs.confidence}% confident
+                          </p>
+                          <button onClick={() => setAiBugs(null)} className="text-[10px] text-dim hover:text-text">dismiss</button>
+                        </div>
+                        {aiBugs.summary && <p className="text-[11px] text-dim mb-1.5">{aiBugs.summary}</p>}
+                        <ul className="space-y-1.5">
+                          {aiBugs.bugs.map((b, i) => (
+                            <li key={i} className="text-[11px] leading-relaxed">
+                              <span className={cn("shrink-0 font-semibold mr-1.5", b.severity === "critical" ? "text-down" : "text-warn")}>{b.severity === "critical" ? "✕" : "!"}</span>
+                              <span className="text-text/85">{b.issue}</span>
+                              {b.fix && <span className="block text-dim ml-4 mt-0.5">→ {b.fix}</span>}
+                            </li>
+                          ))}
+                        </ul>
                       </div>
                     )}
                     {mode === "code" && audit.findings.length > 0 && (
