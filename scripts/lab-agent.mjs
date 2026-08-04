@@ -597,7 +597,7 @@ console.log(`paper run complete: ${summaries.length} strategies, combined ${comb
       // a detached spawn (or a VBS/Task launcher) therefore always flashed a
       // terminal. Started from the hidden agent-daemon, nothing is ever visible.
       const logFd = openSync(logPath, "a");
-      const child = fork(researchPath, [], { stdio: ["ignore", logFd, logFd, "ipc"], env: process.env });
+      const child = fork(researchPath, [], { stdio: ["ignore", logFd, logFd, "ipc"], windowsHide: true, env: process.env });
       console.log(`research due (${alwaysOn ? "always-on, >" + everyMs / 60000 + "min" : ">" + everyMs / 3.6e6 + "h"}) → spawned hidden (log: ~/.mmmxcix-research.log)`);
     }
   } catch (e) {

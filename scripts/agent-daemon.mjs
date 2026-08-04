@@ -39,7 +39,8 @@ function runAgent(name, file) {
   let fd;
   try { fd = openSync(logFor(name), "a"); } catch { fd = "ignore"; }
   const child = fork(here(file), [], {
-    stdio: ["ignore", fd, fd, "ipc"], // inherit-free, but no new console either
+    stdio: ["ignore", fd, fd, "ipc"], // stdout/stderr → log file (not an inherited console)
+    windowsHide: true,                // …so Windows must NOT allocate a new visible console
     env: process.env,                 // carries LAB_TOKEN, LAB_LLM_URL, …
   });
   console.log(`[${stamp()}] ${name}: started (pid ${child.pid})`);
@@ -58,7 +59,7 @@ function runAgent(name, file) {
 function runPersistent(name, file) {
   let fd;
   try { fd = openSync(logFor(name), "a"); } catch { fd = "ignore"; }
-  const child = fork(here(file), [], { stdio: ["ignore", fd, fd, "ipc"], env: process.env });
+  const child = fork(here(file), [], { stdio: ["ignore", fd, fd, "ipc"], windowsHide: true, env: process.env });
   console.log(`[${stamp()}] ${name}: started (pid ${child.pid}, persistent)`);
   const restart = (why) => {
     console.log(`[${stamp()}] ${name}: ${why} — restarting in 10s`);

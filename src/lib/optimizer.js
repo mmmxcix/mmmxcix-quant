@@ -13,9 +13,14 @@
 // (JS or Python) — both single (`RANGE_BARS = 6`) and tuple (`A, B, C = 1, 2, 3`)
 // assignments — and expose them as a param space plus a substitution helper.
 
-const TUPLE_RE = /^(\s*(?:const\s+|let\s+|var\s+)?)([A-Z][A-Z0-9_]*(?:\s*,\s*[A-Z][A-Z0-9_]*)+)(\s*=\s*)(.+?)(\s*;?\s*)$/;
-const SINGLE_RE = /^(\s*(?:const\s+|let\s+|var\s+)?)([A-Z][A-Z0-9_]*)(\s*=\s*)(-?\d+(?:\.\d+)?)(\s*;?\s*)$/;
+// Any-case identifiers (was UPPER_CASE only) so camelCase / snake_case params like
+// `atrPeriod`, `rsi_len` are optimizable too — the number-literal RHS keeps it to
+// genuine numeric constants, and SKIP drops obvious loop/temp counters.
+const ID = "[A-Za-z_$][A-Za-z0-9_$]*";
+const TUPLE_RE = new RegExp(`^(\\s*(?:const\\s+|let\\s+|var\\s+)?)(${ID}(?:\\s*,\\s*${ID})+)(\\s*=\\s*)(.+?)(\\s*;?\\s*)$`);
+const SINGLE_RE = new RegExp(`^(\\s*(?:const\\s+|let\\s+|var\\s+)?)(${ID})(\\s*=\\s*)(-?\\d+(?:\\.\\d+)?)(\\s*;?\\s*)$`);
 const NUM = /^-?\d+(?:\.\d+)?$/;
+const SKIP = /^(i|j|k|l|m|n|x|y|z|_|idx|len|sum|cnt|tmp|acc|out|res|ret)$/; // loop/temp vars, not params
 
 // Parse the tunable constants out of code → { consts:{KEY:num}, assigns:[…] }.
 function parseConstants(code) {
@@ -27,14 +32,14 @@ function parseConstants(code) {
     if (m) {
       const names = m[2].split(",").map((s) => s.trim());
       const vals = m[4].split(",").map((s) => s.trim());
-      if (names.length >= 2 && names.length === vals.length && vals.every((v) => NUM.test(v))) {
+      if (names.length >= 2 && names.length === vals.length && vals.every((v) => NUM.test(v)) && !names.some((n) => SKIP.test(n))) {
         names.forEach((n, k) => { consts[n] = +vals[k]; });
         assigns.push({ line: i, names, kind: "tuple" });
         return;
       }
     }
     m = ln.match(SINGLE_RE);
-    if (m) { consts[m[2]] = +m[4]; assigns.push({ line: i, names: [m[2]], kind: "single" }); }
+    if (m && !SKIP.test(m[2])) { consts[m[2]] = +m[4]; assigns.push({ line: i, names: [m[2]], kind: "single" }); }
   });
   return { consts, assigns, lines };
 }

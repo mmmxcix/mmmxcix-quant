@@ -15,7 +15,7 @@
 // generator's repair channel, or your own tooling.
 
 import { toPineScript } from "./pinescript.js";
-import { toCpp, toQ, toRust } from "./exportLangs.js";
+import { toCpp, toQ, toRust, toPyRef, toJsRef } from "./exportLangs.js";
 
 const P = (params, key, dflt) => {
   const v = params?.[key];
@@ -787,11 +787,15 @@ export function strategyToCode(entry, lang = "js") {
     return lang === "cpp" ? toCpp(args) : lang === "rust" ? toRust(args) : toQ(args);
   }
   if (entry.mode === "code" || typeof entry.code === "string") {
-    // Code entries copy as whatever language they were validated in; asking
-    // for the OTHER language yields nothing rather than a fake translation.
-    if (lang === "python") return entry.language === "python" ? (entry.code || "") : "";
-    if (entry.language === "python" && lang === "js") return ""; // no JS twin for Python code
-    return entry.code || "// (no code on this entry)";
+    const isPy = entry.language === "python";
+    const src = entry.code || "";
+    const args = { name: entry.name || "Strategy", source: src, sourceLang: isPy ? "python" : "js" };
+    // Ask for the OTHER runnable language → an honest REFERENCE scaffold embedding the
+    // source to port (a deterministic 1:1 translation isn't possible), so every "Copy
+    // as …" button produces something instead of failing.
+    if (lang === "python") return isPy ? src : (src.trim() ? toPyRef(args) : "");
+    if (lang === "js") return isPy ? (src.trim() ? toJsRef(args) : "") : (src || "// (no code on this entry)");
+    return src || "// (no code on this entry)";
   }
   if (entry.mode === "builder" && entry.strategyId) {
     if (lang === "python") {

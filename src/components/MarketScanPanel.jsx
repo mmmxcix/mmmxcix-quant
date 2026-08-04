@@ -30,6 +30,7 @@ export default function MarketScanPanel({ code, language, capital, feeBps, posit
   const [done, setDone] = useState(0);
   const [total, setTotal] = useState(0);
   const [results, setResults] = useState([]);
+  const [scanned, setScanned] = useState(false); // a scan has finished (for the empty-state)
   const cancelRef = useRef(false);
 
   const tasks = useMemo(() => {
@@ -49,7 +50,7 @@ export default function MarketScanPanel({ code, language, capital, feeBps, posit
 
   async function scan() {
     if (!tasks.length || !code?.trim()) return;
-    setRunning(true); cancelRef.current = false; setResults([]); setDone(0); setTotal(tasks.length);
+    setRunning(true); cancelRef.current = false; setResults([]); setScanned(false); setDone(0); setTotal(tasks.length);
     const get = OBJECTIVES[obj].get;
     const out = [];
     let idx = 0, finished = 0;
@@ -74,6 +75,7 @@ export default function MarketScanPanel({ code, language, capital, feeBps, posit
     await Promise.all(Array.from({ length: concurrency }, worker));
     out.sort((a, b) => get(b.m) - get(a.m));
     setResults(out.slice(0, 40));
+    setScanned(true);
     setRunning(false);
   }
 
@@ -134,6 +136,13 @@ export default function MarketScanPanel({ code, language, capital, feeBps, posit
         <p className="text-[10px] text-dim">Python runs one symbol at a time (Pyodide) — a full 4-class · daily scan takes a few minutes. Narrow the markets/timeframes for a quicker pass.</p>
       )}
 
+      {scanned && !running && results.length === 0 && (
+        <p className="text-[11px] text-warn leading-relaxed">
+          No market produced a clean result (≥3 trades, no errors) on the selected timeframes. The strategy may be erroring,
+          rarely trading, or unsuited to these markets/timeframes — widen the markets/timeframes, or check the code (run it once
+          in the backtester to see any warnings).
+        </p>
+      )}
       {results.length > 0 && (
         <div className="overflow-x-auto">
           <table className="w-full text-[11px] font-mono">

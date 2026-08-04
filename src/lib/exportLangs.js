@@ -48,6 +48,40 @@ ${commentBlock(source, "    // ")}
 `;
 }
 
+/** Python signals(df) reference scaffold — for copying a JS strat's logic to Python
+ *  to port (an honest twin, since a deterministic 1:1 translation isn't possible). */
+export function toPyRef({ name, source, sourceLang }) {
+  const params = codeParamSpace(source);
+  const consts = params.length ? params.map((p) => `    ${p.key} = ${p.default}`).join("\n") : "    # (no tunable constants detected)";
+  return `# ${name || "Strategy"} — Python REFERENCE (port the validated ${srcNote(sourceLang)} embedded below).
+# Contract: return a list/Series of signals aligned to df, one per row — 1 long, 0 flat, -1 short.
+# Use ONLY rows up to i (no look-ahead). Fill in the logic; this scaffold does not run as-is.
+def signals(df):
+${consts}
+    # ---- PORT THE VALIDATED LOGIC BELOW (${sourceLang}) ----
+${commentBlock(source, "    # ")}
+    # ---- END ----
+    return [0] * len(df)
+`;
+}
+
+/** JavaScript strategy(ctx) reference scaffold — the JS twin for a Python strat. */
+export function toJsRef({ name, source, sourceLang }) {
+  const params = codeParamSpace(source);
+  const consts = params.length ? params.map((p) => `  const ${p.key} = ${p.default};`).join("\n") : "  // (no tunable constants detected)";
+  return `// ${name || "Strategy"} — JavaScript REFERENCE (port the validated ${srcNote(sourceLang)} embedded below).
+// Contract: strategy(ctx) returns "long" | "short" | "flat" (or { signal, stop, target }),
+// using ctx up to the current bar only (no look-ahead). Fill in the logic; not runnable as-is.
+function strategy(ctx) {
+${consts}
+  // ---- PORT THE VALIDATED LOGIC BELOW (${sourceLang}) ----
+${commentBlock(source, "  // ")}
+  // ---- END ----
+  return "flat";
+}
+`;
+}
+
 /** Rust reference scaffold: typed constants + the validated source to port. The
  *  modern low-latency alternative to C++ for HFT execution — memory-safe, no GC. */
 export function toRust({ name, source, sourceLang }) {

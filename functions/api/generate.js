@@ -58,6 +58,11 @@ The code MUST define a function \`strategy(ctx)\`:
   - { signal: "long"|"short"|"flat", stop: number, target: number } — stop/target are live
     bracket orders checked intrabar against high/low (stop fills before target if both hit).
     Return the same signal with new levels to trail a stop while holding.
+    CRITICAL — stop/target must be SIDE-AWARE, computed INSIDE each side's branch, never once globally:
+    LONG → stop BELOW entry (close - k*ATR), target ABOVE (close + k*ATR); SHORT → stop ABOVE (close + k*ATR),
+    target BELOW (close - k*ATR). A TRAILING stop must be MONOTONIC: a long's stop may only rise
+    (stop = max(prevStop, candidate)), a short's only fall (stop = min(prevStop, candidate)) — never let it
+    retrace toward price on a pullback.
 
 Rules:
 - The strategy must actually TRADE: both the entry and the exit condition have to
@@ -418,6 +423,12 @@ export async function onRequest({ request, env }) {
       "- LOOK-AHEAD: deciding a fill from the CURRENT bar's close, or reading any future bar/index (arr[i+1], shift(-1)).\n" +
       "- DEGENERATE / TAUTOLOGICAL signals: a condition that is mathematically ~always true/false or nets to zero, so trades fire on floating-point noise — e.g. a single-asset 'triangular arbitrage' whose log edge-weights CANCEL to 0 (the Bellman-Ford trap), or a 'cross rate' faked from one asset's own past close.\n" +
       "- WRONG indicator math / off-by-one / warm-up not handled (early bars use garbage).\n" +
+      "- SIDE-INVERTED stop/target: a LONG's stop must be BELOW entry and target ABOVE; a SHORT's stop ABOVE and target BELOW. " +
+      "Flag any strategy that computes stop/target ONCE globally (e.g. `stop = close - k*ATR`, `target = close + k*ATR`) and reuses " +
+      "them for BOTH sides — for the short that puts the stop in profit and the target in a loss (critical).\n" +
+      "- BROKEN / NON-MONOTONIC trailing stop: a long's trailing stop may only RISE, a short's only FALL. Flag a stop recomputed " +
+      "from the current bar's low/high every candle WITHOUT clamping to the previous stop (it retraces on pullbacks), or a trail " +
+      "using Math.min on a long / Math.max on a short, or a Math.min/Math.max whose two arguments make it a no-op that never moves the stop.\n" +
       "- A CONSTANT or near-constant position that isn't really trading.\n" +
       "- Missing RISK management (no stop / target / exit) for a DIRECTIONAL swing strategy.\n" +
       "CRUCIAL — judge the code by the strategy's OWN class and language. If it is a market-making / HFT / latency-style snippet (often C++/Rust), the absence of a stop-loss is NORMAL, not a bug — do not flag it. Only report things that are genuinely wrong for what this code is trying to do. Do NOT invent problems.\n\n" +
