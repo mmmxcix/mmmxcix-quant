@@ -44,7 +44,7 @@ function VerdictChip({ verdict, score }) {
   );
 }
 
-export default function BiasPanel({ market, symbol, interval, embedded = false }) {
+export default function BiasPanel({ market, symbol, interval, embedded = false, onSelectTf }) {
   // Timeframe set: the base ladder for this market plus the chart's own
   // interval, sorted ascending.
   const tfs = useMemo(() => {
@@ -219,7 +219,7 @@ export default function BiasPanel({ market, symbol, interval, embedded = false }
         {tfs.map((tf) => {
           const r = results[tf];
           return (
-            <button key={tf} onClick={() => setSelected(tf)}
+            <button key={tf} onClick={() => { setSelected(tf); onSelectTf?.(tf); }}
               title={`Show the ${tf} breakdown above`}
               className={cn("flex items-center gap-1.5 rounded-md px-1.5 py-0.5 transition-colors",
                 selected === tf ? "bg-accent/10" : "hover:bg-surface")}>

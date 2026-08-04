@@ -22,12 +22,15 @@ const SYSTEM =
   "You are a markets analyst writing a SHORT, balanced fundamental + news read for an educational charting tool. " +
   "This is NOT investment advice. Judge the likely directional lean on three horizons — short (days), medium (weeks), " +
   "long (months) — from the fundamentals and current headlines provided plus your general knowledge, and always name the " +
-  "main risk to your view. Also give a concrete PRICE TARGET for each horizon: your single best point estimate of where " +
-  "the price could realistically be, in the SAME units as the current price given below, grounded in the fundamentals, " +
-  "analyst targets and headlines (not a wild guess — a considered estimate; null a horizon you genuinely can't call). " +
+  "main risk to your view. Also give a concrete PRICE TARGET for each horizon: your single best point estimate, in the " +
+  "SAME units as the current price given below. TARGETS MUST BE REALISTIC FOR THE HORIZON, anchored to the CURRENT price: " +
+  "a days target is normally within a few percent up to ~15% of the current price; a weeks target within ~30%; a months " +
+  "target within ~100% even for a volatile name. NEVER return a multiple of the current price over days/weeks — a target " +
+  "that is 3x–10x the current price is wrong. If you cannot make a realistic call, null that horizon. " +
+  "In `note`, briefly JUSTIFY the direction AND why price would move toward those levels — concise, one or two sentences. " +
   "Reply with STRICT JSON ONLY: " +
   '{"shortTerm":"long"|"short"|"neutral","mediumTerm":"long"|"short"|"neutral","longTerm":"long"|"short"|"neutral",' +
-  '"confidence":0..1,"note":"one or two plain sentences","drivers":["…","…"],' +
+  '"confidence":0..1,"note":"one or two plain sentences justifying the read","drivers":["…","…"],' +
   '"targets":{"short":<price|null>,"medium":<price|null>,"long":<price|null>}}. ' +
   "`drivers` = up to 4 terse bullets (the concrete facts behind the read). No prose outside the JSON.";
 
@@ -97,12 +100,13 @@ function parseBias(text, anchor) {
   let o; try { o = JSON.parse(t.slice(a, b + 1)); } catch { return null; }
   if (!o || typeof o !== "object") return null;
   const dir = (v) => (["long", "short", "neutral"].includes(v) ? v : "neutral");
-  // Accept a target only if it's a sane point estimate near the anchor (reject
-  // hallucinated garbage — a 100× or negative "target" is noise, not analysis).
-  const tgt = (v) => {
+  // Accept a target only if the implied move is REALISTIC for its horizon — the LLM
+  // routinely hallucinates a target that is a multiple of the price over days. Bounds
+  // are relative to the anchor: days ±25%, weeks ±60%, months +150%/-70%.
+  const tgt = (v, upMax, downMax) => {
     const n = Number(v);
     if (!Number.isFinite(n) || n <= 0 || !(anchor > 0)) return null;
-    return n >= anchor * 0.25 && n <= anchor * 4 ? n : null;
+    return n >= anchor * (1 - downMax) && n <= anchor * (1 + upMax) ? n : null;
   };
   const tg = o.targets || {};
   return {
@@ -110,7 +114,7 @@ function parseBias(text, anchor) {
     confidence: Math.max(0, Math.min(1, Number(o.confidence) || 0.5)),
     note: String(o.note || "").slice(0, 400),
     drivers: Array.isArray(o.drivers) ? o.drivers.map((d) => String(d).slice(0, 120)).slice(0, 4) : [],
-    targets: { short: tgt(tg.short), medium: tgt(tg.medium), long: tgt(tg.long) },
+    targets: { short: tgt(tg.short, 0.25, 0.25), medium: tgt(tg.medium, 0.6, 0.5), long: tgt(tg.long, 1.5, 0.7) },
   };
 }
 
@@ -163,7 +167,13 @@ export async function onRequest({ request, env }) {
   if (!symbol) return json({ ok: false, error: "no_symbol" }, 400);
 
   const db = env.DB;
-  const cacheKey = `biasv2:${market}:${symbol}`; // v2 adds price targets — orphan the pre-target cache
+  // The cache key includes the price's ORDER OF MAGNITUDE so a big move (e.g. a
+  // reverse split, or a stale anchor from a previous session) forces a fresh read
+  // instead of serving targets anchored to a wildly different price. v3 = realistic
+  // horizon-bounded targets.
+  const priceParamK = Number(url.searchParams.get("price"));
+  const bucket = Number.isFinite(priceParamK) && priceParamK > 0 ? Math.round(Math.log10(priceParamK)) : "x";
+  const cacheKey = `biasv3:${market}:${symbol}:${bucket}`;
   const read = async () => { try { const row = await db?.prepare("SELECT data FROM argus_kv WHERE key=?").bind(cacheKey).first(); return row ? JSON.parse(row.data) : null; } catch { return null; } };
   const write = (obj) => db?.prepare("INSERT INTO argus_kv (key,data,updated_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at").bind(cacheKey, JSON.stringify(obj), Date.now()).run();
 

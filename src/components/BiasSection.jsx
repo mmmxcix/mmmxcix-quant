@@ -52,14 +52,19 @@ function VerdictChip({ verdict, label }) {
   );
 }
 // A price target row with its implied move vs the live price.
-function TargetRow({ label, price, live, highlight }) {
+// `maxMove` (optional) hides a target whose implied move vs the LIVE price is
+// unrealistic for its horizon — a last-line guard so a stale/mis-anchored AI target
+// (e.g. +900% over days) never shows as a real expectation.
+function TargetRow({ label, price, live, highlight, maxMove }) {
   const move = live > 0 && price > 0 ? price / live - 1 : null;
+  const absurd = move != null && maxMove != null && Math.abs(move) > maxMove;
+  const show = price > 0 && !absurd;
   return (
-    <div className={cn("flex items-center justify-between text-xs rounded px-1.5 py-1", highlight && "bg-accent/10")}>
-      <span className={cn("text-dim", highlight && "text-accent font-medium")}>{label}</span>
+    <div className={cn("flex items-center justify-between text-xs rounded px-1.5 py-1", highlight && show && "bg-accent/10")}>
+      <span className={cn("text-dim", highlight && show && "text-accent font-medium")}>{label}</span>
       <span className="font-mono">
-        {price > 0 ? fmtPrice(price) : "–"}
-        {move != null && <span className={cn("ml-2", move >= 0 ? "text-up" : "text-down")}>{fmtPct(move * 100)}</span>}
+        {show ? fmtPrice(price) : "–"}
+        {show && move != null && <span className={cn("ml-2", move >= 0 ? "text-up" : "text-down")}>{fmtPct(move * 100)}</span>}
       </span>
     </div>
   );
@@ -162,9 +167,9 @@ function DataBiasBody({ market, state, biasTF, live }) {
             {market !== "crypto" && info?.targetMean != null && (
               <TargetRow label="Analyst mean (~12mo)" price={info.targetMean} live={live} />
             )}
-            <TargetRow label={`In ${HORIZON_LABEL.short} (days)`} price={t.short} live={live} highlight={horizon === "short"} />
-            <TargetRow label={`In ${HORIZON_LABEL.medium} (weeks)`} price={t.medium} live={live} highlight={horizon === "medium"} />
-            <TargetRow label={`In ${HORIZON_LABEL.long} (months)`} price={t.long} live={live} highlight={horizon === "long"} />
+            <TargetRow label={`In ${HORIZON_LABEL.short} (days)`} price={t.short} live={live} maxMove={0.3} highlight={horizon === "short"} />
+            <TargetRow label={`In ${HORIZON_LABEL.medium} (weeks)`} price={t.medium} live={live} maxMove={0.7} highlight={horizon === "medium"} />
+            <TargetRow label={`In ${HORIZON_LABEL.long} (months)`} price={t.long} live={live} maxMove={2} highlight={horizon === "long"} />
             <p className="text-[10px] text-dim/80 pt-1.5 leading-relaxed">AI point estimates from fundamentals + news, not a promise. Row for the chosen {biasTF} timeframe is highlighted.</p>
           </div>
         ) : (
@@ -248,9 +253,9 @@ function CombinedBody({ market, symbol, biasTF, dataState, live }) {
       <div className="rounded-lg border border-line bg-bg/30 p-3">
         <p className="flex items-center gap-1.5 text-[10px] text-dim font-medium mb-2"><TargetIcon className="w-3 h-3" /> Estimated price</p>
         <div className="space-y-0.5">
-          <TargetRow label={`Combined (${HORIZON_LABEL[horizon]})`} price={combined.target} live={live} highlight />
+          <TargetRow label={`Combined (${HORIZON_LABEL[horizon]})`} price={combined.target} live={live} maxMove={horizon === "short" ? 0.3 : horizon === "medium" ? 0.7 : 2} highlight />
           <TargetRow label={`Technical target (${biasTF})`} price={combined.techTgt} live={live} />
-          <TargetRow label={`Fundamental (${HORIZON_LABEL[horizon]})`} price={combined.fundTgt} live={live} />
+          <TargetRow label={`Fundamental (${HORIZON_LABEL[horizon]})`} price={combined.fundTgt} live={live} maxMove={horizon === "short" ? 0.3 : horizon === "medium" ? 0.7 : 2} />
           {tech.plan?.stop && <TargetRow label="Technical stop" price={tech.plan.stop} live={live} />}
         </div>
         <p className="text-[10px] text-dim/80 pt-1.5 leading-relaxed">The combined target weights the technical structure and the fundamental estimate the same way as the direction.</p>
@@ -300,19 +305,23 @@ export default function BiasSection({ market, symbol, interval, price }) {
         ))}
       </div>
 
-      {mode === "rule" && <BiasPanel key={biasTF} market={market} symbol={symbol} interval={biasTF} embedded />}
+      {mode === "rule" && <BiasPanel key={biasTF} market={market} symbol={symbol} interval={biasTF} embedded onSelectTf={setBiasTF} />}
       {mode === "data" && <DataBiasBody market={market} state={dataState} biasTF={biasTF} live={price} />}
       {mode === "combined" && <CombinedBody market={market} symbol={symbol} biasTF={biasTF} dataState={dataState} live={price} />}
 
+      {/* Disclaimer matches the ACTIVE view, not a generic one. */}
       <div className="flex items-start gap-2 rounded-lg border border-warn/40 bg-warn/10 p-3 mt-3">
         <ShieldAlert className="w-4 h-4 text-warn shrink-0 mt-0.5" />
         <p className="text-[11px] text-text/80 leading-relaxed">
-          <span className="font-semibold">Not investment advice.</span> The rule-based view is a mechanical checklist on past
-          prices; the news & data view mixes public fundamentals with an AI reading of current headlines and can be wrong or
-          out of date. Price targets are estimates, not promises. Timeframes and methods can disagree — any trade is your own
-          decision and risk.
+          <span className="font-semibold">Not investment advice.</span> {DISCLAIMER[mode]}
         </p>
       </div>
     </div>
   );
 }
+
+const DISCLAIMER = {
+  rule: "This is a fixed, mechanical checklist applied to PAST PRICE data — it knows nothing about news, fundamentals, or your situation, and timeframes can legitimately disagree. Any trade is your own decision and risk.",
+  data: "This mixes public fundamentals with an AI reading of current news & macro — it can be wrong or out of date, and the price targets are rough estimates, not promises. Any trade is your own decision and risk.",
+  combined: "This blends the mechanical rule-based checklist with the AI news & data read — both can be wrong, the targets are estimates, and the two methods can disagree. Any trade is your own decision and risk.",
+};
