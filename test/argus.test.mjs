@@ -36,20 +36,24 @@ test("capital gate: committed margin (total notional / leverage) stays ≤ equit
   assert.equal(full, null, "capital fully committed → null");
 });
 
-test("leverage is dynamic: bounded by stop, asset class, and confidence", () => {
-  // Crypto is capped low (noise) — even a tight stop + max conviction stays ≤ 20x.
-  const cryptoTight = chooseLeverage(100, 0.2, { conviction: 1, asset: "crypto" });
-  assert.ok(cryptoTight <= 20, `crypto tight/high-conviction ≤ 20x (got ${cryptoTight})`);
-  // Forex allows high leverage (tiny pips) — tight stop + high conviction → up to 100x.
-  const fxTight = chooseLeverage(100, 0.05, { conviction: 1, asset: "forex", maxTradeLev: 100 });
-  assert.ok(fxTight > 20 && fxTight <= 100, `forex tight/high-conviction goes high (got ${fxTight})`);
-  // Confidence scaling: a routine crypto setup uses far less than the ceiling.
-  const routine = chooseLeverage(100, 0.2, { conviction: 0.5, asset: "crypto" });
-  assert.ok(routine < cryptoTight, "low conviction → less leverage than high conviction");
-  // Never leverage so a wider stop's liquidation precedes the stop.
-  const lev = chooseLeverage(100, 2, { conviction: 0.5, asset: "crypto" });
+test("leverage is a free, situational choice across 1..100x, capped only by safety", () => {
+  // A high-conviction crypto setup with a tight (noise-floor) stop can now lean in
+  // HARD — well above the old 20x wall — because safeMax leaves room and the user cap
+  // is 100x. Argus is free.
+  const cryptoStrong = chooseLeverage(100, 0.2, { conviction: 0.95, asset: "crypto", rr: 3, maxTradeLev: 100 });
+  assert.ok(cryptoStrong > 20 && cryptoStrong <= 100, `strong crypto leans in past 20x (got ${cryptoStrong})`);
+  // A rich reward:risk presses it harder than a bare 2:1 at the same conviction.
+  const cryptoLowRR = chooseLeverage(100, 0.2, { conviction: 0.95, asset: "crypto", rr: 2, maxTradeLev: 100 });
+  assert.ok(cryptoStrong >= cryptoLowRR, "higher R:R → at least as much leverage");
+  // Conviction is the main dial: a weak setup stays small even with room to spare.
+  const weak = chooseLeverage(100, 0.2, { conviction: 0.4, asset: "crypto", maxTradeLev: 100 });
+  assert.ok(weak < cryptoStrong && weak >= 1, `weak setup stays modest (got ${weak})`);
+  // It genuinely VARIES (not the old fixed 9x): different conviction → different lev.
+  assert.notEqual(weak, cryptoStrong, "leverage is not a fixed bucket");
+  // HARD safety: on a WIDE stop, safeMax caps leverage so liquidation stays beyond it.
+  const lev = chooseLeverage(100, 2, { conviction: 1, asset: "crypto", rr: 5, maxTradeLev: 100 });
   const liq = liquidationPrice(100, "long", lev);
-  assert.ok(liq < 100 && liq < 98, "liq below entry and beyond a 98 stop");
+  assert.ok(liq < 100 && liq < 98, `liq below entry and beyond a 98 stop even at max desire (lev ${lev})`);
 });
 
 test("enforceMinStop widens an absurdly tight stop to the asset noise floor", () => {
@@ -85,6 +89,17 @@ test("fill price moves against the trader on entry and exit", () => {
   assert.ok(fillPrice(100, "long", "entry", "crypto") > 100, "long entry pays up");
   assert.ok(fillPrice(100, "long", "exit", "crypto") < 100, "long exit gets less");
   assert.ok(fillPrice(100, "short", "entry", "crypto") < 100, "short entry sells lower");
+});
+
+test("a LIMIT (retest) fill takes the limit price, not adverse slippage", () => {
+  // Market short: entry slips BELOW the level (sells lower). A limit short must fill
+  // AT the level — otherwise the entry is drawn where the market never traded.
+  const mkt = openThesis({ symbol: "BNBUSDT", market: "crypto", side: "short", kind: "breakout", timeframe: "15m", entry: 588.02, stop: 590.5, target: 583.85, reason: "x" },
+    { equity: 10000, openRisk: 0, asset: "crypto", heatCap: 0.10, baseRiskPct: 0.02 });
+  const lim = openThesis({ symbol: "BNBUSDT", market: "crypto", side: "short", kind: "breakout", timeframe: "15m", entry: 588.02, stop: 590.5, target: 583.85, reason: "x", limitFill: true },
+    { equity: 10000, openRisk: 0, asset: "crypto", heatCap: 0.10, baseRiskPct: 0.02 });
+  assert.ok(mkt.entry < 588.02, "market short slips below the level");
+  assert.equal(lim.entry, 588.02, "limit short fills exactly at the level — no phantom entry");
 });
 
 test("thesis: open, hit target → positive R; hit stop → −1R", () => {
@@ -157,6 +172,16 @@ test("breakout carries a retest level below the entry — the 'better entry' the
   const candles = [...flat(40, 100), bar(100, 103.2, 100, 103)];
   const r = breakout(candles, { n: 20, atrPeriod: 14 });
   assert.ok(Number.isFinite(r.retest) && r.retest < r.entry, "retest = broken high, below the chase entry");
+});
+
+test("reward:risk is situational, NOT a fixed 2:1 — a decisive breakout targets further", () => {
+  const decisive = breakout([...flat(40, 100), bar(100, 103.2, 100, 103)], { n: 20, atrPeriod: 14 });  // broke ~2.7 ATR
+  const marginal = breakout([...flat(40, 100), bar(100, 100.4, 100, 100.33)], { n: 20, atrPeriod: 14 }); // just cleared the high
+  assert.ok(decisive.rMult > 2, `decisive break aims beyond 2:1 (got ${decisive.rMult})`);
+  assert.ok(marginal.rMult >= 1.5 && marginal.rMult < decisive.rMult, `marginal break aims lower (got ${marginal.rMult})`);
+  // The target actually reflects the chosen R:R.
+  const rr = plannedRR(decisive.side, decisive.entry, decisive.stop, decisive.target);
+  assert.ok(Math.abs(rr - decisive.rMult) < 1e-9, "target = entry ± rMult × risk");
 });
 
 test("scan gates trend setups by higher-timeframe bias", () => {
@@ -276,6 +301,18 @@ test("parseReflection extracts a journal entry and clamps confidence", () => {
   assert.equal(e.applies.symbol, null, "omitted dimension stays null");
   assert.equal(e.R, -1.05);
   assert.equal(parseReflection("no json here", closedTrade()), null);
+});
+
+test("post-mortem judges and records the leverage Argus chose (learning)", () => {
+  const t = closedTrade({ leverage: 80 });
+  const e = parseReflection('{"verdict":"bad-process","cause":"c","mistake":"m","lesson":"80x on a low-conviction fade left no room","leverage":"too-high","applies":{"kind":"mean-reversion"},"confidence":0.7}', t);
+  assert.equal(e.leverage, "too-high", "captures the coach's leverage judgement");
+  assert.equal(e.lev, 80, "records the leverage that was actually used");
+  // Missing/invalid leverage field defaults to na.
+  const e2 = parseReflection('{"verdict":"neutral","cause":"c","mistake":"none","lesson":"","confidence":0.3}', t);
+  assert.equal(e2.leverage, "na");
+  // describeTrade surfaces the leverage + liquidation buffer for the coach to judge.
+  assert.match(describeTrade(t), /Leverage 80×/);
 });
 
 test("crystallise promotes a lesson only after it repeats, and skillsFor matches scope", () => {

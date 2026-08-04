@@ -15,12 +15,18 @@
 export function describeTrade(t, ctx = {}) {
   const held = t.exitAt && t.openedAt ? Math.round((t.exitAt - t.openedAt) / 60000) : null;
   const dirWord = t.side === "long" ? "long" : "short";
+  const stopDist = Math.abs(t.entry - t.stop);
+  // How much room sat between the stop and liquidation, in stop-distances (R). A thin
+  // buffer means the leverage was aggressive for this stop; a huge one means it was
+  // timid (margin tied up for nothing). Feeds the leverage judgement.
+  const liqBufR = Number.isFinite(t.liqPrice) && stopDist > 0 ? Math.abs(t.liqPrice - t.stop) / stopDist : null;
   const lines = [
     `Instrument: ${t.symbol} (${t.asset || t.market || "?"}), timeframe ${t.timeframe || "?"}`,
     `Setup: ${t.kind || "?"} ${dirWord}${t.bias ? `, higher-timeframe bias ${t.bias}` : ""}`,
     `Reason at entry: ${t.reason || "(none recorded)"}`,
     t.catalyst ? `News catalyst: ${t.catalyst}` : null,
     `Entry ${fmt(t.entry)} · stop ${fmt(t.stop)} · target ${fmt(t.target)} (planned ${num(t.plannedR)}R)`,
+    t.leverage ? `Leverage ${Math.round(t.leverage)}× (Argus's own choice; margin ${num(t.margin)})${liqBufR != null ? `; liquidation sat ${num(liqBufR)}R beyond the stop` : ""}` : null,
     `Outcome: ${t.outcome} at ${fmt(t.exit)} → ${num(t.R)}R (${t.pnl >= 0 ? "+" : ""}${num(t.pnl)} on ${num(t.riskAmt)} risked)`,
     held != null ? `Held ${held} min` : null,
     ctx.marketNote ? `Market context: ${ctx.marketNote}` : null,
@@ -39,10 +45,13 @@ export function buildReflectionMessages(trade, ctx = {}) {
     "praise a win that was taken for the wrong reason — a profitable trade from a bad process is still a bad trade. " +
     "You know that a single trade is a tiny sample: say when there is no lesson to draw. " +
     'Reply with STRICT JSON ONLY: {"verdict":"good-process"|"bad-process"|"neutral","cause":"...","mistake":"...",' +
-    '"lesson":"...","applies":{"kind":"...","symbol":"...","side":"..."},"confidence":0..1}. ' +
+    '"lesson":"...","leverage":"good"|"too-high"|"too-low"|"na","applies":{"kind":"...","symbol":"...","side":"..."},"confidence":0..1}. ' +
     "`cause` = why it actually worked or failed (one sentence). `mistake` = what the agent should have done differently, " +
     'or "none" if the process was right. `lesson` = a REUSABLE rule for future trades, phrased as an instruction ' +
     '("skip mean-reversion shorts while the 1h bias is up"), or "" when this trade teaches nothing. ' +
+    "`leverage` = judge the leverage Argus CHOSE for this trade: `too-high` if it was aggressive for the setup/stop " +
+    "(thin liquidation buffer, over-committed margin), `too-low` if it timidly tied up margin a stronger setup deserved, " +
+    "`good` if right-sized, `na` if leverage wasn't a factor — and if it was wrong, fold WHY into the lesson. " +
     "`applies` = which dimensions the lesson is about; omit a field that isn't specific. No prose outside the JSON.";
   const devReason = String(ctx.devCloseReason || "").trim();
   const user =
@@ -72,12 +81,14 @@ export function parseReflection(text, trade) {
   try { o = JSON.parse(t.slice(a, b + 1)); } catch { return null; }
   if (!o || typeof o !== "object") return null;
   const verdict = ["good-process", "bad-process", "neutral"].includes(o.verdict) ? o.verdict : "neutral";
+  const leverage = ["good", "too-high", "too-low", "na"].includes(o.leverage) ? o.leverage : "na";
   return {
     id: trade?.id || null,
     at: Date.now(),
     symbol: trade?.symbol, kind: trade?.kind, side: trade?.side,
     outcome: trade?.outcome, R: Number.isFinite(trade?.R) ? +trade.R.toFixed(2) : null,
-    verdict,
+    lev: Number.isFinite(trade?.leverage) ? Math.round(trade.leverage) : null, // what Argus chose
+    verdict, leverage, // leverage = the coach's judgement of that choice
     // Preserve that the human closed it early + why, so the journal shows the origin.
     devCloseReason: trade?.devCloseReason ? String(trade.devCloseReason).slice(0, 200) : undefined,
     cause: String(o.cause || "").slice(0, 300),

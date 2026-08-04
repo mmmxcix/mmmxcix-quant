@@ -41,10 +41,13 @@ export function priorLow(candles, n) {
 
 const MAINT = 0.05; // maintenance-margin + fee buffer used for leverage/liquidation
 
-// Per-asset-class leverage ceiling. Crypto is NOISY (wide spreads, mini-wicks) —
-// so 100× there gets liquidated by noise before a stop matters; forex moves in
-// tiny pips so high leverage is safe; stocks/futures gap. Tunable ceilings.
-export const ASSET_MAX_LEV = { crypto: 20, forex: 100, futures: 25, stock: 15, etf: 15, index: 20 };
+// Per-asset "lean-in" weight — how large a share of the leverage range this asset
+// class takes for the SAME conviction. NOT a hard ceiling: the real cap is safeMax
+// (stop fires before liquidation) plus the noise-floor stop. Crypto/stocks are
+// noisier/gappier so they lean a bit less; forex the most. Argus is free to reach
+// maxTradeLev (100×) when the situation (tight stop + high conviction + rich R:R)
+// warrants it. Tunable.
+export const ASSET_LEV_BIAS = { crypto: 0.85, forex: 1.0, futures: 0.9, stock: 0.8, etf: 0.8, index: 0.85 };
 
 // Minimum stop distance as a fraction of price, per asset — a stop tighter than
 // this is just market noise (a 0.017% BTC stop liquidates on the spread). Argus
@@ -52,19 +55,26 @@ export const ASSET_MAX_LEV = { crypto: 20, forex: 100, futures: 25, stock: 15, e
 export const MIN_STOP_FRAC = { crypto: 0.004, forex: 0.0006, futures: 0.0015, stock: 0.002, etf: 0.002, index: 0.002 };
 
 /**
- * Leverage Argus chooses for a trade — bounded on THREE sides so it's never
- * reckless: (1) the STOP must fire before liquidation (safeMax from entry/stop),
- * (2) an ASSET-class ceiling (crypto low, forex high), (3) CONFIDENCE scaling
- * (a routine setup uses a small fraction of the ceiling; a high-conviction one
- * uses most). This is dynamic, not a flat 100×.
+ * Leverage Argus chooses for a trade — its OWN call, free across the whole
+ * 1..maxTradeLev range depending on the situation, never bucketed to a fixed value.
+ * Two things bound the free choice:
+ *   • HARD safety — safeMax: the STOP must fire before liquidation (from entry/stop),
+ *     so the margin safeguard (liq beyond the stop) always holds whatever it picks;
+ *   • the user cap — maxTradeLev (100×).
+ * Within that, the desired leverage rises steeply with CONVICTION (weak setups stay
+ * small), is pressed harder on a rich REWARD:RISK, and trimmed on noisier asset
+ * classes. Same conviction + different stop/asset/R:R ⇒ different leverage — Argus
+ * then learns from the ledger whether that call was right (see reflect.js).
  */
-export function chooseLeverage(entry, stopDist, { conviction = 0.5, maxTradeLev = 100, asset = "crypto" } = {}) {
+export function chooseLeverage(entry, stopDist, { conviction = 0.5, maxTradeLev = 100, asset = "crypto", rr = 2 } = {}) {
   if (!(stopDist > 0) || !(entry > 0)) return 1;
-  const safeMax = Math.max(1, Math.floor((entry / stopDist) * (1 - MAINT)));       // stop before liquidation
-  const assetCap = Math.min(maxTradeLev, ASSET_MAX_LEV[asset] ?? 15);              // asset-class ceiling
+  const safeMax = Math.max(1, Math.floor((entry / stopDist) * (1 - MAINT)));   // stop before liquidation (hard)
   const c = Math.max(0, Math.min(1, conviction));
-  const frac = c >= 0.85 ? 1.0 : c >= 0.75 ? 0.7 : c >= 0.6 ? 0.45 : 0.25;         // confidence scaling
-  return Math.max(1, Math.min(assetCap, safeMax, Math.round(assetCap * frac)));
+  const bias = ASSET_LEV_BIAS[asset] ?? 0.8;
+  const rrBoost = 1 + Math.max(0, Math.min(0.5, (rr - 2) * 0.15));              // 2:1 → ×1, 5:1 → ×1.45
+  const frac = Math.max(0.02, Math.min(1, (c ** 2.5) * bias * rrBoost));        // steep conviction curve
+  const desired = Math.round(maxTradeLev * frac);
+  return Math.max(1, Math.min(maxTradeLev, safeMax, desired));
 }
 
 /** Widen a stop that's tighter than the asset's noise floor, keeping direction. */
@@ -97,7 +107,7 @@ export function sizePosition({
   equity, entry, stop, side = "long", asset = "crypto",
   openRisk = 0, openMargin = 0, openNotional = 0,
   heatCap = 0.06, baseRiskPct = 0.02,
-  maxTradeLev = 100, portfolioLevCap, maxLeverage, conviction = 0.5,
+  maxTradeLev = 100, portfolioLevCap, maxLeverage, conviction = 0.5, rr = 2,
 }) {
   const stopDist = Math.abs(entry - stop);
   if (!(stopDist > 0) || !(equity > 0) || !(entry > 0)) return null;
@@ -119,9 +129,9 @@ export function sizePosition({
   if (riskAmt0 <= equity * 0.0005) return null;          // no meaningful heat room → wait
   let size = riskAmt0 / effStopDist;
 
-  // 2) Argus's leverage — dynamic by asset class + conviction, and never so high
-  //    that a stop-out becomes a liquidation.
-  const leverage = chooseLeverage(entry, stopDist, { conviction, maxTradeLev, asset });
+  // 2) Argus's leverage — its free, situational choice (conviction + R:R + asset),
+  //    never so high that a stop-out becomes a liquidation.
+  const leverage = chooseLeverage(entry, stopDist, { conviction, maxTradeLev, asset, rr });
 
   // 3) Capital gates — the tightest wins.
   const notionalRoom = Math.max(0, levCap * equity - openNotional);      // portfolio exposure ceiling
@@ -173,7 +183,10 @@ export function newId() {
  * cash risk. Returns null if there's no heat room (caller keeps it forming).
  */
 export function openThesis(setup, { equity, openRisk, openMargin = 0, openNotional = 0, asset, heatCap, baseRiskPct, maxTradeLev, portfolioLevCap, maxLeverage, conviction, minPlannedR = 0.8, now = Date.now() }) {
-  const fillEntry = fillPrice(setup.entry, setup.side, "entry", asset);
+  // A LIMIT (retest) fill gets its price OR BETTER — never adverse slippage. Only a
+  // MARKET entry pays the spread. (Applying slippage to a limit recorded a short
+  // BELOW its own level — an entry "where the market wasn't".)
+  const fillEntry = setup.limitFill ? setup.entry : fillPrice(setup.entry, setup.side, "entry", asset);
   // Widen an absurdly tight stop to the asset's noise floor BEFORE sizing, so the
   // stop is meaningful (not liquidated by the spread) and risk/size stay coherent.
   const stop = enforceMinStop(fillEntry, setup.stop, setup.side, asset);
@@ -185,7 +198,7 @@ export function openThesis(setup, { equity, openRisk, openMargin = 0, openNotion
     equity, entry: fillEntry, stop, side: setup.side, asset,
     openRisk, openMargin, openNotional, heatCap, baseRiskPct,
     maxTradeLev, portfolioLevCap, maxLeverage,
-    conviction: conviction ?? setup.conviction ?? 0.5,
+    conviction: conviction ?? setup.conviction ?? 0.5, rr,
   });
   if (!sized) return null;
   return {

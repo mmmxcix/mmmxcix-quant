@@ -324,6 +324,7 @@ function tryOpen(inst, setup, halted) {
           symbol: inst.symbol, asset: inst.asset, side: setup.side, kind: setup.kind,
           limit, stop: setup.stop, target: setup.target, bias: setup.bias ?? null,
           evidence: setup.evidence || [], conviction, reason: setup.reason,
+          stopDist: Math.abs(limit - stopAtLimit),   // intended risk at the retest (run-away guard)
           expiresAt: Date.now() + LIMIT_TTL_MS, pending: true,
         });
         console.log(`[${new Date().toISOString()}] WAIT ${inst.symbol} ${setup.side} ${setup.kind} — limit @${limit.toFixed(4)} (now ${rrNow.toFixed(2)}R → retest ${rrLimit.toFixed(2)}R): ${setup.reason}`);
@@ -336,7 +337,7 @@ function tryOpen(inst, setup, halted) {
   // uncorrelated with what's already open.
   const heatCap = effectiveHeatCap(open.map((o) => o.symbol), inst.symbol, HEAT_CAP, MAX_HEAT);
   const th = openThesis(
-    { ...setup, symbol: inst.symbol, market: inst.asset, conviction },
+    { ...setup, symbol: inst.symbol, market: inst.asset, conviction, limitFill: !!setup._fromLimit },
     { equity, openRisk: openRisk(), openMargin: openMargin(), openNotional: openNotional(), asset: inst.asset,
       heatCap, baseRiskPct: riskPct, maxTradeLev: MAX_TRADE_LEV, portfolioLevCap: PORTFOLIO_LEV_CAP, conviction },
   );
@@ -374,6 +375,16 @@ function checkLimits(inst, candle, halted) {
   // Filled if the bar traded through the limit (low ≤ limit for a long, high ≥ for a short).
   const hit = f.side === "long" ? (candle.low ?? candle.close) <= f.limit : (candle.high ?? candle.close) >= f.limit;
   if (!hit) return true; // still waiting
+  // Run-away guard: a retest should fill NEAR the level, not after price has already
+  // pushed well past it toward the stop (that's a failed retest — we'd be born hugging
+  // the SL, entering into a move going against us). If the bar CLOSED more than 30% of
+  // the way to the stop beyond the limit, the retest failed — abandon it.
+  const overshoot = f.side === "long" ? f.limit - candle.close : candle.close - f.limit; // toward the stop
+  if (f.stopDist > 0 && overshoot > 0.3 * f.stopDist) {
+    forming.splice(idx, 1);
+    console.log(`[${new Date().toISOString()}] ABANDON-LIMIT ${inst.symbol} ${f.side} ${f.kind} @${f.limit.toFixed(4)} — retest ran ${(overshoot / f.stopDist * 100).toFixed(0)}% to the stop`);
+    return true;
+  }
   forming.splice(idx, 1);
   tryOpen(inst, {
     symbol: inst.symbol, side: f.side, kind: f.kind, entry: f.limit, stop: f.stop, target: f.target,
