@@ -213,7 +213,7 @@ export function correlationMatrix(entries) {
  * @param {Object} p
  * @returns {Object} the created entry
  */
-export function saveEntry({ name, market, symbol, interval, range, mode, strategyId, params, code, positionPct, feeBps, leverage = 1, metrics, equity, tradeReturns, validation, status = "factory", candidateId = null, language = null, windowProfile = null, failureReason = null, research = null, crowned = false }) {
+export function saveEntry({ name, market, symbol, interval, range, mode, strategyId, params, code, positionPct, feeBps, leverage = 1, metrics, equity, tradeReturns, validation, status = "factory", candidateId = null, paperId = null, language = null, windowProfile = null, failureReason = null, research = null, crowned = false }) {
   const entry = {
     id: newId(),
     createdAt: Date.now(),
@@ -221,6 +221,9 @@ export function saveEntry({ name, market, symbol, interval, range, mode, strateg
     // Which research candidate this came from — lets auto-promotion recognise
     // what it has already imported instead of adding a copy on every poll.
     candidateId,
+    // Set when this entry was adopted from a live paper-book strategy that had no
+    // registry card (e.g. a manual publish) — so it's surfaced + de-duped on re-sync.
+    paperId,
     language,
     // The research context (thesis / committee verdict / DSR / source / markets)
     // when this came from Cortex — so the library card is as rich as the old feed.

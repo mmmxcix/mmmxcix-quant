@@ -150,11 +150,32 @@ function AgentCandidates() {
     let alive = true;
     (async () => {
       const tradingIds = new Set();
+      let paperItems = [];
       try {
         const out = await (await fetch("/api/lab?what=strategies")).json();
-        for (const s of out?.strategies?.items || []) if (s.candidateId) tradingIds.add(s.candidateId);
+        paperItems = out?.strategies?.items || [];
+        for (const s of paperItems) if (s.candidateId) tradingIds.add(s.candidateId);
       } catch { /* offline — skip the paper step this pass */ }
       if (!alive) return;
+
+      // Surface paper-book strategies that have NO registry card — e.g. manually
+      // published strats (candidateId=none). Without this they trade invisibly, so
+      // "not all strats are in the Registry". Adopt each ONCE (deduped by paperId).
+      const known = getEntries();
+      const havePaperId = new Set(known.filter((e) => e.paperId).map((e) => e.paperId));
+      const haveCode = new Set(known.filter((e) => e.code).map((e) => e.code));
+      for (const s of paperItems) {
+        if (!s || !s.id || s.candidateId || !s.code) continue;         // linked/codeless → handled elsewhere
+        if (havePaperId.has(s.id) || haveCode.has(s.code)) continue;   // already in the library
+        saveEntry({
+          name: s.name || "Paper strategy", market: s.market, symbol: s.symbol, interval: s.interval,
+          mode: "code", code: s.code, language: s.language || null,
+          positionPct: s.positionPct ?? 100, feeBps: s.feeBps ?? 10, leverage: s.leverage ?? 1,
+          status: "paper", paperId: s.id,
+          failureReason: "Adopted from the paper book — published without a backtest, so it has no validation metrics.",
+        });
+      }
+
       const byCand = new Map(items.map((c) => [c.id, c]));
       const order = { factory: 0, validated: 1, paper: 2 };
       for (const e of getEntries()) {
