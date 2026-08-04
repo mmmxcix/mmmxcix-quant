@@ -500,7 +500,7 @@ export default function Backtest() {
       params: mode === "builder" ? effectiveParams : null,
       code: mode === "code" ? code : null,
       language: mode === "code" ? lang : null,
-      positionPct, feeBps,
+      positionPct, feeBps, leverage,
       metrics: result.metrics,
       equity: result.equity,
       tradeReturns: result.trades.map((t) => t.pnlPct / 100),

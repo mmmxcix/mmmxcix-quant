@@ -91,7 +91,9 @@ function dedupe(strategies, published) {
   for (const s of strategies) {
     if (s.error) { groups.push({ key: s.id, rep: s, members: [s] }); continue; }
     const entry = published[s.id];
-    const sig = entry ? codeSig(strategyToCode(entry)) : null;
+    // Native-language source (js twin is "" for Python) so Python strats aren't all
+    // collapsed to one empty signature in the unique-strategy count.
+    const sig = entry ? codeSig(strategyToCode(entry, entry.language === "python" ? "python" : "js")) : null;
     const key = sig ? `${s.symbol}|${s.interval}|${sig}` : `id:${s.id}`;
     let g = byKey.get(key);
     if (!g) { g = { key, rep: s, members: [] }; byKey.set(key, g); groups.push(g); }
@@ -225,7 +227,9 @@ function StrategyBook({ id, icon: Icon, strategies, published, openRow, setOpenR
             {groups.map((g) => {
               const s = g.rep;
               const entry = published[s.id];
-              const code = entry ? strategyToCode(entry) : null;
+              // Copy in the strat's NATIVE language — forcing "js" returned "" for a
+              // Python strategy, so its Copy button vanished (most paper strats are Python).
+              const code = entry ? strategyToCode(entry, entry.language === "python" ? "python" : "js") : null;
               const pyCode = entry ? strategyToCode(entry, "python") : null;
               const rowKey = `${id}:${g.key}`;
               const isOpen = openRow === rowKey;

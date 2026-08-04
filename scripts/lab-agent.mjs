@@ -121,9 +121,13 @@ function saveLocal(st) {
   try { writeFileSync(STATE_FILE, JSON.stringify(st)); } catch (e) { console.error("state save failed:", e.message); }
 }
 
-function applyTarget(ps, target, price, feeBps, positionPct) {
+function applyTarget(ps, target, price, feeBps, positionPct, leverage = 1) {
   const fee = (feeBps ?? 10) / 10000;
-  const posFrac = Math.min(100, Math.max(1, positionPct ?? 100)) / 100;
+  // Leverage multiplies exposure (3x = 300% of equity), exactly like the backtester
+  // (runBacktest posFrac = positionPct/100 × lev). De-risking (vol-target/rotation)
+  // has already scaled positionPct DOWN; leverage sets the base on top of that.
+  const lev = Math.min(10, Math.max(1, leverage || 1));
+  const posFrac = (Math.min(100, Math.max(1, positionPct ?? 100)) / 100) * lev;
   const mtm = () => (ps.position === "flat"
     ? ps.equity
     : ps.equityAfterEntry + (ps.position === "long" ? 1 : -1) * ps.units * (price - ps.entryPrice));
@@ -154,6 +158,12 @@ function applyTarget(ps, target, price, feeBps, positionPct) {
     ps.openedAt = Date.now();
   }
   ps.markEquity = +mtm().toFixed(2);
+  // Leverage can wipe the account: a position underwater past the equity liquidates
+  // (equity → 0). Never let paper equity go negative.
+  if (ps.markEquity <= 0) {
+    ps.markEquity = 0;
+    if (ps.position !== "flat") { ps.equity = 0; ps.position = "flat"; ps.units = 0; }
+  }
   return trade;
 }
 
@@ -387,7 +397,7 @@ for (const s of published) {
     }
 
     const posBefore = ps.position;
-    const trade = applyTarget(ps, target, price, s.feeBps, effPositionPct);
+    const trade = applyTarget(ps, target, price, s.feeBps, effPositionPct, s.leverage ?? 1);
     if (ps.position !== "flat" && ps.position !== posBefore) {
       local.day.entries++;
       local.day.byProfile[pid] = (local.day.byProfile[pid] || 0) + 1;

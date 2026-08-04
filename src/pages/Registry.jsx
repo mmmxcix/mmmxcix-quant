@@ -245,8 +245,8 @@ function Card({ e, rich = false }) {
     const iso = (d) => d.toISOString().slice(0, 10);
     const codeBits = e.code ? { code: e.code } : { strategyId: e.strategyId || undefined, params: e.params || undefined };
     const handoff = mk
-      ? { market: mk.asset === "crypto" ? "crypto" : "stock", symbol: mk.symbol, interval: mk.interval, customPeriod: true, fromDate: iso(from), toDate: iso(to), feeBps: costFor(mk), positionPct: 100, ...codeBits }
-      : { market: e.market, symbol: e.symbol, interval: e.interval, customPeriod: true, fromDate: iso(from), toDate: iso(to), feeBps: e.feeBps, positionPct: e.positionPct, ...codeBits };
+      ? { market: mk.asset === "crypto" ? "crypto" : "stock", symbol: mk.symbol, interval: mk.interval, customPeriod: true, fromDate: iso(from), toDate: iso(to), feeBps: costFor(mk), positionPct: 100, leverage: e.leverage ?? 1, ...codeBits }
+      : { market: e.market, symbol: e.symbol, interval: e.interval, customPeriod: true, fromDate: iso(from), toDate: iso(to), feeBps: e.feeBps, positionPct: e.positionPct, leverage: e.leverage ?? 1, ...codeBits };
     try { sessionStorage.setItem("backtest_handoff", JSON.stringify(handoff)); } catch { /* quota */ }
     navigate("/backtest?load=1");
   };
@@ -274,7 +274,7 @@ function Card({ e, rich = false }) {
               <span key={p} className={cn("text-[9px] uppercase tracking-wide rounded px-1.5 py-0.5 font-semibold", p === "prop" ? "bg-accent/15 text-accent" : "bg-up/10 text-up")}>{PROFILE_LABEL[p] || p}</span>
             ))}
           </div>
-          <p className="text-[10px] text-dim font-mono">{e.symbol} · {e.interval} · {e.mode}{e.positionPct != null ? ` · ${e.positionPct}%` : ""}</p>
+          <p className="text-[10px] text-dim font-mono">{e.symbol} · {e.interval} · {e.mode}{e.positionPct != null ? ` · ${e.positionPct}%` : ""}{e.leverage > 1 ? ` · ${e.leverage}x` : ""}</p>
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
           {/* Copy in the strategy's NATIVE language — forcing "js" returned "" for a
@@ -513,8 +513,8 @@ function PublishToAgent({ entries }) {
     try {
       const payload = paper.map((e) => ({
         id: e.id, name: e.name, market: e.market, symbol: e.symbol, interval: e.interval,
-        mode: e.mode, strategyId: e.strategyId, params: e.params, code: e.code,
-        positionPct: e.positionPct ?? 100, feeBps: e.feeBps ?? 10,
+        mode: e.mode, strategyId: e.strategyId, params: e.params, code: e.code, language: e.language,
+        positionPct: e.positionPct ?? 100, feeBps: e.feeBps ?? 10, leverage: e.leverage ?? 1,
       }));
       // Auth = the admin session cookie (sent automatically, same origin).
       const res = await fetch("/api/lab", {

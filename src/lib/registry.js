@@ -213,7 +213,7 @@ export function correlationMatrix(entries) {
  * @param {Object} p
  * @returns {Object} the created entry
  */
-export function saveEntry({ name, market, symbol, interval, range, mode, strategyId, params, code, positionPct, feeBps, metrics, equity, tradeReturns, validation, status = "factory", candidateId = null, language = null, windowProfile = null, failureReason = null, research = null, crowned = false }) {
+export function saveEntry({ name, market, symbol, interval, range, mode, strategyId, params, code, positionPct, feeBps, leverage = 1, metrics, equity, tradeReturns, validation, status = "factory", candidateId = null, language = null, windowProfile = null, failureReason = null, research = null, crowned = false }) {
   const entry = {
     id: newId(),
     createdAt: Date.now(),
@@ -233,7 +233,7 @@ export function saveEntry({ name, market, symbol, interval, range, mode, strateg
     market, symbol, interval, range,
     mode, strategyId: strategyId || null, params: params || null,
     code: mode === "code" ? code : null,
-    positionPct, feeBps,
+    positionPct, feeBps, leverage: leverage ?? 1,
     metrics: metrics || null,
     validation: validation || null,
     returnSeries: buildReturnSeries(equity),

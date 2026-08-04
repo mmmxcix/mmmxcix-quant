@@ -85,11 +85,30 @@ function normalizeLanguage(s) {
   return (want && want !== s.language) ? { ...s, language: want } : s;
 }
 
+// A strategy with a CRITICAL code-validity bug must never paper-trade — its numbers
+// are a lie. This is the high-precision CRITICAL subset of src/lib/strategyAudit.js
+// (kept inline because Cloudflare functions don't import from src/lib): a degenerate
+// single-asset "arbitrage" (log weights cancel → triggers on float error), a
+// look-ahead peek at a future bar, or a constant price-independent signal.
+function hasCriticalBug(s) {
+  const c = String(s?.code || "");
+  if (!c.trim()) return false;
+  const py = s?.language === "python";
+  if (/\b(bellman[- ]?ford|arbitrage|negative[- ]?cycle|triangular|cross[- ]?rate)\b/i.test(c)
+    && /(Math\.log|np\.log|\blog\s*\()/i.test(c)) return true;
+  if (py ? /\.shift\(\s*-\s*\d+\s*\)|\.iloc\[[^\]]*\+\s*1\s*\]|\[\s*i\s*\+\s*[1-9]/.test(c)
+         : /\[\s*i\s*\+\s*[1-9]\d*\s*\]|candles\s*\[[^\]]*\+\s*[1-9]/.test(c)) return true;
+  const rets = [...c.matchAll(/return\s+["'`](long|short|flat|buy|sell|hold)["'`]/gi)].map((m) => m[1].toLowerCase());
+  const nonFlat = rets.filter((r) => r !== "flat" && r !== "hold");
+  if (rets.length && nonFlat.length && new Set(rets).size === 1) return true;
+  return false;
+}
+
 // The full tidy pass applied wherever lab:strategies is written or self-healed:
-// fix languages first (so dedupe/runnability see the truth), collapse duplicates,
-// then clean legacy names.
+// fix languages first (so dedupe/runnability see the truth), DROP critical-buggy
+// strategies (they must not trade), collapse duplicates, then clean legacy names.
 function tidyStrategies(items) {
-  return cleanNames(dedupeByCode((items || []).map(normalizeLanguage)));
+  return cleanNames(dedupeByCode((items || []).map(normalizeLanguage).filter((s) => !hasCriticalBug(s))));
 }
 
 // Among two duplicates, which to KEEP: a runnable entry beats a broken one, a
