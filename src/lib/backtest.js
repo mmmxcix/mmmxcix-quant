@@ -129,6 +129,10 @@ export function runBacktest({ candles, signalFn, initialCapital = 10000, feeBps 
 
   const equity = [];
   const trades = [];
+  // Per-bar desired position (+1 long / 0 flat / −1 short) the strategy signalled
+  // AFTER that bar closed — index-aligned to candles. Lets callers measure the
+  // Information Coefficient (does the signal actually predict the next bar?).
+  const signals = new Array(candles.length).fill(0);
   let barsInMarket = 0;
   let firstErrorLogged = false;
 
@@ -287,6 +291,7 @@ export function runBacktest({ candles, signalFn, initialCapital = 10000, feeBps 
       }
       pending = { signal: "flat" };
     }
+    signals[i] = pending.signal === "long" ? 1 : pending.signal === "short" ? -1 : 0;
   }
 
   // 5) Force-close any open position at the last bar's close.
@@ -390,6 +395,7 @@ export function runBacktest({ candles, signalFn, initialCapital = 10000, feeBps 
     equity,
     buyHold,
     trades,
+    signals,
     metrics: {
       totalReturnPct,
       buyHoldReturnPct,

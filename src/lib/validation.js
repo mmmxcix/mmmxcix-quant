@@ -49,6 +49,34 @@ function moments(returns) {
   return { mean, sd, skew: sd > 0 ? m3 / sd ** 3 : 0, kurt: sd > 0 ? m4 / sd ** 4 : 3 };
 }
 
+/**
+ * Information Coefficient of a strategy's signal: the correlation between the
+ * position it took at each bar (+1 long / −1 short, from runBacktest's `signals`)
+ * and the NEXT bar's return. Measured only on ACTIVE bars — "when it's in the
+ * market, does its direction actually PREDICT?". An IC near zero (or negative)
+ * means the backtest edge was path-luck, not a real signal — the replication test
+ * a paper-sourced strategy must pass on unseen data. Pearson; null on too few bars.
+ * @returns {{ ic: number|null, n: number }}
+ */
+export function signalIC(candles, signals) {
+  if (!Array.isArray(candles) || !Array.isArray(signals)) return { ic: null, n: 0 };
+  const xs = [], ys = [];
+  for (let i = 0; i < signals.length - 1; i++) {
+    const s = signals[i];
+    if (!s) continue;                       // only bars where it held a position
+    const c0 = candles[i]?.close, c1 = candles[i + 1]?.close;
+    if (!(c0 > 0) || c1 == null) continue;
+    xs.push(s); ys.push(c1 / c0 - 1);
+  }
+  const n = xs.length;
+  if (n < 20) return { ic: null, n };
+  const mx = xs.reduce((a, b) => a + b, 0) / n, my = ys.reduce((a, b) => a + b, 0) / n;
+  let sxy = 0, sxx = 0, syy = 0;
+  for (let i = 0; i < n; i++) { const dx = xs[i] - mx, dy = ys[i] - my; sxy += dx * dy; sxx += dx * dx; syy += dy * dy; }
+  if (sxx <= 0 || syy <= 0) return { ic: null, n };
+  return { ic: sxy / Math.sqrt(sxx * syy), n };
+}
+
 /** Per-bar returns from an equity curve. */
 export function equityReturns(equity) {
   const out = [];

@@ -24,7 +24,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { runBacktest, compileStrategy } from "../src/lib/backtest.js";
-import { kFoldCode, noiseTest, deflatedSharpe, equityReturns } from "../src/lib/validation.js";
+import { kFoldCode, noiseTest, deflatedSharpe, equityReturns, signalIC } from "../src/lib/validation.js";
 import { auditStrategy } from "../src/lib/strategyAudit.js";
 import { qualifyAll, getProfile, PROFILE_IDS } from "../src/lib/profiles.js";
 import { harvestAll, fullTextOf, topicsOf, RELEVANCE, JUNK } from "./sources.mjs";
@@ -74,6 +74,10 @@ function pickLang(item) {
 // so a strategy that decayed and only looks good over the full 10y is rejected.
 const BH_SHARPE_MARGIN = +(process.env.LAB_BH_MARGIN || 0.10);
 const HOLDOUT_MIN_PF = +(process.env.LAB_HOLDOUT_PF || 1.0);
+// Replication (reel #14 / the XAU teardown): on the unseen tail the signal must not
+// ANTI-predict. A near-zero IC is tolerated (asymmetric payoffs are legitimate), but
+// a clearly negative out-of-sample IC means the "edge" reproduces backwards. Tunable.
+const OOS_IC_FLOOR = +(process.env.LAB_OOS_IC || -0.02);
 // Absolute quality floor: a promoted market must clear a real risk-adjusted bar,
 // not merely beat buy&hold — the goal is strategies a quant would actually find
 // attractive (Sharpe ≈ 1+), not marginal ones. Tunable via LAB_MIN_SHARPE.
@@ -383,13 +387,20 @@ function holdout(code, candles, feeBps, lang) {
     if (res.warnings.length) return { ok: false, detail: "error on holdout" };
     const m = res.metrics;
     if (m.tradeCount < 5) return { ok: true, skipped: "few trades" };
+    // REPLICATION: does the signal actually PREDICT on unseen data, or did the
+    // backtest profit come from a few lucky trades? A clearly negative out-of-sample
+    // IC = the "edge" reproduces backwards → bury it (the XAU-reel failure mode).
+    const { ic, n: icN } = signalIC(tail, res.signals);
+    if (ic != null && ic < OOS_IC_FLOOR) {
+      return { ok: false, detail: `failed replication: OOS signal anti-predicts (IC ${ic.toFixed(3)}, n=${icN})`, ic: +ic.toFixed(3) };
+    }
     // The RECENT tail must actually be PROFITABLE, not merely "not inverted": a
     // strategy that made its money years ago but is flat or bleeding lately is
     // decayed and shouldn't be traded now. (Tunable via LAB_HOLDOUT_PF.)
     if (m.profitFactor < HOLDOUT_MIN_PF || m.totalReturnPct <= 0) {
-      return { ok: false, detail: `stale recent tail: PF ${m.profitFactor.toFixed(2)}, ret ${m.totalReturnPct.toFixed(0)}%` };
+      return { ok: false, detail: `stale recent tail: PF ${m.profitFactor.toFixed(2)}, ret ${m.totalReturnPct.toFixed(0)}%`, ic: ic != null ? +ic.toFixed(3) : null };
     }
-    return { ok: true, pf: +m.profitFactor.toFixed(2), ret: +m.totalReturnPct.toFixed(1) };
+    return { ok: true, pf: +m.profitFactor.toFixed(2), ret: +m.totalReturnPct.toFixed(1), ic: ic != null ? +ic.toFixed(3) : null };
   } catch {
     return { ok: false, detail: "holdout threw" };
   }
@@ -628,7 +639,7 @@ function gauntlet(code, datasets, globalTrials, lang) {
 
     const { qualified, reasons } = qualifyAll({ perSet: [{ name: r.name, m: r.m }], dsrPct });
     byMarket[r.name] = {
-      ...mk, dsr: +dsrPct.toFixed(1), holdoutPf: ho.pf ?? null,
+      ...mk, dsr: +dsrPct.toFixed(1), holdoutPf: ho.pf ?? null, oosIc: ho.ic ?? null,
       profiles: qualified,
       ...(qualified.length ? {} : { rejected: reasons.private || reasons.prop }),
     };
