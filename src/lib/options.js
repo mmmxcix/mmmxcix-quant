@@ -42,11 +42,37 @@ export function blackScholesGreeks({ S, K, T, sigma, r = RISK_FREE, type }) {
   if (type === "call") {
     const price = S * Nd1 - K * disc * Nd2;
     const theta = (-(S * pdf * sigma) / (2 * sqrtT) - r * K * disc * Nd2) / 365;
-    return { delta: Nd1, gamma, theta, vega, price };
+    const rho = (K * T * disc * Nd2) / 100; // per 1% rate move
+    return { delta: Nd1, gamma, theta, vega, rho, price, d1, d2 };
   }
   const price = K * disc * normCdf(-d2) - S * normCdf(-d1);
   const theta = (-(S * pdf * sigma) / (2 * sqrtT) + r * K * disc * normCdf(-d2)) / 365;
-  return { delta: Nd1 - 1, gamma, theta, vega, price };
+  const rho = (-K * T * disc * normCdf(-d2)) / 100;
+  return { delta: Nd1 - 1, gamma, theta, vega, rho, price, d1, d2 };
+}
+
+/**
+ * Implied volatility: the σ that makes Black-Scholes reproduce a market `price`.
+ * Robust BISECTION (Newton can diverge near the money / at expiry) over σ∈(0.1%,600%].
+ * Returns null when the price is outside the no-arbitrage bounds or won't converge.
+ */
+export function impliedVol({ price, S, K, T, r = RISK_FREE, type }) {
+  if (!(price > 0) || !(S > 0) || !(K > 0) || !(T > 0)) return null;
+  const disc = Math.exp(-r * T);
+  // No-arbitrage bounds: below intrinsic (discounted) there's no σ that fits.
+  const floor = type === "call" ? Math.max(0, S - K * disc) : Math.max(0, K * disc - S);
+  const ceil = type === "call" ? S : K * disc;
+  if (price < floor - 1e-6 || price > ceil + 1e-6) return null;
+  const priceAt = (sig) => blackScholesGreeks({ S, K, T, sigma: sig, r, type }).price;
+  let lo = 0.001, hi = 6;
+  if (priceAt(lo) > price || priceAt(hi) < price) return null; // not bracketed
+  for (let i = 0; i < 100; i++) {
+    const mid = (lo + hi) / 2;
+    const pm = priceAt(mid);
+    if (Math.abs(pm - price) < 1e-6) return mid;
+    if (pm < price) lo = mid; else hi = mid;
+  }
+  return (lo + hi) / 2;
 }
 
 // ── Chain fetch ──────────────────────────────────────────────────────────────

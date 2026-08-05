@@ -3,7 +3,9 @@ import { useSearchParams, Link } from "react-router-dom";
 import { Plus, X, Trash2, ArrowLeftRight } from "lucide-react";
 import SymbolSearch from "@/components/SymbolSearch";
 import XYLineChart from "@/components/XYLineChart";
-import { fetchOptionChain, markPrice, netCost, payoffCurve, positionGreeks, STRATEGY_PRESETS, fetchTermStructure } from "@/lib/options";
+import { fetchOptionChain, markPrice, netCost, payoffCurve, positionGreeks, STRATEGY_PRESETS, fetchTermStructure, blackScholesGreeks, impliedVol } from "@/lib/options";
+import { gbmCone, estimateGbmParams } from "@/lib/montecarlo";
+import { fetchCandles } from "@/lib/data";
 import { cn, fmtNum, fmtPrice, fmtPct } from "@/lib/utils";
 
 function fmtExpiry(sec) {
@@ -305,12 +307,158 @@ export default function Options() {
         )}
       </div>
 
+      {/* Two math tools derived from the Black-Scholes / Itô machinery. */}
+      <div className="grid lg:grid-cols-2 gap-4 mt-4">
+        <BSCalculator spot={spot} />
+        <GbmConePanel symbol={symbol} spot={spot} />
+      </div>
+
       <p className="mt-3 text-[11px] text-dim">
         Highlighted row = at-the-money; tinted = in-the-money. IV comes from the market; Greeks and the payoff
         engine use Black-Scholes / expiry intrinsic value. Data is delayed. New to this? See the{" "}
         <Link to="/academy" className="text-accent hover:underline">Options &amp; Derivatives course</Link>.
         Not investment advice.
       </p>
+    </div>
+  );
+}
+
+// ── Black-Scholes calculator + implied-vol solver ────────────────────────────
+function BSInput({ label, value, onChange, step = 1, suffix }) {
+  return (
+    <label className="text-[10px] text-dim">
+      {label}
+      <div className="flex items-center gap-1 mt-0.5">
+        <input type="number" value={value} step={step} onChange={(e) => onChange(e.target.value)}
+          className="input-base w-full !py-1 font-mono text-xs" />
+        {suffix && <span className="text-[10px] text-dim">{suffix}</span>}
+      </div>
+    </label>
+  );
+}
+
+function BSCalculator({ spot }) {
+  const [S, setS] = useState(100);
+  const [K, setK] = useState(100);
+  const [days, setDays] = useState(30);
+  const [r, setR] = useState(4.3);
+  const [vol, setVol] = useState(25);
+  const [type, setType] = useState("call");
+  const [mkt, setMkt] = useState("");
+  useEffect(() => { if (spot > 0) { setS(+spot.toFixed(2)); setK(Math.round(spot)); } }, [spot]);
+
+  const T = Math.max(+days, 0) / 365;
+  const g = blackScholesGreeks({ S: +S, K: +K, T, sigma: +vol / 100, r: +r / 100, type });
+  const iv = mkt !== "" ? impliedVol({ price: +mkt, S: +S, K: +K, T, r: +r / 100, type }) : null;
+
+  return (
+    <div className="rounded-xl border border-line lg-glass p-4">
+      <p className="text-sm font-semibold mb-3">Black-Scholes calculator</p>
+      <div className="flex items-center gap-1.5 mb-3">
+        {["call", "put"].map((t) => (
+          <button key={t} onClick={() => setType(t)} className={cn("chip !text-[11px]", type === t ? "chip-active" : "chip-idle")}>{t}</button>
+        ))}
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mb-3">
+        <BSInput label="Spot S" value={S} onChange={setS} step={0.5} />
+        <BSInput label="Strike K" value={K} onChange={setK} step={0.5} />
+        <BSInput label="Days to expiry" value={days} onChange={setDays} step={1} />
+        <BSInput label="Rate r" value={r} onChange={setR} step={0.1} suffix="%" />
+        <BSInput label="Volatility σ" value={vol} onChange={setVol} step={1} suffix="%" />
+      </div>
+      <div className="rounded-lg border border-accent/30 bg-accent/5 p-2.5 mb-3">
+        <div className="flex items-baseline justify-between">
+          <span className="text-[11px] text-dim">Fair value</span>
+          <span className="font-mono font-semibold text-accent">{g.price != null ? fmtNum(g.price, 2) : "–"}</span>
+        </div>
+      </div>
+      <div className="grid grid-cols-5 gap-1.5 text-center">
+        {[["Δ", g.delta, 3], ["Γ", g.gamma, 4], ["Θ/d", g.theta, 3], ["Vega", g.vega, 3], ["ρ", g.rho, 3]].map(([l, v, d]) => (
+          <div key={l} className="rounded-lg border border-line bg-bg/40 px-1 py-1.5">
+            <p className="text-[10px] text-dim">{l}</p>
+            <p className="font-mono text-[11px] text-text">{v != null ? fmtNum(v, d) : "–"}</p>
+          </div>
+        ))}
+      </div>
+      {/* Reverse: solve implied vol from a market price. */}
+      <div className="flex items-center gap-2 mt-3 text-[11px]">
+        <span className="text-dim">Implied σ from a price</span>
+        <input type="number" value={mkt} step={0.05} placeholder="mkt price" onChange={(e) => setMkt(e.target.value)}
+          className="input-base w-24 !py-1 font-mono text-xs" />
+        <span className="font-mono font-semibold text-accent">{mkt !== "" ? (iv != null ? `${(iv * 100).toFixed(1)}%` : "no fit") : ""}</span>
+      </div>
+      <p className="text-[10px] text-dim mt-2">Θ per day, Vega/ρ per 1-point move. The σ√T scaling and the ½σ² in d₁ are the Itô terms from the Academy lesson.</p>
+    </div>
+  );
+}
+
+// ── GBM forward risk-cone ────────────────────────────────────────────────────
+function ConeChart({ cone, S0, height = 220 }) {
+  const steps = cone.bands[0].values.length - 1;
+  const [p5, p25, med, p75, p95] = cone.bands.map((b) => b.values);
+  let lo = Infinity, hi = -Infinity;
+  for (const v of p5) lo = Math.min(lo, v);
+  for (const v of p95) hi = Math.max(hi, v);
+  const pad = (hi - lo) * 0.04 || 1;
+  lo -= pad; hi += pad;
+  const W = 600, H = height;
+  const X = (t) => (t / steps) * W;
+  const Y = (v) => H - ((v - lo) / (hi - lo)) * H;
+  const area = (a, b) => [...a.map((v, t) => `${X(t).toFixed(1)},${Y(v).toFixed(1)}`), ...b.map((v, t) => `${X(steps - t).toFixed(1)},${Y(b[steps - t]).toFixed(1)}`)].join(" ");
+  const lineOf = (arr) => arr.map((v, t) => `${X(t).toFixed(1)},${Y(v).toFixed(1)}`).join(" ");
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="w-full block" style={{ height }}>
+      <polygon points={area(p95, p5)} fill="var(--viz-blue)" opacity="0.12" />
+      <polygon points={area(p75, p25)} fill="var(--viz-blue)" opacity="0.18" />
+      <polyline points={lineOf(med)} fill="none" stroke="var(--viz-amber)" strokeWidth="2" vectorEffect="non-scaling-stroke" />
+      <line x1="0" y1={Y(S0)} x2={W} y2={Y(S0)} stroke="var(--text)" strokeOpacity="0.2" strokeDasharray="4 3" vectorEffect="non-scaling-stroke" />
+    </svg>
+  );
+}
+
+function GbmConePanel({ symbol, spot }) {
+  const [horizon, setHorizon] = useState(60);
+  const [cone, setCone] = useState(null);
+  const [meta, setMeta] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+
+  const run = async () => {
+    setBusy(true); setErr(null);
+    try {
+      const candles = await fetchCandles({ market: "stock", symbol, interval: "1d", range: "1y" });
+      const p = estimateGbmParams(candles);
+      const S0 = spot > 0 ? spot : candles?.at?.(-1)?.close;
+      if (!p || !(S0 > 0)) { setErr("Not enough history for this symbol."); setCone(null); return; }
+      setMeta({ ...p, S0 });
+      setCone(gbmCone({ S0, mu: p.mu, sigma: p.sigma, steps: +horizon, paths: 2000, seed: 7 }));
+    } catch (e) { setErr(e.message); } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="rounded-xl border border-line lg-glass p-4">
+      <div className="flex flex-wrap items-center gap-2 mb-3">
+        <p className="text-sm font-semibold">GBM risk cone · {symbol}</p>
+        <label className="text-[10px] text-dim ml-auto">Horizon
+          <select value={horizon} onChange={(e) => setHorizon(+e.target.value)} className="input-base ml-1 !py-0.5 text-[10px]">
+            {[20, 40, 60, 120, 250].map((d) => <option key={d} value={d}>{d}d</option>)}
+          </select>
+        </label>
+        <button onClick={run} disabled={busy} className="chip chip-idle !text-[11px] hover:text-accent">{busy ? "Simulating…" : "Project"}</button>
+      </div>
+      {err && <p className="text-[11px] text-down">{err}</p>}
+      {!cone && !err && <p className="text-[11px] text-dim">Simulates 2,000 Geometric-Brownian-Motion paths from this symbol's drift &amp; volatility (last 1y) — the 5th–95th-percentile cone of where the price could go.</p>}
+      {cone && meta && (
+        <>
+          <ConeChart cone={cone} S0={meta.S0} />
+          <div className="grid grid-cols-3 gap-2 mt-3 text-center">
+            <div className="rounded-lg border border-line bg-bg/40 px-1 py-1.5"><p className="text-[10px] text-dim">P5</p><p className="font-mono text-[11px] text-down">{fmtNum(cone.stats.p5, 2)} <span className="text-dim">({fmtNum(cone.stats.p5RetPct, 0)}%)</span></p></div>
+            <div className="rounded-lg border border-line bg-bg/40 px-1 py-1.5"><p className="text-[10px] text-dim">Median</p><p className="font-mono text-[11px] text-text">{fmtNum(cone.stats.median, 2)} <span className="text-dim">({fmtNum(cone.stats.medianRetPct, 0)}%)</span></p></div>
+            <div className="rounded-lg border border-line bg-bg/40 px-1 py-1.5"><p className="text-[10px] text-dim">P95</p><p className="font-mono text-[11px] text-up">{fmtNum(cone.stats.p95, 2)} <span className="text-dim">({fmtNum(cone.stats.p95RetPct, 0)}%)</span></p></div>
+          </div>
+          <p className="text-[10px] text-dim mt-2 font-mono">daily μ {(meta.mu * 100).toFixed(3)}% · σ {(meta.sigma * 100).toFixed(2)}% · P(up) {cone.stats.pUpPct.toFixed(0)}% over {horizon}d. Amber = median path, bands = 25–75 &amp; 5–95%. A projection, not a forecast.</p>
+        </>
+      )}
     </div>
   );
 }

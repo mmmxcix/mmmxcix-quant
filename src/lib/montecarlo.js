@@ -29,6 +29,69 @@ export function quantile(arr, q) {
   return lo === hi ? s[lo] : s[lo] + (s[hi] - s[lo]) * (pos - lo);
 }
 
+/** One standard-normal draw (Box–Muller) from a uniform RNG. */
+function boxMuller(rand) {
+  let u = 0, v = 0;
+  while (u === 0) u = rand();
+  while (v === 0) v = rand();
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+}
+
+/** q-quantile of an ALREADY-SORTED ascending array (linear interpolation). */
+function qSorted(s, q) {
+  if (!s.length) return 0;
+  const pos = (s.length - 1) * q, lo = Math.floor(pos), hi = Math.ceil(pos);
+  return lo === hi ? s[lo] : s[lo] + (s[hi] - s[lo]) * (pos - lo);
+}
+
+/**
+ * Geometric Brownian Motion forward "risk cone": simulate `paths` price paths from
+ * S0 under GBM — S_{t+1} = S_t · exp[(μ − ½σ²) + σ·Z] — and return percentile bands
+ * over time. This is the parametric cousin of the trade-bootstrap MC: instead of
+ * resampling past trades it projects where the PRICE could go from its drift and
+ * vol. μ and σ are PER STEP (e.g. daily log-return mean and std). Deterministic
+ * for a given seed. The ½σ² is the Itô correction (see the Academy lesson).
+ * @returns {{ bands:{q,values[]}[], finals:number[], stats:Object } | null}
+ */
+export function gbmCone({ S0, mu = 0, sigma, steps = 60, paths = 2000, seed = 1, quantiles = [0.05, 0.25, 0.5, 0.75, 0.95] }) {
+  if (!(S0 > 0) || !(sigma > 0) || steps < 1) return null;
+  const rand = mulberry32(seed);
+  const drift = mu - 0.5 * sigma * sigma;
+  const cols = Array.from({ length: steps + 1 }, () => new Float64Array(paths));
+  for (let p = 0; p < paths; p++) {
+    let s = S0;
+    cols[0][p] = s;
+    for (let t = 1; t <= steps; t++) { s *= Math.exp(drift + sigma * boxMuller(rand)); cols[t][p] = s; }
+  }
+  const bands = quantiles.map((q) => ({ q, values: new Array(steps + 1) }));
+  for (let t = 0; t <= steps; t++) {
+    const sorted = Array.from(cols[t]).sort((a, b) => a - b);
+    quantiles.forEach((q, qi) => { bands[qi].values[t] = qSorted(sorted, q); });
+  }
+  const finals = Array.from(cols[steps]).sort((a, b) => a - b);
+  return {
+    bands, finals,
+    stats: {
+      median: qSorted(finals, 0.5), p5: qSorted(finals, 0.05), p95: qSorted(finals, 0.95),
+      pUpPct: (finals.filter((x) => x > S0).length / paths) * 100,
+      medianRetPct: (qSorted(finals, 0.5) / S0 - 1) * 100,
+      p5RetPct: (qSorted(finals, 0.05) / S0 - 1) * 100,
+      p95RetPct: (qSorted(finals, 0.95) / S0 - 1) * 100,
+    },
+  };
+}
+
+/** Estimate per-step GBM parameters (log-return mean μ and std σ) from candles. */
+export function estimateGbmParams(candles) {
+  const cl = (candles || []).map((c) => c.close).filter((x) => x > 0);
+  if (cl.length < 20) return null;
+  const r = [];
+  for (let i = 1; i < cl.length; i++) r.push(Math.log(cl[i] / cl[i - 1]));
+  const mu = r.reduce((a, b) => a + b, 0) / r.length;
+  const sigma = Math.sqrt(r.reduce((a, b) => a + (b - mu) ** 2, 0) / (r.length - 1));
+  return { mu, sigma, n: r.length };
+}
+
 /**
  * Run a bootstrap Monte Carlo.
  *
