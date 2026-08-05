@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { LayoutDashboard, Star, Activity, TrendingUp, ShieldCheck, AlertTriangle } from "lucide-react";
+import { LayoutDashboard, Star, Activity, TrendingUp, ShieldCheck, RefreshCw } from "lucide-react";
 import { fetchCandles, WATCHLIST } from "@/lib/data";
 import { getPortfolio, getWatchlist, subscribe as subscribeStore } from "@/lib/portfolio";
 import WorldClock from "@/components/WorldClock";
@@ -211,8 +211,8 @@ function WatchlistCard() {
           {!custom && <span className="ml-2 text-[10px] font-normal text-dim">defaults — add your own in the Watchlist tab</span>}
         </span>
         {failed > 0 ? (
-          <button onClick={reload} className="flex items-center gap-1 text-[11px] text-down hover:underline" title="Some quotes failed to load">
-            <AlertTriangle className="w-3 h-3" /> {failed} failed · retry
+          <button onClick={reload} className="flex items-center gap-1 text-[11px] text-dim hover:text-fg hover:underline" title={`${failed} quote${failed > 1 ? "s" : ""} didn't load — tap to retry`}>
+            <RefreshCw className="w-3 h-3" /> {failed} pending · retry
           </button>
         ) : (
           <span className="text-xs text-dim">live</span>
@@ -259,7 +259,7 @@ function WatchlistCard() {
                 <td className="px-4 py-3 hidden sm:table-cell">
                   <div className="flex justify-end">
                     {loading && !q ? <Skeleton className="h-4 w-16" />
-                      : q ? <Sparkline data={q.spark} up={(q.changePct ?? 0) >= 0} delay={i * 90} />
+                      : q ? <Sparkline data={q.spark} up={(q.spark?.at(-1) ?? 0) >= (q.spark?.[0] ?? 0)} delay={i * 90} />
                       : <span className="text-dim/40 text-xs">—</span>}
                   </div>
                 </td>

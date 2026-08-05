@@ -107,15 +107,29 @@ function stripCdata(str) {
   return str.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1');
 }
 
+// Named entities we see in RSS/Atom headlines. Numeric (&#8217; &#x2019;) is
+// handled generically below — miss those and you get literal "SpaceX&#39;s".
+const NAMED_ENTITIES = {
+  amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ',
+  rsquo: '’', lsquo: '‘', rdquo: '”', ldquo: '“',
+  mdash: '—', ndash: '–', hellip: '…', middot: '·',
+  trade: '™', reg: '®', copy: '©', deg: '°',
+  eacute: 'é', egrave: 'è', agrave: 'à', uuml: 'ü',
+  ouml: 'ö', auml: 'ä', szlig: 'ß',
+};
+
 function decodeEntities(str) {
-  return str
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&apos;/g, "'")
-    .replace(/&nbsp;/g, ' ');
+  return String(str || '')
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => codePoint(parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, dec) => codePoint(parseInt(dec, 10)))
+    .replace(/&([a-zA-Z][a-zA-Z0-9]*);/g, (m, name) =>
+      Object.prototype.hasOwnProperty.call(NAMED_ENTITIES, name) ? NAMED_ENTITIES[name] : m)
+    .replace(/&amp;/g, '&'); // catch a double-encoded &amp; wrapping a numeric entity
+}
+
+function codePoint(cp) {
+  try { return Number.isFinite(cp) ? String.fromCodePoint(cp) : ''; }
+  catch { return ''; }
 }
 
 function stripHtml(str) {

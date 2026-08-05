@@ -42,6 +42,10 @@ export async function fetchYields(country, startDate) {
     const close = num(r.close);
     const days = num(r.maturity_days);
     if (close == null || days == null) continue;
+    // Real (inflation-linked / TIPS) yields sit ~2pp below the nominal curve —
+    // plotting them as a point on the same axis makes the term structure crash
+    // into a V-shape at that tenor. Keep the nominal curve nominal-only.
+    if (/tips|real|inflation|linked|breakeven/i.test(String(r.maturity || ""))) continue;
     rows.push({ date: r.date, tenor: r.maturity, days, close });
   }
   rows.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.days - b.days));

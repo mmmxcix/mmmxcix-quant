@@ -28,6 +28,12 @@ const BOOKS = [
   { id: "prop", icon: Shield },
 ].filter((b) => PROFILE_IDS.includes(b.id));
 
+// Change since local midnight, measured entirely within the equity history so
+// base and cur share one scale. Comparing history against combined.equity is a
+// bug: the live figure grows when a paper strategy is onboarded (fresh capital),
+// so a same-day onboarding printed absurd "+299% today" next to a flat all-time.
+// We require a genuine pre-midnight snapshot; if there is none, there is no
+// honest "today" to show (return null) rather than faking one from the first bar.
 function dayPnl(combined) {
   const hist = combined?.history;
   if (!Array.isArray(hist) || hist.length < 2) return null;
@@ -38,11 +44,14 @@ function dayPnl(combined) {
     if (p.t < midnight) base = p.v; // carry forward the last pre-midnight value
     else break;
   }
-  const partial = base == null; // no snapshot before today → measuring from first bar today
-  if (partial) base = hist[0].v;
-  const cur = combined.equity ?? hist[hist.length - 1].v;
-  if (!(base > 0)) return null;
-  return { abs: cur - base, pct: ((cur - base) / base) * 100, partial };
+  if (!(base > 0)) return null; // no pre-midnight baseline → don't invent a "today"
+  const cur = hist[hist.length - 1].v; // same series as base — no scale mismatch
+  if (!(cur > 0)) return null;
+  const pct = ((cur - base) / base) * 100;
+  // A diversified paper book can't move tens of percent in a day from trading —
+  // that magnitude is a capital/scale artifact, not P&L. Suppress rather than lie.
+  if (!Number.isFinite(pct) || Math.abs(pct) > 40) return null;
+  return { abs: cur - base, pct, partial: false };
 }
 
 // Normalise generated code to a signature so two strategies with identical logic
