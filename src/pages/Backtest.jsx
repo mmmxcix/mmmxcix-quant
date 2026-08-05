@@ -1091,10 +1091,19 @@ export default function Backtest() {
                 <MarketScanPanel
                   code={code}
                   language={lang}
+                  usesPyodide={mode !== "builder" && lang === "python"}
                   capital={capital}
                   feeBps={feeBps}
                   positionPct={positionPct}
                   leverage={leverage}
+                  // Build the signal fn the SAME way the manual run does, so the scan
+                  // reproduces exactly what you tested: an unedited preset runs its
+                  // native builder implementation (not the compiled code string).
+                  buildSignalFn={async (candles) => {
+                    if (mode === "builder") return strategy.build(effectiveParams);
+                    if (lang === "python") return signalsToFn(await runPythonSignals(code, candles));
+                    return compileStrategy(code);
+                  }}
                   onLoad={({ market: m, symbol: s, interval: iv, range: rg }) => {
                     setMarket(m); setSymbol(s); setIntervalId(iv); if (rg) setRange(rg);
                     window.scrollTo({ top: 0, behavior: "smooth" });

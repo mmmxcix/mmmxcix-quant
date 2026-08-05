@@ -44,7 +44,9 @@ function pickBests(list) {
 
 const TF_CHOICES = ["1d", "4h", "1h", "15m"];
 
-export default function MarketScanPanel({ code, language, capital, feeBps, positionPct, leverage, onLoad }) {
+export default function MarketScanPanel({ code, language, capital, feeBps, positionPct, leverage, onLoad, buildSignalFn, usesPyodide }) {
+  // Whether the scan will actually run Pyodide (Python code, NOT a native preset).
+  const pyodide = usesPyodide ?? (language === "python");
   const [classes, setClasses] = useState(["crypto", "stock", "etf", "forex"]);
   const [tfs, setTfs] = useState(["1d"]);
   const [obj, setObj] = useState("sharpe");
@@ -53,6 +55,7 @@ export default function MarketScanPanel({ code, language, capital, feeBps, posit
   const [total, setTotal] = useState(0);
   const [results, setResults] = useState([]);
   const [best, setBest] = useState(null); // per-metric winners across the scan
+  const [diag, setDiag] = useState(null); // why symbols were dropped (no black box)
   const [scanned, setScanned] = useState(false); // a scan has finished (for the empty-state)
   const cancelRef = useRef(false);
 
@@ -73,38 +76,48 @@ export default function MarketScanPanel({ code, language, capital, feeBps, posit
 
   async function scan() {
     if (!tasks.length || !code?.trim()) return;
-    setRunning(true); cancelRef.current = false; setResults([]); setBest(null); setScanned(false); setDone(0); setTotal(tasks.length);
+    setRunning(true); cancelRef.current = false; setResults([]); setBest(null); setDiag(null); setScanned(false); setDone(0); setTotal(tasks.length);
     const get = OBJECTIVES[obj].get;
     const out = [];
+    // Build the signal fn exactly the way the manual run does (an unedited preset
+    // uses its native builder, not the compiled code string) — the fallback keeps
+    // this component usable standalone.
+    const makeFn = buildSignalFn || (async (cs) => (language === "python" ? signalsToFn(await runPythonSignals(code, cs)) : compileStrategy(code)));
+    // Per-reason tally so a "no results" is never a mystery: we can SEE whether
+    // symbols had no data, errored, liquidated, or just traded too little.
+    const d = { noData: 0, errored: 0, liquidated: 0, fewTrades: 0, kept: 0, firstError: null };
     let idx = 0, finished = 0;
-    const concurrency = language === "python" ? 1 : 5; // Pyodide is single-threaded
+    const concurrency = pyodide ? 1 : 5; // Pyodide is single-threaded; native JS isn't
     const worker = async () => {
       while (idx < tasks.length && !cancelRef.current) {
         const { s, tf } = tasks[idx++];
         try {
           const candles = await fetchCandles({ market: s.market, symbol: s.symbol, interval: tf, range: SCAN_RANGE[tf] || "2y" });
-          if (candles && candles.length > 60) {
-            const fn = language === "python" ? signalsToFn(await runPythonSignals(code, candles)) : compileStrategy(code);
+          if (!candles || candles.length <= 60) {
+            d.noData++;
+          } else {
+            const fn = await makeFn(candles);
             const r = runBacktest({ candles, signalFn: fn, initialCapital: capital, feeBps, positionPct, leverage });
-            // Keep any result that traded enough to mean something. A minor warning
-            // (a per-bar error on one symbol) shouldn't wipe the whole scan — only
-            // exclude the VOID ones: a liquidation makes the equity curve garbage,
-            // and that used to happen on every symbol when the editor's leverage was
-            // high, filtering out literally everything (the "no results" bug).
-            const liquidated = r.warnings.some((w) => /liquidat/i.test(w));
-            if (r.metrics.tradeCount >= 3 && !liquidated) {
-              out.push({ ...s, interval: tf, m: r.metrics, warned: r.warnings.length > 0 });
-            }
+            // A liquidation voids the equity curve (used to happen on every symbol
+            // at high leverage → the whole scan filtered to nothing). Tally each
+            // drop reason instead of silently swallowing it.
+            if (r.warnings.some((w) => /liquidat/i.test(w))) d.liquidated++;
+            else if (r.metrics.tradeCount < 3) d.fewTrades++;
+            else { d.kept++; out.push({ ...s, interval: tf, m: r.metrics, warned: r.warnings.length > 0 }); }
           }
-        } catch { /* unreachable symbol / bad data — skip */ }
+        } catch (e) {
+          d.errored++;
+          if (!d.firstError) d.firstError = (e && e.message ? e.message : String(e)).slice(0, 120);
+        }
         finished++; setDone(finished);
-        if (finished % 4 === 0) { out.sort((a, b) => get(b.m) - get(a.m)); setResults(out.slice(0, 40)); setBest(pickBests(out)); }
+        if (finished % 4 === 0) { out.sort((a, b) => get(b.m) - get(a.m)); setResults(out.slice(0, 40)); setBest(pickBests(out)); setDiag({ ...d }); }
       }
     };
     await Promise.all(Array.from({ length: concurrency }, worker));
     out.sort((a, b) => get(b.m) - get(a.m));
     setResults(out.slice(0, 40));
     setBest(pickBests(out));
+    setDiag({ ...d });
     setScanned(true);
     setRunning(false);
   }
@@ -162,15 +175,27 @@ export default function MarketScanPanel({ code, language, capital, feeBps, posit
           </div>
         </div>
       )}
-      {language === "python" && (
+      {pyodide && (
         <p className="text-[10px] text-dim">Python runs one symbol at a time (Pyodide) — a full 4-class · daily scan takes a few minutes. Narrow the markets/timeframes for a quicker pass.</p>
       )}
 
+      {/* Diagnostic tally — where the tested combos went. Never a black box. */}
+      {diag && (diag.kept + diag.fewTrades + diag.liquidated + diag.errored + diag.noData) > 0 && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] font-mono text-dim">
+          <span className="text-up">{diag.kept} kept</span>
+          {diag.fewTrades > 0 && <span>{diag.fewTrades} &lt;3 trades</span>}
+          {diag.liquidated > 0 && <span className="text-warn">{diag.liquidated} liquidated ({leverage}x)</span>}
+          {diag.errored > 0 && <span className="text-down">{diag.errored} errored</span>}
+          {diag.noData > 0 && <span>{diag.noData} no data</span>}
+        </div>
+      )}
       {scanned && !running && results.length === 0 && (
         <p className="text-[11px] text-warn leading-relaxed">
-          No market produced a usable result (≥3 trades, not liquidated) on the selected timeframes. The strategy may rarely
-          trade, get liquidated at the current leverage ({leverage}x — try lowering it), or be unsuited to these markets —
-          widen the markets/timeframes, drop the leverage, or run it once in the backtester to see any warnings.
+          No market produced a usable result (≥3 trades, not liquidated).{" "}
+          {diag?.errored > 0 && `${diag.errored} combos errored${diag.firstError ? ` (e.g. "${diag.firstError}")` : ""} — the code likely doesn't run on that data. `}
+          {diag?.liquidated > 0 && `${diag.liquidated} liquidated at ${leverage}x — lower the leverage. `}
+          {diag?.fewTrades > 0 && diag.errored === 0 && diag.liquidated === 0 && `The strategy just trades too rarely here (${diag.fewTrades} combos had <3 trades) — widen the markets/timeframes. `}
+          {(!diag || (diag.errored === 0 && diag.liquidated === 0 && diag.fewTrades === 0)) && "Widen the markets/timeframes, or run it once in the backtester to see any warnings."}
         </p>
       )}
       {/* Per-metric winners — the best variant on EACH dimension, each loadable. */}
