@@ -247,23 +247,20 @@ export default function BrainVault() {
       const t = e.touches[0];
       const rect = canvas.getBoundingClientRect();
       const hit = hitTest(t.clientX - rect.left, t.clientY - rect.top);
-      userMoved = true;
-      if (hit) { dragNode = hit; hit.pinned = true; setHover(null); kick(0.5); }
-      else tLast = { x: t.clientX, y: t.clientY };
+      // Only capture the touch when grabbing a NODE — an empty-space swipe is left
+      // to the browser so the page scrolls (canvas is touch-action: pan-y). This
+      // fixes the "stuck on the graph, can't scroll" problem on mobile.
+      if (hit) { userMoved = true; dragNode = hit; hit.pinned = true; setHover(null); kick(0.5); }
     };
     const onTouchMove = (e) => {
-      if (e.touches.length !== 1) return;
+      if (e.touches.length !== 1 || !dragNode) return; // no node grabbed → let the page scroll
       const t = e.touches[0];
-      if (dragNode) {
-        e.preventDefault();
-        const rect = canvas.getBoundingClientRect();
-        dragNode.x = (t.clientX - rect.left - cam.tx) / cam.scale;
-        dragNode.y = (t.clientY - rect.top - cam.ty) / cam.scale;
-        dragNode.vx = 0; dragNode.vy = 0;
-        kick(0.35);
-        return;
-      }
-      if (tLast) { e.preventDefault(); cam.tx += t.clientX - tLast.x; cam.ty += t.clientY - tLast.y; tLast = { x: t.clientX, y: t.clientY }; draw(); }
+      e.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      dragNode.x = (t.clientX - rect.left - cam.tx) / cam.scale;
+      dragNode.y = (t.clientY - rect.top - cam.ty) / cam.scale;
+      dragNode.vx = 0; dragNode.vy = 0;
+      kick(0.35);
     };
     const onTouchEnd = () => {
       if (dragNode) { dragNode.pinned = false; dragNode = null; kick(0.3); }
@@ -330,7 +327,7 @@ export default function BrainVault() {
 
           {/* graph */}
           <div ref={wrapRef} className="relative rounded-xl border border-line lg-glass overflow-hidden">
-            <canvas ref={canvasRef} className="block w-full touch-none" style={{ height: 520 }} />
+            <canvas ref={canvasRef} className="block w-full touch-pan-y" style={{ height: 520 }} />
             {/* legend — the 4 pipeline stages, cross-referenced from the registry */}
             <div className="absolute top-3 left-3 flex flex-col gap-1 text-[11px] text-dim">
               <span className="flex items-center gap-1.5"><i className="w-2 h-2 rounded-full inline-block" style={{ background: STAGE_COLORS.paper }} /> paper-trading (live)</span>

@@ -125,7 +125,7 @@ export default function MMSim() {
               <Scale className="w-4 h-4 text-accent" />
               <p className="text-xs text-dim font-medium">Same day, two temperaments</p>
             </div>
-            <table className="w-full text-xs font-mono">
+            <div className="overflow-x-auto"><table className="w-full text-xs font-mono">
               <tbody>
                 <tr className="border-b border-line/40">
                   <td className="py-1 text-dim font-sans">γ = 0.02 (greedy)</td>
@@ -138,7 +138,7 @@ export default function MMSim() {
                   <td className="text-right text-dim">max inv {cmp.tight.maxAbsInv}</td>
                 </tr>
               </tbody>
-            </table>
+            </table></div>
           </div>
         </div>
 

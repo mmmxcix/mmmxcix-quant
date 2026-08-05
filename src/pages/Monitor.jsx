@@ -130,7 +130,7 @@ function Panel({ panel, quotes, navigate }) {
       <p className="px-3 pt-2.5 pb-1.5 text-[10px] tracking-[0.25em] text-dim uppercase border-b border-line">
         {panel.title}
       </p>
-      <table className="w-full text-xs font-mono [font-variant-numeric:tabular-nums]">
+      <div className="overflow-x-auto"><table className="w-full text-xs font-mono [font-variant-numeric:tabular-nums]">
         <tbody>
           {panel.entries.map((e) =>
             quotes ? (
@@ -147,7 +147,7 @@ function Panel({ panel, quotes, navigate }) {
             )
           )}
         </tbody>
-      </table>
+      </table></div>
     </section>
   );
 }

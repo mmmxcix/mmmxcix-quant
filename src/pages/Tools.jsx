@@ -215,7 +215,7 @@ function PivotTool() {
         ))}
       </div>
       {rows ? (
-        <table className="w-full text-sm font-mono">
+        <div className="overflow-x-auto"><table className="w-full text-sm font-mono">
           <tbody>
             {rows.map((r) => (
               <tr key={r.key} className="border-b border-line/40 last:border-0">
@@ -224,7 +224,7 @@ function PivotTool() {
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       ) : (
         <p className="text-xs text-dim">Enter valid values (High ≥ Low).</p>
       )}

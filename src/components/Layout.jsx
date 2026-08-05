@@ -320,9 +320,11 @@ export default function Layout({ children }) {
         </div>
       )}
 
-      <main className="md:ml-56 p-3 sm:p-4 md:p-8 max-w-[1800px]">
-        {/* keyed by route so each page entry replays the reveal */}
-        <div key={location.pathname} className="view-in">{children}</div>
+      <main className="md:ml-56 p-3 sm:p-4 md:p-8">
+        {/* keyed by route so each page entry replays the reveal. Capped + centred
+            here (not on <main>, which needs its ml-56 sidebar offset) so ultrawide
+            screens don't leave the content hugging the left. */}
+        <div key={location.pathname} className="view-in mx-auto max-w-[1800px]">{children}</div>
       </main>
 
       {/* Mobile footer */}

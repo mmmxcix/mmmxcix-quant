@@ -224,7 +224,7 @@ export default function MLRanking() {
                 <ListOrdered className="w-4 h-4 text-accent" />
                 <p className="text-sm font-semibold">Current top 10 — model rank for {out.liveMonth}</p>
               </div>
-              <table className="w-full text-sm">
+              <div className="overflow-x-auto"><table className="w-full text-sm">
                 <tbody>
                   {out.picks.map((p, i) => (
                     <tr key={p.sym} className="border-b border-line/40 last:border-0">
@@ -239,7 +239,7 @@ export default function MLRanking() {
                     </tr>
                   ))}
                 </tbody>
-              </table>
+              </table></div>
               <p className="text-[11px] text-dim mt-2">Score = model's expected next-month return. A ranking signal, not investment advice.</p>
             </div>
             <div className="rounded-xl border border-line lg-glass p-4">
