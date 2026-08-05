@@ -5,7 +5,7 @@
 // Paper only. Persists to /api/argus. Env: LAB_TOKEN (req), LAB_SITE,
 // LAB_ARGUS_EQUITY (paper start, default 10000).
 import { loadMarket } from "./marketdata.mjs";
-import { openThesis, evaluateExit, closeThesisAt, plannedRR, fillPrice, enforceMinStop, MIN_STOP_FRAC } from "../src/lib/argus/core.js";
+import { openThesis, evaluateExit, closeThesisAt, plannedRR, fillPrice, enforceMinStop, MIN_STOP_FRAC, volStatus } from "../src/lib/argus/core.js";
 import { scan } from "../src/lib/argus/scanners.js";
 import { buildBrief, diffBrief, renderBrief, parseFearGreed } from "../src/lib/argus/brief.js";
 import { deriveLessons, adjustment, sessionOf } from "../src/lib/argus/learn.js";
@@ -305,11 +305,21 @@ function tryOpen(inst, setup, halted) {
     console.log(`[${new Date().toISOString()}] SKIP ${inst.symbol} ${setup.side} ${setup.kind} — skill (${veto.times}×, ${veto.avgR}R): ${veto.lesson}`);
     return;
   }
-  const riskPct = BASE_RISK * adj.mult;
+  // Volatility-regime gate (the risk system's "Volatility check"): skip when the
+  // current regime is too wild to trade cleanly (whipsaw / gap-through-stop risk),
+  // and size DOWN in the elevated band just below the ceiling.
+  const vol = volStatus(setup.atrPct, inst.asset);
+  if (!vol.ok) {
+    console.log(`[${new Date().toISOString()}] SKIP ${inst.symbol} ${setup.side} ${setup.kind} — ${vol.reason}`);
+    return;
+  }
+  const riskPct = BASE_RISK * adj.mult * vol.mult;
 
-  // Conviction = technical setup quality, tilted by an ALIGNED bias (its parts,
-  // not a binary). Real signals dominate (0.7 weight); the bias only leans it.
-  const conviction = clamp01(0.7 * convictionOf(setup) + 0.3 * (0.5 + 0.5 * (evented ? biasConf : opposes ? -biasConf : 0)));
+  // Conviction = technical setup quality, tilted by an ALIGNED bias (its parts, not
+  // a binary; real signals dominate at 0.7 weight), plus a GENTLE nudge from the
+  // learned prior (adj.mult−1) so a proven bucket leans in a touch harder and a
+  // shaky one eases off — bounded, so learning nudges leverage but never swings it.
+  const conviction = clamp01(0.7 * convictionOf(setup) + 0.3 * (0.5 + 0.5 * (evented ? biasConf : opposes ? -biasConf : 0)) + 0.15 * (adj.mult - 1));
 
   // WAIT FOR A BETTER ENTRY (user request): rather than chase a momentum setup at
   // the close — where the entry sits right on top of the stop and gets shaken out
@@ -363,6 +373,17 @@ function tryOpen(inst, setup, halted) {
       th.reason = `⚡ ${th.reason}`;
     }
     open.push(th);
+    // The risk system's checklist, surfaced on the thesis (Size / Exposure / DD /
+    // Volatility / Max-loss → Pass). A trade only reaches here after every gate
+    // passed, so this shows WHY it was allowed — auditable, like the reel's slide 5.
+    th.riskChecks = {
+      pass: true,
+      size: true,
+      exposure: true, heatUsedPct: +((openRisk() / equity) * 100).toFixed(1), heatCapPct: +(heatCap * 100).toFixed(0),
+      drawdown: true,
+      volatility: { ok: vol.ok, elevated: !!vol.elevated, label: vol.label },
+      maxLoss: true, // a daily-loss halt returns at the top of tryOpen, so it's clear here
+    };
     forming = forming.filter((f) => f.symbol !== inst.symbol);
     if (adj.mult !== 1) console.log(`[${new Date().toISOString()}] LESSON ${inst.symbol} size ×${adj.mult.toFixed(2)} — ${adj.reasons[0] || ""}`);
     console.log(`[${new Date().toISOString()}] OPEN ${th.symbol} ${th.side} ${th.kind}${th.catalyst ? " [event]" : ""} @${th.entry.toFixed(4)} stop ${th.stop.toFixed(4)} tgt ${th.target.toFixed(4)} risk ${th.riskAmt.toFixed(0)} — ${th.reason}`);
@@ -506,10 +527,20 @@ async function cycle(fullScan) {
       // catches a forming setup the moment it triggers ("watch until entry").
       if (!limitPending && tf.c15 && tf.c1h) {
         const { triggered } = scan(tf);
-        // Trade only the BEST: several scanners can fire on one instrument — take the
-        // strongest first (quality = setup strength × reward:risk), so if only one
-        // slot opens per symbol, it's the best available, not whichever fired first.
-        triggered.sort((a, b) => ((b.strength ?? 0.5) * (b.rMult ?? 2)) - ((a.strength ?? 0.5) * (a.rMult ?? 2)));
+        // Trade only the BEST — and "best" means best EXPECTED value, not just the
+        // prettiest chart. Base quality = setup strength × reward:risk, then tilted
+        // by what the ledger has TAUGHT us about this bucket (learn.js sizing mult,
+        // 0.5–1.25): a kind/symbol/side with proven positive expectancy outranks an
+        // equally-pretty setup from a bucket that keeps losing. So the one slot per
+        // symbol goes to the highest expected value.
+        for (const s of triggered) {
+          const a = adjustment(lessons, {
+            kind: s.kind, symbol: inst.symbol, side: s.side,
+            session: sessionOf(Date.now()), source: "technical", bias: s.bias,
+          }, { minSample: LEARN_MIN });
+          s._rank = (s.strength ?? 0.5) * (s.rMult ?? 2) * a.mult;
+        }
+        triggered.sort((a, b) => (b._rank ?? 0) - (a._rank ?? 0));
         for (const s of triggered) tryOpen(inst, s, halted);
       }
       if (inst.asset !== "crypto") await sleep(400); // be gentle on Yahoo

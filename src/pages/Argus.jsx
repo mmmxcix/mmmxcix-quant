@@ -223,6 +223,14 @@ export default function Argus() {
                     </div>
                   );
                 })()}
+                {/* Structural invalidation — Argus bails early if the setup's level
+                    is lost on a close, before the wider hard stop. */}
+                {Number.isFinite(t.invalidation) && (
+                  <p className="text-[10px] font-mono text-dim/80 mt-1">
+                    invalidation <span className="text-warn">{fmtNum(t.invalidation, 4)}</span>
+                    <span className="text-dim/60"> · early exit if it closes {t.side === "long" ? "below" : "above"} this</span>
+                  </p>
+                )}
                 {/* Live price + floating (unrealized) P&L — updates every scan (Bug 4). */}
                 {Number.isFinite(t.currentPrice) && (
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-2 text-[11px] font-mono">
@@ -255,6 +263,19 @@ export default function Argus() {
                     </div>
                   );
                 })()}
+                {/* The risk system's checklist — every gate that had to pass before
+                    this trade was allowed (slide 5). All ✓ since it's live. */}
+                {t.riskChecks && (
+                  <div className="flex flex-wrap items-center gap-1.5 mt-2 text-[10px]">
+                    {[["Size", true], ["Exposure", true], ["DD", t.riskChecks.drawdown !== false], ["Vol", t.riskChecks.volatility?.ok !== false], ["MaxLoss", t.riskChecks.maxLoss !== false]].map(([label, ok]) => (
+                      <span key={label} className={cn("inline-flex items-center gap-0.5 rounded px-1 py-0.5 font-medium", ok ? "bg-up/10 text-up" : "bg-down/10 text-down")}>
+                        {ok ? "✓" : "✕"} {label}
+                      </span>
+                    ))}
+                    {t.riskChecks.volatility?.elevated && <span className="text-warn/80 font-mono">vol {t.riskChecks.volatility.label} · sized down</span>}
+                    {Number.isFinite(t.riskChecks.heatUsedPct) && <span className="text-dim/60 font-mono">heat {t.riskChecks.heatUsedPct}%/{t.riskChecks.heatCapPct}%</span>}
+                  </div>
+                )}
                 <p className="text-[11px] text-dim mt-1.5 leading-snug">{t.reason}</p>
                 <div className="flex items-center gap-2 mt-3">
                   <Link to={chartHref(t, "open")} className="btn-ghost text-xs flex items-center gap-1.5">
@@ -432,7 +453,8 @@ export default function Argus() {
                     </td>
                     <td className={c.side === "long" ? "text-up" : "text-down"}>{c.side}</td>
                     <td className="text-dim">{c.kind}</td>
-                    <td className={cn(c.outcome === "target" ? "text-up" : c.outcome === "stop" ? "text-down" : "text-dim")}>{c.outcome}</td>
+                    <td className={cn(c.outcome === "target" ? "text-up" : c.outcome === "stop" || c.outcome === "liquidation" ? "text-down" : c.outcome === "invalidated" ? "text-warn" : "text-dim")}
+                      title={c.outcome === "invalidated" ? "Setup thesis broke on a close — cut early, before the hard stop" : undefined}>{c.outcome}</td>
                     <td className={cn("text-right", r >= 0 ? "text-up" : "text-down")}>{r >= 0 ? "+" : ""}{r.toFixed(2)}</td>
                     <td className={cn("text-right", c.pnl >= 0 ? "text-up" : "text-down")}>{money(c.pnl)}</td>
                     <td className="text-right text-dim">{c.exitAt ? ago(c.exitAt) : ""}</td>

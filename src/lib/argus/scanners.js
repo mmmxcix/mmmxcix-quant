@@ -17,11 +17,15 @@ function clampR(r) { return !(r > R_MIN) ? R_MIN : r > R_MAX ? R_MAX : r; }
 // at the close is often a chase; the agent may instead wait for price to pull back
 // to this level for a better fill (see tryOpen's "wait for better entry").
 // `rMult` = the reward:risk this setup targets (situational, see above).
-function longSetup(kind, entry, stop, strength, reason, retest, rMult = 2) {
-  return { state: "triggered", kind, side: "long", entry, stop, target: entry + rMult * (entry - stop), rMult, strength, reason, retest };
+// `invalidation` (optional) = the structural level at which the SETUP THESIS is
+// wrong on a CLOSE (e.g. a breakout that closes back below the level it broke), so
+// Argus can bail EARLY — before the wider hard stop — when the reason is gone. It
+// defaults to `retest` (the broken level) since that's usually exactly it.
+function longSetup(kind, entry, stop, strength, reason, retest, rMult = 2, invalidation = retest) {
+  return { state: "triggered", kind, side: "long", entry, stop, target: entry + rMult * (entry - stop), rMult, strength, reason, retest, invalidation };
 }
-function shortSetup(kind, entry, stop, strength, reason, retest, rMult = 2) {
-  return { state: "triggered", kind, side: "short", entry, stop, target: entry - rMult * (stop - entry), rMult, strength, reason, retest };
+function shortSetup(kind, entry, stop, strength, reason, retest, rMult = 2, invalidation = retest) {
+  return { state: "triggered", kind, side: "short", entry, stop, target: entry - rMult * (stop - entry), rMult, strength, reason, retest, invalidation };
 }
 
 /** Higher-timeframe bias from a fast/slow SMA stack. */
@@ -113,7 +117,9 @@ export function fvg(candles, { lookback = 12, atrPeriod = 14, minGapAtr = 0.2 } 
       if (!filled && c.low <= gapTop && c.close > gapBot && c.close >= c.open) {
         const stop = Math.min(gapBot, c.low) - 0.2 * A;
         const sw = priorHigh(candles, 20);
-        return longSetup("fvg", c.close, stop, 0.6, `Bullish FVG retest ${gapBot.toFixed(4)}–${gapTop.toFixed(4)}`, gapTop, clampR((sw - c.close) / (c.close - stop)));
+        // Invalidation = the gap must HOLD: a close back below its bottom means the
+        // imbalance failed (tighter than the wick-based stop).
+        return longSetup("fvg", c.close, stop, 0.6, `Bullish FVG retest ${gapBot.toFixed(4)}–${gapTop.toFixed(4)}`, gapTop, clampR((sw - c.close) / (c.close - stop)), gapBot);
       }
     }
     // Bearish FVG: gap between bar(i-2).low and bar(i).high. Short on a retest.
@@ -123,7 +129,7 @@ export function fvg(candles, { lookback = 12, atrPeriod = 14, minGapAtr = 0.2 } 
       if (!filled && c.high >= gapBot && c.close < gapTop && c.close <= c.open) {
         const stop = Math.max(gapTop, c.high) + 0.2 * A;
         const sw = priorLow(candles, 20);
-        return shortSetup("fvg", c.close, stop, 0.6, `Bearish FVG retest ${gapBot.toFixed(4)}–${gapTop.toFixed(4)}`, gapBot, clampR((c.close - sw) / (stop - c.close)));
+        return shortSetup("fvg", c.close, stop, 0.6, `Bearish FVG retest ${gapBot.toFixed(4)}–${gapTop.toFixed(4)}`, gapBot, clampR((c.close - sw) / (stop - c.close)), gapTop);
       }
     }
   }
@@ -208,7 +214,71 @@ export function liquiditySweep(candles, { n = 20, atrPeriod = 14 } = {}) {
   return null;
 }
 
-export const SCANNERS = [breakout, vwapReclaim, meanReversion, fvg, inverseFvg, openingRange, liquiditySweep];
+/** Simple moving average of the last `p` closes. */
+function sma(candles, p) {
+  if (candles.length < p) return null;
+  const s = candles.slice(-p);
+  return s.reduce((a, c) => a + c.close, 0) / p;
+}
+
+/** Pullback in a trend — the classic high-odds CONTINUATION setup. In an up-stack
+ *  (fast SMA > slow SMA) price dips back to a mid moving average and closes back up
+ *  off it → join the trend; mirror for a down-stack. Invalidation = a close back
+ *  through that MA (the trend structure broke). */
+export function pullback(candles, { fast = 10, slow = 30, maLen = 20, atrPeriod = 14, nearAtr = 0.6 } = {}) {
+  const n = candles.length;
+  if (n < Math.max(slow, maLen) + atrPeriod + 2) return null;
+  const A = atr(candles, atrPeriod);
+  if (!(A > 0)) return null;
+  const c = candles[n - 1], prev = candles[n - 2];
+  const f = sma(candles, fast), s = sma(candles, slow), ma = sma(candles, maLen);
+  if (f == null || s == null || ma == null) return null;
+  // Uptrend: dipped to the MA (this bar or the last), then closed bullish above it.
+  if (f > s && Math.min(c.low, prev.low) <= ma + nearAtr * A && c.close > ma && c.close > c.open && c.close > prev.close) {
+    const stop = Math.min(c.low, ma - 0.6 * A);
+    const sw = priorHigh(candles, 20);
+    return longSetup("pullback", c.close, stop, 0.6, `Pullback to MA${maLen} in uptrend`, ma, clampR((sw - c.close) / (c.close - stop)));
+  }
+  // Downtrend: rallied to the MA, then closed bearish back below it.
+  if (f < s && Math.max(c.high, prev.high) >= ma - nearAtr * A && c.close < ma && c.close < c.open && c.close < prev.close) {
+    const stop = Math.max(c.high, ma + 0.6 * A);
+    const sw = priorLow(candles, 20);
+    return shortSetup("pullback", c.close, stop, 0.6, `Pullback to MA${maLen} in downtrend`, ma, clampR((c.close - sw) / (stop - c.close)));
+  }
+  return null;
+}
+
+/** Momentum / expansion — a strong, decisive thrust in the trend's direction: a big
+ *  move over `roc` bars (in ATR units), an expanded body, and a close near the bar's
+ *  extreme. A continuation chase, so no retest wait and no early invalidation (give
+ *  it room); the ATR stop bounds the risk. */
+export function momentum(candles, { roc = 10, atrPeriod = 14, bodyMult = 1.5, fast = 10, slow = 30 } = {}) {
+  const n = candles.length;
+  if (n < roc + atrPeriod + 22) return null;
+  const A = atr(candles, atrPeriod);
+  if (!(A > 0)) return null;
+  const c = candles[n - 1], past = candles[n - 1 - roc];
+  const thrust = (c.close - past.close) / A;                 // signed move in ATR over `roc` bars
+  const body = Math.abs(c.close - c.open);
+  const avgBody = candles.slice(n - 21, n - 1).reduce((a, x) => a + Math.abs(x.close - x.open), 0) / 20;
+  const range = (c.high - c.low) || A;
+  const closePos = (c.close - c.low) / range;                // 1 = closed at the high, 0 = at the low
+  const f = sma(candles, fast), s = sma(candles, slow);
+  if (f == null || s == null) return null;
+  if (thrust > 2.2 && f > s && body > bodyMult * avgBody && closePos > 0.7) {
+    const stop = Math.min(c.low, c.close - 1.2 * A);
+    const sw = priorHigh(candles, 30);
+    return longSetup("momentum", c.close, stop, Math.min(1, thrust / 4), `Momentum thrust +${thrust.toFixed(1)} ATR/${roc}b`, undefined, clampR(Math.max(2, (sw - c.close) / (c.close - stop))));
+  }
+  if (thrust < -2.2 && f < s && body > bodyMult * avgBody && closePos < 0.3) {
+    const stop = Math.max(c.high, c.close + 1.2 * A);
+    const sw = priorLow(candles, 30);
+    return shortSetup("momentum", c.close, stop, Math.min(1, -thrust / 4), `Momentum thrust ${thrust.toFixed(1)} ATR/${roc}b`, undefined, clampR(Math.max(2, (c.close - sw) / (stop - c.close))));
+  }
+  return null;
+}
+
+export const SCANNERS = [breakout, vwapReclaim, meanReversion, fvg, inverseFvg, openingRange, liquiditySweep, pullback, momentum];
 
 // Reversal-type setups are ALLOWED to fade the higher-timeframe bias (that's their
 // whole point) — they're never tagged "counter-trend", so they don't lose conviction
@@ -222,6 +292,10 @@ const REVERSAL_KINDS = new Set(["mean-reversion", "liquidity-sweep", "ifvg"]);
  */
 export function scan({ c5, c15, c1h }) {
   const bias = higherBias(c1h);
+  // Current volatility regime (ATR as a fraction of price on the 5m), attached to
+  // every setup so the agent's risk gate can size down / skip when it's extreme.
+  const A5 = atr(c5, 14), lastClose = c5[c5.length - 1]?.close;
+  const atrPct = A5 > 0 && lastClose > 0 ? A5 / lastClose : null;
   const triggered = [], forming = [];
   for (const fn of SCANNERS) {
     const r = fn(c5);
@@ -232,7 +306,7 @@ export function scan({ c5, c15, c1h }) {
     // tag whether it aligns with the 1h bias; the agent folds that into conviction
     // (lower leverage against the trend) and its learning can veto losing buckets.
     const aligned = isRev || (r.side === "long" && bias !== "down") || (r.side === "short" && bias !== "up");
-    const setup = { ...r, timeframe: "5m", bias, aligned };
+    const setup = { ...r, timeframe: "5m", bias, aligned, atrPct };
     if (r.state === "triggered") triggered.push(setup);
     else forming.push(setup);
   }

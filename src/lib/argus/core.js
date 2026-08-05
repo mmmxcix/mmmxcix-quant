@@ -54,6 +54,28 @@ export const ASSET_LEV_BIAS = { crypto: 0.85, forex: 1.0, futures: 0.9, stock: 0
 // widens a too-tight stop to at least this before sizing.
 export const MIN_STOP_FRAC = { crypto: 0.004, forex: 0.0006, futures: 0.0015, stock: 0.002, etf: 0.002, index: 0.002 };
 
+// Volatility-regime ceiling: ATR as a fraction of price on the trading timeframe
+// above which conditions are too wild to trade cleanly (whipsaw, gap-through-stop
+// risk). Per asset class. The risk gate skips a setup above the ceiling and sizes
+// DOWN in the elevated band just below it.
+export const VOL_CEIL_ATR_PCT = { crypto: 0.05, forex: 0.006, futures: 0.02, stock: 0.03, etf: 0.025, index: 0.02 };
+
+/**
+ * The volatility-regime verdict for a setup — the "Volatility check" of the risk
+ * system. Given ATR-as-fraction-of-price and the asset class, returns whether the
+ * regime is acceptable (`ok`), a size multiplier (1 normally, <1 when elevated),
+ * and a human label. Extreme vol → ok:false (the gate skips the trade).
+ * @returns {{ ok:boolean, mult:number, label:string, elevated?:boolean, reason?:string }}
+ */
+export function volStatus(atrPct, asset = "crypto") {
+  const ceil = VOL_CEIL_ATR_PCT[asset] ?? 0.03;
+  if (!Number.isFinite(atrPct) || atrPct <= 0) return { ok: true, mult: 1, label: "n/a" };
+  const label = `${(atrPct * 100).toFixed(2)}%/bar`;
+  if (atrPct > ceil) return { ok: false, mult: 0, label, reason: `volatility ${label} > ceiling ${(ceil * 100).toFixed(1)}%` };
+  if (atrPct > 0.6 * ceil) return { ok: true, mult: 0.7, label, elevated: true };
+  return { ok: true, mult: 1, label };
+}
+
 /**
  * Leverage Argus chooses for a trade — its OWN call, free across the whole
  * 1..maxTradeLev range depending on the situation, never bucketed to a fixed value.
@@ -201,6 +223,16 @@ export function openThesis(setup, { equity, openRisk, openMargin = 0, openNotion
     conviction: conviction ?? setup.conviction ?? 0.5, rr,
   });
   if (!sized) return null;
+  // Structural invalidation: the level where the SETUP THESIS is wrong on a CLOSE,
+  // so Argus bails EARLY (before the wider hard stop) when the reason is gone. Only
+  // kept when it sits strictly between entry and stop on the LOSS side — otherwise
+  // the stop hits first and it would be redundant.
+  let invalidation = null;
+  if (Number.isFinite(setup.invalidation)) {
+    const inv = setup.invalidation;
+    const usable = setup.side === "long" ? inv < fillEntry && inv > stop : inv > fillEntry && inv < stop;
+    if (usable) invalidation = inv;
+  }
   return {
     id: newId(),
     symbol: setup.symbol, market: setup.market, asset,
@@ -208,7 +240,7 @@ export function openThesis(setup, { equity, openRisk, openMargin = 0, openNotion
     bias: setup.bias ?? null, // higher-TF regime at entry — carried into the ledger for learning
     state: "open",
     reason: setup.reason, evidence: setup.evidence || [],
-    entry: fillEntry, stop, target: setup.target,
+    entry: fillEntry, stop, target: setup.target, invalidation,
     size: sized.size, riskAmt: sized.riskAmt,
     leverage: sized.leverage, margin: sized.margin, notional: sized.notional, liqPrice: sized.liqPrice,
     plannedR: rr,
@@ -230,6 +262,13 @@ export function evaluateExit(th, candle, { now = Date.now(), maxHoldMs = 3 * 864
   // If a bar spans both stop and target, assume the stop hit first (conservative).
   if (hitStop) return finalize(th, th.stop, "stop", now);
   if (hitTarget) return finalize(th, th.target, "target", now);
+  // Early THESIS-BREAK exit: the setup's structural level was lost on a CLOSE (the
+  // reason to be in the trade is gone), and the intrabar stop wasn't hit — cut here
+  // for a smaller loss than waiting for the wider stop. Close-based, not intrabar.
+  if (th.invalidation != null) {
+    const invalid = th.side === "long" ? candle.close < th.invalidation : candle.close > th.invalidation;
+    if (invalid) return finalize(th, candle.close, "invalidated", now);
+  }
   if (now - th.openedAt > maxHoldMs) return finalize(th, candle.close, "timeout", now);
   return null;
 }
