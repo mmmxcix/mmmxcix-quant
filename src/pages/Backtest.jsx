@@ -210,9 +210,10 @@ export default function Backtest() {
   //   "new"     — write a fresh strategy from the prompt
   //   "improve" — rewrite the code that's in the editor (prompt = what to change)
   //   "review"  — read the code and give an assessment, changing nothing
-  const runAi = async (action) => {
+  const runAi = async (action, opts = {}) => {
     const p = aiPrompt.trim();
     const src = code.trim();
+    const seed = opts.seed || ""; // a Review/Audit "apply the recommendation" instruction
     if (aiLoading) return;
     if (action === "new" && !p) return;
     if (action !== "new" && !src) { setAiError("The editor is empty — there's nothing to work on."); return; }
@@ -238,7 +239,11 @@ export default function Backtest() {
       // rewrites blind — which is how an "improvement" ended up doubling the
       // drawdown it was asked to cut.
       const m = result?.metrics;
-      const baseline = m
+      // A "fix" applies a correctness recommendation (from Review / Find bugs), so
+      // it must NOT be pushed to "beat Sharpe" — a real fix (removing look-ahead,
+      // correcting a short's stop/target) can legitimately LOWER returns. For fixes
+      // we give the numbers only as context and make correctness the priority.
+      const baseline = m && action !== "fix"
         ? `The current version, backtested on ${symbol} ${interval} (${result.candleCount} bars, ${feeBps}bps/side, ${positionPct}% position${leverage > 1 ? `, ${leverage}x leverage` : ""}), scores: ` +
           `total return ${m.totalReturnPct.toFixed(1)}%, max drawdown ${m.maxDrawdownPct.toFixed(1)}%, Sharpe ${(m.sharpe ?? 0).toFixed(2)}, ` +
           `profit factor ${Number.isFinite(m.profitFactor) ? m.profitFactor.toFixed(2) : "∞"}, ${m.tradeCount} trades ` +
@@ -247,9 +252,12 @@ export default function Backtest() {
           "keep the core idea and the trade count in the same ballpark; do not buy one metric with another " +
           "(no cutting drawdown by barely trading, no lifting return by doubling drawdown)."
         : "";
+      const fixContext = m && action === "fix"
+        ? `\n\nFor reference the current version scores Sharpe ${(m.sharpe ?? 0).toFixed(2)}, return ${m.totalReturnPct.toFixed(1)}%, maxDD ${m.maxDrawdownPct.toFixed(1)}% — but CORRECTNESS comes first: applying the fix properly may change these numbers, and that is acceptable. Do not preserve a bug just to keep the metrics.`
+        : "";
       const improveBody = { improve: {
         code: src,
-        facts: `${p || "Make the smallest change that raises risk-adjusted return without changing the core idea."}${baseline ? `\n\n${baseline}` : ""}`,
+        facts: `${seed || p || "Make the smallest change that raises risk-adjusted return without changing the core idea."}${baseline ? `\n\n${baseline}` : ""}${fixContext}`,
         title: presetDirty ? "an edited strategy" : strategy?.name,
       }, language: lang };
 
@@ -293,6 +301,15 @@ export default function Backtest() {
         const { res, data } = await callGenerate({ prompt: p, language: lang });
         if (!res.ok || !data.code) throw new Error("Generation failed — please try again.");
         setPrevCode(code); setCode(data.code); setPresetDirty(true);
+      } else if (action === "fix") {
+        // Apply a recommended Review/Audit fix. Unlike "improve" we do NOT gate on
+        // beating Sharpe — a correctness fix can legitimately lower returns. Apply
+        // the corrected code directly; Undo restores the prior version, and the
+        // user can re-run the backtest to see the honest numbers.
+        const { res, data } = await callGenerate(improveBody);
+        if (!res.ok || !data.code) throw new Error("Couldn't apply the fix — please try again.");
+        setPrevCode(code); setCode(data.code); setPresetDirty(true);
+        setAiNote({ ok: true, text: `Applied the recommended ${opts.kind || "fix"} — re-run the backtest to see the effect; Undo restores your code.` });
       } else {
         // IMPROVE — verify before apply. Fetch a couple of candidates, backtest
         // each against the current version, and only apply one that genuinely
@@ -635,8 +652,8 @@ export default function Backtest() {
               </label>
               <label className="text-xs text-dim" title="Leverage multiplies exposure (3x = 300%). Amplifies returns AND drawdowns — enough drawdown at high leverage liquidates the account (equity → 0).">
                 Leverage (×)
-                <input type="number" value={leverage} min={1} max={10} step={1}
-                  onChange={(e) => setLeverage(Math.min(10, Math.max(1, +e.target.value || 1)))} className="input-base w-full mt-1 font-mono" />
+                <input type="number" value={leverage} min={1} max={100} step={1}
+                  onChange={(e) => setLeverage(Math.min(100, Math.max(1, +e.target.value || 1)))} className="input-base w-full mt-1 font-mono" />
               </label>
             </div>
             {/* Perp funding — crypto only. Ignoring funding is where most crypto
@@ -911,6 +928,12 @@ export default function Backtest() {
                           <button onClick={() => setAiReview(null)} className="text-[10px] text-dim hover:text-text">dismiss</button>
                         </div>
                         <p className="text-[11px] text-dim leading-relaxed whitespace-pre-wrap">{aiReview}</p>
+                        <button
+                          onClick={() => runAi("fix", { kind: "review changes", seed: `A senior strategy reviewer assessed this code:\n\n${aiReview}\n\nRewrite the code to apply the concrete improvements it recommends. Make the smallest change that addresses them, keep the core idea, and do not introduce look-ahead or degenerate signals.` })}
+                          disabled={!!aiLoading}
+                          className="chip chip-idle !text-[10px] mt-2 flex items-center gap-1.5 hover:text-accent disabled:opacity-50">
+                          {aiLoading === "fix" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />} Apply recommended changes
+                        </button>
                       </div>
                     )}
                     {aiBugs && (
@@ -931,6 +954,14 @@ export default function Backtest() {
                             </li>
                           ))}
                         </ul>
+                        {aiBugs.bugs.length > 0 && (
+                          <button
+                            onClick={() => runAi("fix", { kind: "bug fixes", seed: `A code audit found these issues in this strategy:\n${aiBugs.bugs.map((b, i) => `${i + 1}. [${b.severity}] ${b.issue}${b.fix ? ` — recommended fix: ${b.fix}` : ""}`).join("\n")}\n\nRewrite the code to fix exactly these issues. Make the smallest change that resolves each, keep the strategy's core idea, and do not introduce look-ahead or degenerate signals.` })}
+                            disabled={!!aiLoading}
+                            className="chip chip-idle !text-[10px] mt-2.5 flex items-center gap-1.5 hover:text-accent disabled:opacity-50">
+                            {aiLoading === "fix" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />} Apply recommended fixes
+                          </button>
+                        )}
                       </div>
                     )}
                     {mode === "code" && audit.findings.length > 0 && (
@@ -1051,7 +1082,7 @@ export default function Backtest() {
                   feeBps={feeBps}
                   positionPct={positionPct}
                   leverage={leverage}
-                  onApply={(newCode) => { setPrevCode(code); setCode(newCode); setPresetDirty(true); }}
+                  onApply={(newCode, lev) => { setPrevCode(code); setCode(newCode); setPresetDirty(true); if (lev != null) setLeverage(lev); }}
                 />
               )}
 

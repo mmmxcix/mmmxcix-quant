@@ -20,6 +20,28 @@ const OBJECTIVES = {
   profitFactor: { label: "Profit factor", get: (m) => (Number.isFinite(m.profitFactor) ? m.profitFactor : 0) },
 };
 
+// The per-metric "best variant" summary — where the strategy did best on EACH
+// dimension, not just the single Rank-by objective. Each card loads that market.
+const BEST_METRICS = [
+  { key: "sharpe", label: "Best Sharpe", get: (m) => m.sharpe, fmt: (v) => fmtNum(v, 2), dir: 1 },
+  { key: "pf", label: "Best profit factor", get: (m) => (Number.isFinite(m.profitFactor) ? m.profitFactor : null), fmt: (v) => fmtNum(v, 2), dir: 1 },
+  { key: "dd", label: "Smallest max DD", get: (m) => m.maxDrawdownPct, fmt: (v) => `-${fmtNum(v, 0)}%`, dir: -1 },
+  { key: "ret", label: "Most total return", get: (m) => m.totalReturnPct, fmt: (v) => `${fmtNum(v, 0)}%`, dir: 1 },
+];
+function pickBests(list) {
+  const bests = {};
+  for (const bm of BEST_METRICS) {
+    let row = null, wv = null;
+    for (const r of list) {
+      const v = bm.get(r.m);
+      if (v == null || !Number.isFinite(v)) continue;
+      if (row == null || (bm.dir > 0 ? v > wv : v < wv)) { row = r; wv = v; }
+    }
+    if (row) bests[bm.key] = { row, value: wv };
+  }
+  return bests;
+}
+
 const TF_CHOICES = ["1d", "4h", "1h", "15m"];
 
 export default function MarketScanPanel({ code, language, capital, feeBps, positionPct, leverage, onLoad }) {
@@ -30,6 +52,7 @@ export default function MarketScanPanel({ code, language, capital, feeBps, posit
   const [done, setDone] = useState(0);
   const [total, setTotal] = useState(0);
   const [results, setResults] = useState([]);
+  const [best, setBest] = useState(null); // per-metric winners across the scan
   const [scanned, setScanned] = useState(false); // a scan has finished (for the empty-state)
   const cancelRef = useRef(false);
 
@@ -50,7 +73,7 @@ export default function MarketScanPanel({ code, language, capital, feeBps, posit
 
   async function scan() {
     if (!tasks.length || !code?.trim()) return;
-    setRunning(true); cancelRef.current = false; setResults([]); setScanned(false); setDone(0); setTotal(tasks.length);
+    setRunning(true); cancelRef.current = false; setResults([]); setBest(null); setScanned(false); setDone(0); setTotal(tasks.length);
     const get = OBJECTIVES[obj].get;
     const out = [];
     let idx = 0, finished = 0;
@@ -63,18 +86,25 @@ export default function MarketScanPanel({ code, language, capital, feeBps, posit
           if (candles && candles.length > 60) {
             const fn = language === "python" ? signalsToFn(await runPythonSignals(code, candles)) : compileStrategy(code);
             const r = runBacktest({ candles, signalFn: fn, initialCapital: capital, feeBps, positionPct, leverage });
-            if (!r.warnings.length && r.metrics.tradeCount >= 3) {
-              out.push({ ...s, interval: tf, m: r.metrics });
+            // Keep any result that traded enough to mean something. A minor warning
+            // (a per-bar error on one symbol) shouldn't wipe the whole scan — only
+            // exclude the VOID ones: a liquidation makes the equity curve garbage,
+            // and that used to happen on every symbol when the editor's leverage was
+            // high, filtering out literally everything (the "no results" bug).
+            const liquidated = r.warnings.some((w) => /liquidat/i.test(w));
+            if (r.metrics.tradeCount >= 3 && !liquidated) {
+              out.push({ ...s, interval: tf, m: r.metrics, warned: r.warnings.length > 0 });
             }
           }
         } catch { /* unreachable symbol / bad data — skip */ }
         finished++; setDone(finished);
-        if (finished % 4 === 0) { out.sort((a, b) => get(b.m) - get(a.m)); setResults(out.slice(0, 40)); }
+        if (finished % 4 === 0) { out.sort((a, b) => get(b.m) - get(a.m)); setResults(out.slice(0, 40)); setBest(pickBests(out)); }
       }
     };
     await Promise.all(Array.from({ length: concurrency }, worker));
     out.sort((a, b) => get(b.m) - get(a.m));
     setResults(out.slice(0, 40));
+    setBest(pickBests(out));
     setScanned(true);
     setRunning(false);
   }
@@ -138,10 +168,27 @@ export default function MarketScanPanel({ code, language, capital, feeBps, posit
 
       {scanned && !running && results.length === 0 && (
         <p className="text-[11px] text-warn leading-relaxed">
-          No market produced a clean result (≥3 trades, no errors) on the selected timeframes. The strategy may be erroring,
-          rarely trading, or unsuited to these markets/timeframes — widen the markets/timeframes, or check the code (run it once
-          in the backtester to see any warnings).
+          No market produced a usable result (≥3 trades, not liquidated) on the selected timeframes. The strategy may rarely
+          trade, get liquidated at the current leverage ({leverage}x — try lowering it), or be unsuited to these markets —
+          widen the markets/timeframes, drop the leverage, or run it once in the backtester to see any warnings.
         </p>
+      )}
+      {/* Per-metric winners — the best variant on EACH dimension, each loadable. */}
+      {best && Object.keys(best).length > 0 && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          {BEST_METRICS.filter((bm) => best[bm.key]).map((bm) => {
+            const { row, value } = best[bm.key];
+            return (
+              <button key={bm.key} onClick={() => onLoad({ market: row.market, symbol: row.symbol, interval: row.interval, range: SCAN_RANGE[row.interval] || "2y" })}
+                title={`Load ${row.label} ${row.interval}`}
+                className="rounded-lg border border-line bg-bg/40 p-2 text-left hover:border-accent/50 transition-colors">
+                <p className="text-[9px] uppercase tracking-wide text-dim">{bm.label}</p>
+                <p className="text-sm font-mono text-text">{bm.fmt(value)}</p>
+                <p className="text-[10px] text-dim truncate">{row.label} <span className="text-dim/60">{row.interval}</span></p>
+              </button>
+            );
+          })}
+        </div>
       )}
       {results.length > 0 && (
         <div className="overflow-x-auto">

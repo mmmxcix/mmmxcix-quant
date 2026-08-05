@@ -53,6 +53,11 @@ export default function CodeOptimizerPanel({ code, language, candles, capital, f
   const [applied, setApplied] = useState(false);
   const [xKey, setXKey] = useState(params[0]?.key);
   const [yKey, setYKey] = useState(params[1]?.key ?? params[0]?.key);
+  const [sweepLev, setSweepLev] = useState(false); // also search for the best leverage
+
+  // Leverage is not a code constant, so it's swept separately: each param combo
+  // is re-run at each of these multipliers and the best (params × leverage) wins.
+  const LEV_GRID = [1, 2, 3, 5, 10, 20];
 
   if (!params.length) {
     return (
@@ -62,8 +67,8 @@ export default function CodeOptimizerPanel({ code, language, candles, capital, f
           <p className="text-sm font-semibold">Optimize parameters</p>
         </div>
         <p className="text-[11px] text-dim">
-          No tunable constants detected. Name them in <span className="font-mono">UPPER_CASE</span> at the top of your code
-          (e.g. <span className="font-mono">LOOKBACK = 50</span> or <span className="font-mono">A, B, C = 1, 2, 3</span>) and they'll be optimizable here.
+          No tunable constants detected. Declare numeric constants at the top of your code
+          (e.g. <span className="font-mono">const lookback = 50</span>, <span className="font-mono">LOOKBACK = 50</span>, or <span className="font-mono">a, b, c = 1, 2, 3</span>) and they'll be optimizable here.
         </p>
       </div>
     );
@@ -72,20 +77,28 @@ export default function CodeOptimizerPanel({ code, language, candles, capital, f
   async function run() {
     setRunning(true); setResults(null); setApplied(false); setProgress(0);
     const combos = gridCombos(params, 5, language === "python" ? 48 : 220);
+    const levs = sweepLev ? LEV_GRID : [leverage];
     const get = OBJECTIVES[obj].get;
     const out = [];
     for (let i = 0; i < combos.length; i++) {
       const src = substituteConstants(code, combos[i]);
       let fn = null;
       try {
+        // Compile the signals ONCE per param combo, then sweep leverage cheaply —
+        // leverage only changes the fill engine's sizing, not the signals.
         fn = language === "python" ? signalsToFn(await runPythonSignals(src, candles)) : compileStrategy(src);
       } catch { setProgress((i + 1) / combos.length); continue; }
-      try {
-        const r = runBacktest({ candles, signalFn: fn, initialCapital: capital, feeBps, positionPct, leverage });
-        if (!r.warnings.length && r.metrics.tradeCount > 0) {
-          out.push({ params: combos[i], m: r.metrics, score: get(r.metrics), returns: r.trades.map((t) => t.pnlPct / 100) });
-        }
-      } catch { /* skip a broken combo */ }
+      for (const lev of levs) {
+        try {
+          const r = runBacktest({ candles, signalFn: fn, initialCapital: capital, feeBps, positionPct, leverage: lev });
+          // Keep usable runs only — a liquidation voids the equity curve (common at
+          // high leverage), but a stray non-fatal warning shouldn't drop the combo.
+          const liquidated = r.warnings.some((w) => /liquidat/i.test(w));
+          if (!liquidated && r.metrics.tradeCount > 0) {
+            out.push({ params: combos[i], lev, m: r.metrics, score: get(r.metrics), returns: r.trades.map((t) => t.pnlPct / 100) });
+          }
+        } catch { /* skip a broken combo */ }
+      }
       setProgress((i + 1) / combos.length);
       // Yield so the progress bar paints and the tab stays responsive.
       if (i % 4 === 0) await new Promise((res) => setTimeout(res, 0));
@@ -136,6 +149,10 @@ export default function CodeOptimizerPanel({ code, language, candles, capital, f
               {Object.entries(OBJECTIVES).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
             </select>
           </label>
+          <label className="flex items-center gap-1.5 text-[10px] text-dim cursor-pointer" title="Also search 1× / 2× / 3× / 5× / 10× / 20× and report the best leverage for each param set">
+            <input type="checkbox" checked={sweepLev} onChange={(e) => setSweepLev(e.target.checked)} className="accent-current" />
+            also find best leverage
+          </label>
           <button onClick={run} disabled={running || !candles?.length}
             className="chip chip-idle !text-xs flex items-center gap-1.5 hover:text-accent">
             {running ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
@@ -151,12 +168,14 @@ export default function CodeOptimizerPanel({ code, language, candles, capital, f
             <span className="text-up font-semibold">Best {OBJECTIVES[obj].label}: {fmtNum(best.score, 2)}</span>
             <span className="font-mono text-dim">
               {Object.entries(best.params).map(([k, v]) => `${k}=${v}`).join(" · ")}
+              {sweepLev && <span className="text-accent"> · {best.lev}x</span>}
             </span>
             <span className="text-dim">ret {fmtNum(best.m.totalReturnPct, 0)}% · maxDD {fmtNum(best.m.maxDrawdownPct, 0)}% · PF {fmtNum(best.m.profitFactor, 2)} · {best.m.tradeCount} trades</span>
             <button
-              onClick={() => { onApply(substituteConstants(code, best.params)); setApplied(true); }}
+              onClick={() => { onApply(substituteConstants(code, best.params), sweepLev ? best.lev : undefined); setApplied(true); }}
+              title={sweepLev ? `Apply the params and set leverage to ${best.lev}x` : "Apply the best params to your code"}
               className="chip chip-idle !text-[10px] ml-auto flex items-center gap-1 hover:text-accent">
-              {applied ? <Check className="w-3 h-3 text-up" /> : null} {applied ? "Applied" : "Apply to code"}
+              {applied ? <Check className="w-3 h-3 text-up" /> : null} {applied ? "Applied" : sweepLev ? `Apply (+ ${best.lev}x)` : "Apply to code"}
             </button>
           </div>
         </div>
@@ -168,6 +187,7 @@ export default function CodeOptimizerPanel({ code, language, candles, capital, f
             <thead>
               <tr className="text-left text-dim border-b border-line">
                 <th className="py-1 pr-3 font-sans font-medium">Params</th>
+                {sweepLev && <th className="py-1 pr-3 font-sans font-medium text-right">Lev</th>}
                 <th className="py-1 pr-3 font-sans font-medium text-right">{OBJECTIVES[obj].label}</th>
                 <th className="py-1 pr-3 font-sans font-medium text-right">Return</th>
                 <th className="py-1 pr-3 font-sans font-medium text-right">MaxDD</th>
@@ -178,6 +198,7 @@ export default function CodeOptimizerPanel({ code, language, candles, capital, f
               {results.slice(0, 6).map((r, i) => (
                 <tr key={i} className="border-b border-line/40 last:border-0">
                   <td className="py-1 pr-3 text-dim">{Object.entries(r.params).map(([k, v]) => `${k}=${v}`).join(" · ")}</td>
+                  {sweepLev && <td className="py-1 pr-3 text-right text-accent">{r.lev}x</td>}
                   <td className="py-1 pr-3 text-right text-text">{fmtNum(r.score, 2)}</td>
                   <td className={cn("py-1 pr-3 text-right", r.m.totalReturnPct >= 0 ? "text-up" : "text-down")}>{fmtNum(r.m.totalReturnPct, 0)}%</td>
                   <td className="py-1 pr-3 text-right text-down">{fmtNum(r.m.maxDrawdownPct, 0)}%</td>
