@@ -273,6 +273,7 @@ export default function Argus() {
                       </span>
                     ))}
                     {t.riskChecks.volatility?.elevated && <span className="text-warn/80 font-mono">vol {t.riskChecks.volatility.label} · sized down</span>}
+                    {t.riskChecks.volume?.rvol != null && <span className="text-dim/60 font-mono">rvol {t.riskChecks.volume.rvol}×</span>}
                     {Number.isFinite(t.riskChecks.heatUsedPct) && <span className="text-dim/60 font-mono">heat {t.riskChecks.heatUsedPct}%/{t.riskChecks.heatCapPct}%</span>}
                   </div>
                 )}

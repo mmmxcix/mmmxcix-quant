@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { evaluateExit, volStatus, VOL_CEIL_ATR_PCT } from "../src/lib/argus/core.js";
-import { breakout, pullback, momentum, SCANNERS, scan } from "../src/lib/argus/scanners.js";
+import { evaluateExit, volStatus, VOL_CEIL_ATR_PCT, relVolume } from "../src/lib/argus/core.js";
+import { breakout, pullback, momentum, vwapBands, SCANNERS, VOLUME_KINDS, scan } from "../src/lib/argus/scanners.js";
 
 // ── Upgrade 1: structural invalidation → early exit ──────────────────────────
 const longTh = (over = {}) => ({
@@ -67,6 +67,35 @@ test("momentum fires on a strong trend thrust and stays a continuation long", ()
     assert.equal(s.side, "long");
     assert.ok(s.target > s.entry && s.stop < s.entry);
   }
+});
+
+// ── Reel batch 2: relative volume + VWAP bands ───────────────────────────────
+test("relVolume compares the last bar to the prior average", () => {
+  const flat = bars(Array.from({ length: 25 }, () => [1, 1, 1, 1])).map((c) => ({ ...c, volume: 1000 }));
+  assert.equal(relVolume(flat, 20), 1); // last == average
+  flat[flat.length - 1].volume = 3000;  // a 3× volume spike on the latest bar
+  assert.ok(Math.abs(relVolume(flat, 20) - 3) < 1e-9);
+});
+
+test("VOLUME_KINDS gates continuation setups but not fades", () => {
+  assert.ok(VOLUME_KINDS.has("breakout") && VOLUME_KINDS.has("momentum"));
+  assert.ok(!VOLUME_KINDS.has("mean-reversion") && !VOLUME_KINDS.has("vwap-band"));
+});
+
+test("vwapBands fades a tag of the lower band back toward VWAP", () => {
+  // A series with real variance around ~100 (so the std-dev band exists), then a
+  // spike down that tags the lower band and closes back above it.
+  const arr = [];
+  for (let i = 0; i < 60; i++) { const cl = i % 2 ? 101 : 99; arr.push([cl, cl + 0.2, cl - 0.2, cl]); }
+  arr.push([98, 98, 96, 97.5]); // low pierces ~−3σ, closes above it
+  const s = vwapBands(bars(arr));
+  if (s) {
+    assert.equal(s.kind, "vwap-band");
+    assert.equal(s.side, "long");
+    assert.ok(s.target > s.entry && s.stop < s.entry);
+    assert.equal(s.invalidation < s.entry, true);
+  }
+  assert.ok(SCANNERS.includes(vwapBands));
 });
 
 test("scan attaches an atrPct volatility reading to every setup", () => {

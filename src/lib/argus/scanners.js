@@ -7,7 +7,7 @@
 // NOT fixed — each scanner picks it from the situation (the measured move of the
 // broken range, the distance to the next swing, the mean), so a strong setup can aim
 // 4:1+ while a marginal one settles for ~1.5:1. Clamped to a sane band.
-import { atr, vwap, priorHigh, priorLow } from "./core.js";
+import { atr, vwap, priorHigh, priorLow, relVolume } from "./core.js";
 
 const R_MIN = 1.5, R_MAX = 5;   // reward:risk band — Argus chooses within it per setup
 /** Clamp a situational reward:risk into the sane band (guards NaN/∞/negatives). */
@@ -278,12 +278,48 @@ export function momentum(candles, { roc = 10, atrPeriod = 14, bodyMult = 1.5, fa
   return null;
 }
 
-export const SCANNERS = [breakout, vwapReclaim, meanReversion, fvg, inverseFvg, openingRange, liquiditySweep, pullback, momentum];
+/** VWAP standard-deviation bands — the volume-weighted cousin of Bollinger. A tag
+ *  of the Nth band (default 3σ) is a stretch that tends to snap back to the mean;
+ *  fade it toward VWAP (only when the reward to the mean is at least 1R). Reel-
+ *  inspired (institutional "VWAP is the better MA"). Reversal-type. */
+export function vwapBands(candles, { bars = 60, atrPeriod = 14, mult = 3 } = {}) {
+  const n = candles.length;
+  if (n < bars + 2) return null;
+  const A = atr(candles, atrPeriod);
+  if (!(A > 0)) return null;
+  const V = vwap(candles, bars);
+  const seg = candles.slice(-bars);
+  let s2 = 0;
+  for (const x of seg) s2 += (x.close - V) ** 2;
+  const sd = Math.sqrt(s2 / seg.length);
+  if (!(sd > 0)) return null;
+  const c = candles[n - 1];
+  const lower = V - mult * sd, upper = V + mult * sd;
+  // Tagged the lower band and closed back above it → long toward the mean.
+  if (c.low <= lower && c.close > lower) {
+    const entry = c.close, stop = Math.min(c.low, lower) - 0.2 * A, target = V;
+    const rr = (target - entry) / (entry - stop);
+    if (rr >= 1) return { state: "triggered", kind: "vwap-band", side: "long", entry, stop, target, rMult: rr, invalidation: lower, strength: Math.min(1, (V - c.low) / (mult * sd)), reason: `Tagged −${mult}σ VWAP band ${lower.toFixed(4)}` };
+  }
+  if (c.high >= upper && c.close < upper) {
+    const entry = c.close, stop = Math.max(c.high, upper) + 0.2 * A, target = V;
+    const rr = (entry - target) / (stop - entry);
+    if (rr >= 1) return { state: "triggered", kind: "vwap-band", side: "short", entry, stop, target, rMult: rr, invalidation: upper, strength: Math.min(1, (c.high - V) / (mult * sd)), reason: `Tagged +${mult}σ VWAP band ${upper.toFixed(4)}` };
+  }
+  return null;
+}
+
+export const SCANNERS = [breakout, vwapReclaim, meanReversion, fvg, inverseFvg, openingRange, liquiditySweep, pullback, momentum, vwapBands];
 
 // Reversal-type setups are ALLOWED to fade the higher-timeframe bias (that's their
 // whole point) — they're never tagged "counter-trend", so they don't lose conviction
 // for it. Continuation setups still note alignment.
-const REVERSAL_KINDS = new Set(["mean-reversion", "liquidity-sweep", "ifvg"]);
+const REVERSAL_KINDS = new Set(["mean-reversion", "liquidity-sweep", "ifvg", "vwap-band"]);
+
+// Continuation/breakout setups that LIVE on participation — they only mean something
+// on above-average volume, so the agent's relative-volume gate applies to these
+// (reversal fades do not need a volume surge, so they're exempt).
+export const VOLUME_KINDS = new Set(["breakout", "orb", "momentum", "pullback"]);
 
 /**
  * Run all scanners on the 5m timeframe, gated by the 15m structure + 1h bias.
@@ -296,6 +332,7 @@ export function scan({ c5, c15, c1h }) {
   // every setup so the agent's risk gate can size down / skip when it's extreme.
   const A5 = atr(c5, 14), lastClose = c5[c5.length - 1]?.close;
   const atrPct = A5 > 0 && lastClose > 0 ? A5 / lastClose : null;
+  const rvol = relVolume(c5, 20); // participation vs the last 20 bars, for the volume gate
   const triggered = [], forming = [];
   for (const fn of SCANNERS) {
     const r = fn(c5);
@@ -306,7 +343,7 @@ export function scan({ c5, c15, c1h }) {
     // tag whether it aligns with the 1h bias; the agent folds that into conviction
     // (lower leverage against the trend) and its learning can veto losing buckets.
     const aligned = isRev || (r.side === "long" && bias !== "down") || (r.side === "short" && bias !== "up");
-    const setup = { ...r, timeframe: "5m", bias, aligned, atrPct };
+    const setup = { ...r, timeframe: "5m", bias, aligned, atrPct, rvol };
     if (r.state === "triggered") triggered.push(setup);
     else forming.push(setup);
   }

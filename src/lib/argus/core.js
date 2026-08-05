@@ -37,6 +37,19 @@ export function priorLow(candles, n) {
   return Math.min(...s.map((c) => c.low));
 }
 
+/** Relative volume: the latest bar's volume vs the average of the `period` bars
+ *  BEFORE it. >1 = above-average participation (a breakout with conviction behind
+ *  it); <1 = thin, prone to failing. Returns 1 when volume data is unavailable. */
+export function relVolume(candles, period = 20) {
+  const n = candles.length;
+  if (n < period + 1) return 1;
+  let sum = 0;
+  for (let i = n - 1 - period; i < n - 1; i++) sum += candles[i].volume || 0;
+  const avg = sum / period;
+  const cur = candles[n - 1].volume || 0;
+  return avg > 0 ? cur / avg : 1;
+}
+
 // ── portfolio-heat position sizing ──────────────────────────────────────────
 
 const MAINT = 0.05; // maintenance-margin + fee buffer used for leverage/liquidation

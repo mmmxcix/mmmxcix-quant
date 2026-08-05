@@ -6,7 +6,7 @@
 // LAB_ARGUS_EQUITY (paper start, default 10000).
 import { loadMarket } from "./marketdata.mjs";
 import { openThesis, evaluateExit, closeThesisAt, plannedRR, fillPrice, enforceMinStop, MIN_STOP_FRAC, volStatus } from "../src/lib/argus/core.js";
-import { scan } from "../src/lib/argus/scanners.js";
+import { scan, VOLUME_KINDS } from "../src/lib/argus/scanners.js";
 import { buildBrief, diffBrief, renderBrief, parseFearGreed } from "../src/lib/argus/brief.js";
 import { deriveLessons, adjustment, sessionOf } from "../src/lib/argus/learn.js";
 import { marketOpen } from "../src/lib/argus/hours.js";
@@ -47,6 +47,7 @@ const EVENT_TTL = +(process.env.LAB_ARGUS_EVENT_TTL_MIN || 240) * 60_000; // bia
 // Hermes-style learning: buckets need at least this many closed trades before any
 // lesson is allowed to touch sizing (small samples lie). Tunable, conservative.
 const LEARN_MIN = +(process.env.LAB_ARGUS_LEARN_MIN || 20);
+const RVOL_MIN = +(process.env.LAB_ARGUS_RVOL_MIN || 1.1); // breakouts need above-average volume
 // Trade duration: hard cap 3 days (a position still open then is force-closed),
 // but Argus is a DAY-TRADER at heart — it prefers short, high-conviction setups
 // (reaching the same target with a tighter stop = more exposure) over long swing
@@ -313,6 +314,13 @@ function tryOpen(inst, setup, halted) {
     console.log(`[${new Date().toISOString()}] SKIP ${inst.symbol} ${setup.side} ${setup.kind} — ${vol.reason}`);
     return;
   }
+  // Relative-volume gate: a breakout / continuation setup on THIN volume tends to
+  // fail (no participation behind the move) — skip it. Reversal fades don't need a
+  // volume surge, so only VOLUME_KINDS are gated.
+  if (VOLUME_KINDS.has(setup.kind) && Number.isFinite(setup.rvol) && setup.rvol < RVOL_MIN) {
+    console.log(`[${new Date().toISOString()}] SKIP ${inst.symbol} ${setup.side} ${setup.kind} — thin volume (rvol ${setup.rvol.toFixed(2)} < ${RVOL_MIN})`);
+    return;
+  }
   const riskPct = BASE_RISK * adj.mult * vol.mult;
 
   // Conviction = technical setup quality, tilted by an ALIGNED bias (its parts, not
@@ -382,6 +390,7 @@ function tryOpen(inst, setup, halted) {
       exposure: true, heatUsedPct: +((openRisk() / equity) * 100).toFixed(1), heatCapPct: +(heatCap * 100).toFixed(0),
       drawdown: true,
       volatility: { ok: vol.ok, elevated: !!vol.elevated, label: vol.label },
+      volume: { rvol: Number.isFinite(setup.rvol) ? +setup.rvol.toFixed(2) : null, gated: VOLUME_KINDS.has(setup.kind) },
       maxLoss: true, // a daily-loss halt returns at the top of tryOpen, so it's clear here
     };
     forming = forming.filter((f) => f.symbol !== inst.symbol);
