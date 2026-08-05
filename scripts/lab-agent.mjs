@@ -192,16 +192,23 @@ function assessIncubation(ps, s) {
   const sd = rets.length > 2 ? Math.sqrt(rets.reduce((a, b) => a + (b - mean) ** 2, 0) / (rets.length - 1)) : 0;
   const tStat = sd > 0 ? mean / (sd / Math.sqrt(rets.length)) : 0;
 
-  // Drawdown budget: 1.5× the backtest's max drawdown (min +5pp headroom);
+  // Vol-target-aware baseline: `expect` was measured on the FULL-SIZE validation
+  // backtest with NO vol-targeting, but the live agent sizes DOWN by the GARCH
+  // vol-target weight. Scale the expectation by the mean weight actually applied
+  // so the budget matches how the strategy really trades — otherwise it's inflated
+  // by the un-vol-targeted number and a genuinely broken strat hides under it.
+  const vtScale = (s.volTarget && ps.vtN >= 8) ? Math.min(1, ps.vtSum / ps.vtN) : 1;
+  // Drawdown budget: 1.5× the (scaled) backtest max drawdown (min +5pp headroom);
   // 25% hard fallback when an older promotion carries no expectation.
-  const expDd = s.expect?.ddPct ?? null;
+  const expDdRaw = s.expect?.ddPct ?? null;
+  const expDd = expDdRaw != null ? expDdRaw * vtScale : null;
   const ddLimit = expDd != null ? Math.max(expDd * 1.5, expDd + 5) : 25;
 
   let verdict = "incubating";
   let reason = `${Math.floor(days)}d live`;
   if (maxDd > ddLimit) {
     verdict = "diverged";
-    reason = `live dd ${maxDd.toFixed(1)}% > budget ${ddLimit.toFixed(1)}% (backtest ${expDd != null ? expDd + "%" : "n/a"})`;
+    reason = `live dd ${maxDd.toFixed(1)}% > budget ${ddLimit.toFixed(1)}% (backtest ${expDd != null ? expDd.toFixed(1) + "%" : "n/a"}${vtScale < 1 ? ` · vol-scaled ×${vtScale.toFixed(2)}` : ""})`;
   } else if (days >= 28 && rets.length >= 15 && tStat < -1) {
     verdict = "diverged";
     reason = `losing with confidence (t=${tStat.toFixed(1)}) after ${Math.floor(days)}d`;
@@ -216,7 +223,11 @@ function assessIncubation(ps, s) {
   return {
     verdict, reason, days: +days.toFixed(1),
     liveRetPct: +liveRetPct.toFixed(2), liveDdPct: +maxDd.toFixed(1),
-    expRetPct: s.expect?.retPct ?? null, expDdPct: expDd, trades: ps.tradeTotal || 0,
+    // Report the VOL-SCALED expectation so the Coach's live-vs-backtest comparison
+    // is apples-to-apples with how the strategy actually trades.
+    expRetPct: s.expect?.retPct != null ? +(s.expect.retPct * vtScale).toFixed(1) : null,
+    expDdPct: expDd != null ? +expDd.toFixed(1) : null,
+    trades: ps.tradeTotal || 0,
   };
 }
 
@@ -376,6 +387,13 @@ for (const s of published) {
         const w = volTargetWeight(candles, typeof s.volTarget === "object" ? s.volTarget : {});
         effPositionPct = Math.min(100, Math.max(1, Math.round(effPositionPct * w)));
         volInfo = { weight: +w.toFixed(2), sizedPct: effPositionPct };
+        // Track the mean de-risk actually applied vs the full-size backtest the
+        // `expect` baseline was measured at (which had NO vol-targeting). The
+        // incubation watchdog scales `expect` by this so the drawdown budget
+        // reflects how the strategy really trades — see assessIncubation.
+        const vtMult = Math.min(1, w);
+        ps.vtSum = (ps.vtSum || 0) + vtMult;
+        ps.vtN = (ps.vtN || 0) + 1;
       } catch { /* thin data → keep base size */ }
     }
 
