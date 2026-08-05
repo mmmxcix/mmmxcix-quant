@@ -1,25 +1,60 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Network, RefreshCw, BookOpenCheck, Skull } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { getEntries, subscribeRegistry, syncFromServer } from "@/lib/registry";
 
 // Brain Vault — the knowledge graph the research agent builds as it reads.
-// Nodes = papers (green = survived the gauntlet, red = buried); edges connect
-// papers that share a research topic. Data is pushed by scripts/research-agent
-// from MULTIPLE sources (arXiv + OpenAlex) to /api/lab (channel lab:brain).
-// Self-contained canvas force simulation — no external graph library.
+// Nodes = papers; edges connect papers that share a research topic. Data is
+// pushed by scripts/research-agent from MULTIPLE sources (arXiv + OpenAlex) to
+// /api/lab (channel lab:brain). Self-contained canvas force simulation.
+//
+// A node is coloured by what became of the strategy it produced — cross-referenced
+// LIVE against the registry (each candidate node's id === the registry entry's
+// candidateId), so the vault always reflects the real pipeline:
+//   green  = paper-trading (live)
+//   yellow = found, not yet live (factory / validated / improve, or not imported)
+//   grey   = in the graveyard, but it WAS live once
+//   red    = never good enough to validate (buried paper, or buried before going live)
+const STAGE_COLORS = { paper: "#34d399", found: "#fbbf24", buriedLive: "#94a3b8", failed: "#f87171" };
+const COLORS = { edge: "rgba(148,163,184,0.18)" };
 
-const COLORS = { candidate: "#34d399", graveyard: "#f87171", edge: "rgba(148,163,184,0.18)" };
+// Map a brain node → pipeline stage, using the registry entry linked by candidateId.
+function stageOf(node, byCand) {
+  if (node.outcome === "graveyard") return "failed"; // a buried PAPER — never a strategy
+  const e = byCand.get(node.id);
+  if (!e) return "found";                             // survived research, not (yet) in the library
+  if (e.status === "paper") return "paper";
+  if (e.status === "graveyard") return e.everLive ? "buriedLive" : "failed";
+  return "found";                                     // factory / validated / improve → found, not live
+}
 
 export default function BrainVault() {
   const [data, setData] = useState(undefined); // undefined=loading, null=none
   const [busy, setBusy] = useState(false);
   const [hover, setHover] = useState(null);
+  const [entries, setEntries] = useState(getEntries); // live registry, for node colours
 
   const wrapRef = useRef(null);
   const canvasRef = useRef(null);
   const simRef = useRef(null); // { nodes, edges, raf }
-  const viewRef = useRef(null); // { reset } — re-frame the camera on demand
+  const viewRef = useRef(null); // { reset, redraw } — re-frame / recolour on demand
+
+  // Keep the registry in sync so node colours track the real pipeline (a strat
+  // going to Paper turns its node green without a page reload).
+  useEffect(() => {
+    syncFromServer();
+    return subscribeRegistry(() => setEntries(getEntries()));
+  }, []);
+  const byCand = useMemo(() => {
+    const m = new Map();
+    for (const e of entries) if (e.candidateId) m.set(e.candidateId, e);
+    return m;
+  }, [entries]);
+  // Read inside the render loop without re-running the whole simulation on every
+  // 60s registry sync (which would reset the layout).
+  const stageRef = useRef(byCand);
+  stageRef.current = byCand;
 
   // Auth = the admin session cookie (this page only renders inside the
   // RequireAdmin-guarded Cortex hub anyway).
@@ -88,10 +123,13 @@ export default function BrainVault() {
         ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
       }
       for (const n of nodes) {
-        const c = COLORS[n.outcome] || "#94a3b8";
+        const stage = stageOf(n, stageRef.current);
+        const c = STAGE_COLORS[stage] || "#94a3b8";
+        const dim = stage === "buriedLive" || stage === "failed";
         ctx.beginPath(); ctx.arc(n.x, n.y, n.rad, 0, Math.PI * 2);
-        ctx.fillStyle = c; ctx.globalAlpha = n.outcome === "graveyard" ? 0.55 : 1; ctx.fill();
-        if (n.outcome === "candidate") { ctx.globalAlpha = 0.25; ctx.beginPath(); ctx.arc(n.x, n.y, n.rad + 4, 0, Math.PI * 2); ctx.fillStyle = c; ctx.fill(); }
+        ctx.fillStyle = c; ctx.globalAlpha = dim ? 0.55 : 1; ctx.fill();
+        // Live (paper) nodes get a soft halo so the money-making ones pop.
+        if (stage === "paper") { ctx.globalAlpha = 0.25; ctx.beginPath(); ctx.arc(n.x, n.y, n.rad + 4, 0, Math.PI * 2); ctx.fillStyle = c; ctx.fill(); }
         ctx.globalAlpha = 1;
       }
       ctx.restore();
@@ -132,7 +170,7 @@ export default function BrainVault() {
 
     cancelAnimationFrame(simRef.current.raf);
     simRef.current.raf = requestAnimationFrame(step);
-    viewRef.current = { reset: () => { userMoved = false; fit(); draw(); } };
+    viewRef.current = { reset: () => { userMoved = false; fit(); draw(); }, redraw: draw };
 
     const onResize = () => { setup(); if (!userMoved) fit(); alpha = Math.max(alpha, 0.25); cancelAnimationFrame(simRef.current.raf); simRef.current.raf = requestAnimationFrame(step); };
     const ro = new ResizeObserver(onResize);
@@ -256,6 +294,10 @@ export default function BrainVault() {
     };
   }, [data]);
 
+  // When the registry changes after the simulation has settled (its RAF loop
+  // stops at rest), force one repaint so node colours update without a reload.
+  useEffect(() => { viewRef.current?.redraw?.(); }, [byCand]);
+
   const stats = data?.stats;
   const sources = data?.sources || {};
 
@@ -289,10 +331,12 @@ export default function BrainVault() {
           {/* graph */}
           <div ref={wrapRef} className="relative rounded-xl border border-line lg-glass overflow-hidden">
             <canvas ref={canvasRef} className="block w-full touch-none" style={{ height: 520 }} />
-            {/* legend */}
+            {/* legend — the 4 pipeline stages, cross-referenced from the registry */}
             <div className="absolute top-3 left-3 flex flex-col gap-1 text-[11px] text-dim">
-              <span className="flex items-center gap-1.5"><i className="w-2 h-2 rounded-full inline-block" style={{ background: COLORS.candidate }} /> survivor (candidate)</span>
-              <span className="flex items-center gap-1.5"><i className="w-2 h-2 rounded-full inline-block opacity-60" style={{ background: COLORS.graveyard }} /> buried</span>
+              <span className="flex items-center gap-1.5"><i className="w-2 h-2 rounded-full inline-block" style={{ background: STAGE_COLORS.paper }} /> paper-trading (live)</span>
+              <span className="flex items-center gap-1.5"><i className="w-2 h-2 rounded-full inline-block" style={{ background: STAGE_COLORS.found }} /> found · not yet live</span>
+              <span className="flex items-center gap-1.5"><i className="w-2 h-2 rounded-full inline-block opacity-70" style={{ background: STAGE_COLORS.buriedLive }} /> graveyard · was live</span>
+              <span className="flex items-center gap-1.5"><i className="w-2 h-2 rounded-full inline-block opacity-70" style={{ background: STAGE_COLORS.failed }} /> never good enough</span>
               <span className="text-dim">edge = shared research topic</span>
               <span className="text-dim">scroll = zoom · drag bg = pan · drag node = move it</span>
             </div>
@@ -328,9 +372,12 @@ export default function BrainVault() {
           </div>
 
           <p className="text-[11px] text-dim leading-relaxed">
-            Every paper the agent reads — from arXiv and OpenAlex — lands here. Survivors (green) cleared the full
-            validation gauntlet; buried nodes (red) failed and are kept as a record. Hover a node for its source,
-            verdict and topics — every paper the research agent has read, built from our own honest data.
+            Every paper the agent reads — from arXiv and OpenAlex — lands here, coloured by what became of the
+            strategy it produced: <span className="text-up">green</span> is live in paper trading,{" "}
+            <span className="text-amber-400">yellow</span> was found but isn't live yet,{" "}
+            <span style={{ color: STAGE_COLORS.buriedLive }}>grey</span> is buried but once traded, and{" "}
+            <span className="text-down">red</span> never made the cut. Cross-referenced live against the registry,
+            so it always matches the real pipeline. Hover a node for its source, verdict and topics.
           </p>
         </div>
       )}

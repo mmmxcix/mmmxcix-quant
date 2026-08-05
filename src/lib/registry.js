@@ -18,6 +18,12 @@ const listeners = new Set();
 // side-exits: "improve" for a strategy that has a KNOWN, fixable flaw (e.g. it
 // only worked in the first half of the window) and "graveyard" for a dead one.
 export const STATUSES = ["factory", "validated", "paper", "improve", "graveyard"];
+
+// A buried strategy is kept for this many days so you can still rescue it, then
+// it's deleted for good. Graveyard lives ONLY in the pipeline's graveyard area —
+// never in the library. See graveyardDaysLeft / pruneGraveyard below.
+export const GRAVEYARD_TTL_DAYS = 14;
+const DAY_MS = 86_400_000;
 export const STATUS_META = {
   factory: { label: "Factory", hint: "In the library — awaiting / between re-tests" },
   validated: { label: "Validated", hint: "Survived the validation pipeline" },
@@ -242,6 +248,9 @@ export function saveEntry({ name, market, symbol, interval, range, mode, strateg
     returnSeries: buildReturnSeries(equity),
     tradeCount: metrics?.tradeCount ?? (tradeReturns?.length || 0),
     status,
+    // A strat imported straight into Validated/Paper (Cortex finds, adopted paper
+    // book) counts as having been live — for the grey-vs-red graveyard distinction.
+    everLive: status === "validated" || status === "paper",
     note: "",
   };
   write([entry, ...read()]);
@@ -251,11 +260,42 @@ export function saveEntry({ name, market, symbol, interval, range, mode, strateg
 
 export function setStatus(id, status) {
   if (!STATUSES.includes(status)) return;
-  // Stamp WHEN it entered this stage so the UI can show "newly added to Paper".
-  const next = read().map((e) => (e.id === id ? { ...e, status, statusAt: Date.now() } : e));
+  // Stamp WHEN it entered this stage so the UI can show "newly added to Paper"
+  // and the graveyard countdown can measure from the burial time. Once a strategy
+  // reaches Validated or Paper it's flagged `everLive` for good — that's what lets
+  // the Brain Vault tell a buried strat that WAS live (grey) from one that never
+  // cleared the gauntlet (red).
+  const wasLive = status === "validated" || status === "paper";
+  const next = read().map((e) =>
+    e.id === id ? { ...e, status, statusAt: Date.now(), everLive: e.everLive || wasLive } : e
+  );
   write(next);
   const updated = next.find((e) => e.id === id);
   if (updated) push({ upsert: updated });
+}
+
+/** Days left before a buried strategy is auto-deleted (0 = due for deletion),
+ *  or null if it isn't in the graveyard. Measured from when it was buried. */
+export function graveyardDaysLeft(e) {
+  if (!e || e.status !== "graveyard") return null;
+  const buriedAt = e.statusAt || e.createdAt || Date.now();
+  const left = GRAVEYARD_TTL_DAYS - Math.floor((Date.now() - buriedAt) / DAY_MS);
+  return Math.max(0, left);
+}
+
+/** Permanently delete graveyard strategies whose 14-day rescue window has elapsed.
+ *  Call on the Registry mount. Returns how many were purged. */
+export function pruneGraveyard() {
+  const cur = read();
+  const now = Date.now();
+  const expired = cur.filter(
+    (e) => e.status === "graveyard" && now - (e.statusAt || e.createdAt || now) >= GRAVEYARD_TTL_DAYS * DAY_MS
+  );
+  if (!expired.length) return 0;
+  const keep = cur.filter((e) => !expired.includes(e));
+  write(keep);
+  for (const e of expired) push({ remove: e.id });
+  return expired.length;
 }
 
 // Crown / uncrown a strategy — the "maxed out" mark (Cortex reached its best

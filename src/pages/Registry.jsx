@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { Boxes, Trash2, Skull, ShieldCheck, FlaskConical, Rocket, Grid3x3, Info, Send, Loader2, Check, Scale, Wrench, Search, Crown } from "lucide-react";
 import {
   getEntries, subscribeRegistry, setStatus, setCrowned, removeEntry, STATUS_META, correlationMatrix, saveEntry, syncFromServer, restoreBackup,
+  graveyardDaysLeft, pruneGraveyard, GRAVEYARD_TTL_DAYS,
 } from "@/lib/registry";
 import { cn, fmtPct, fmtNum } from "@/lib/utils";
 import { PROFILES } from "@/lib/profiles";
@@ -414,6 +415,17 @@ function Card({ e, rich = false }) {
       )}
 
       <div className="flex flex-wrap gap-1 pt-0.5">
+        {/* Graveyard countdown — a buried strat is auto-deleted 14 days after
+            burial unless rescued. Turns red in the final stretch. */}
+        {e.status === "graveyard" && (() => {
+          const d = graveyardDaysLeft(e);
+          return (
+            <span className={cn("chip !text-[10px] !py-0.5 flex items-center gap-1", d <= 3 ? "text-down" : "text-dim")}
+              title={`Auto-deletes ${d === 0 ? "now" : `in ${d} day${d === 1 ? "" : "s"}`} unless you rescue it`}>
+              <Skull className="w-3 h-3" /> {d === 0 ? "deleting…" : `${d}d left`}
+            </span>
+          );
+        })()}
         {(MOVES[e.status] || []).map(([to, label]) => (
           <button key={to} onClick={() => setStatus(e.id, to)}
             className={cn("chip !text-[10px] !py-0.5", to === "graveyard" ? "chip-idle hover:text-down" : "chip-idle hover:text-accent")}>
@@ -432,18 +444,19 @@ function Card({ e, rich = false }) {
   );
 }
 
-// The Paper column grows without bound as strategies get promoted, so show only
-// the ones added most recently ("new") and tuck the rest behind an "Old" toggle.
-const PAPER_NEW_COUNT = 4;
-function PaperColumn({ col, list, query }) {
+// Every pipeline stage grows without bound as strategies flow through it, so show
+// only the 3 most-recently-added and tuck the rest behind an "Old" toggle — the
+// column stays scannable and you always see the freshest movement first.
+const STAGE_NEW_COUNT = 3;
+function StageColumn({ col, list, query }) {
   const [showOld, setShowOld] = useState(false);
   const Icon = col.icon;
   const sorted = useMemo(
     () => [...list].sort((a, b) => (b.statusAt || b.createdAt || 0) - (a.statusAt || a.createdAt || 0)),
     [list]
   );
-  const fresh = sorted.slice(0, PAPER_NEW_COUNT);
-  const old = sorted.slice(PAPER_NEW_COUNT);
+  const fresh = sorted.slice(0, STAGE_NEW_COUNT);
+  const old = sorted.slice(STAGE_NEW_COUNT);
   return (
     <div className="rounded-xl border border-line lg-glass p-3">
       <div className="flex items-center gap-2 mb-3 px-1">
@@ -591,14 +604,16 @@ export default function Registry() {
       setBanner(`Recovered ${recovered} strateg${recovered === 1 ? "y" : "ies"} from a local backup.`);
       setTimeout(() => setBanner(null), 8000);
     }
+    pruneGraveyard(); // delete buried strats whose 14-day rescue window has elapsed
     syncFromServer();
-    const id = setInterval(() => { if (!document.hidden) syncFromServer(); }, 60_000);
+    const id = setInterval(() => { if (!document.hidden) { syncFromServer(); pruneGraveyard(); } }, 60_000);
     return () => clearInterval(id);
   }, []);
   const [query, setQuery] = useState("");
-  const [showGraveyard, setShowGraveyard] = useState(false); // buried strats are hidden until asked for
+  const [showGraveyard, setShowGraveyard] = useState(false); // opens the pipeline's graveyard area (rescue/expire)
   const [sourceFilter, setSourceFilter] = useState("all");   // all | you | cortex
   const [stageFilter, setStageFilter] = useState("all");     // all | factory | validated | paper | improve
+  const [sortBy, setSortBy] = useState("newest");            // newest|oldest|language|maxDD|return|sharpe
 
   const matches = (e) => {
     const q = query.trim().toLowerCase();
@@ -606,18 +621,32 @@ export default function Registry() {
     return (e.name || "").toLowerCase().includes(q) || (e.symbol || "").toLowerCase().includes(q);
   };
 
-  // The LIBRARY view (top) — every strategy, own + Cortex, with real filters.
-  // Graveyard stays out unless you toggle it on or filter to it explicitly.
-  const library = useMemo(() => entries.filter((e) => {
-    if (e.status === "graveyard" && !showGraveyard) return false;
-    // "maxed" is a flag, not a status — the Maxed-out stage chip is the 👑 filter.
-    if (stageFilter === "maxed") { if (!e.crowned) return false; }
-    else if (stageFilter !== "all" && e.status !== stageFilter) return false;
-    if (sourceFilter === "you" && e.candidateId) return false;
-    if (sourceFilter === "cortex" && !e.candidateId) return false;
-    return matches(e);
+  // The LIBRARY view (top) — every LIVING strategy, own + Cortex, with real
+  // filters and sorting. Graveyard is NEVER in the library: buried strats live
+  // only in the pipeline's graveyard area (rescue within 14 days, else deleted).
+  const library = useMemo(() => {
+    const filtered = entries.filter((e) => {
+      if (e.status === "graveyard") return false; // buried → pipeline graveyard only
+      // "maxed" is a flag, not a status — the Maxed-out stage chip is the 👑 filter.
+      if (stageFilter === "maxed") { if (!e.crowned) return false; }
+      else if (stageFilter !== "all" && e.status !== stageFilter) return false;
+      if (sourceFilter === "you" && e.candidateId) return false;
+      if (sourceFilter === "cortex" && !e.candidateId) return false;
+      return matches(e);
+    });
+    const num = (v, d = -Infinity) => (Number.isFinite(v) ? v : d);
+    const cmp = {
+      newest: (a, b) => (b.createdAt || 0) - (a.createdAt || 0),
+      oldest: (a, b) => (a.createdAt || 0) - (b.createdAt || 0),
+      language: (a, b) => (a.language || "js").localeCompare(b.language || "js") || (b.createdAt || 0) - (a.createdAt || 0),
+      return: (a, b) => num(b.metrics?.totalReturnPct) - num(a.metrics?.totalReturnPct),
+      sharpe: (a, b) => num(b.metrics?.sharpe) - num(a.metrics?.sharpe),
+      // Smaller drawdown is better, so ascending; missing DD sorts last.
+      maxDD: (a, b) => num(a.metrics?.maxDrawdownPct, Infinity) - num(b.metrics?.maxDrawdownPct, Infinity),
+    };
+    return filtered.sort(cmp[sortBy] || cmp.newest);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [entries, query, sourceFilter, stageFilter, showGraveyard]);
+  }, [entries, query, sourceFilter, stageFilter, sortBy]);
 
   const byStatus = useMemo(() => {
     const g = { factory: [], validated: [], paper: [], improve: [], maxed: [], graveyard: [] };
@@ -699,7 +728,15 @@ export default function Registry() {
                 <button key={id} onClick={() => setStageFilter(id)}
                   className={cn("chip !text-[10px]", stageFilter === id ? "chip-active" : "chip-idle")}>{label}</button>
               ))}
+              <label className="flex items-center gap-1 text-[10px] text-dim uppercase tracking-wide ml-3">Sort
+                <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="input-base !py-0.5 text-[10px] normal-case tracking-normal">
+                  {[["newest", "Newest"], ["oldest", "Oldest"], ["language", "Language"], ["return", "Return"], ["sharpe", "Sharpe"], ["maxDD", "Max DD"]].map(([id, label]) => (
+                    <option key={id} value={id}>{label}</option>
+                  ))}
+                </select>
+              </label>
               <button onClick={() => setShowGraveyard((v) => !v)}
+                title="Open the graveyard — buried strats, rescuable for 14 days"
                 className={cn("chip !text-[10px] ml-auto flex items-center gap-1", showGraveyard ? "chip-active" : "chip-idle")}>
                 <Skull className="w-3 h-3" /> Graveyard {graveyardCount}
               </button>
@@ -718,38 +755,21 @@ export default function Registry() {
             <p className="text-xs font-semibold text-dim uppercase tracking-wide">Pipeline · where each strategy is</p>
           </div>
           <div className="grid md:grid-cols-2 xl:grid-cols-5 gap-4 mb-6">
-            {activeCols.map((col) => {
-              const Icon = col.icon;
-              const list = byStatus[col.id];
-              // Paper can grow without bound — show only what was added most
-              // recently and hide the rest behind an "old" toggle (see PaperColumn).
-              if (col.id === "paper") return <PaperColumn key={col.id} col={col} list={list} query={query} />;
-              return (
-                <div key={col.id} className="rounded-xl border border-line lg-glass p-3">
-                  <div className="flex items-center gap-2 mb-3 px-1">
-                    <Icon className={cn("w-4 h-4", col.tone)} />
-                    <p className={cn("text-sm font-semibold", col.tone)}>{STATUS_META[col.id].label}</p>
-                    <span className="text-xs font-mono text-dim ml-auto">{list.length}</span>
-                  </div>
-                  <p className="text-[10px] text-dim px-1 mb-2">{STATUS_META[col.id].hint}</p>
-                  <div className="space-y-2">
-                    {list.length === 0
-                      ? <p className="text-[11px] text-dim px-1 py-4 text-center">{query ? "no match" : "empty"}</p>
-                      : list.map((e) => <Card key={e.id} e={e} />)}
-                  </div>
-                </div>
-              );
-            })}
+            {activeCols.map((col) => (
+              // Every stage shows only its 3 newest, rest behind an "Old" toggle.
+              <StageColumn key={col.id} col={col} list={byStatus[col.id]} query={query} />
+            ))}
           </div>
 
-          {/* Graveyard — opt-in. Buried strategies (too weak, decayed, etc.) are
-              kept as a record but stay out of the library/pipeline by default. */}
+          {/* Graveyard — buried strategies, OUT of the library entirely. Each has
+              a 14-day rescue window (Revive → back to Factory/Improve); after that
+              it's auto-deleted. Opt-in view via the Graveyard toggle. */}
           {showGraveyard && (
             <div className="rounded-xl border border-line lg-glass p-3 mb-8">
               <div className="flex items-center gap-2 mb-3 px-1">
                 <Skull className="w-4 h-4 text-dim" />
                 <p className="text-sm font-semibold text-dim">Graveyard</p>
-                <span className="text-[10px] text-dim">— buried, kept as a record of what failed</span>
+                <span className="text-[10px] text-dim">— buried & out of the library · rescue within {GRAVEYARD_TTL_DAYS} days or it's deleted</span>
                 <span className="text-xs font-mono text-dim ml-auto">{byStatus.graveyard.length}</span>
               </div>
               {byStatus.graveyard.length === 0
