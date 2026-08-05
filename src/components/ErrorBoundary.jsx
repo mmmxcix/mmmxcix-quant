@@ -10,7 +10,11 @@ import { Component } from "react";
 // a mid-deploy race, which then fails MIME checking). The page is unusable but
 // self-fixable: drop the caches and reload once. Guarded by sessionStorage so a
 // genuinely missing chunk can never become a reload loop.
-const CHUNK_ERROR = /Failed to fetch dynamically imported module|Importing a module script failed|error loading dynamically imported module|Expected a JavaScript-or-Wasm module script/i;
+// Broad on purpose — browsers word a failed chunk load half a dozen ways (network
+// fetch, MIME mismatch when the 404 falls back to index.html, Safari/Firefox
+// variants). Missing one meant the auto-recovery never fired and the user saw the
+// error card after a deploy. The reload is guarded to one shot, so casting wide is safe.
+const CHUNK_ERROR = /dynamically imported module|module script|Importing a module|disallowed MIME type|ChunkLoadError|Loading chunk|Failed to fetch/i;
 const RECOVER_KEY = "quant_chunk_recover";
 
 async function recoverFromStaleChunks() {
