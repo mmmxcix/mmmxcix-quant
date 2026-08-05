@@ -101,6 +101,13 @@ function hasCriticalBug(s) {
   const rets = [...c.matchAll(/return\s+["'`](long|short|flat|buy|sell|hold)["'`]/gi)].map((m) => m[1].toLowerCase());
   const nonFlat = rets.filter((r) => r !== "flat" && r !== "hold");
   if (rets.length && nonFlat.length && new Set(rets).size === 1) return true;
+  // Side-inverted short bracket (mirrors strategyAudit's inverted-short-bracket):
+  // a short reuses a long-style stop computed BELOW entry (close − …) with no
+  // above-entry stop anywhere → its stop sits in profit, target in a loss.
+  const shortBracket = /\bsignal\s*:\s*["']short["'][^}]*\b(stop|target)\b/.test(c) || /["']short["']\s*,\s*(stop|target)/.test(c);
+  if (shortBracket
+    && /\bstop\b\s*[:=][^;\n]*\b(close|price|entry|hl2|mid)\b[^;\n]*-/.test(c)
+    && !/\bstop\b\s*[:=][^;\n]*\b(close|price|entry|hl2|mid)\b[^;\n]*\+/.test(c)) return true;
   return false;
 }
 

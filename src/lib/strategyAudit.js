@@ -79,6 +79,23 @@ const RULES = [
     },
     msg: "The strategy returns a single constant side on every path — that's a static position, not a signal. The decision must depend on the price data.",
   },
+  {
+    id: "inverted-short-bracket",
+    severity: "critical",
+    // A SHORT that reuses long-style brackets: stop computed BELOW entry
+    // (close − …) and target ABOVE — so the stop sits in profit and the target in a
+    // loss. High precision: only fires when the code returns a short bracket AND the
+    // stop is ONLY ever computed below the price, never above. A correct dual-side
+    // strategy computes a `close + …` stop for its short, which suppresses this.
+    test: (code) => {
+      const shortBracket = /\bsignal\s*:\s*["']short["'][^}]*\b(stop|target)\b/.test(code) || /["']short["']\s*,\s*(stop|target)/.test(code);
+      if (!shortBracket) return false;
+      const stopBelow = /\bstop\b\s*[:=][^;\n]*\b(close|price|entry|hl2|mid)\b[^;\n]*-/.test(code);
+      const stopAbove = /\bstop\b\s*[:=][^;\n]*\b(close|price|entry|hl2|mid)\b[^;\n]*\+/.test(code);
+      return stopBelow && !stopAbove;
+    },
+    msg: "Side-inverted brackets: a SHORT reuses a stop computed BELOW entry (close − …) and a target ABOVE — that puts the stop in profit and the target in a loss. A short's stop must be ABOVE entry, its target BELOW. Compute stop/target per side.",
+  },
 ];
 
 /**

@@ -70,6 +70,29 @@ test("a genuine computed-float equality still warns", () => {
     .findings.some((f) => f.id === "float-equality"), "=== decimal literal warns");
 });
 
+test("catches a side-inverted short bracket (critical), leaves a correct dual-side clean", () => {
+  // The real Square-Root/RSI-ATR bug: short reuses the long's close−ATR stop.
+  const inverted = `function strategy(ctx){
+    const atr = ctx.indicators.atr(ctx.candles,14);
+    const stop = ctx.close - atr*1.5;
+    const target = ctx.close + atr*1.5;
+    if (ctx.rsi < 30) return { signal: "long", stop, target };
+    if (ctx.rsi > 70) return { signal: "short", stop, target };
+    return "flat";
+  }`;
+  const a = auditStrategy(inverted, "js");
+  assert.ok(a.findings.some((f) => f.id === "inverted-short-bracket" && f.severity === "critical"));
+
+  // A correct dual-side strategy computes a close+ATR stop for the short → no flag.
+  const correct = `function strategy(ctx){
+    const atr = ctx.indicators.atr(ctx.candles,14);
+    if (ctx.rsi < 30) return { signal: "long", stop: ctx.close - atr*1.5, target: ctx.close + atr*3 };
+    if (ctx.rsi > 70) return { signal: "short", stop: ctx.close + atr*1.5, target: ctx.close - atr*3 };
+    return "flat";
+  }`;
+  assert.equal(auditStrategy(correct, "js").findings.some((f) => f.id === "inverted-short-bracket"), false);
+});
+
 test("empty / missing code is a no-op, not a crash", () => {
   const a = auditStrategy("", "js");
   assert.deepEqual(a, { findings: [], blocked: false, critical: 0, warnings: 0 });
