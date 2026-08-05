@@ -102,15 +102,15 @@ export function bestRunFor(label) {
 
 /* ── Prediction ledger ───────────────────────────────────────────────── */
 
-/** Forecast: model said `predRet` for the bar AFTER lastBarTime. */
-export function logForecastPrediction({ symbol, market, model, predRet, lastBarTime, lastClose }) {
+/** Forecast: model said `predRet` for the bar AFTER lastBarTime (on `interval`). */
+export function logForecastPrediction({ symbol, market, model, predRet, lastBarTime, lastClose, interval = "1d" }) {
   const preds = read(PREDS_KEY);
   // One open forecast per symbol+model per bar — re-running the same day
   // must not stack duplicate ledger entries.
   const dup = preds.some((p) => p.type === "forecast" && p.symbol === symbol && p.model === model && p.lastBarTime === lastBarTime);
   if (dup) return;
   preds.unshift({
-    type: "forecast", symbol, market, model, predRet, lastBarTime, lastClose,
+    type: "forecast", symbol, market, model, predRet, lastBarTime, lastClose, interval,
     madeAt: Date.now(), resolved: false, actualRet: null, hit: null,
   });
   write(PREDS_KEY, preds.slice(0, PREDS_CAP));
@@ -151,10 +151,17 @@ export async function resolvePredictions() {
     if (p.resolved) continue;
     try {
       if (p.type === "forecast") {
-        // Needs at least one bar AFTER the bar the prediction was made on.
-        const cs = await fetchCandles({ market: p.market || "stock", symbol: p.symbol, interval: "1d", range: "1mo" });
-        const next = cs.find((c) => c.time > p.lastBarTime);
-        if (!next) continue;
+        // Fetch a window that reaches BACK far enough to include the prediction's
+        // own bar. If it doesn't, `find(time > lastBarTime)` would return the oldest
+        // bar in the window — grading a stale forecast against a ~1-month return
+        // instead of the next bar (the bug that corrupted the hit rate). Daily uses
+        // a year; intraday what Yahoo will give.
+        const iv = p.interval || "1d";
+        const range = iv === "1d" ? "1y" : "1mo";
+        const cs = await fetchCandles({ market: p.market || "stock", symbol: p.symbol, interval: iv, range });
+        if (!cs.length || cs[0].time > p.lastBarTime) continue; // window doesn't reach the prediction bar yet
+        const next = cs.find((c) => c.time > p.lastBarTime);    // the IMMEDIATE next bar
+        if (!next) continue;                                     // no bar after it yet — reality hasn't answered
         p.actualRet = next.close / p.lastClose - 1;
         p.hit = Math.sign(p.actualRet) === Math.sign(p.predRet) && p.predRet !== 0;
         p.resolved = true;

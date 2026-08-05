@@ -17,13 +17,15 @@ import { loadPy } from "@/lib/pyRunner";
 export const ML_MODELS = [
   { id: "rf", label: "Random Forest", desc: "200 trees, depth ≤ 6 — robust default, real feature importances" },
   { id: "gbm", label: "Gradient Boosting", desc: "sklearn GBM (the browser stand-in for XGBoost/CatBoost)" },
-  { id: "ridge", label: "Ridge (linear)", desc: "standardized linear model — the sanity check the fancy models must beat" },
+  { id: "ridge", label: "Ridge (L2)", desc: "standardized linear + L2 penalty — the sanity check the fancy models must beat" },
+  { id: "lasso", label: "Lasso (L1)", desc: "L1 penalty — drops useless features to zero, a sparse, hard-to-overfit model" },
+  { id: "elasticnet", label: "Elastic Net (L1+L2)", desc: "blends L1 sparsity and L2 shrinkage — the quant-standard regularized regression" },
 ];
 
 const PY_ML = `
 import numpy as np, pandas as pd, json
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
-from sklearn.linear_model import Ridge
+from sklearn.linear_model import Ridge, Lasso, ElasticNet
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
@@ -72,6 +74,10 @@ def run_forecast(o, h, l, c, v, t, model_id):
         model = RandomForestRegressor(n_estimators=200, max_depth=6, min_samples_leaf=5, random_state=7, n_jobs=1)
     elif model_id == "gbm":
         model = GradientBoostingRegressor(n_estimators=200, max_depth=3, learning_rate=0.05, subsample=0.8, random_state=7)
+    elif model_id == "lasso":
+        model = make_pipeline(StandardScaler(), Lasso(alpha=0.001, max_iter=5000))
+    elif model_id == "elasticnet":
+        model = make_pipeline(StandardScaler(), ElasticNet(alpha=0.001, l1_ratio=0.5, max_iter=5000))
     else:
         model = make_pipeline(StandardScaler(), Ridge(alpha=1.0))
 
@@ -88,7 +94,13 @@ def run_forecast(o, h, l, c, v, t, model_id):
 
     mae = float(np.mean(np.abs(pred - y_te)))
     mae_naive = float(np.mean(np.abs(y_te)))  # predicting 0 every day
+    # Information Coefficient — the quant-standard skill metric: how well the
+    # predicted returns line up with the actual ones. corr = Pearson IC; rank_ic =
+    # Spearman (rank) IC, which is robust to outliers and the one desks report.
     corr = float(np.corrcoef(pred, y_te)[0, 1]) if len(y_te) > 2 else 0.0
+    def _ranks(a):
+        return np.argsort(np.argsort(a)).astype(float)
+    rank_ic = float(np.corrcoef(_ranks(pred), _ranks(y_te))[0, 1]) if len(y_te) > 2 else 0.0
 
     # Frictionless sign-trading curve on the test window vs buy & hold — an
     # upper bound, not a tradable result (no fees/slippage).
@@ -96,8 +108,19 @@ def run_forecast(o, h, l, c, v, t, model_id):
     strat = np.cumprod(1 + pos * y_te)
     bh = np.cumprod(1 + y_te)
 
-    if model_id == "ridge":
-        coefs = np.abs(model.named_steps["ridge"].coef_)
+    # NEUTRAL-ZONE DEADBAND (reel-borrow): only act on CONVINCING predictions —
+    # skip the weak signals near zero that are mostly noise. Threshold = half a
+    # std of the model's own predictions. Fewer, higher-conviction trades.
+    db = 0.5 * float(np.std(pred))
+    pos_db = np.where(np.abs(pred) > db, np.sign(pred), 0.0)
+    strat_db = np.cumprod(1 + pos_db * y_te)
+    db_exposure = float(np.mean(pos_db != 0))
+    db_mask = (pos_db != 0) & nz
+    db_hit = float((np.sign(pred[db_mask]) == np.sign(y_te[db_mask])).mean()) if db_mask.sum() else hit
+
+    if hasattr(model, "named_steps"):                 # any regularized linear pipeline
+        est = list(model.named_steps.values())[-1]
+        coefs = np.abs(est.coef_)
         imp = coefs / (coefs.sum() or 1)
     else:
         imp = model.feature_importances_
@@ -112,9 +135,10 @@ def run_forecast(o, h, l, c, v, t, model_id):
 
     return json.dumps({
         "nTrain": int(split), "nTest": int(n - split), "hit": hit, "z": float(z),
-        "mae": mae, "maeNaive": mae_naive, "corr": corr, "tomorrow": tomorrow,
+        "mae": mae, "maeNaive": mae_naive, "corr": corr, "rankIc": rank_ic, "tomorrow": tomorrow,
+        "deadband": {"exposure": db_exposure, "hit": db_hit},
         "importances": importances[:10],
-        "curve": {"t": [int(x) for x in t_te], "strat": strat.tolist(), "bh": bh.tolist()},
+        "curve": {"t": [int(x) for x in t_te], "strat": strat.tolist(), "strat_db": strat_db.tolist(), "bh": bh.tolist()},
         "scatter": scatter,
     })
 `;

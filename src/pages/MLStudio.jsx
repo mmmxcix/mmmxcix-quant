@@ -33,7 +33,8 @@ function CurveChart({ curve, height = 220 }) {
   const [hov, setHov] = useState(null);
   const n = curve.t.length;
   if (n < 2) return null;
-  const all = [...curve.strat, ...curve.bh];
+  const hasDb = Array.isArray(curve.strat_db) && curve.strat_db.length === n;
+  const all = [...curve.strat, ...curve.bh, ...(hasDb ? curve.strat_db : [])];
   const min = Math.min(...all), max = Math.max(...all), rng = max - min || 1;
   const W = 600, H = height;
   const X = (i) => (i / (n - 1)) * W;
@@ -52,6 +53,10 @@ function CurveChart({ curve, height = 220 }) {
           vectorEffect="non-scaling-stroke" strokeLinejoin="round" />
         <polyline points={line(curve.strat)} fill="none" stroke="var(--viz-amber)" strokeWidth="2"
           vectorEffect="non-scaling-stroke" strokeLinejoin="round" />
+        {hasDb && (
+          <polyline points={line(curve.strat_db)} fill="none" stroke="var(--viz-green, #34d399)" strokeWidth="1.75"
+            vectorEffect="non-scaling-stroke" strokeLinejoin="round" strokeDasharray="4 3" />
+        )}
       </svg>
       {hov != null && (
         <>
@@ -142,7 +147,7 @@ export default function MLStudio() {
       });
       logForecastPrediction({
         symbol: sym, market, model: model.label, predRet: res.tomorrow,
-        lastBarTime: last.time, lastClose: last.close,
+        lastBarTime: last.time, lastClose: last.close, interval: "1d",
       });
     } catch (e) {
       setError(e.message);
@@ -376,8 +381,9 @@ export default function MLStudio() {
                 <MetricCard label="MAE vs naive" value={`${(out.mae * 100).toFixed(3)}%`}
                   sub={`naive (always 0): ${(out.maeNaive * 100).toFixed(3)}%`}
                   tone={out.mae < out.maeNaive ? "text-up" : "text-down"} />
-                <MetricCard label="Pred/actual corr" value={out.corr.toFixed(3)}
-                  sub="1 = clairvoyant · 0 = noise" />
+                <MetricCard label="Information Coefficient" value={out.corr.toFixed(3)}
+                  sub={out.rankIc != null ? `rank IC ${out.rankIc.toFixed(3)} · desk's skill metric` : "1 = clairvoyant · 0 = noise"}
+                  tone={Math.abs(out.corr) >= 0.03 ? "text-up" : "text-text"} />
                 <MetricCard label="Next-bar forecast" value={fmtPct(out.tomorrow * 100)}
                   sub="model's guess for tomorrow" tone={out.tomorrow >= 0 ? "text-up" : "text-down"} />
               </div>
@@ -397,6 +403,11 @@ export default function MLStudio() {
                 <p className="text-[11px] text-dim mt-2">
                   <span style={{ color: "var(--viz-amber)" }}>■</span> model (frictionless — an upper bound, not a tradable result) ·{" "}
                   <span style={{ color: "var(--viz-blue)" }}>■</span> buy &amp; hold
+                  {out.deadband && (<> ·{" "}
+                    <span style={{ color: "var(--viz-green, #34d399)" }}>▦</span> deadband — only the top-conviction signals
+                    (<span className="font-mono">{(out.deadband.exposure * 100).toFixed(0)}%</span> of bars traded,{" "}
+                    <span className="font-mono">{(out.deadband.hit * 100).toFixed(0)}%</span> right)
+                  </>)}
                 </p>
               </div>
 
