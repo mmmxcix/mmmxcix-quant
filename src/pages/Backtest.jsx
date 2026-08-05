@@ -1070,7 +1070,7 @@ export default function Backtest() {
                   feeBps={feeBps}
                   positionPct={positionPct}
                   leverage={leverage}
-                  onApply={(p) => setParamValues({ ...p })}
+                  onApply={(p, lev) => { setParamValues({ ...p }); if (lev != null) setLeverage(lev); }}
                 />
               )}
               {mode !== "builder" && result.candles?.length > 100 && (

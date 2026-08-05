@@ -70,6 +70,10 @@ Rules:
   exits, or whose condition almost never occurs, is wrong — prefer crossovers,
   bands, and levels relative to recent data over rare absolute constants.
 - No look-ahead (use only data up to ctx.index).
+- Never compare a COMPUTED FLOAT with === / == to an exact number (e.g. \`price - sma === 0\`,
+  \`Math.abs(x) === 0\`) — floating-point math rarely lands exactly. Use a small epsilon
+  (\`Math.abs(x) < 1e-9\`) or a relational test (\`>\` / \`<\`) instead. (Exact === on integer
+  counters, indices, or \`.length\` is fine.)
 - The source is evaluated ONCE, then strategy(ctx) is called per bar in order — top-level
   let/const state persists across bars (useful for opening ranges, one-trade-per-day flags).
 - Compute indicator arrays once per candle array and cache them (e.g. a module-level WeakMap or an array-reference check) to keep the backtest fast.

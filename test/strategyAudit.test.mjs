@@ -47,6 +47,29 @@ test("a healthy strategy (real logic + ATR stop, no look-ahead) passes clean", (
   assert.equal(a.warnings, 0, "clean code raises no warnings");
 });
 
+test("legit integer comparisons don't trip the float-equality warning", () => {
+  // These used to warn because the file contained a `*`/`/` somewhere — a false
+  // positive the AI-applied fixes kept hitting (i===0, count===0, .length===0).
+  const code = `
+    function strategy(ctx){
+      const atr = ctx.indicators.atr(14);
+      let count = 0;
+      for (let i = 0; i < ctx.i; i++) { if (i === 0) continue; count = count + 1; }
+      const signal = ctx.rsi(2) < 10 ? 1 : 0;
+      if (signal === 1 && ctx.closes.length % 2 === 0) return { signal: "long", stop: ctx.close - 2*atr, target: ctx.close + 3*atr };
+      return "flat";
+    }`;
+  const a = auditStrategy(code, "js");
+  assert.equal(a.findings.some((f) => f.id === "float-equality"), false, "integer idioms must not warn");
+});
+
+test("a genuine computed-float equality still warns", () => {
+  assert.ok(auditStrategy(`function strategy(ctx){ return Math.abs(ctx.close - ctx.sma(50)) === 0 ? "long" : "flat"; }`, "js")
+    .findings.some((f) => f.id === "float-equality"), "Math.* === 0 warns");
+  assert.ok(auditStrategy(`function strategy(ctx){ return ctx.rsi(2) === 1.5 ? "long" : "flat"; }`, "js")
+    .findings.some((f) => f.id === "float-equality"), "=== decimal literal warns");
+});
+
 test("empty / missing code is a no-op, not a crash", () => {
   const a = auditStrategy("", "js");
   assert.deepEqual(a, { findings: [], blocked: false, critical: 0, warnings: 0 });

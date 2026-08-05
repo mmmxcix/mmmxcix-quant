@@ -66,9 +66,12 @@ export default function OptimizerPanel({ strategy, candles, capital, feeBps, pos
   const [hmRunning, setHmRunning] = useState(false);
   const [mc, setMc] = useState(null);     // Monte-Carlo across parameter sets
   const [mcRunning, setMcRunning] = useState(false);
+  const [sweepLev, setSweepLev] = useState(false); // also find the best leverage
+  const [bestLev, setBestLev] = useState(null);    // winning leverage for the best params
 
   const params = strategy?.params || [];
   const score = OBJECTIVES[objective].get;
+  const LEV_GRID = [1, 2, 3, 5, 10, 20];
   // Default the two heatmap axes to the strategy's first two params.
   const [xKey, setXKey] = useState(params[0]?.key);
   const [yKey, setYKey] = useState(params[1]?.key ?? params[0]?.key);
@@ -83,12 +86,25 @@ export default function OptimizerPanel({ strategy, candles, capital, feeBps, pos
 
   const run = (withWalkForward) => {
     if (!params.length) return;
-    setRunning(true); setApplied(false); setRes(null); setWf(null);
+    setRunning(true); setApplied(false); setRes(null); setWf(null); setBestLev(null);
     // Yield once so the spinner paints before the (blocking) search loop.
     setTimeout(() => {
       try {
         const out = optimize({ method, params, evaluate: (p) => scoreSlice(p), budget: method === "grid" ? 500 : method === "genetic" ? 240 : 140 });
         setRes(out);
+        // Leverage doesn't change WHICH params win (it scales the equity curve),
+        // so sweep it on the winning set: pick the leverage that maximises the
+        // objective without liquidating. Skips leverages that void the curve.
+        if (sweepLev && out.best) {
+          let bl = 1, bs = -Infinity;
+          for (const L of LEV_GRID) {
+            const r = runBacktest({ candles, signalFn: strategy.build(out.best.params), initialCapital: capital, feeBps, positionPct, leverage: L });
+            if (r.warnings.some((w) => /liquidat/i.test(w)) || r.metrics.tradeCount < 5) continue;
+            const sc = score(r.metrics);
+            if (sc > bs) { bs = sc; bl = L; }
+          }
+          setBestLev(bl);
+        }
         if (withWalkForward) {
           setWf(walkForward({ params, scoreSlice, n: candles.length, method, folds: 4, budget: 50 }));
         }
@@ -148,6 +164,10 @@ export default function OptimizerPanel({ strategy, candles, capital, feeBps, pos
             {Object.entries(OBJECTIVES).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
           </select>
         </label>
+        <label className="flex items-center gap-1.5 text-[10px] text-dim cursor-pointer" title="After finding the best params, also search 1× / 2× / 3× / 5× / 10× / 20× and report the best leverage">
+          <input type="checkbox" checked={sweepLev} onChange={(e) => setSweepLev(e.target.checked)} className="accent-current" />
+          also find best leverage
+        </label>
         <button onClick={() => run(false)} disabled={running} className="btn-accent flex items-center gap-2">
           {running ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
           {running ? "Optimizing…" : "Optimize"}
@@ -162,12 +182,14 @@ export default function OptimizerPanel({ strategy, candles, capital, feeBps, pos
             <span className="text-dim">Best ({METHODS[res.method]}, {res.evals} evals):</span>
             <span className="font-mono text-text">
               {params.map((p) => `${p.key}=${res.best.params[p.key]}`).join(" · ")}
+              {sweepLev && bestLev != null && <span className="text-accent"> · {bestLev}x</span>}
             </span>
             <span className="font-mono text-up">{OBJECTIVES[objective].label} {fmtNum(res.best.score, 2)}</span>
             <button
-              onClick={() => { onApply?.(res.best.params); setApplied(true); }}
+              onClick={() => { onApply?.(res.best.params, sweepLev ? bestLev : undefined); setApplied(true); }}
+              title={sweepLev && bestLev != null ? `Apply the params and set leverage to ${bestLev}x` : "Apply the best params to the builder"}
               className="ml-auto btn-ghost text-xs flex items-center gap-1">
-              {applied ? <><Check className="w-3.5 h-3.5 text-up" /> applied</> : "Apply to builder"}
+              {applied ? <><Check className="w-3.5 h-3.5 text-up" /> applied</> : sweepLev && bestLev != null ? `Apply (+ ${bestLev}x)` : "Apply to builder"}
             </button>
           </div>
 

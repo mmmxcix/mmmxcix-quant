@@ -49,9 +49,23 @@ const RULES = [
   {
     id: "float-equality",
     severity: "warn",
-    // Exact equality on computed floats almost never holds and hides logic errors.
-    test: (code) => /[)\]\w]\s*===?\s*0(?:\.0+)?\b(?!\s*[)\]])/.test(code) && /(Math\.|np\.|\/|\*)/.test(code),
-    msg: "Exact float equality/`=== 0` on a computed value — floating-point math rarely lands exactly, so compare against a small epsilon instead.",
+    // Exact equality on a COMPUTED FLOAT rarely holds and hides logic errors. Only
+    // flag high-confidence cases so legit integer idioms — i===0, .length===0,
+    // count===0, signal===0, a % n === 0 — are NOT falsely warned (the old rule
+    // fired on any `===0` whenever the file contained a `*` or `/` anywhere, which
+    // tripped constantly on normal code):
+    //  (a) a Math.*(…) call compared with ==/=== to a number, or
+    //  (b) an explicit `a * b` / `a / b` expression compared with ==/=== to a number, or
+    //  (c) any ==/=== against a DECIMAL literal (=== 1.5) — always a float compare.
+    test: (code) => {
+      // Math.fn(…) === num — allow ONE level of nested parens (e.g. an indicator
+      // call inside: Math.abs(close - sma(50)) === 0).
+      const mathCall = /Math\.\w+\s*\((?:[^()]|\([^()]*\))*\)\s*===?\s*-?\d+(?:\.\d+)?/;
+      const arithExpr = /[\w.\])]\s*[*/]\s*[\w.([\d]+\s*===?\s*-?\d+(?:\.\d+)?/;
+      const decimalRhs = /===?\s*-?\d+\.\d+\b/;
+      return mathCall.test(code) || arithExpr.test(code) || decimalRhs.test(code);
+    },
+    msg: "Exact float equality on a computed value — floating-point math rarely lands exactly, so compare against a small epsilon (e.g. Math.abs(x) < 1e-9) instead.",
   },
   {
     id: "constant-signal",
