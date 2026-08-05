@@ -5,7 +5,7 @@
 // Paper only. Persists to /api/argus. Env: LAB_TOKEN (req), LAB_SITE,
 // LAB_ARGUS_EQUITY (paper start, default 10000).
 import { loadMarket } from "./marketdata.mjs";
-import { openThesis, evaluateExit, closeThesisAt, plannedRR, fillPrice, enforceMinStop, MIN_STOP_FRAC, volStatus } from "../src/lib/argus/core.js";
+import { openThesis, evaluateExit, closeThesisAt, plannedRR, fillPrice, enforceMinStop, MIN_STOP_FRAC, volStatus, pyramidAdd } from "../src/lib/argus/core.js";
 import { scan, VOLUME_KINDS } from "../src/lib/argus/scanners.js";
 import { buildBrief, diffBrief, renderBrief, parseFearGreed } from "../src/lib/argus/brief.js";
 import { deriveLessons, adjustment, sessionOf } from "../src/lib/argus/learn.js";
@@ -48,6 +48,9 @@ const EVENT_TTL = +(process.env.LAB_ARGUS_EVENT_TTL_MIN || 240) * 60_000; // bia
 // lesson is allowed to touch sizing (small samples lie). Tunable, conservative.
 const LEARN_MIN = +(process.env.LAB_ARGUS_LEARN_MIN || 20);
 const RVOL_MIN = +(process.env.LAB_ARGUS_RVOL_MIN || 1.1); // breakouts need above-average volume
+const PYRAMID = process.env.LAB_ARGUS_PYRAMID !== "0";     // scale into winners (Turtle-style MM)
+const PYRAMID_MAX_UNITS = +(process.env.LAB_ARGUS_PYRAMID_UNITS || 4);
+const PYRAMID_STEP = +(process.env.LAB_ARGUS_PYRAMID_STEP || 1); // add a unit each R of profit
 // Trade duration: hard cap 3 days (a position still open then is force-closed),
 // but Argus is a DAY-TRADER at heart — it prefers short, high-conviction setups
 // (reaching the same target with a tighter stop = more exposure) over long swing
@@ -217,6 +220,19 @@ function manageExits(inst, last5, ledgerAdd) {
       th.unrealizedPnl = (last5.close - th.entry) * th.size * dir;
       th.unrealizedR = th.riskAmt > 0 ? th.unrealizedPnl / th.riskAmt : 0;
       th.lastPoll = Date.now();
+
+      // PYRAMID into a working CONTINUATION trade (Turtle-style MM): add a unit each
+      // R of profit and trail the stop so total risk stays inside the original
+      // budget — more size on the house's money, never more risk. The rising
+      // threshold (units × step) self-spaces the adds; the gross-notional cap still
+      // binds. Reversal fades (fixed target) don't pyramid.
+      if (PYRAMID && VOLUME_KINDS.has(th.kind) && (th.units || 1) < PYRAMID_MAX_UNITS && th.unrealizedR >= (th.units || 1) * PYRAMID_STEP) {
+        const add = pyramidAdd(th, last5.close, { maxUnits: PYRAMID_MAX_UNITS });
+        if (add && openNotional() - th.notional + add.notional <= PORTFOLIO_LEV_CAP * equity) {
+          Object.assign(th, add);
+          console.log(`[${new Date().toISOString()}] PYRAMID ${th.symbol} ${th.side} → unit ${th.units} @${last5.close.toFixed(4)} size ${th.size.toFixed(4)} stop ${th.stop.toFixed(4)} (risk locked ${th.riskAmt.toFixed(0)})`);
+        }
+      }
     }
   }
 }

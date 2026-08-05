@@ -259,6 +259,7 @@ export default function Argus() {
                       )}
                       {Number.isFinite(t.margin) && <span className="text-dim">margin <span className="text-text">{fmtNum(t.margin, 0)}</span></span>}
                       <span className="text-dim">risk <span className="text-text">{fmtNum(t.riskAmt, 0)}</span></span>
+                      {t.units > 1 && <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold bg-up/10 text-up" title="Pyramided — units scaled into the winner, stop trailed to keep total risk inside the original budget">▲ {t.units} units</span>}
                       {Number.isFinite(t.liqPrice) && <span className="text-dim/70">liq {fmtNum(t.liqPrice, 4)}</span>}
                     </div>
                   );

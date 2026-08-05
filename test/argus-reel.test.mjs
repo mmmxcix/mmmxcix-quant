@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { evaluateExit, volStatus, VOL_CEIL_ATR_PCT, relVolume } from "../src/lib/argus/core.js";
+import { evaluateExit, volStatus, VOL_CEIL_ATR_PCT, relVolume, pyramidAdd } from "../src/lib/argus/core.js";
 import { breakout, pullback, momentum, vwapBands, SCANNERS, VOLUME_KINDS, scan } from "../src/lib/argus/scanners.js";
 
 // ── Upgrade 1: structural invalidation → early exit ──────────────────────────
@@ -96,6 +96,24 @@ test("vwapBands fades a tag of the lower band back toward VWAP", () => {
     assert.equal(s.invalidation < s.entry, true);
   }
   assert.ok(SCANNERS.includes(vwapBands));
+});
+
+// ── Pyramiding (money-management borrow) ─────────────────────────────────────
+test("pyramidAdd scales into a winner and trails the stop to keep risk bounded", () => {
+  const th = { side: "long", entry: 100, stop: 98, size: 10, riskAmt: 20, riskBudget: 20, baseSize: 10, units: 1, leverage: 1, target: 110 };
+  const add = pyramidAdd(th, 102, { maxUnits: 4 });
+  assert.ok(add, "adds a unit when in profit");
+  assert.equal(add.units, 2);
+  assert.equal(add.size, 20);                         // one unit added
+  assert.ok(add.entry > 100 && add.entry < 102);      // averaged entry
+  assert.ok(add.stop >= th.stop);                     // stop only trails FORWARD
+  assert.ok(add.riskAmt <= th.riskBudget + 1e-9);     // total risk stays inside the original budget
+});
+
+test("pyramidAdd refuses when not in profit or at the unit cap", () => {
+  const base = { side: "long", entry: 100, stop: 98, size: 10, riskAmt: 20, riskBudget: 20, baseSize: 10, leverage: 1, target: 110 };
+  assert.equal(pyramidAdd({ ...base, units: 1 }, 99, {}), null);                 // price below entry
+  assert.equal(pyramidAdd({ ...base, units: 4 }, 105, { maxUnits: 4 }), null);   // at the unit cap
 });
 
 test("scan attaches an atrPct volatility reading to every setup", () => {

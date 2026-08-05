@@ -255,9 +255,43 @@ export function openThesis(setup, { equity, openRisk, openMargin = 0, openNotion
     reason: setup.reason, evidence: setup.evidence || [],
     entry: fillEntry, stop, target: setup.target, invalidation,
     size: sized.size, riskAmt: sized.riskAmt,
+    // Pyramiding state: one unit at entry; baseSize is the unit to add later, and
+    // riskBudget is the ORIGINAL risk the trailing stop keeps total risk inside as
+    // units are added (see pyramidAdd).
+    units: 1, baseSize: sized.size, riskBudget: sized.riskAmt,
     leverage: sized.leverage, margin: sized.margin, notional: sized.notional, liqPrice: sized.liqPrice,
     plannedR: rr,
     openedAt: now, lastPoll: now,
+  };
+}
+
+/**
+ * PYRAMIDING (money-management borrow, Turtle-style): scale INTO a winner by
+ * adding a unit at `addPrice`, then TRAIL the stop so total risk never exceeds the
+ * original budget — you increase exposure on the house's money, not your own. Pure:
+ * returns the updated thesis fields, or null if it shouldn't add (already flat/at
+ * the unit cap / not in profit). Leverage is held constant; margin/liq/risk recompute.
+ * @returns {null | {entry,size,stop,riskAmt,notional,margin,liqPrice,units,plannedR}}
+ */
+export function pyramidAdd(th, addPrice, { maxUnits = 4 } = {}) {
+  const units = th.units || 1;
+  if (units >= maxUnits) return null;
+  const dir = th.side === "long" ? 1 : -1;
+  if ((addPrice - th.entry) * dir <= 0) return null;   // only add when the trade is in profit
+  const addSize = th.baseSize || th.size;              // one unit
+  const newSize = th.size + addSize;
+  const avgEntry = (th.entry * th.size + addPrice * addSize) / newSize;
+  const budget = th.riskBudget || th.riskAmt;          // the risk the stop must keep total inside
+  // Trail the stop so total risk == the original budget; never move it BACKWARDS.
+  const trailed = avgEntry - dir * (budget / newSize);
+  const stop = dir === 1 ? Math.max(th.stop, trailed) : Math.min(th.stop, trailed);
+  const lev = th.leverage || 1;
+  const notional = newSize * avgEntry;
+  return {
+    entry: avgEntry, size: newSize, stop,
+    riskAmt: Math.abs(avgEntry - stop) * newSize,
+    notional, margin: notional / lev, liqPrice: liquidationPrice(avgEntry, th.side, lev),
+    units: units + 1, plannedR: plannedRR(th.side, avgEntry, stop, th.target),
   };
 }
 
