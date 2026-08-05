@@ -319,11 +319,37 @@ function EquityCard({ lab }) {
   const [positions, setPositions] = useState(getPortfolio);
   useEffect(() => subscribeStore(() => setPositions(getPortfolio())), []);
 
+  // Argus (the 24/7 day-trader) account balance + its curve. GET /api/argus is
+  // public; there's no equity time-series stored, so we rebuild it from the closed-
+  // trade ledger (cumulative realised P&L from the 10k start) and tip it with the
+  // current mark-to-market balance.
+  const [argus, setArgus] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    const load = () => fetch("/api/argus").then((r) => (r.ok ? r.json() : null)).then((j) => { if (alive) setArgus(j?.ok ? j : null); }).catch(() => {});
+    load();
+    const id = setInterval(() => { if (!document.hidden) load(); }, 60_000);
+    return () => { alive = false; clearInterval(id); };
+  }, []);
+  const argusHistory = useMemo(() => {
+    if (!argus) return null;
+    const led = [...(argus.ledger || [])].filter((t) => Number.isFinite(t.pnl) && t.exitAt).sort((a, b) => a.exitAt - b.exitAt);
+    const START = 10000;
+    let eq = START;
+    const h = [{ t: (led[0]?.exitAt ?? Date.now()) - 86_400_000, v: START }];
+    for (const t of led) { eq += t.pnl; h.push({ t: t.exitAt, v: eq }); }
+    const mark = argus.state?.markEquity;
+    if (Number.isFinite(mark)) h.push({ t: argus.state?.at ?? Date.now(), v: mark });
+    return h;
+  }, [argus]);
+  const hasArgus = argusHistory && argusHistory.length >= 2;
+
   const sources = useMemo(() => [
     ...(c ? [{ id: "paper", label: "Paper" }] : []),
+    ...(hasArgus ? [{ id: "argus", label: "Argus" }] : []),
     { id: "portfolio", label: "Portfolio" },
     { id: "watchlist", label: "Watchlist" },
-  ], [c]);
+  ], [c, hasArgus]);
 
   const [src, setSrc] = useState(() => {
     try { return localStorage.getItem(EQUITY_SRC_KEY) || ""; } catch { return ""; }
@@ -389,7 +415,15 @@ function EquityCard({ lab }) {
     return hist.filter((p) => p.t >= cutoff);
   }, [c, range.days]);
 
-  const history = active === "paper" ? paperHistory : (curve.data || []);
+  const argusWindowed = useMemo(() => {
+    const hist = argusHistory || [];
+    if (!Number.isFinite(range.days)) return hist;
+    const cutoff = Date.now() - range.days * 86400_000;
+    const f = hist.filter((p) => p.t >= cutoff);
+    return f.length >= 2 ? f : hist; // too short a window → show the whole curve
+  }, [argusHistory, range.days]);
+
+  const history = active === "paper" ? paperHistory : active === "argus" ? argusWindowed : (curve.data || []);
   // Change over the VISIBLE window, so the badge always matches the chart.
   const chgPct = history.length >= 2 && history[0].v > 0
     ? ((history[history.length - 1].v / history[0].v) - 1) * 100
@@ -397,6 +431,7 @@ function EquityCard({ lab }) {
 
   const TITLES = {
     paper: ["Paper equity", `${lab?.strategies?.filter((s) => !s.error).length ?? 0} strategies · virtual book`],
+    argus: ["Argus equity", `24/7 day-trader · virtual account${argus?.ledger?.length ? ` · ${argus.ledger.length} closed` : ""}`],
     portfolio: ["Portfolio value", `your simulated holdings · ${range.label}`],
     watchlist: ["Watchlist index", `equal-weight · ${range.label} · start = 100`],
   };
