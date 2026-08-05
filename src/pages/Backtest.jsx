@@ -53,24 +53,33 @@ function MetricCard({ label, value, num, format, tone }) {
 }
 
 export default function Backtest() {
-  const [market, setMarket] = useState("crypto");
-  const [symbol, setSymbol] = useState(DEFAULT_SYMBOL.crypto);
-  const [interval, setIntervalId] = useState("1d");
+  // One-shot handoff from the Registry's "Open in Backtest" — read ONCE, BEFORE
+  // the first render, so the code/symbol/window are the INITIAL state. Applying it
+  // in an effect raced with the preset-loader effect, which ran with a stale
+  // presetDirty=false and overwrote the handed-over code with the default SMA.
+  const handoff = useMemo(() => {
+    try { const h = JSON.parse(sessionStorage.getItem("backtest_handoff") || "null"); if (h) sessionStorage.removeItem("backtest_handoff"); return h; }
+    catch { return null; }
+  }, []);
+  const hasHandoffCode = !!(handoff?.code && handoff.code.trim());
+  const [market, setMarket] = useState(handoff?.market || "crypto");
+  const [symbol, setSymbol] = useState(handoff?.symbol || DEFAULT_SYMBOL.crypto);
+  const [interval, setIntervalId] = useState(handoff?.interval || "1d");
   const [range, setRange] = useState("5y");
   const [dataSrc, setDataSrc] = useState("yahoo"); // stock data: yahoo | london (LSE archive)
   // Custom test period — backtest exactly the window you pick (e.g. only the
   // 2022 bear market), instead of "the last N years".
-  const [customPeriod, setCustomPeriod] = useState(false);
-  const [fromDate, setFromDate] = useState("2020-01-01");
-  const [toDate, setToDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [customPeriod, setCustomPeriod] = useState(!!handoff?.customPeriod);
+  const [fromDate, setFromDate] = useState(handoff?.fromDate || "2020-01-01");
+  const [toDate, setToDate] = useState(() => handoff?.toDate || new Date().toISOString().slice(0, 10));
   // UNIFIED editor: `strategyId` selects a PRESET whose code is loaded into the
   // single `code` field. Editing the code detaches it from the preset (the preset
   // dropdown then reads "Custom"), and `lang` is DETECTED, never chosen.
-  const [strategyId, setStrategyId] = useState(BUILT_IN_STRATEGIES[0].id);
-  const [paramValues, setParamValues] = useState({});
-  const [presetDirty, setPresetDirty] = useState(false); // code edited away from the preset
-  const [code, setCode] = useState(() =>
-    strategyToCode({ mode: "builder", strategyId: BUILT_IN_STRATEGIES[0].id, params: {} }, "python") || PYTHON_TEMPLATE);
+  const [strategyId, setStrategyId] = useState(handoff?.strategyId || BUILT_IN_STRATEGIES[0].id);
+  const [paramValues, setParamValues] = useState(handoff?.params || {});
+  const [presetDirty, setPresetDirty] = useState(hasHandoffCode); // code edited away from the preset
+  const [code, setCode] = useState(() => hasHandoffCode ? handoff.code
+    : strategyToCode({ mode: "builder", strategyId: BUILT_IN_STRATEGIES[0].id, params: {} }, "python") || PYTHON_TEMPLATE);
   const [pyStatus, setPyStatus] = useState(null); // Pyodide loading/progress text
   const lang = useMemo(() => detectLang(code), [code]);
   // Code-validity audit — the same check Cortex runs, so a bug (look-ahead,
@@ -80,40 +89,20 @@ export default function Backtest() {
   // only edited code goes through the JS/Python compiler.
   const mode = presetDirty ? "code" : "builder";
   const [capital, setCapital] = useState(10000);
-  const [feeBps, setFeeBps] = useState(10);
-  const [positionPct, setPositionPct] = useState(100);
-  const [leverage, setLeverage] = useState(1);
+  const [feeBps, setFeeBps] = useState(handoff?.feeBps ?? 10);
+  const [positionPct, setPositionPct] = useState(handoff?.positionPct ?? 100);
+  const [leverage, setLeverage] = useState(handoff?.leverage ?? 1);
   const [applyFunding, setApplyFunding] = useState(false); // perp funding (crypto)
   const [running, setRunning] = useState(false);
   const [error, setError] = useState(null);
   const [result, setResult] = useState(null);
   const [verdicts, setVerdicts] = useState({ wf: null, dsr: null, noise: null });
   const [saved, setSaved] = useState(false);
-  const [fromRegistry, setFromRegistry] = useState(false);
+  const [fromRegistry, setFromRegistry] = useState(!!handoff);
 
-  // Deep-link from the Registry ("Open in Backtester"): pre-fill the EXACT market,
-  // window (as a custom from/to period — the research ranges like "10y" aren't in
-  // the dropdown), fee, sizing and code so an agent's registry number reproduces
-  // here 1:1. Handed off via sessionStorage to avoid URL-length limits on code.
-  useEffect(() => {
-    let h;
-    try { h = JSON.parse(sessionStorage.getItem("backtest_handoff") || "null"); } catch { h = null; }
-    if (!h) return;
-    sessionStorage.removeItem("backtest_handoff");
-    if (h.market) setMarket(h.market);
-    if (h.symbol) setSymbol(h.symbol);
-    if (h.interval) setIntervalId(h.interval);
-    if (h.customPeriod) { setCustomPeriod(true); if (h.fromDate) setFromDate(h.fromDate); if (h.toDate) setToDate(h.toDate); }
-    if (h.feeBps != null) setFeeBps(h.feeBps);
-    if (h.positionPct != null) setPositionPct(h.positionPct);
-    // Code handed over from the Registry goes straight into the one editor; the
-    // language detects itself, so no mode/lang to restore.
-    if (typeof h.code === "string" && h.code.trim()) { setCode(h.code); setPresetDirty(true); }
-    else if (h.strategyId) { setStrategyId(h.strategyId); if (h.params) setParamValues(h.params); }
-    if (h.leverage != null) setLeverage(h.leverage);
-    setFromRegistry(true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // (The Registry "Open in Backtest" handoff — market/symbol/window/fee/sizing/code
+  // — is applied via the lazy state initializers above, BEFORE first render, so it
+  // can't be clobbered by the preset-loader effect. No effect needed here.)
 
   // AI code generation: the provider keys never reach the browser — the Pages
   // Function /api/generate holds them server-side; access requires the signed-in

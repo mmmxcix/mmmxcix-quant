@@ -8,7 +8,9 @@ import {
 import { cn, fmtPct, fmtNum } from "@/lib/utils";
 import { PROFILES } from "@/lib/profiles";
 import { byId, costFor, describeMarkets } from "@/lib/markets";
-import { INTERVAL_SECONDS } from "@/lib/data";
+import { INTERVAL_SECONDS, fetchCandles } from "@/lib/data";
+import { runBacktest, compileStrategy } from "@/lib/backtest";
+import { runPythonSignals, signalsToFn } from "@/lib/pyRunner";
 import { strategyToCode } from "@/lib/strategyCode";
 import { hasPineSource } from "@/lib/pinescript";
 import { findComplementaryPairs } from "@/lib/combine";
@@ -249,6 +251,44 @@ function verdictDot(v) {
   return "bg-line";
 }
 
+// A live 10-year backtest of a strategy on the symbol it was saved with — the same
+// green "market" chip the Cortex cards get, but computed on demand (own strats
+// carry no research.byMarket). Cached per entry id so re-sorts/re-renders don't
+// recompute; runs JS instantly and Python through the shared Pyodide.
+const probeCache = new Map();
+function MarketProbe({ e, onOpen }) {
+  const [res, setRes] = useState(() => probeCache.get(e.id) || null);
+  useEffect(() => {
+    if (probeCache.has(e.id)) { setRes(probeCache.get(e.id)); return; }
+    let alive = true;
+    (async () => {
+      try {
+        const candles = await fetchCandles({ market: e.market || "stock", symbol: e.symbol, interval: e.interval || "1d", range: "10y" });
+        if (!candles || candles.length < 60) throw new Error("no data");
+        const lang = e.language === "python" ? "python" : "js";
+        const fn = lang === "python" && e.code
+          ? signalsToFn(await runPythonSignals(e.code, candles))
+          : compileStrategy(e.code && lang === "js" ? e.code : strategyToCode(e, "js"));
+        const r = runBacktest({ candles, signalFn: fn, initialCapital: 10000, feeBps: e.feeBps ?? 10, positionPct: e.positionPct ?? 100, leverage: e.leverage ?? 1 });
+        const out = r.warnings.length && r.metrics.tradeCount === 0 ? "error" : { ret: r.metrics.totalReturnPct, dd: r.metrics.maxDrawdownPct, n: r.metrics.tradeCount };
+        probeCache.set(e.id, out);
+        if (alive) setRes(out);
+      } catch { probeCache.set(e.id, "error"); if (alive) setRes("error"); }
+    })();
+    return () => { alive = false; };
+  }, [e.id]);
+  return (
+    <button type="button" onClick={onOpen} title={`Backtested 10y on ${e.symbol} — open in the Backtester`}
+      className="group text-[10px] font-mono rounded border border-up/30 bg-up/5 text-up px-1.5 py-0.5 hover:bg-up/15 hover:border-up/50 transition-colors">
+      {e.symbol} <span className="text-dim/60">{e.interval || "1d"}</span> <span className="text-dim/60">10y</span>
+      {res === "error" ? <span className="text-down/70"> n/a</span>
+        : res ? <span className="text-dim/90"> {fmtNum(res.ret, 0)}%</span>
+        : <span className="text-dim/50"> …</span>}
+      <span className="text-dim/40 group-hover:text-accent"> ↗</span>
+    </button>
+  );
+}
+
 function Card({ e, rich = false }) {
   const m = e.metrics;
   const val = e.validation || {};
@@ -260,9 +300,13 @@ function Card({ e, rich = false }) {
 
   // Reproduce this strategy in the Backtester — its own market/window/code (or a
   // specific research market when a chip is clicked). Handed off via sessionStorage.
-  const openInBacktest = (mid) => {
+  const openInBacktest = (mid, years) => {
     const mk = mid ? byId(mid) : null;
-    const days = RANGE_DAYS[(mk?.range) || e.range] ?? 3652;
+    // Cap the window at 10y: some research markets are stored as "max" (≈100y of
+    // days) which is meaningless — there's no century of data — and was landing a
+    // 100-year custom period in the backtester. `years` forces a window (own-strat
+    // 10y probe chip).
+    const days = years ? years * 365 : Math.min(RANGE_DAYS[(mk?.range) || e.range] ?? 3652, 3652);
     const to = new Date(), from = new Date(to.getTime() - days * 86_400_000);
     const iso = (d) => d.toISOString().slice(0, 10);
     const codeBits = e.code ? { code: e.code } : { strategyId: e.strategyId || undefined, params: e.params || undefined };
@@ -336,6 +380,14 @@ function Card({ e, rich = false }) {
             );
           })}
           {r.marketsTested > (r.markets?.length || 0) && <span className="text-[10px] text-dim">of {r.marketsTested} tested</span>}
+        </div>
+      )}
+
+      {/* Own / no-research strategies get the SAME green chip — a live 10y backtest
+          on the symbol they were saved with, clickable into the Backtester. */}
+      {rich && !(r?.markets || []).length && e.symbol && (e.code || e.strategyId) && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <MarketProbe e={e} onOpen={() => openInBacktest(null, 10)} />
         </div>
       )}
 
