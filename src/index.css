@@ -13,7 +13,8 @@
   --c-line: 228 228 231;    /* #e4e4e7 silver */
   --c-text: 12 12 15;       /* #0c0c0f */
   --c-dim: 88 88 96;        /* #585860 — darker so secondary text + faint tints stay readable on white */
-  --c-accent: 24 24 26;     /* #18181a graphite — the accent IS the ink */
+  --c-accent: 76 81 181;    /* #4C51B5 muted indigo — the brand signal (kept OFF the
+                               chart palette: green/red/amber + --viz-* stay the data). */
   --c-up: 11 110 71;        /* #0b6e47 — deeper green; the old #158f60 washed out on white and in /10 tints */
   --c-down: 190 40 48;      /* #be2830 — deeper red for the same reason */
   --c-warn: 138 94 7;       /* #8a5e07 — dark ochre; raw yellow-400 was ~1.5:1 (invisible) on white. ~5.6:1 here */
@@ -45,7 +46,7 @@
   --c-line: 41 41 43;       /* #29292b */
   --c-text: 244 244 245;    /* #f4f4f5 */
   --c-dim: 158 158 164;     /* #9e9ea4 — lighter so secondary text + tints stay readable on charcoal */
-  --c-accent: 250 250 250;  /* near-white — the accent IS the light */
+  --c-accent: 139 147 230;  /* #8B93E6 soft periwinkle-indigo — the brand signal on charcoal */
   --c-up: 74 194 140;       /* #4ac28c — a touch brighter for tint legibility */
   --c-down: 232 82 88;      /* #e85258 */
   --c-warn: 224 175 82;     /* #e0af52 — warm amber, legible on charcoal (~8:1) */
