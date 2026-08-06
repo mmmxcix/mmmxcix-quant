@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef } from "react";
 import { NavLink, Link, useLocation } from "react-router-dom";
-import { LayoutDashboard, CandlestickChart, FlaskConical, Newspaper, Compass, Wrench, Activity, Scale, Star, Briefcase, Radar, GraduationCap, Sigma, Menu, X, Target, BookOpenCheck, Telescope, Cpu, Sun, Moon, Monitor, Waypoints, Search, LogIn , Landmark, Globe, Radio, Palette} from "lucide-react";
+import { LayoutDashboard, CandlestickChart, FlaskConical, Newspaper, Compass, Wrench, Activity, Scale, Star, Briefcase, Radar, GraduationCap, Sigma, Menu, X, Target, BookOpenCheck, Telescope, Cpu, Sun, Moon, Monitor, Waypoints, Search, LogIn , Landmark, Globe, Radio, Palette, ChevronDown, ChevronsLeft, ChevronsRight, User} from "lucide-react";
 import { cn } from "@/lib/utils";
 import DitherBackground from "@/components/DitherBackground";
 import CommandPalette from "@/components/CommandPalette";
-import Brandmark from "@/components/Brandmark";
+import Brandmark, { BrandGlyph } from "@/components/Brandmark";
 import { authClient, useSession, signOut } from "@/lib/authClient";
 import { THEME_MODES, applyThemeMode, getThemeMode, storeThemeMode } from "@/lib/theme";
 import { syncFromServer as syncPrefs, restoreBackups } from "@/lib/portfolio";
@@ -117,14 +117,27 @@ const DEV_ITEMS = {
   Learn: [{ to: "/coach", label: "Coach", icon: Target }],
 };
 
-function NavItems({ onNavigate }) {
+const NAV_GROUPS_KEY = "quant_nav_groups";
+function loadGroupState() {
+  try { return JSON.parse(localStorage.getItem(NAV_GROUPS_KEY) || "{}"); } catch { return {}; }
+}
+
+function NavItems({ onNavigate, collapsed = false }) {
   const isDev = useDevNav();
   const { pathname } = useLocation();
   const containerRef = useRef(null);
   const [rail, setRail] = useState(null); // { top, height } of the active item
+  const [openGroups, setOpenGroups] = useState(loadGroupState); // { label: false } = collapsed
   const groups = isDev
     ? NAV_GROUPS.map((g) => (DEV_ITEMS[g.label] ? { ...g, items: [...g.items, ...DEV_ITEMS[g.label]] } : g))
     : NAV_GROUPS;
+
+  const groupOpen = (label) => collapsed || openGroups[label] !== false; // default open
+  const toggleGroup = (label) => setOpenGroups((s) => {
+    const next = { ...s, [label]: s[label] === false ? true : false };
+    try { localStorage.setItem(NAV_GROUPS_KEY, JSON.stringify(next)); } catch { /* private mode */ }
+    return next;
+  });
 
   // The active accent bar is ONE element that slides to the active item on
   // navigation (shared-layout feel) instead of popping per item.
@@ -134,7 +147,7 @@ function NavItems({ onNavigate }) {
     const el = c.querySelector('[aria-current="page"]');
     if (el) setRail({ top: el.offsetTop + 6, height: el.offsetHeight - 12 });
     else setRail(null);
-  }, [pathname, isDev]);
+  }, [pathname, isDev, collapsed, openGroups]);
 
   return (
     <div ref={containerRef} className="relative">
@@ -145,30 +158,45 @@ function NavItems({ onNavigate }) {
           style={{ top: rail.top, height: rail.height }}
         />
       )}
-      {groups.map((group, gi) => (
-        <div key={group.label}>
-          <p className={cn("px-3 text-[9px] font-semibold uppercase tracking-[0.2em] text-dim", gi === 0 ? "mb-1" : "mt-4 mb-1")}>
-            {group.label}
-          </p>
-          {group.items.map(({ to, label, icon: Icon, end }) => (
-            <NavLink
-              key={to}
-              to={to}
-              end={end}
-              onClick={onNavigate}
-              className={({ isActive }) =>
-                cn(
-                  "relative flex items-center gap-2.5 rounded-lg px-3 py-[7px] text-sm transition-colors",
-                  isActive ? "bg-accent/10 text-accent font-medium" : "text-dim hover:text-text hover:bg-surface"
-                )
-              }
-            >
-              <Icon className="w-4 h-4 shrink-0" />
-              {label}
-            </NavLink>
-          ))}
-        </div>
-      ))}
+      {groups.map((group, gi) => {
+        const open = groupOpen(group.label);
+        return (
+          <div key={group.label} className={collapsed && gi > 0 ? "mt-2 pt-2 border-t border-line/60" : ""}>
+            {!collapsed && (
+              <button
+                type="button"
+                onClick={() => toggleGroup(group.label)}
+                className={cn(
+                  "group flex w-full items-center gap-1 px-3 text-[9px] font-semibold uppercase tracking-[0.2em] text-dim transition-colors hover:text-text",
+                  gi === 0 ? "mb-1" : "mt-4 mb-1"
+                )}
+              >
+                {group.label}
+                <ChevronDown className={cn("ml-auto w-3 h-3 opacity-0 group-hover:opacity-100 transition-[transform,opacity]", open ? "" : "-rotate-90 opacity-60")} />
+              </button>
+            )}
+            {open && group.items.map(({ to, label, icon: Icon, end }) => (
+              <NavLink
+                key={to}
+                to={to}
+                end={end}
+                onClick={onNavigate}
+                title={collapsed ? label : undefined}
+                className={({ isActive }) =>
+                  cn(
+                    "relative flex items-center rounded-lg text-sm transition-colors",
+                    collapsed ? "justify-center px-0 py-2.5" : "gap-2.5 px-3 py-[7px]",
+                    isActive ? "bg-accent/10 text-accent font-medium" : "text-dim hover:text-text hover:bg-surface"
+                  )
+                }
+              >
+                <Icon className="w-4 h-4 shrink-0" />
+                {!collapsed && label}
+              </NavLink>
+            ))}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -221,6 +249,14 @@ function LegalLinks({ small }) {
 
 export default function Layout({ children }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(() => {
+    try { return localStorage.getItem("quant_sidebar_collapsed") === "1"; } catch { return false; }
+  });
+  const toggleCollapsed = () => setCollapsed((c) => {
+    const n = !c;
+    try { localStorage.setItem("quant_sidebar_collapsed", n ? "1" : "0"); } catch { /* private mode */ }
+    return n;
+  });
   const location = useLocation();
 
   // Durability: recover any locally-backed-up watchlist/portfolio entries, then
@@ -245,22 +281,54 @@ export default function Layout({ children }) {
       <CommandPalette />
 
       {/* Desktop sidebar */}
-      <aside className="hidden md:flex fixed inset-y-0 left-0 w-56 flex-col border-r border-line lg-frost p-4">
-        <div className="mb-5 px-3 pt-2">
-          <Brandmark glyphClass="w-8 h-8" />
+      <aside className={cn(
+        "hidden md:flex fixed inset-y-0 left-0 flex-col border-r border-line lg-frost transition-[width] duration-200",
+        collapsed ? "w-16 p-2" : "w-56 p-4"
+      )}>
+        <div className={cn("pt-2", collapsed ? "mb-4 grid place-items-center" : "mb-5 px-3")}>
+          {collapsed
+            ? <span className="text-accent"><BrandGlyph className="w-8 h-8" /></span>
+            : <Brandmark glyphClass="w-8 h-8" />}
         </div>
-        <button
-          onClick={openPalette}
-          className="mb-5 flex w-full items-center gap-2 rounded-lg border border-line bg-surface/60 px-3 py-1.5 text-xs text-dim transition-colors hover:text-text hover:border-line/80"
-        >
-          <Search className="h-3.5 w-3.5" />
-          <span>Jump to…</span>
-          <kbd className="ml-auto font-mono text-[10px] text-dim">{KBD_HINT}</kbd>
-        </button>
-        <nav className="flex flex-col gap-1 overflow-y-auto pr-1 -mr-1">
-          <NavItems />
+        {collapsed ? (
+          <button onClick={openPalette} title={`Search — ${KBD_HINT}`}
+            className="mb-4 grid place-items-center w-full py-2 rounded-lg border border-line bg-surface/60 text-dim transition-colors hover:text-text hover:border-line/80">
+            <Search className="h-4 w-4" />
+          </button>
+        ) : (
+          <button
+            onClick={openPalette}
+            className="mb-5 flex w-full items-center gap-2 rounded-lg border border-line bg-surface/60 px-3 py-1.5 text-xs text-dim transition-colors hover:text-text hover:border-line/80"
+          >
+            <Search className="h-3.5 w-3.5" />
+            <span>Jump to…</span>
+            <kbd className="ml-auto font-mono text-[10px] text-dim">{KBD_HINT}</kbd>
+          </button>
+        )}
+        <nav className="flex flex-col gap-1 overflow-y-auto overflow-x-hidden pr-1 -mr-1">
+          <NavItems collapsed={collapsed} />
         </nav>
-        <div className="mt-auto px-3 pb-2 space-y-2">
+        <div className={cn("mt-auto", collapsed ? "flex flex-col items-center gap-2 pb-1" : "px-3 pb-2 space-y-2")}>
+          {collapsed ? (
+            <>
+              <ThemeToggle className="w-9 h-9" />
+              <NavLink to="/theme" title="Theme & chart colours"
+                className={({ isActive }) => cn("grid place-items-center w-9 h-9 rounded-lg border border-line transition-colors",
+                  isActive ? "text-accent border-accent/40 bg-accent/10" : "text-dim hover:text-text")}>
+                <Palette className="w-4 h-4" />
+              </NavLink>
+              <NavLink to="/account" title="Account"
+                className={({ isActive }) => cn("grid place-items-center w-9 h-9 rounded-lg border border-line transition-colors",
+                  isActive ? "text-accent border-accent/40 bg-accent/10" : "text-dim hover:text-text")}>
+                <User className="w-4 h-4" />
+              </NavLink>
+              <button onClick={toggleCollapsed} title="Expand sidebar"
+                className="grid place-items-center w-9 h-9 rounded-lg border border-line text-dim transition-colors hover:text-text mt-1">
+                <ChevronsRight className="w-4 h-4" />
+              </button>
+            </>
+          ) : (
+          <>
           <SessionBox />
           <div className="flex items-center gap-1.5">
             <ThemeToggle className="w-8 h-8" />
@@ -269,11 +337,17 @@ export default function Layout({ children }) {
                 isActive ? "text-accent border-accent/40 bg-accent/10" : "text-dim hover:text-text")}>
               <Palette className="w-4 h-4" />
             </NavLink>
+            <button onClick={toggleCollapsed} title="Collapse sidebar"
+              className="ml-auto grid place-items-center w-8 h-8 rounded-lg border border-line text-dim transition-colors hover:text-text">
+              <ChevronsLeft className="w-4 h-4" />
+            </button>
           </div>
           <p className="text-[10px] text-dim leading-relaxed">
             Not investment advice. Backtests are hypothetical — past performance guarantees nothing.
           </p>
           <LegalLinks small />
+          </>
+          )}
         </div>
       </aside>
 
@@ -322,9 +396,9 @@ export default function Layout({ children }) {
         </div>
       )}
 
-      <main className="md:ml-56 p-3 sm:p-4 md:p-8">
+      <main className={cn("p-3 sm:p-4 md:p-8 transition-[margin] duration-200", collapsed ? "md:ml-16" : "md:ml-56")}>
         {/* keyed by route so each page entry replays the reveal. Capped + centred
-            here (not on <main>, which needs its ml-56 sidebar offset) so ultrawide
+            here (not on <main>, which needs its sidebar offset) so ultrawide
             screens don't leave the content hugging the left. */}
         <div key={location.pathname} className="view-in mx-auto max-w-[1800px]">{children}</div>
       </main>
