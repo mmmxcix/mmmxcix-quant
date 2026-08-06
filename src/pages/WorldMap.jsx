@@ -142,9 +142,11 @@ function gatherCountryIntel(name, conflicts, disasters, news) {
 
 export default function WorldMap() {
   const [layers, setLayers] = useState(loadLayers);
-  // Layer panel folds away on small screens so it doesn't cover the map.
+  // Layer panel starts folded on anything smaller than a full desktop so its
+  // left-docked card doesn't sit over the North Atlantic / Europe; the "Layers"
+  // header chip stays visible so it's still one tap to open.
   const [panelOpen, setPanelOpen] = useState(() =>
-    typeof window === "undefined" ? true : !window.matchMedia("(max-width: 640px)").matches);
+    typeof window === "undefined" ? true : !window.matchMedia("(max-width: 1024px)").matches);
   const [shipStatus, setShipStatus] = useState("off");
   const [planeStatus, setPlaneStatus] = useState("off");
   const [hover, setHover] = useState(null);       // { x, y, label, sub }
@@ -745,6 +747,13 @@ export default function WorldMap() {
       const ctx = canvas.getContext("2d");
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, w, h);
+      // Ocean: a subtle surface lift so the map reads as its own plane instead of
+      // dissolving into the page's near-black ground (the "too dark" note). One
+      // step up from --c-bg via --c-surface, theme-aware.
+      ctx.fillStyle = cssRgb("--c-surface");
+      ctx.globalAlpha = 0.6;
+      ctx.fillRect(0, 0, w, h);
+      ctx.globalAlpha = 1;
       clampView();
       const { cx, cy, scale } = viewRef.current;
       // Static layers (countries, cables) redraw once per visible world copy
@@ -784,7 +793,7 @@ export default function WorldMap() {
         // Yield-curve stress choropleth (our LSE data): an inverted 10Y−2Y
         // tints the country red, deeper inversion = deeper tint; healthy
         // curves get the faintest green; no coverage stays neutral ink.
-        let fill = ink, alpha = 0.06, tinted = false;
+        let fill = ink, alpha = 0.09, tinted = false;
         // Instability tint (amber) wins over the yield choropleth for the
         // handful of hot countries; everything else falls through to yields.
         if (L.instab && !hot) {
