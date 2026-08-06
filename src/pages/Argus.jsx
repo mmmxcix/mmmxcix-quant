@@ -135,9 +135,13 @@ export default function Argus() {
           hide losses, so the readiness gate is positive R-EXPECTANCY over a real
           sample, with win rate shown but not the gate. */}
       {(() => {
-        const READY_TRADES = 100;
-        const ready = stats.n >= READY_TRADES && stats.expectancy > 0 && stats.winRate >= 0.4;
-        const pctTrades = Math.min(100, Math.round((stats.n / READY_TRADES) * 100));
+        // Readiness is gated on GROWING THE PAPER ACCOUNT, not a trade count.
+        // Argus never stops on its own — it keeps learning until it has doubled
+        // the book to $20k with a real positive edge, and you choose to graduate it.
+        const START_EQ = 10000, GRADUATE_EQ = 20000;
+        const eq = state?.markEquity ?? state?.equity ?? START_EQ;
+        const eligible = eq >= GRADUATE_EQ && stats.expectancy > 0 && stats.n >= 30;
+        const pct = Math.max(0, Math.min(100, Math.round(((eq - START_EQ) / (GRADUATE_EQ - START_EQ)) * 100)));
         return (
           <div className="rounded-xl border border-accent/30 bg-accent/5 p-4">
             <div className="flex items-center gap-2 mb-1">
@@ -146,23 +150,22 @@ export default function Argus() {
             </div>
             <p className="text-[13px] text-dim leading-relaxed">
               Argus is an educational agent learning to day-trade with <span className="text-text">virtual money</span>.
-              {" "}<span className="text-text">This is not financial advice.</span> It stays in paper mode, building and
-              honestly grading its own track record — and only goes public once that record shows a real, repeatable
-              edge (<span className="text-text">positive expectancy over a real sample</span>), not merely a high win
-              rate, which can sit right on top of losing money.
+              {" "}<span className="text-text">This is not financial advice.</span> It keeps trading and learning on paper —
+              it won't be considered ready to go public until it has <span className="text-text">grown the paper account to $20k</span>
+              {" "}with a real, positive edge (not merely a high win rate), and you decide to graduate it. It never stops on its own.
             </p>
             <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[11px] font-mono">
               <div className="flex items-center gap-2">
                 <div className="w-28 h-1.5 rounded-full bg-line overflow-hidden">
-                  <div className="h-full bg-accent" style={{ width: `${pctTrades}%` }} />
+                  <div className={cn("h-full", eq >= START_EQ ? "bg-accent" : "bg-down")} style={{ width: `${eq >= START_EQ ? pct : 100}%` }} />
                 </div>
-                <span className="text-dim">{stats.n}/{READY_TRADES} trades</span>
+                <span className="text-dim">{money(eq)} <span className="text-dim/60">/ $20k</span></span>
               </div>
               <span className="text-dim">expectancy <span className={stats.expectancy > 0 ? "text-up" : "text-down"}>{stats.expectancy >= 0 ? "+" : ""}{stats.expectancy.toFixed(2)}R</span></span>
-              <span className="text-dim">win rate {(stats.winRate * 100).toFixed(0)}%</span>
+              <span className="text-dim">{stats.n} trades · win {(stats.winRate * 100).toFixed(0)}%</span>
               <span className={cn("ml-auto inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 uppercase tracking-wide text-[10px] font-semibold",
-                ready ? "border-up/40 bg-up/10 text-up" : "border-line bg-bg text-dim")}>
-                {ready ? "✓ track record ready" : "learning…"}
+                eligible ? "border-up/40 bg-up/10 text-up" : "border-line bg-bg text-dim")}>
+                {eligible ? "✓ ready to graduate — your call" : "learning…"}
               </span>
             </div>
           </div>
