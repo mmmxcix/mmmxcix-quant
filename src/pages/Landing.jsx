@@ -233,13 +233,13 @@ export default function Landing() {
           <div className="ey" style={{ justifyContent: "center", color: "var(--pew-hi)" }}><span className="br">//</span> Ready when you are</div>
           <h2>A quant desk in your browser.</h2>
           <p className="lead">Free while in beta. No sign-up to look around. The honest numbers are waiting.</p>
-          <div className="row"><Link className="btn btn-p" to="/">Enter MMMXCIX Quant →</Link><a className="btn btn-g" href="#top">↑ Back to top</a></div>
+          <div className="row"><Link className="btn btn-p" to="/">Enter MMMXCIX Quant →</Link><Link className="btn btn-g" to="/pricing">See pricing</Link></div>
         </div>
       </section>
 
       <footer>
         <Link className="brand" to="/"><Mark size={22} /><span style={{ fontWeight: 800, fontSize: 14 }}>Quant</span></Link>
-        <div style={{ display: "flex", gap: 18 }}><Link to="/nutzung">TERMS</Link><Link to="/datenschutz">PRIVACY</Link><Link to="/impressum">IMPRINT</Link></div>
+        <div style={{ display: "flex", gap: 18 }}><Link to="/pricing">PRICING</Link><Link to="/nutzung">TERMS</Link><Link to="/datenschutz">PRIVACY</Link><Link to="/impressum">IMPRINT</Link></div>
         <span>EDUCATIONAL · NOT INVESTMENT ADVICE · HYPOTHETICAL RESULTS GUARANTEE NOTHING</span>
       </footer>
     </div>

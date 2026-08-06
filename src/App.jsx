@@ -31,6 +31,7 @@ const Register = lazy(() => import("@/pages/Register"));
 const Account = lazy(() => import("@/pages/Account"));
 const Theme = lazy(() => import("@/pages/Theme"));
 const Landing = lazy(() => import("@/pages/Landing"));
+const Pricing = lazy(() => import("@/pages/Pricing"));
 
 // Skeleton shown while a route chunk loads (usually just a flicker on repeat
 // visits — chunks are cached).
@@ -90,6 +91,7 @@ export default function App() {
                 <Route path="/coach" element={<Coach />} />
                 <Route path="/argus" element={<Argus />} />
                 <Route path="/account" element={<Account />} />
+                <Route path="/pricing" element={<Pricing />} />
                 <Route path="/theme" element={<Theme />} />
                 <Route path="/settings/theme" element={<Redir to="/theme" replace />} />
 
