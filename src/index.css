@@ -15,8 +15,9 @@
   --c-line: 225 229 236;    /* #e1e5ec cool silver */
   --c-text: 12 16 23;       /* #0c1017 cool ink */
   --c-dim: 83 91 104;       /* #535b68 — cool slate, still AA (~5.9:1) on the near-white ground */
-  --c-accent: 37 84 199;    /* #2554C7 cobalt — the brand signal (kept OFF the chart
+  --c-accent: 74 100 140;   /* #4A648C Pewter Blue — the brand signal (kept OFF the chart
                                palette: green/red/amber + --viz-* stay the data). */
+  --c-on-accent: 255 255 255; /* text/icon colour on a solid accent fill (light theme) */
   --c-up: 11 110 71;        /* #0b6e47 — deeper green; the old #158f60 washed out on white and in /10 tints */
   --c-down: 190 40 48;      /* #be2830 — deeper red for the same reason */
   --c-warn: 138 94 7;       /* #8a5e07 — dark ochre; raw yellow-400 was ~1.5:1 (invisible) on white. ~5.6:1 here */
@@ -52,7 +53,8 @@
   --c-line: 38 43 52;       /* #262b34 */
   --c-text: 240 243 248;    /* #f0f3f8 */
   --c-dim: 148 155 168;     /* #949ba8 — cool slate, readable on the ink (~6.5:1) */
-  --c-accent: 92 141 255;   /* #5C8DFF confident cobalt — the brand signal on ink */
+  --c-accent: 95 127 168;   /* #5F7FA8 Pewter Blue — the brand signal on ink */
+  --c-on-accent: 11 13 18;  /* near-ink text on the (lighter) accent fill reads better on dark */
   --c-up: 74 194 140;       /* #4ac28c — a touch brighter for tint legibility */
   --c-down: 232 82 88;      /* #e85258 */
   --c-warn: 224 175 82;     /* #e0af52 — warm amber, legible on charcoal (~8:1) */
@@ -116,6 +118,11 @@
   .btn-ghost {
     @apply bg-surface border border-line text-dim rounded-lg px-3 py-2 text-sm hover:text-text hover:border-line/80 transition-[color,background-color,border-color,transform] duration-150;
   }
+  .btn-primary {
+    @apply rounded-lg px-4 py-2 text-sm font-semibold transition-[filter,transform] duration-150 disabled:opacity-40 disabled:cursor-not-allowed;
+    background: rgb(var(--c-accent));
+    color: rgb(var(--c-on-accent));
+  }
   .chip {
     @apply px-3 py-1 rounded-full text-xs border transition-[color,background-color,border-color,transform] duration-150 cursor-pointer select-none;
   }
@@ -137,9 +144,11 @@
    mouse click (focus ring is :focus-visible only). */
 .btn-accent:active:not(:disabled),
 .btn-ghost:active:not(:disabled),
+.btn-primary:active:not(:disabled),
 .chip:active {
   transform: scale(0.97);
 }
+.btn-primary:hover:not(:disabled) { filter: brightness(1.07); }
 button:focus-visible,
 a:focus-visible,
 [role="button"]:focus-visible,

@@ -30,6 +30,7 @@ const Login = lazy(() => import("@/pages/Login"));
 const Register = lazy(() => import("@/pages/Register"));
 const Account = lazy(() => import("@/pages/Account"));
 const Theme = lazy(() => import("@/pages/Theme"));
+const Landing = lazy(() => import("@/pages/Landing"));
 
 // Skeleton shown while a route chunk loads (usually just a flicker on repeat
 // visits — chunks are cached).
@@ -49,6 +50,16 @@ function Redir({ to }) {
   return <Navigate to={`${to}${search}`} replace />;
 }
 
+// The root: first-time visitors meet the welcome page once (flag set when Landing
+// mounts); everyone after lands straight on the dashboard. Search params (the
+// ?view= deep links) pass through to the dashboard untouched.
+function HomeOrWelcome() {
+  let welcomed = true;
+  try { welcomed = !!localStorage.getItem("quant_welcomed"); } catch { /* private mode → skip */ }
+  if (!welcomed) return <Navigate to="/welcome" replace />;
+  return <Dashboard />;
+}
+
 // The legal pages carry their own full-page shell (LegalLayout), so they render
 // outside the app chrome; everything else lives inside Layout.
 export default function App() {
@@ -62,13 +73,14 @@ export default function App() {
         <Route path="/nutzung" element={<Nutzung />} />
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
+        <Route path="/welcome" element={<Landing />} />
         <Route
           path="*"
           element={
             <Layout>
               <Suspense fallback={<RouteFallback />}>
               <Routes>
-                <Route path="/" element={<Dashboard />} />
+                <Route path="/" element={<HomeOrWelcome />} />
                 <Route path="/charts" element={<Charts />} />
                 <Route path="/news" element={<News />} />
                 <Route path="/watchlist" element={<Redir to="/?view=watchlist" />} />
