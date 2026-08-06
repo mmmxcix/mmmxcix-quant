@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { NavLink, Link, useLocation } from "react-router-dom";
-import { LayoutDashboard, CandlestickChart, FlaskConical, Newspaper, Compass, Wrench, Activity, Scale, Star, Briefcase, Radar, GraduationCap, Sigma, Menu, X, Target, BookOpenCheck, Telescope, Cpu, Sun, Moon, Monitor, Waypoints, Search, LogIn , Landmark, Globe, Radio} from "lucide-react";
+import { LayoutDashboard, CandlestickChart, FlaskConical, Newspaper, Compass, Wrench, Activity, Scale, Star, Briefcase, Radar, GraduationCap, Sigma, Menu, X, Target, BookOpenCheck, Telescope, Cpu, Sun, Moon, Monitor, Waypoints, Search, LogIn , Landmark, Globe, Radio, Palette} from "lucide-react";
 import { cn } from "@/lib/utils";
 import DitherBackground from "@/components/DitherBackground";
 import CommandPalette from "@/components/CommandPalette";
@@ -262,7 +262,14 @@ export default function Layout({ children }) {
         </nav>
         <div className="mt-auto px-3 pb-2 space-y-2">
           <SessionBox />
-          <ThemeToggle className="w-8 h-8" />
+          <div className="flex items-center gap-1.5">
+            <ThemeToggle className="w-8 h-8" />
+            <NavLink to="/theme" title="Theme & chart colours"
+              className={({ isActive }) => cn("grid place-items-center w-8 h-8 rounded-lg border border-line transition-colors",
+                isActive ? "text-accent border-accent/40 bg-accent/10" : "text-dim hover:text-text")}>
+              <Palette className="w-4 h-4" />
+            </NavLink>
+          </div>
           <p className="text-[10px] text-dim leading-relaxed">
             Not investment advice. Backtests are hypothetical — past performance guarantees nothing.
           </p>

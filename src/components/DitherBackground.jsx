@@ -1,4 +1,5 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { getThemePrefs, subscribe as subThemePrefs } from "@/lib/themeSettings";
 
 // DitherBackground — a faithful port of React Bits' <Dither /> wave shader
 // (reactbits.dev/backgrounds/dither): Perlin `cnoise` → turbulence fbm with a
@@ -120,9 +121,15 @@ void main(){
 
 export default function DitherBackground() {
   const ref = useRef(null);
+  // The theme page can switch the dither off entirely — when it does we skip the
+  // WebGL init altogether (not just fade to 0) so there's no idle GPU loop.
+  const [enabled, setEnabled] = useState(() => getThemePrefs().dither !== "off");
+  useEffect(() => subThemePrefs(() => setEnabled(getThemePrefs().dither !== "off")), []);
 
   useEffect(() => {
+    if (!enabled) return;
     const canvas = ref.current;
+    if (!canvas) return;
     const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
     const dpr = Math.min(2, window.devicePixelRatio || 1);
     const gl = canvas.getContext("webgl", { alpha: true, premultipliedAlpha: false, antialias: false });
@@ -215,7 +222,8 @@ export default function DitherBackground() {
       const ext = gl.getExtension("WEBGL_lose_context");
       if (ext) ext.loseContext();
     };
-  }, []);
+  }, [enabled]);
 
+  if (!enabled) return null;
   return <canvas ref={ref} className="dither-bg" aria-hidden="true" />;
 }

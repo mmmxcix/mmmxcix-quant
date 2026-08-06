@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { ShieldCheck, ShieldOff, Loader2, Copy, Check, LogOut, KeyRound, Sun, Moon, Monitor } from "lucide-react";
+import { ShieldCheck, ShieldOff, Loader2, Copy, Check, LogOut, KeyRound, Sun, Moon, Monitor, Palette } from "lucide-react";
 import QRCode from "qrcode";
 import { authClient, useSession, signOut } from "@/lib/authClient";
 import Skeleton from "@/components/Skeleton";
@@ -112,6 +112,9 @@ function ThemeSection({ accountTheme }) {
           </button>
         ))}
       </div>
+      <Link to="/theme" className="inline-flex items-center gap-1.5 mt-4 text-sm text-accent hover:underline">
+        <Palette className="w-3.5 h-3.5" /> Customise chart colours &amp; background →
+      </Link>
     </div>
   );
 }
