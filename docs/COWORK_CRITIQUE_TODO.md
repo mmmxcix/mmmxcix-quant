@@ -17,7 +17,9 @@ S3 = minor · S4 = polish.
 
 ---
 
-## ✅ Done (this pass)
+## ✅ Done
+
+**Data bugs (Priority 1):**
 
 | # | Item | Sev |
 |---|------|-----|
@@ -25,6 +27,19 @@ S3 = minor · S4 = polish.
 | — | News: decode numeric + extended HTML entities ("SpaceX's" not "SpaceX&#39;s") | S1 |
 | — | Cortex "today" P&L: same-scale baseline, suppress capital-jump artifacts (no more +299% vs flat all-time) | S1 |
 | — | Watchlist sparkline colored by its own 30-day trend (down-line never green); calmer "N pending · retry" | S2 |
+
+**Optics / consistency / clarity (Priority 2–3):**
+
+| # | Item | Sev |
+|---|------|-----|
+| O2 | Dither is now a `--dither-opacity` token — calmer default (0.4 light / 0.55 dark, ~0.28/0.42 phones) | S2 |
+| O3 | Faint dim-text opacity tiers lifted one step app-wide (/40→/55, /50→/70, /60→/80) | S2 |
+| O4 | World Map: subtle `--c-surface` ocean (no longer "the void"), land fill 0.06→0.09; Layers panel folds <1024px so it clears Europe | S2 |
+| T1 | Shared metric glossary + reusable `<Abbr>` (PF, DD, R, Exposure, Sharpe, RiskGate, Regime, Edge…); wired into Argus chips, Registry, Dashboard KPIs | S2 |
+| C1 | Chart-type labels to English ("Kerzen"→"Candles", "Linie"→"Line") | S2 |
+| C2 | `altName()` hides the secondary name when it's just the ticker ("BTCUSDT BTCUSDT" gone) | S2 |
+| M3 | Paper/Argus equity books tagged **VIRTUAL** so a big sim figure ≠ a real balance next to $0 portfolio | S1 |
+| **O1** | **Theme page** (`/theme`): custom bull/bear/accent colours + presets + **dither Off/Subtle/Default/Full** → delivers "dither optional" | S2 |
 
 ---
 
@@ -79,11 +94,22 @@ S3 = minor · S4 = polish.
 
 ---
 
-## Suggested next-session order
+## Still open from the critique (fold into the branding waves)
 
-1. **O2** (calmer dither default) + **O3** (contrast) — fast, site-wide lift.
-2. **C1 + C2** (language + symbol dup) — cheap credibility wins.
-3. **T1** (abbreviation glossary/tooltips) — the reusable `<Abbr>` unlocks T2/T3.
-4. **M3** (number coherence) — investigate the equity-vs-portfolio discrepancy.
-5. **O1** (theme page) — the large one; delivers dither-optional + custom colors.
-6. **M1 / M2** — cross-linking, then onboarding (with the Wave-1 landing).
+- **O3 font density** — the pervasive 10–11px labels. Deliberately *not* bulk-changed
+  (500 spots, standard for dense finance UIs); revisit as a deliberate density pass
+  with the design-review skills, not a blind resize.
+- **T2 / T3** — yield-curve axis labels + chart legends (reuse `<Abbr>` / the glossary).
+- **C3 / C4** — consistent empty states + generalise skeleton loaders (watchlist retry
+  already softened).
+- **L1 / L2 / L3** — equal Academy card heights, tighten dead vertical space, larger clocks.
+- **M1** — cross-linking symbols → chart (Dashboard/Watchlist/News → Charts).
+- **M2** — onboarding / "start here" (ships with the Wave-2 landing page).
+
+## Next: Welle 1 — Brand identity
+
+Per the launch playbook, the branding waves start now:
+**Palette → Logo/Monogram → Tagline → Landing → Poster → Sidebar.**
+Recommended palette direction: **Ink & Signal** (cool blue-black + a confident cobalt).
+The whole app is CSS-variable driven, so the palette is a token swap — and the new
+`/theme` page already proves the override plumbing works end to end.
