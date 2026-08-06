@@ -6,6 +6,7 @@ import {
   graveyardDaysLeft, pruneGraveyard, GRAVEYARD_TTL_DAYS,
 } from "@/lib/registry";
 import { cn, fmtPct, fmtNum } from "@/lib/utils";
+import Abbr from "@/components/Abbr";
 import { PROFILES } from "@/lib/profiles";
 import { byId, costFor, describeMarkets } from "@/lib/markets";
 import { INTERVAL_SECONDS, fetchCandles } from "@/lib/data";
@@ -360,8 +361,8 @@ function Card({ e, rich = false }) {
       {m && (
         <div className="grid grid-cols-3 gap-x-2 gap-y-0.5 text-[11px] font-mono">
           <span className="text-dim">ret</span><span className={cn("col-span-2 text-right", m.totalReturnPct >= 0 ? "text-up" : "text-down")}>{fmtPct(m.totalReturnPct)}</span>
-          <span className="text-dim">PF</span><span className="col-span-2 text-right text-text">{fmtNum(m.profitFactor, 2)}</span>
-          <span className="text-dim">maxDD</span><span className="col-span-2 text-right text-down">-{fmtNum(m.maxDrawdownPct, 0)}%</span>
+          <Abbr t="PF" className="text-dim" /><span className="col-span-2 text-right text-text">{fmtNum(m.profitFactor, 2)}</span>
+          <Abbr t="Max drawdown" className="text-dim">maxDD</Abbr><span className="col-span-2 text-right text-down">-{fmtNum(m.maxDrawdownPct, 0)}%</span>
           <span className="text-dim">trades</span><span className="col-span-2 text-right text-text">{m.tradeCount}</span>
         </div>
       )}

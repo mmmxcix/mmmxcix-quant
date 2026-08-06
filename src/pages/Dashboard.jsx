@@ -7,6 +7,7 @@ import WorldClock from "@/components/WorldClock";
 import WatchlistPage from "@/pages/Watchlist";
 import MonitorPage from "@/pages/Monitor";
 import { cn, fmtPrice, fmtPct } from "@/lib/utils";
+import { GLOSSARY } from "@/lib/glossary";
 import CountUp from "@/components/CountUp";
 import Skeleton from "@/components/Skeleton";
 
@@ -186,11 +187,12 @@ function AreaChart({ history, height = 200, fmt }) {
   );
 }
 
-function KpiCard({ label, value, sub, icon: Icon, tone }) {
+function KpiCard({ label, value, sub, icon: Icon, tone, hint }) {
   return (
     <div className="rounded-xl border border-line lg-glass p-4 hover-lift">
       <p className="text-[10px] uppercase tracking-wide text-dim flex items-center gap-1.5 mb-2">
-        {Icon && <Icon className="w-3 h-3 text-accent" />}{label}
+        {Icon && <Icon className="w-3 h-3 text-accent" />}
+        <span title={hint} className={hint ? "cursor-help underline decoration-dotted decoration-dim/50 underline-offset-2" : undefined}>{label}</span>
       </p>
       <div className={cn("font-mono text-2xl font-bold tabular-nums leading-none", tone)}>{value}</div>
       {sub && <div className="mt-2 text-xs flex items-center gap-2">{sub}</div>}
@@ -436,6 +438,10 @@ function EquityCard({ lab }) {
     watchlist: ["Watchlist index", `equal-weight · ${range.label} · start = 100`],
   };
   const [title, sub] = TITLES[active];
+  // Paper + Argus are simulated books; the user's Portfolio is their own (here,
+  // empty → $0). Tag the virtual ones so a large paper-equity figure is never
+  // read as a real balance sitting next to a $0 portfolio.
+  const isVirtual = active === "paper" || active === "argus";
   const fmtHover = active === "watchlist"
     ? (v) => v.toFixed(2)
     : (v) => (Math.abs(v) >= 1000 ? "$" + Math.round(v).toLocaleString("en-US") : "$" + v.toFixed(2));
@@ -445,6 +451,10 @@ function EquityCard({ lab }) {
       <div className="flex flex-wrap items-center gap-2 mb-2">
         <div className="min-w-0">
           <span className="text-sm font-semibold">{title}</span>
+          {isVirtual && (
+            <span className="ml-1.5 align-middle inline-block rounded border border-line/80 px-1 py-0.5 text-[9px] uppercase tracking-wide text-dim"
+              title="Simulated money — a virtual book, not a real brokerage balance.">virtual</span>
+          )}
           <span className="text-dim text-xs ml-2">{sub}</span>
         </div>
         <div className="ml-auto flex items-center gap-2">
@@ -508,12 +518,12 @@ function Overview() {
           <KpiCard label="Paper strategies"
             value={<CountUp value={lab.strategies?.filter((s) => !s.error).length ?? 0} format={(v) => String(Math.round(v))} />}
             sub={<span className="text-dim">virtual book</span>} />
-          <KpiCard label="Max drawdown" tone="text-down"
+          <KpiCard label="Max drawdown" tone="text-down" hint={GLOSSARY["Max drawdown"]}
             value={rg?.activeLimits
               ? <CountUp value={rg.activeLimits.combinedDrawdownPct} format={(v) => `${v.toFixed(1)}%`} />
               : "—"}
             sub={<span className="text-dim">peak-to-trough</span>} />
-          <KpiCard icon={ShieldCheck} label="RiskGate"
+          <KpiCard icon={ShieldCheck} label="RiskGate" hint={GLOSSARY.RiskGate}
             value={<span className={cn("inline-flex items-center gap-1.5 text-sm font-semibold rounded-full px-2.5 py-1", rg?.armed ? "bg-up/10 text-up" : "bg-line/50 text-dim")}>
               <span className={cn("w-1.5 h-1.5 rounded-full", rg?.armed ? "bg-up pulse-dot" : "bg-dim")} />{rg?.armed ? "Armed" : "Idle"}</span>}
             sub={<span className="text-dim">{rg?.activeLimits?.openPositions ?? 0} / {rg?.rules?.maxSimultaneousPositions ?? "—"} open</span>} />

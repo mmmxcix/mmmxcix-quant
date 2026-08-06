@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Radio, TrendingUp, TrendingDown, Trophy, AlertTriangle, Zap, Newspaper, GraduationCap, LineChart, X, Ban } from "lucide-react";
 import { cn, fmtNum } from "@/lib/utils";
+import { GLOSSARY } from "@/lib/glossary";
 import { ledgerStats, tradeR } from "@/lib/argus/core";
 import { useSession } from "@/lib/authClient";
 import Skeleton from "@/components/Skeleton";
@@ -269,7 +270,7 @@ export default function Argus() {
                 {t.riskChecks && (
                   <div className="flex flex-wrap items-center gap-1.5 mt-2 text-[10px]">
                     {[["Size", true], ["Exposure", true], ["DD", t.riskChecks.drawdown !== false], ["Vol", t.riskChecks.volatility?.ok !== false], ["MaxLoss", t.riskChecks.maxLoss !== false]].map(([label, ok]) => (
-                      <span key={label} className={cn("inline-flex items-center gap-0.5 rounded px-1 py-0.5 font-medium", ok ? "bg-up/10 text-up" : "bg-down/10 text-down")}>
+                      <span key={label} title={GLOSSARY[label]} className={cn("inline-flex items-center gap-0.5 rounded px-1 py-0.5 font-medium cursor-help", ok ? "bg-up/10 text-up" : "bg-down/10 text-down")}>
                         {ok ? "✓" : "✕"} {label}
                       </span>
                     ))}
