@@ -239,7 +239,7 @@ export default function Landing() {
 
       <footer>
         <Link className="brand" to="/"><Mark size={22} /><span style={{ fontWeight: 800, fontSize: 14 }}>Quant</span></Link>
-        <div style={{ display: "flex", gap: 18 }}><Link to="/pricing">PRICING</Link><Link to="/nutzung">TERMS</Link><Link to="/datenschutz">PRIVACY</Link><Link to="/impressum">IMPRINT</Link></div>
+        <div style={{ display: "flex", gap: 18, flexWrap: "wrap" }}><Link to="/pricing">PRICING</Link><Link to="/about">ABOUT</Link><Link to="/changelog">CHANGELOG</Link><Link to="/nutzung">TERMS</Link><Link to="/datenschutz">PRIVACY</Link><Link to="/impressum">IMPRINT</Link></div>
         <span>EDUCATIONAL · NOT INVESTMENT ADVICE · HYPOTHETICAL RESULTS GUARANTEE NOTHING</span>
       </footer>
     </div>
