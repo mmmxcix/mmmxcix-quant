@@ -12,33 +12,9 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="Quant" />
-    <script>
-      // Apply the saved theme MODE before paint (default light) — no flash of
-      // wrong theme. Mode may be "light" | "dark" | "system"; system resolves
-      // via the OS preference. The signed-in account's preference is mirrored
-      // into localStorage by the app, so it survives reloads on every device.
-      try {
-        var m = localStorage.getItem("theme") || "light";
-        if (m === "system") m = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-        var dark = m === "dark";
-        document.documentElement.dataset.theme = dark ? "dark" : "light";
-        // Match the browser status-bar / chrome to the theme (dark app must not
-        // get a white bar up top).
-        var mc = document.querySelector('meta[name="theme-color"]');
-        if (mc) mc.setAttribute("content", dark ? "#0b0d12" : "#f8fafc");
-      } catch (e) { document.documentElement.dataset.theme = "light"; }
-      // Custom look (chart colours + dither level, see lib/themeSettings.js),
-      // applied before paint so a saved palette doesn't flash the defaults first.
-      try {
-        var p = JSON.parse(localStorage.getItem("quant_theme_prefs") || "{}");
-        var root = document.documentElement;
-        var toTrip = function (h) { var mm = /^#?([0-9a-f]{6})$/i.exec((h || "").trim()); if (!mm) return null; var n = parseInt(mm[1], 16); return ((n >> 16) & 255) + " " + ((n >> 8) & 255) + " " + (n & 255); };
-        [["--c-up", p.up], ["--c-down", p.down], ["--c-accent", p.accent]].forEach(function (kv) { var t = kv[1] && toTrip(kv[1]); if (t) root.style.setProperty(kv[0], t); });
-        var dop = { off: "0", subtle: "0.22", full: "0.85" }[p.dither];
-        if (dop != null) root.style.setProperty("--dither-opacity", dop);
-        root.dataset.dither = p.dither || "default";
-      } catch (e) { /* defaults stand */ }
-    </script>
+    <!-- Pre-paint theme + palette (external, not inline — our CSP has no
+         'unsafe-inline', which would otherwise block it and flash the theme). -->
+    <script src="/theme-init.js"></script>
     <title>MMMXCIX Quant — The honest quant desk</title>
     <meta name="description" content="The honest quant desk: institutional-grade backtesting (Deflated Sharpe, walk-forward), in-browser ML, screener, pairs mean-reversion, HRP portfolios, live charts, macro yields, and a live world-events map. Private, in your browser. Educational, not advice." />
     <meta name="keywords" content="quant trading, backtesting, deflated sharpe ratio, walk-forward, machine learning trading, cross-sectional ranking, triple barrier, meta labeling, pairs trading, cointegration, hierarchical risk parity, GARCH, correlation matrix, bond yield curve, algorithmic trading tools, free backtester" />
