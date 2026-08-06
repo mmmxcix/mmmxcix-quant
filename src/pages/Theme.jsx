@@ -70,7 +70,7 @@ export default function Theme() {
 
   // Theme-default fallbacks shown when a slot has no override. These mirror the
   // light-mode tokens in index.css (the picker needs a concrete hex to seed).
-  const FALLBACK = { up: "#0b6e47", down: "#be2830", accent: "#4c51b5" };
+  const FALLBACK = { up: "#0b6e47", down: "#be2830", accent: "#2554c7" };
 
   const activePreset = CHART_PRESETS.find((p) => p.up === prefs.up && p.down === prefs.down);
   const dirty = prefs.up || prefs.down || prefs.accent || prefs.dither !== "default";

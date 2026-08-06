@@ -8,13 +8,15 @@
 /* Light = white / silver / graphite. Monochrome by design: the only colour on
    the page is the semantic up/down, which makes the data the loudest thing. */
 :root {
-  --c-bg: 250 250 251;      /* #fafafb */
+  /* Ink & Signal — neutrals carry a faint COOL (blue) bias so they read as ink,
+     not warm grey; the lone colour is the cobalt accent ("signal"). */
+  --c-bg: 248 250 252;      /* #f8fafc cool near-white */
   --c-surface: 255 255 255;
-  --c-line: 228 228 231;    /* #e4e4e7 silver */
-  --c-text: 12 12 15;       /* #0c0c0f */
-  --c-dim: 88 88 96;        /* #585860 — darker so secondary text + faint tints stay readable on white */
-  --c-accent: 76 81 181;    /* #4C51B5 muted indigo — the brand signal (kept OFF the
-                               chart palette: green/red/amber + --viz-* stay the data). */
+  --c-line: 225 229 236;    /* #e1e5ec cool silver */
+  --c-text: 12 16 23;       /* #0c1017 cool ink */
+  --c-dim: 83 91 104;       /* #535b68 — cool slate, still AA (~5.9:1) on the near-white ground */
+  --c-accent: 37 84 199;    /* #2554C7 cobalt — the brand signal (kept OFF the chart
+                               palette: green/red/amber + --viz-* stay the data). */
   --c-up: 11 110 71;        /* #0b6e47 — deeper green; the old #158f60 washed out on white and in /10 tints */
   --c-down: 190 40 48;      /* #be2830 — deeper red for the same reason */
   --c-warn: 138 94 7;       /* #8a5e07 — dark ochre; raw yellow-400 was ~1.5:1 (invisible) on white. ~5.6:1 here */
@@ -29,9 +31,9 @@
 
   --glass-bg: rgba(255, 255, 255, 0.74);
   --glass-bg2: rgba(255, 255, 255, 0.58);
-  --glass-border: rgba(12, 12, 15, 0.10);
-  --glass-hairline: rgba(12, 12, 15, 0.16);
-  --glass-shadow: 0 1px 2px rgba(12, 12, 15, 0.05), 0 14px 34px -14px rgba(12, 12, 15, 0.16);
+  --glass-border: rgba(12, 16, 23, 0.10);
+  --glass-hairline: rgba(12, 16, 23, 0.16);
+  --glass-shadow: 0 1px 2px rgba(12, 16, 23, 0.05), 0 14px 34px -14px rgba(12, 16, 23, 0.16);
   --frost-bg: rgba(255, 255, 255, 0.62);
   --grain: 0.05;
   /* Dither strength on the near-white ground. Its crests reach further toward
@@ -44,12 +46,13 @@
    Monochrome, high-contrast type, no coloured accent — the restraint is what
    makes it read expensive. */
 :root[data-theme="dark"] {
-  --c-bg: 12 12 15;         /* #0c0c0f */
-  --c-surface: 24 24 26;    /* #18181a */
-  --c-line: 41 41 43;       /* #29292b */
-  --c-text: 244 244 245;    /* #f4f4f5 */
-  --c-dim: 158 158 164;     /* #9e9ea4 — lighter so secondary text + tints stay readable on charcoal */
-  --c-accent: 139 147 230;  /* #8B93E6 soft periwinkle-indigo — the brand signal on charcoal */
+  /* Ink & Signal (dark) — a cool blue-black ramp, cobalt as the one signal. */
+  --c-bg: 11 13 18;         /* #0b0d12 cool ink black */
+  --c-surface: 22 25 31;    /* #16191f */
+  --c-line: 38 43 52;       /* #262b34 */
+  --c-text: 240 243 248;    /* #f0f3f8 */
+  --c-dim: 148 155 168;     /* #949ba8 — cool slate, readable on the ink (~6.5:1) */
+  --c-accent: 92 141 255;   /* #5C8DFF confident cobalt — the brand signal on ink */
   --c-up: 74 194 140;       /* #4ac28c — a touch brighter for tint legibility */
   --c-down: 232 82 88;      /* #e85258 */
   --c-warn: 224 175 82;     /* #e0af52 — warm amber, legible on charcoal (~8:1) */
