@@ -352,7 +352,7 @@ export default function Layout({ children }) {
       </aside>
 
       {/* Mobile top bar: brand + hamburger */}
-      <header className="md:hidden sticky top-0 z-30 flex items-center justify-between border-b border-line lg-frost px-4 h-14">
+      <header className="md:hidden sticky top-0 z-30 flex items-center justify-between border-b border-line lg-frost px-4 min-h-14" style={{ paddingTop: "env(safe-area-inset-top)" }}>
         <Brandmark glyphClass="w-6 h-6" sub={false} />
         <div className="flex items-center gap-1">
           <button
@@ -396,18 +396,40 @@ export default function Layout({ children }) {
         </div>
       )}
 
-      <main className={cn("p-3 sm:p-4 md:p-8 transition-[margin] duration-200", collapsed ? "md:ml-16" : "md:ml-56")}>
+      <main className={cn("p-3 sm:p-4 md:p-8 pb-24 md:pb-8 transition-[margin] duration-200", collapsed ? "md:ml-16" : "md:ml-56")}>
         {/* keyed by route so each page entry replays the reveal. Capped + centred
             here (not on <main>, which needs its sidebar offset) so ultrawide
             screens don't leave the content hugging the left. */}
         <div key={location.pathname} className="view-in mx-auto max-w-[1800px]">{children}</div>
       </main>
 
-      {/* Mobile footer */}
-      <footer className="md:hidden border-t border-line px-4 py-4 mt-4">
+      {/* Mobile footer — extra bottom room so the legal links clear the tab bar */}
+      <footer className="md:hidden border-t border-line px-4 pt-4 mt-4" style={{ paddingBottom: "calc(5.5rem + env(safe-area-inset-bottom))" }}>
         <LegalLinks />
         <p className="mt-2 text-[10px] text-dim">Not investment advice.</p>
       </footer>
+
+      {/* Mobile bottom tab bar — thumb-friendly primary nav */}
+      <nav className="md:hidden fixed bottom-0 inset-x-0 z-30 lg-frost border-t border-line flex items-stretch"
+        style={{ paddingBottom: "env(safe-area-inset-bottom)" }} aria-label="Primary">
+        {[
+          { to: "/", label: "Home", icon: LayoutDashboard, end: true },
+          { to: "/charts", label: "Charts", icon: CandlestickChart },
+          { to: "/screener", label: "Screener", icon: Radar },
+          { to: "/map", label: "Map", icon: Globe },
+        ].map(({ to, label, icon: Icon, end }) => (
+          <NavLink key={to} to={to} end={end}
+            className={({ isActive }) => cn("flex-1 flex flex-col items-center justify-center gap-0.5 py-2 text-[10px] font-medium transition-colors",
+              isActive ? "text-accent" : "text-dim hover:text-text")}>
+            <Icon className="w-[22px] h-[22px]" strokeWidth={1.9} />
+            <span>{label}</span>
+          </NavLink>
+        ))}
+        <button onClick={() => setDrawerOpen(true)}
+          className="flex-1 flex flex-col items-center justify-center gap-0.5 py-2 text-[10px] font-medium text-dim hover:text-text transition-colors">
+          <Menu className="w-[22px] h-[22px]" strokeWidth={1.9} /><span>More</span>
+        </button>
+      </nav>
     </div>
   );
 }
