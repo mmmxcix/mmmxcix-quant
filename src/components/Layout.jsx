@@ -4,6 +4,7 @@ import { LayoutDashboard, CandlestickChart, FlaskConical, Newspaper, Compass, Wr
 import { cn } from "@/lib/utils";
 import DitherBackground from "@/components/DitherBackground";
 import CommandPalette from "@/components/CommandPalette";
+import Brandmark from "@/components/Brandmark";
 import { authClient, useSession, signOut } from "@/lib/authClient";
 import { THEME_MODES, applyThemeMode, getThemeMode, storeThemeMode } from "@/lib/theme";
 import { syncFromServer as syncPrefs, restoreBackups } from "@/lib/portfolio";
@@ -246,8 +247,7 @@ export default function Layout({ children }) {
       {/* Desktop sidebar */}
       <aside className="hidden md:flex fixed inset-y-0 left-0 w-56 flex-col border-r border-line lg-frost p-4">
         <div className="mb-5 px-3 pt-2">
-          <p className="text-[10px] tracking-[0.3em] text-dim uppercase">MMMXCIX</p>
-          <p className="text-lg font-bold text-text tracking-tight">Quant</p>
+          <Brandmark glyphClass="w-8 h-8" />
         </div>
         <button
           onClick={openPalette}
@@ -279,9 +279,7 @@ export default function Layout({ children }) {
 
       {/* Mobile top bar: brand + hamburger */}
       <header className="md:hidden sticky top-0 z-30 flex items-center justify-between border-b border-line lg-frost px-4 h-14">
-        <p className="text-sm font-bold">
-          <span className="text-dim tracking-[0.25em] text-[10px] uppercase mr-2">MMMXCIX</span>Quant
-        </p>
+        <Brandmark glyphClass="w-6 h-6" sub={false} />
         <div className="flex items-center gap-1">
           <button
             onClick={openPalette}
@@ -307,10 +305,7 @@ export default function Layout({ children }) {
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setDrawerOpen(false)} />
           <div className="absolute inset-y-0 right-0 w-72 max-w-[85vw] bg-surface border-l border-line flex flex-col p-4 shadow-2xl animate-[slidein_0.18s_ease-out]">
             <div className="flex items-center justify-between mb-6 px-1">
-              <div>
-                <p className="text-[10px] tracking-[0.3em] text-dim uppercase">MMMXCIX</p>
-                <p className="text-lg font-bold text-text tracking-tight">Quant</p>
-              </div>
+              <Brandmark glyphClass="w-8 h-8" />
               <button onClick={() => setDrawerOpen(false)} aria-label="Close menu"
                 className="p-2 rounded-lg text-dim hover:text-text active:bg-bg transition-colors">
                 <X className="w-5 h-5" />
