@@ -18,6 +18,11 @@ const HARD_CUT_EXPECTANCY = -0.30; // ≤ this → the firmer of the two size cu
 const MULT_FLOOR = 0.5, MULT_CEIL = 1.25;
 const BOOST = 1.12, MILD_CUT = 0.85, HARD_CUT = 0.65;
 const SKIP_EXPECTANCY = -0.8, SKIP_WINRATE = 0.28; // only truly broken buckets skip
+// Invalidation rate = share of a bucket's trades cut early because the setup thesis
+// broke. A chronically-invalidated setup is being ENTERED too eagerly — learn to
+// avoid it faster than the raw-expectancy gate alone would.
+const HIGH_INVAL_RATE = 0.50;     // ≥ half the bucket keeps breaking → skip when the edge is negative
+const ELEVATED_INVAL_RATE = 0.38; // enough to firm up the size cut / suppress a break-even bucket
 
 // ── session bucketing (UTC-hour → trading session) ──────────────────────────
 /** Coarse trading-session bucket for a trade's entry time (UTC hour). */
@@ -114,15 +119,19 @@ function describeDims(d) {
 
 function makeLesson(dims, items) {
   const s = ledgerStats(items);
+  const invalidated = items.reduce((a, c) => a + (c.outcome === "invalidated" ? 1 : 0), 0);
+  const invalRate = items.length ? invalidated / items.length : 0;
   let verdict, action;
   if (s.expectancy >= STRONG_EXPECTANCY) { verdict = "strong-positive"; action = "boost"; }
   else if (s.expectancy < 0) { verdict = "losing"; action = "suppress"; }
+  else if (invalRate >= HIGH_INVAL_RATE) { verdict = "chronic-invalidation"; action = "suppress"; } // keeps breaking even at ~break-even
   else { verdict = "neutral"; action = "neutral"; }
   const word = action === "boost" ? "favor" : action === "suppress" ? "suppress" : "neutral";
-  const text = `${describeDims(dims)}: ${Math.round(s.winRate * 100)}% win, ${signedR(s.expectancy)} over ${s.n} trades → ${word}`;
+  const invalNote = invalRate >= ELEVATED_INVAL_RATE ? `, ${Math.round(invalRate * 100)}% invalidated` : "";
+  const text = `${describeDims(dims)}: ${Math.round(s.winRate * 100)}% win, ${signedR(s.expectancy)} over ${s.n} trades${invalNote} → ${word}`;
   return {
     dims, verdict, action,
-    n: s.n, wins: s.wins, winRate: s.winRate, avgR: s.avgR, expectancy: s.expectancy, pnl: s.pnl,
+    n: s.n, wins: s.wins, winRate: s.winRate, avgR: s.avgR, expectancy: s.expectancy, pnl: s.pnl, invalRate,
     text,
   };
 }
@@ -192,9 +201,16 @@ export function adjustment(lessons, setup, opts = {}) {
       mult *= boost;
       reasons.push(l.text);
     } else if (l.action === "suppress") {
-      mult *= l.expectancy <= hardCutExpectancy ? hardCut : mildCut;
+      // A chronically-invalidated bucket earns the firmer cut even before its
+      // expectancy is catastrophic — the setup keeps entering and breaking.
+      const firmer = l.expectancy <= hardCutExpectancy || (l.invalRate ?? 0) >= ELEVATED_INVAL_RATE;
+      mult *= firmer ? hardCut : mildCut;
       reasons.push(l.text);
-      if (l.n >= skipMinSample && l.expectancy <= skipExpectancy && l.winRate <= skipWinRate) skip = true;
+      // Skip entirely: the classic egregiously-negative bucket, OR a setup that
+      // keeps getting invalidated (≥50%) while its edge is negative — stop taking it.
+      const brokenEdge = l.expectancy <= skipExpectancy && l.winRate <= skipWinRate;
+      const chronicInval = (l.invalRate ?? 0) >= HIGH_INVAL_RATE && l.expectancy < 0;
+      if (l.n >= skipMinSample && (brokenEdge || chronicInval)) skip = true;
     }
   }
   mult = Math.max(floor, Math.min(ceil, mult));

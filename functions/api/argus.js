@@ -65,8 +65,9 @@ export async function onRequest({ request, env }) {
     if (body.command) {
       if (!(await isAdminRequest(env, request))) return json({ error: "unauthorized" }, 401);
       const c = body.command;
-      const type = c?.type === "cancel" ? "cancel" : c?.type === "close" ? "close" : null;
-      const id = typeof c?.id === "string" ? c.id.slice(0, 64) : null;
+      const type = c?.type === "cancel" ? "cancel" : c?.type === "close" ? "close" : c?.type === "reset" ? "reset" : null;
+      // reset has no per-thesis target — give it a fixed id so de-dupe still works.
+      const id = typeof c?.id === "string" ? c.id.slice(0, 64) : (type === "reset" ? "reset" : null);
       const reason = typeof c?.reason === "string" ? c.reason.slice(0, 200) : "";
       if (!type || !id) return json({ error: "bad_command" }, 400);
       try {

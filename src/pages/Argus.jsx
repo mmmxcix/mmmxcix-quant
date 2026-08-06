@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Radio, TrendingUp, TrendingDown, Trophy, AlertTriangle, Zap, Newspaper, GraduationCap, LineChart, X, Ban } from "lucide-react";
+import { Radio, TrendingUp, TrendingDown, Trophy, AlertTriangle, Zap, Newspaper, GraduationCap, LineChart, X, Ban, RotateCcw } from "lucide-react";
 import { cn, fmtNum } from "@/lib/utils";
 import { GLOSSARY } from "@/lib/glossary";
 import { ledgerStats, tradeR } from "@/lib/argus/core";
@@ -101,6 +101,22 @@ export default function Argus() {
     } catch { /* surfaced by the button staying enabled */ } finally { setCmdBusy(null); }
   };
 
+  // Dev-only: reset the paper book to $10k. Queues a "reset" command the running
+  // agent drains (within ~15s) — clears the book + track record but keeps the
+  // learned skills. Session-gated server-side.
+  const resetArgus = async () => {
+    if (!isDev || cmdBusy) return;
+    if (!window.confirm("Reset Argus to $10,000?\n\nThis clears the paper book and the closed track record. Argus KEEPS its learned skills. The running agent applies it within ~15 seconds.")) return;
+    setCmdBusy("reset");
+    try {
+      const r = await fetch("/api/argus", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ command: { type: "reset" } }),
+      });
+      if (!r.ok) throw new Error();
+    } catch { /* stays enabled */ } finally { setCmdBusy(null); }
+  };
+
   if (data === undefined) return <Skeleton className="h-64 w-full rounded-xl" />;
 
   const { state, theses = [], ledger = [] } = data;
@@ -168,6 +184,15 @@ export default function Argus() {
                 {eligible ? "✓ ready to graduate — your call" : "learning…"}
               </span>
             </div>
+            {isDev && (
+              <div className="mt-3 pt-3 border-t border-line/60 flex items-center justify-between gap-2">
+                <span className="text-[10px] text-dim">Dev · resets the paper book to $10k (keeps learned skills)</span>
+                <button onClick={resetArgus} disabled={cmdBusy === "reset"}
+                  className="inline-flex items-center gap-1.5 text-[11px] text-dim hover:text-down transition-colors disabled:opacity-50">
+                  <RotateCcw className="w-3 h-3" /> {cmdBusy === "reset" ? "Resetting…" : "Reset to $10k"}
+                </button>
+              </div>
+            )}
           </div>
         );
       })()}

@@ -484,6 +484,8 @@ async function drainCommands() {
       forming = forming.filter((f) => f.symbol !== c.id);
       if (eventBias.has(c.id)) eventBias.delete(c.id);
       if (forming.length !== before || eventBias.size) console.log(`[${new Date().toISOString()}] CANCEL ${c.id} (dev)`);
+    } else if (c.type === "reset") {
+      await doReset("dev");
     }
   }
 }
@@ -494,7 +496,7 @@ async function ackCommands() {
   if (!pendingCommands.length) return;
   const ack = [];
   for (const c of pendingCommands) {
-    if (c.type === "cancel") ack.push(c.id);
+    if (c.type === "cancel" || c.type === "reset") ack.push(c.id);
     else if (c.type === "close" && !open.some((o) => o.id === c.id)) { ack.push(c.id); forceClose.delete(c.id); }
   }
   pendingCommands = [];
@@ -651,37 +653,32 @@ async function hydrate() {
 
 await hydrate();
 
-// One-shot reset (LAB_ARGUS_RESET=1): after this bias/leverage overhaul, wipe the
-// book back to the starting equity and clear the ledger, but KEEP the technical
-// learnings — forgetting only lessons tied to the OLD bias-gating behaviour that
-// no longer exists (bias/event/catalyst/regime/timeframe-alignment). Set the env,
-// restart once, then unset it.
-if (process.env.LAB_ARGUS_RESET === "1") {
+// One-shot reset: money + track record (equity, open book, ledger, journal) go
+// back to the $10k start, but the crystallised TECHNICAL SKILLS are kept so the
+// learning survives. Triggered two ways: LAB_ARGUS_RESET=1 on boot, or a dev
+// "reset" command drained at runtime (the Argus page's "Reset to $10k" button).
+async function doReset(source) {
   const b = { j: journal.length, s: skills.length };
-  const BIAS_TIED = /\bbias\b|\bevent\b|catalyst|regime|higher.?time|\bhtf\b|overlap|timeframe/i;
-  const keep = (e) => !BIAS_TIED.test(`${e?.lesson || ""} ${e?.cause || ""} ${e?.mistake || ""} ${e?.text || ""}`) && e?.applies?.source !== "event";
-  // Keep the technical KNOWLEDGE, drop the bias-tied lessons: crystallise skills
-  // from the non-bias journal and RETAIN them, then clear the journal itself so the
-  // per-trade post-mortems match the freshly-cleared track record (Gemini Bug 2 —
-  // header ledger and post-mortems must agree). Retained skills survive the empty
-  // journal via unionSkills in the reflect loop.
-  retainedSkills = crystallise(journal.filter(keep));
+  retainedSkills = unionSkills(retainedSkills, crystallise(journal)); // keep the knowledge
   journal = [];
   skills = retainedSkills.slice();
   equity = EQUITY0; equityDayStart = EQUITY0;
   open = []; forming = []; closedAll = []; closedToday = []; reflectQueue = [];
+  forceClose = new Set(); forceCloseReason = new Map();
   lessons = deriveLessons(closedAll, { minSample: LEARN_MIN });
   eventBias = new Map();
-  console.log(`[${new Date().toISOString()}] RESET → ${EQUITY0}: cleared ${b.j} journal + ${b.s} skills, retained ${retainedSkills.length} technical skills (dropped bias-tied), cleared book + ledger`);
-  await persist([], { dailyPnl: 0, halted: false }); // writes reset state + theses:[] + empty journal + retained skills
-  // Clear the stored ledger too (persist only appends) so the fresh track record starts at 0.
+  console.log(`[${new Date().toISOString()}] RESET (${source}) → ${EQUITY0}: cleared ${b.j} journal + book + ledger, kept ${retainedSkills.length} skills`);
+  await persist([], { dailyPnl: 0, halted: false }); // reset state + theses:[] + empty journal + retained skills
+  // persist only APPENDS the ledger — replace it explicitly so the track record starts at 0.
   try {
     await fetch(`${SITE}/api/argus`, {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ token: TOKEN, ledgerReplace: [] }),
     });
-  } catch { /* offline — retried on next persist is not possible for replace; harmless */ }
+  } catch { /* offline — harmless */ }
 }
+
+if (process.env.LAB_ARGUS_RESET === "1") await doReset("env");
 // Near-instant dev commands: a light 15s loop that drains the queue and closes a
 // commanded position at the LIVE price right away, instead of waiting up to 2 min
 // for the next scan. Shares the cycleRunning mutex so it never races a scan.
