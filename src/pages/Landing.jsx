@@ -1,192 +1,240 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
-import {
-  ArrowRight, FlaskConical, Brain, LineChart, Landmark, Globe, ShieldCheck,
-  Radar, Waypoints, Lock,
-} from "lucide-react";
-import Brandmark, { BrandGlyph } from "@/components/Brandmark";
+import "@fontsource-variable/bricolage-grotesque";
+import "@fontsource-variable/jetbrains-mono";
+import "./landing.css";
 
 export const WELCOMED_KEY = "quant_welcomed";
 
-// A little candlestick figure that echoes the logo — mono ink candles with the
-// last few in the accent, on a faint grid. Pure decoration, theme-aware.
-function HeroChart() {
-  const bars = [
-    [30, 46, 50, 26, 0], [46, 40, 52, 36, 0], [40, 58, 62, 38, 0], [58, 52, 64, 48, 0],
-    [52, 70, 74, 50, 0], [70, 62, 78, 58, 0], [62, 82, 86, 60, 1], [82, 74, 90, 70, 1],
-    [74, 94, 100, 72, 1],
-  ];
-  const W = 380, H = 200, n = bars.length, cw = W / n, bw = cw * 0.46;
-  const y = (v) => H - 12 - (v / 108) * (H - 30);
+// The brand mark (two-candle aperture), Pewter via currentColor.
+function Mark({ size = 30 }) {
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto" aria-hidden="true">
-      <defs>
-        <linearGradient id="hg" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stopColor="rgb(var(--c-accent))" stopOpacity="0.14" />
-          <stop offset="1" stopColor="rgb(var(--c-accent))" stopOpacity="0" />
-        </linearGradient>
-      </defs>
-      {[0.25, 0.5, 0.75].map((f) => (
-        <line key={f} x1="0" x2={W} y1={H * f} y2={H * f} stroke="rgb(var(--c-line))" strokeWidth="1" />
-      ))}
-      <polygon
-        points={`0,${H} ${bars.map((b, i) => `${i * cw + cw / 2},${y(b[1])}`).join(" ")} ${W},${H}`}
-        fill="url(#hg)" />
-      {bars.map(([o, c, h, l, accent], i) => {
-        const cx = i * cw + cw / 2;
-        const col = accent ? "rgb(var(--c-accent))" : "rgb(var(--c-dim))";
-        return (
-          <g key={i}>
-            <line x1={cx} x2={cx} y1={y(h)} y2={y(l)} stroke={col} strokeWidth="1.5" strokeLinecap="round" />
-            <rect x={cx - bw / 2} y={y(Math.max(o, c))} width={bw}
-              height={Math.max(2, Math.abs(y(o) - y(c)))} rx="1.5" fill={col} />
-          </g>
-        );
-      })}
+    <svg width={size} height={size} viewBox="0 0 64 64" fill="none" style={{ color: "var(--pew)" }} aria-hidden="true">
+      <g stroke="currentColor" strokeWidth="3" strokeLinecap="round">
+        <path d="M14 8H8V14" /><path d="M50 8H56V14" /><path d="M14 56H8V50" /><path d="M50 56H56V50" />
+      </g>
+      <line x1="26" y1="27" x2="26" y2="45" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round" />
+      <rect x="21.5" y="31" width="9" height="10" rx="2.2" fill="currentColor" />
+      <line x1="39" y1="19" x2="39" y2="41" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round" />
+      <rect x="34.5" y="23" width="9" height="14" rx="2.2" fill="currentColor" />
     </svg>
   );
 }
 
-const FEATURES = [
-  { icon: FlaskConical, title: "Backtest honestly", body: "Deflated Sharpe, walk-forward and purged cross-validation — so an edge has to survive luck, not just fit the past." },
-  { icon: Brain, title: "Research-grade ML", body: "Triple-barrier labels, meta-labeling and hierarchical risk parity, run entirely in your browser. No server, no upload." },
-  { icon: LineChart, title: "Live markets", body: "Fast charts, a screener, options with Greeks and Monte-Carlo cones — the daily tools, done properly." },
-  { icon: Landmark, title: "Macro & regimes", body: "Yield curves, an HMM regime model and correlation structure — the context most retail tools skip." },
-  { icon: Globe, title: "A live world map", body: "Ships, flights, quakes, cables and breaking news on one map — the alt-data layer, watchable in real time." },
-  { icon: Lock, title: "Private by default", body: "It runs in your browser and your positions stay on your device. Nothing to sell, nothing leaked." },
+// Real registry snapshot — believable Sharpe + real drawdowns, and a genuinely
+// buried strategy. No hype returns; the honest figures are the point.
+const STRATS = [
+  { name: "Breakout · volatility-confirmed", sharpe: "1.39", dd: "29%", status: "paper" },
+  { name: "Breakout pullback + vol filter", sharpe: "1.28", dd: "21%", status: "validated" },
+  { name: "EMA·RSI·MACD regime breakout", sharpe: "1.27", dd: "41%", status: "paper" },
+  { name: "SMA crossover", sharpe: "1.48", dd: "8%", status: "factory" },
+  { name: "Square-root price impact", sharpe: "—", dd: "—", status: "buried · bug", grave: true },
 ];
 
-const PILLARS = [
-  { k: "Deflated Sharpe", v: "adjusts for luck" },
-  { k: "Walk-forward", v: "tested out of sample" },
-  { k: "In-browser ML", v: "nothing uploaded" },
-  { k: "Real track records", v: "losers shown too" },
+const FAQ = [
+  ["What does it cost?", "Free while in beta — no account needed to explore the desk. A paid tier will come later for the heavier compute (deep generation, hosted research); the core research tools stay generous."],
+  ["Where does my data go?", "Nowhere. Backtests and ML run in your browser; your watchlist and positions live on your device. There's nothing to upload and nothing to leak."],
+  ["Is this investment advice?", "No. It's an educational research desk. Backtests are hypothetical and past performance guarantees nothing — which is exactly why every number is shown deflated and out-of-sample."],
+  ["Who is behind it?", "An independent quant building the desk in the open — no fund affiliation, no product to pump. The whole pitch is honesty, so the incentives are kept clean."],
 ];
 
 export default function Landing() {
+  const rootRef = useRef(null);
+  const canvasRef = useRef(null);
+
   useEffect(() => {
     try { localStorage.setItem(WELCOMED_KEY, "1"); } catch { /* private mode */ }
+    const root = rootRef.current;
+    if (!root) return;
+    const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    const glow = root.querySelector(".glow");
+    const onMove = (e) => { if (glow) glow.style.transform = `translate(${e.clientX}px,${e.clientY}px)`; };
+    window.addEventListener("pointermove", onMove, { passive: true });
+
+    const nav = root.querySelector("nav");
+    const onScroll = () => nav && nav.classList.toggle("stuck", window.scrollY > 40);
+    window.addEventListener("scroll", onScroll, { passive: true }); onScroll();
+
+    const io = new IntersectionObserver((es) => es.forEach((x) => { if (x.isIntersecting) { x.target.classList.add("in"); io.unobserve(x.target); } }), { threshold: 0.15 });
+    root.querySelectorAll(".reveal").forEach((el) => io.observe(el));
+
+    const cio = new IntersectionObserver((es) => es.forEach((x) => {
+      if (!x.isIntersecting) return; cio.unobserve(x.target);
+      const el = x.target, to = +el.dataset.to; let t0 = null;
+      const run = (t) => { t0 = t0 || t; const p = Math.min(1, (t - t0) / 850); el.textContent = Math.round(to * (1 - Math.pow(1 - p, 3))); if (p < 1) requestAnimationFrame(run); };
+      reduce ? (el.textContent = to) : requestAnimationFrame(run);
+    }), { threshold: 0.6 });
+    root.querySelectorAll("[data-to]").forEach((el) => cio.observe(el));
+
+    const clk = root.querySelector(".clock");
+    const ci = setInterval(() => { if (clk) clk.textContent = new Date().toISOString().slice(11, 19) + " UTC"; }, 1000);
+
+    // streaming candle hero
+    let raf = 0, resize = null;
+    const cv = canvasRef.current;
+    if (cv) {
+      const ctx = cv.getContext("2d"); let W, H, dpr;
+      resize = () => { dpr = Math.min(2, devicePixelRatio || 1); const r = cv.getBoundingClientRect(); W = r.width; H = r.height; cv.width = W * dpr; cv.height = H * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); };
+      resize(); window.addEventListener("resize", resize);
+      let price = 100; const candles = [];
+      const step = () => { const o = price, c = o + 0.5 + (Math.random() - 0.48) * 4.4, h = Math.max(o, c) + Math.random() * 2.4, l = Math.min(o, c) - Math.random() * 2.4; price = c; candles.push({ o, c, h, l }); if (candles.length > 66) candles.shift(); };
+      for (let i = 0; i < 54; i++) step(); let last = 0;
+      const frame = (now) => {
+        if (!reduce && now - last > 820) { step(); last = now; }
+        const vis = candles.slice(-48); const hi = Math.max(...vis.map((c) => c.h)), lo = Math.min(...vis.map((c) => c.l)), pad = (hi - lo) * 0.12 || 1, top = lo - pad, bot = hi + pad;
+        const Y = (v) => H - 16 - (v - top) / (bot - top) * (H - 46), cw = W / vis.length, bw = Math.min(9, cw * 0.5); ctx.clearRect(0, 0, W, H);
+        ctx.strokeStyle = "rgba(148,155,168,.06)"; ctx.lineWidth = 1; for (let g = 0; g < 4; g++) { const y = 16 + g * (H - 32) / 3; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+        ctx.beginPath(); vis.forEach((c, i) => { const x = i * cw + cw / 2, y = Y(c.c); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); ctx.strokeStyle = "rgba(147,178,216,.2)"; ctx.lineWidth = 2; ctx.stroke(); ctx.lineCap = "round";
+        vis.forEach((c, i) => { const x = i * cw + cw / 2, up = c.c >= c.o, near = i >= vis.length - 7; ctx.strokeStyle = ctx.fillStyle = near ? "#93b2d8" : (up ? "rgba(74,194,140,.4)" : "rgba(232,82,88,.4)"); ctx.lineWidth = 1.4;
+          ctx.beginPath(); ctx.moveTo(x, Y(c.h)); ctx.lineTo(x, Y(c.l)); ctx.stroke(); const yt = Y(Math.max(c.o, c.c)), hh = Math.max(2, Math.abs(Y(c.o) - Y(c.c))); ctx.beginPath(); ctx.roundRect ? ctx.roundRect(x - bw / 2, yt, bw, hh, 2) : ctx.rect(x - bw / 2, yt, bw, hh); ctx.fill(); });
+        const lc = vis[vis.length - 1], ex = (vis.length - 1) * cw + cw / 2, ey = Y(lc.c); ctx.fillStyle = "#93b2d8"; ctx.beginPath(); ctx.arc(ex, ey, 3.4, 0, 7); ctx.fill(); ctx.strokeStyle = "rgba(147,178,216,.4)"; ctx.lineWidth = 1.4; ctx.beginPath(); ctx.arc(ex, ey, 7, 0, 7); ctx.stroke();
+        raf = requestAnimationFrame(frame);
+      };
+      raf = requestAnimationFrame(frame);
+    }
+
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("scroll", onScroll);
+      if (resize) window.removeEventListener("resize", resize);
+      io.disconnect(); cio.disconnect(); clearInterval(ci); cancelAnimationFrame(raf);
+    };
   }, []);
 
   return (
-    <div className="min-h-screen relative text-text">
-      <div className="ambient-bg" aria-hidden="true" />
+    <div className="lp" ref={rootRef}>
+      <div className="glow" />
+      <div className="frame"><b /><b /><b /><b /></div>
+      <div className="sidelabel">The honest quant desk</div>
+      <div className="statusbar"><span><span className="live">● LIVE</span> · MMMXCIX QUANT · v1.0</span><span className="clock m">--:--:-- UTC</span></div>
 
-      {/* Top bar */}
-      <header className="relative z-10 max-w-6xl mx-auto flex items-center justify-between px-5 sm:px-8 h-16">
-        <Brandmark glyphClass="w-7 h-7" />
-        <div className="flex items-center gap-2">
-          <Link to="/login" className="btn-ghost text-sm hidden sm:inline-flex">Sign in</Link>
-          <Link to="/" className="btn-primary text-sm inline-flex items-center gap-1.5">
-            Enter the desk <ArrowRight className="w-3.5 h-3.5" />
-          </Link>
+      <nav>
+        <Link className="brand" to="/"><Mark size={30} /><span className="wm"><small>MMMXCIX</small>Quant</span></Link>
+        <div className="navlinks"><a href="#honest">[01] Honest</a><a href="#desk">[02] Desk</a><a href="#tools">[03] Tools</a><a href="#faq">[04] Access</a></div>
+        <Link className="btn btn-p" to="/">Enter the desk →</Link>
+      </nav>
+
+      <header className="hero">
+        <canvas ref={canvasRef} />
+        <div className="part"><span className="dot" /> <span className="br">[</span> Quantitative research desk <span className="br">/</span> live <span className="br">]</span></div>
+        <h1><span className="l"><span>The honest</span></span><span className="l"><span className="grad">quant desk.</span></span></h1>
+        <p className="sub">Institutional-grade backtesting, in-browser ML and live markets — private, in your browser. No black boxes, no hype.</p>
+        <div className="heroctas"><Link className="btn btn-p" to="/">Enter the desk →</Link><a className="btn btn-g" href="#desk">See the desk ↓</a></div>
+        <p className="access">// <b>Free while in beta</b> · no account needed · your work never leaves your device</p>
+        <div className="kpis">
+          <div className="kpi"><div className="n"><span data-to="12">0</span></div><div className="k">integrated tools</div></div>
+          <div className="kpi"><div className="n"><span data-to="10">0</span>y</div><div className="k">backtest history</div></div>
+          <div className="kpi"><div className="n">0<span className="u">%</span></div><div className="k">of your data uploaded</div></div>
+          <div className="kpi"><div className="n">0.83<span className="ci">±.14</span></div><div className="k">deflated, not vanity</div></div>
         </div>
       </header>
 
-      {/* Hero */}
-      <main className="relative z-10">
-        <section className="max-w-6xl mx-auto px-5 sm:px-8 pt-10 pb-16 grid lg:grid-cols-[1.1fr_1fr] gap-10 items-center">
+      <div className="marq"><div className="track">
+        {[0, 1].map((k) => (
+          <span key={k}>
+            {["Deflated Sharpe", "Walk-forward", "Purged CV", "Triple-barrier", "Meta-labeling", "HRP", "Regime HMM", "Monte Carlo", "Options Greeks", "Macro yields", "World map"].map((t) => (
+              <span key={t}>{t}<span className="s"> / </span></span>
+            ))}
+          </span>
+        ))}
+      </div></div>
+
+      {/* [01] HONEST */}
+      <section className="block" id="honest">
+        <div className="split">
           <div>
-            <p className="text-[11px] tracking-[0.32em] text-dim uppercase mb-4">MMMXCIX Quant</p>
-            <h1 className="text-4xl sm:text-5xl font-extrabold tracking-tight leading-[1.05] text-balance">
-              The honest<br />quant desk.
-            </h1>
-            <p className="mt-5 text-lg text-dim max-w-xl leading-relaxed">
-              Institutional-grade backtesting, in-browser ML and live markets —
-              private, in your browser. No black boxes, no hype.
-            </p>
-            <div className="mt-8 flex flex-wrap items-center gap-3">
-              <Link to="/" className="btn-primary inline-flex items-center gap-2">
-                Enter the desk <ArrowRight className="w-4 h-4" />
-              </Link>
-              <a href="#features" className="btn-ghost">See the tools</a>
-            </div>
-            <p className="mt-4 text-xs text-dim">Free while in beta · educational, not investment advice</p>
+            <div className="ey"><span className="br">[01]</span> The difference</div>
+            <h2 className="reveal">Most tools flatter you.<br />This one won't.</h2>
+            <p className="lead reveal d1">We deflate every Sharpe for how many strategies were tried, test out of sample, and show the real registry — <b style={{ color: "var(--text)" }}>including the ones we buried</b>. If an edge isn't real, the numbers say so. That's the whole product.</p>
+            <p className="lead reveal d2 m" style={{ fontSize: 13, color: "var(--faint)", marginTop: 14 }}>// every figure ships against its baseline, deflated and out-of-sample.</p>
           </div>
-
-          <div className="rounded-2xl border border-line lg-glass p-5 sm:p-6">
-            <div className="flex items-center justify-between mb-3">
-              <span className="text-xs text-dim font-mono">SPY · daily · walk-forward</span>
-              <span className="text-[11px] rounded-full px-2 py-0.5 font-mono font-semibold bg-accent/12 text-accent">signal</span>
-            </div>
-            <HeroChart />
-          </div>
-        </section>
-
-        {/* Pillars */}
-        <section className="max-w-6xl mx-auto px-5 sm:px-8 pb-16">
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-px rounded-xl overflow-hidden border border-line bg-line">
-            {PILLARS.map((p) => (
-              <div key={p.k} className="bg-bg px-5 py-5">
-                <p className="text-sm font-semibold">{p.k}</p>
-                <p className="text-xs text-dim mt-0.5">{p.v}</p>
+          <div className="track-tbl brk reveal d1">
+            <div className="cap"><span>Live registry · real strategies</span><span>the losers included</span></div>
+            {STRATS.map((s) => (
+              <div className="tr" key={s.name}>
+                <b>{s.name}</b>
+                <span className={"num" + (s.grave ? " dim" : "")}>{s.sharpe}</span>
+                <span className={"num" + (s.grave ? " dim" : "")}>{s.dd}</span>
+                <span className={"v" + (s.grave ? " grave" : "")}>{s.status}</span>
               </div>
             ))}
+            <div className="foot">↳ backtest Sharpe shown · deflated & walk-forward before anything is trusted.</div>
           </div>
-        </section>
-
-        {/* Features */}
-        <section id="features" className="max-w-6xl mx-auto px-5 sm:px-8 pb-16 scroll-mt-8">
-          <h2 className="text-2xl font-bold tracking-tight mb-1">The desk institutions have</h2>
-          <p className="text-dim mb-8">The same rigour the pros rely on — the tools a quant actually uses, now in your browser.</p>
-          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {FEATURES.map(({ icon: Icon, title, body }) => (
-              <div key={title} className="rounded-xl border border-line lg-glass p-5 hover-lift">
-                <div className="w-9 h-9 rounded-lg grid place-items-center bg-accent/10 text-accent mb-3">
-                  <Icon className="w-5 h-5" strokeWidth={1.75} />
-                </div>
-                <h3 className="font-semibold mb-1">{title}</h3>
-                <p className="text-sm text-dim leading-relaxed">{body}</p>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        {/* Honesty */}
-        <section className="max-w-6xl mx-auto px-5 sm:px-8 pb-16">
-          <div className="rounded-2xl border border-line lg-glass p-7 sm:p-10 relative overflow-hidden">
-            <span className="text-accent mb-4 inline-flex"><BrandGlyph className="w-9 h-9" /></span>
-            <h2 className="text-2xl sm:text-3xl font-bold tracking-tight max-w-2xl text-balance">
-              Most trading tools flatter you. This one won't.
-            </h2>
-            <p className="mt-4 text-dim max-w-2xl leading-relaxed">
-              Every backtest is deflated for how many strategies you tried, tested out of
-              sample, and shown with its real track record — the losers included. If an
-              edge isn't real, the numbers say so. That honesty is the whole point.
-            </p>
-            <div className="mt-6 flex flex-wrap gap-2">
-              {[["Deflated Sharpe", ShieldCheck], ["Walk-forward", Waypoints], ["Purged CV", Radar]].map(([t, Ic]) => (
-                <span key={t} className="inline-flex items-center gap-1.5 text-xs rounded-full border border-line px-3 py-1.5 text-dim">
-                  <Ic className="w-3.5 h-3.5 text-accent" /> {t}
-                </span>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        {/* CTA */}
-        <section className="max-w-6xl mx-auto px-5 sm:px-8 pb-20">
-          <div className="rounded-2xl border border-accent/25 bg-accent/[0.06] p-8 sm:p-10 text-center">
-            <h2 className="text-2xl sm:text-3xl font-bold tracking-tight">A quant desk in your browser</h2>
-            <p className="text-dim mt-2 mb-6">No sign-up needed to look around — your work stays on your device.</p>
-            <Link to="/" className="btn-primary inline-flex items-center gap-2 mx-auto">
-              Enter MMMXCIX Quant <ArrowRight className="w-4 h-4" />
-            </Link>
-          </div>
-        </section>
-      </main>
-
-      {/* Footer */}
-      <footer className="relative z-10 border-t border-line">
-        <div className="max-w-6xl mx-auto px-5 sm:px-8 py-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-dim">
-          <Brandmark glyphClass="w-6 h-6" sub={false} />
-          <div className="flex items-center gap-4">
-            <Link to="/nutzung" className="hover:text-text">Terms</Link>
-            <Link to="/datenschutz" className="hover:text-text">Privacy</Link>
-            <Link to="/impressum" className="hover:text-text">Imprint</Link>
-          </div>
-          <p className="text-center sm:text-right max-w-xs">Educational tools. Not investment advice; hypothetical results guarantee nothing.</p>
         </div>
+      </section>
+
+      {/* [02] DESK — real screenshots */}
+      <section className="block" id="desk">
+        <div className="ey reveal"><span className="br">[02]</span> The desk institutions have</div>
+        <h2 className="reveal d1" style={{ marginBottom: 32 }}>This is the real thing.</h2>
+        <div className="shots reveal d2">
+          <div className="shot big brk">
+            <img src="/shots/regimes.jpg" alt="Market regimes — Hidden Markov Model, SPY price coloured by regime" loading="lazy" />
+            <div className="cap"><b>Market regimes</b><span>Hidden Markov Model</span></div>
+          </div>
+          <div className="shot">
+            <img src="/shots/map.jpg" alt="Live world map — ships, flights, cables, conflict and instability signals" loading="lazy" />
+            <div className="cap"><b>Live world map</b><span>alt-data · real-time</span></div>
+          </div>
+          <div className="shot">
+            <img src="/shots/charts.jpg" alt="Charts — candlesticks with indicators" loading="lazy" />
+            <div className="cap"><b>Charts</b><span>fast · candlesticks</span></div>
+          </div>
+        </div>
+        <p className="reveal d2 m" style={{ marginTop: 14, fontSize: 11.5, color: "var(--faint)", letterSpacing: ".06em" }}>// actual screens from the live desk · your data stays in your browser</p>
+      </section>
+
+      {/* [03] TOOLS */}
+      <section className="block" id="tools">
+        <div className="ey reveal"><span className="br">[03]</span> Capability ledger</div>
+        <h2 className="reveal d1" style={{ marginBottom: 30 }}>The tools a quant actually uses.</h2>
+        <div className="ledger brk reveal d2">
+          {[
+            ["[ BACKTEST ]", "Deflated Sharpe · walk-forward · purged cross-validation", "rigorous"],
+            ["[ ML ]", "Triple-barrier labels · meta-labeling · hierarchical risk parity", "in-browser"],
+            ["[ MARKETS ]", "Charts · screener · options Greeks · Monte-Carlo cones", "live"],
+            ["[ MACRO ]", "Yield curves · HMM regime model · correlation structure", "live"],
+            ["[ MAP ]", "Ships · flights · quakes · undersea cables · breaking news", "real-time"],
+            ["[ PRIVACY ]", "Runs client-side · positions never leave your device", "by default"],
+          ].map(([tag, desc, st]) => (
+            <div className="lr" key={tag}><span className="tagc">{tag}</span><span className="desc">{desc}</span><span className="st">{st}</span></div>
+          ))}
+        </div>
+      </section>
+
+      {/* manifesto */}
+      <section className="block">
+        <div className="manifesto reveal">
+          <p>“Every metric on this desk is shown against its baseline — the winners and the losers. If it doesn't survive deflation, walk-forward and a real sample, it doesn't ship.”</p>
+          <div className="sig">— Built by an independent quant · <b>MMMXCIX</b> · no fund, no affiliation, no incentive to flatter</div>
+        </div>
+      </section>
+
+      {/* [04] FAQ + CTA */}
+      <section className="block" id="faq">
+        <div className="ey reveal"><span className="br">[04]</span> Access</div>
+        <h2 className="reveal d1" style={{ marginBottom: 26 }}>Questions, answered honestly.</h2>
+        <div className="faq reveal d2">
+          {FAQ.map(([q, a], i) => (
+            <details key={q} open={i === 0}>
+              <summary>{q} <span className="pl">+</span></summary>
+              <div className="a">{a}</div>
+            </details>
+          ))}
+        </div>
+        <div className="cta reveal d2" style={{ marginTop: 44 }}>
+          <div className="ey" style={{ justifyContent: "center", color: "var(--pew-hi)" }}><span className="br">//</span> Ready when you are</div>
+          <h2>A quant desk in your browser.</h2>
+          <p className="lead">Free while in beta. No sign-up to look around. The honest numbers are waiting.</p>
+          <div className="row"><Link className="btn btn-p" to="/">Enter MMMXCIX Quant →</Link><a className="btn btn-g" href="#top">↑ Back to top</a></div>
+        </div>
+      </section>
+
+      <footer>
+        <Link className="brand" to="/"><Mark size={22} /><span style={{ fontWeight: 800, fontSize: 14 }}>Quant</span></Link>
+        <div style={{ display: "flex", gap: 18 }}><Link to="/nutzung">TERMS</Link><Link to="/datenschutz">PRIVACY</Link><Link to="/impressum">IMPRINT</Link></div>
+        <span>EDUCATIONAL · NOT INVESTMENT ADVICE · HYPOTHETICAL RESULTS GUARANTEE NOTHING</span>
       </footer>
     </div>
   );
