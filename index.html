@@ -20,7 +20,12 @@
       try {
         var m = localStorage.getItem("theme") || "light";
         if (m === "system") m = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-        document.documentElement.dataset.theme = m === "dark" ? "dark" : "light";
+        var dark = m === "dark";
+        document.documentElement.dataset.theme = dark ? "dark" : "light";
+        // Match the browser status-bar / chrome to the theme (dark app must not
+        // get a white bar up top).
+        var mc = document.querySelector('meta[name="theme-color"]');
+        if (mc) mc.setAttribute("content", dark ? "#0b0d12" : "#f8fafc");
       } catch (e) { document.documentElement.dataset.theme = "light"; }
       // Custom look (chart colours + dither level, see lib/themeSettings.js),
       // applied before paint so a saved palette doesn't flash the defaults first.

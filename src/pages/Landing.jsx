@@ -44,8 +44,13 @@ export default function Landing() {
 
   useEffect(() => {
     try { localStorage.setItem(WELCOMED_KEY, "1"); } catch { /* private mode */ }
+    // The landing is committed-dark — pin the browser status-bar colour dark
+    // while it's shown (regardless of the visitor's app theme), then restore.
+    const mc = document.querySelector('meta[name="theme-color"]');
+    const prevMc = mc && mc.getAttribute("content");
+    if (mc) mc.setAttribute("content", "#0b0d12");
     const root = rootRef.current;
-    if (!root) return;
+    if (!root) return () => { if (mc && prevMc) mc.setAttribute("content", prevMc); };
     const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
     const glow = root.querySelector(".glow");
@@ -99,6 +104,7 @@ export default function Landing() {
       window.removeEventListener("scroll", onScroll);
       if (resize) window.removeEventListener("resize", resize);
       io.disconnect(); cio.disconnect(); clearInterval(ci); cancelAnimationFrame(raf);
+      if (mc && prevMc) mc.setAttribute("content", prevMc);
     };
   }, []);
 

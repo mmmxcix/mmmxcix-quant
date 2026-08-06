@@ -19,7 +19,12 @@ export function resolveTheme(mode) {
 
 /** Apply a mode to the document (what the CSS tokens key off). */
 export function applyThemeMode(mode) {
-  document.documentElement.dataset.theme = resolveTheme(mode);
+  const theme = resolveTheme(mode);
+  document.documentElement.dataset.theme = theme;
+  // Keep the browser status-bar / chrome colour in step with the theme so a dark
+  // app never shows a white bar at the top (and vice-versa).
+  const mc = document.querySelector('meta[name="theme-color"]');
+  if (mc) mc.setAttribute("content", theme === "dark" ? "#0b0d12" : "#f8fafc");
 }
 
 export function getThemeMode() {
