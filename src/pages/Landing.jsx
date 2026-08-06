@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
-import "@fontsource-variable/bricolage-grotesque";
+import "@fontsource-variable/geist";
 import "@fontsource-variable/jetbrains-mono";
 import "./landing.css";
 
