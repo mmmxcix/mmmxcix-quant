@@ -5,6 +5,16 @@ export function cn(...inputs) {
   return twMerge(clsx(inputs));
 }
 
+// A symbol's human name is only worth showing when it actually differs from the
+// ticker. Our lists fall back to name = symbol.toUpperCase() when no name is
+// known, which otherwise rendered as "BTCUSDT BTCUSDT". Returns "" when the name
+// is just the symbol again (case/space-insensitive).
+export function altName(symbol, name) {
+  if (!name) return "";
+  const norm = (s) => String(s).trim().toUpperCase().replace(/\s+/g, "");
+  return norm(name) === norm(symbol) ? "" : name;
+}
+
 // 1234.5678 → "1,234.57" (US-style thousands separator)
 export function fmtNum(n, digits = 2) {
   if (n === null || n === undefined || Number.isNaN(n)) return "–";

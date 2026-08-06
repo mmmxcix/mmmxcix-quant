@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Loader2, Search } from "lucide-react";
 import { searchSymbols, localMatches, warmup } from "@/lib/search";
-import { cn } from "@/lib/utils";
+import { cn, altName } from "@/lib/utils";
 
 const DEBOUNCE_MS = 150;
 const MIN_CHARS = 1;
@@ -185,7 +185,7 @@ export default function SymbolSearch({
               )}
             >
               <span className="font-mono font-semibold shrink-0">{r.symbol}</span>
-              <span className="text-dim truncate flex-1">{r.name}</span>
+              <span className="text-dim truncate flex-1">{altName(r.symbol, r.name)}</span>
               <span className="text-[10px] uppercase tracking-wide text-dim shrink-0">
                 {[r.exchange, r.type].filter(Boolean).join(" · ")}
               </span>

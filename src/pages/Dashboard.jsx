@@ -109,7 +109,7 @@ function FlashCell({ value, className, children }) {
 
 // Tiny inline sparkline from the last ~30 daily closes. Theme-aware stroke.
 function Sparkline({ data, up, delay = 0 }) {
-  if (!data || data.length < 2) return <span className="text-dim/40 text-xs">—</span>;
+  if (!data || data.length < 2) return <span className="text-dim/55 text-xs">—</span>;
   const w = 66, h = 22, min = Math.min(...data), max = Math.max(...data), rng = max - min || 1;
   const pts = data.map((v, i) => `${(i / (data.length - 1)) * w},${(h - 2 - ((v - min) / rng) * (h - 4)).toFixed(1)}`).join(" ");
   return (
@@ -244,7 +244,7 @@ function WatchlistCard() {
                 <td className="px-4 py-3 text-right font-mono tabular-nums">
                   {loading && !q ? <Skeleton className="h-4 w-16 ml-auto" />
                     : q ? <FlashCell value={q.price} className="inline-block rounded px-1 -mx-1">{fmtPrice(q.price)}</FlashCell>
-                    : <span className="text-dim/40" title="Failed to load">—</span>}
+                    : <span className="text-dim/55" title="Failed to load">—</span>}
                 </td>
                 <td className="px-4 py-3 text-right">
                   {loading && !q ? <Skeleton className="h-5 w-14 ml-auto rounded-full" />
@@ -254,13 +254,13 @@ function WatchlistCard() {
                         {fmtPct(q.changePct)}
                       </span>
                     )
-                    : <span className="text-dim/40" title="Failed to load">—</span>}
+                    : <span className="text-dim/55" title="Failed to load">—</span>}
                 </td>
                 <td className="px-4 py-3 hidden sm:table-cell">
                   <div className="flex justify-end">
                     {loading && !q ? <Skeleton className="h-4 w-16" />
                       : q ? <Sparkline data={q.spark} up={(q.spark?.at(-1) ?? 0) >= (q.spark?.[0] ?? 0)} delay={i * 90} />
-                      : <span className="text-dim/40 text-xs">—</span>}
+                      : <span className="text-dim/55 text-xs">—</span>}
                   </div>
                 </td>
               </tr>

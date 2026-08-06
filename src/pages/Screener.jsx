@@ -92,7 +92,7 @@ export default function Screener() {
     <th className={cn("px-3 py-2 font-medium cursor-pointer select-none whitespace-nowrap", right && "text-right")}
       onClick={() => toggleSort(k)}>
       <span className="inline-flex items-center gap-1">
-        {label}<ArrowUpDown className={cn("w-3 h-3", sort.key === k ? "text-accent" : "text-dim/40")} />
+        {label}<ArrowUpDown className={cn("w-3 h-3", sort.key === k ? "text-accent" : "text-dim/55")} />
       </span>
     </th>
   );

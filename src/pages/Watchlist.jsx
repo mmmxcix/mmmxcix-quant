@@ -11,7 +11,7 @@ import {
   removeFromWatchlist,
   subscribe,
 } from "@/lib/portfolio";
-import { cn, fmtPrice, fmtPct } from "@/lib/utils";
+import { cn, fmtPrice, fmtPct, altName } from "@/lib/utils";
 
 const REFRESH_MS = 30_000;
 
@@ -163,7 +163,7 @@ export default function Watchlist() {
                     >
                       <td className="px-4 py-3">
                         <span className="font-mono font-semibold">{w.symbol}</span>
-                        <span className="text-dim ml-2 hidden md:inline">{w.name}</span>
+                        {altName(w.symbol, w.name) && <span className="text-dim ml-2 hidden md:inline">{altName(w.symbol, w.name)}</span>}
                       </td>
                       <td className="px-4 py-3 text-dim hidden sm:table-cell">
                         {w.market === "crypto" ? "Crypto" : "Stocks"}

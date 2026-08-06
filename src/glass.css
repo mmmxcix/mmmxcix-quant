@@ -33,6 +33,12 @@ body {
   inset: 0;
   z-index: -2;
   pointer-events: none;
+  /* Intensity knob. The wave's troughs already sit on --c-bg, so fading the
+     canvas only pulls the brighter crests back toward the flat ground — a clean
+     "calmer" dial. Default lives in index.css (--dither-opacity), smaller on
+     phones, and the theme page will drive it (0 = off) later. */
+  opacity: var(--dither-opacity, 1);
+  transition: opacity 0.4s ease;
 }
 
 .ambient-bg {

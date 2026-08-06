@@ -280,11 +280,11 @@ function MarketProbe({ e, onOpen }) {
   return (
     <button type="button" onClick={onOpen} title={`Backtested 10y on ${e.symbol} — open in the Backtester`}
       className="group text-[10px] font-mono rounded border border-up/30 bg-up/5 text-up px-1.5 py-0.5 hover:bg-up/15 hover:border-up/50 transition-colors">
-      {e.symbol} <span className="text-dim/60">{e.interval || "1d"}</span> <span className="text-dim/60">10y</span>
+      {e.symbol} <span className="text-dim/80">{e.interval || "1d"}</span> <span className="text-dim/80">10y</span>
       {res === "error" ? <span className="text-down/70"> n/a</span>
         : res ? <span className="text-dim/90"> {fmtNum(res.ret, 0)}%</span>
-        : <span className="text-dim/50"> …</span>}
-      <span className="text-dim/40 group-hover:text-accent"> ↗</span>
+        : <span className="text-dim/70"> …</span>}
+      <span className="text-dim/55 group-hover:text-accent"> ↗</span>
     </button>
   );
 }
@@ -375,7 +375,7 @@ function Card({ e, rich = false }) {
               <button key={mid} type="button" onClick={() => openInBacktest(mid)}
                 title={`Open in Backtester — ${mk?.symbol} ${mk?.interval} over ${win?.label || "?"} · return ${row.ret ?? "?"}% · maxDD ${row.dd ?? "?"}%`}
                 className="group text-[10px] font-mono rounded border border-up/30 bg-up/5 text-up px-1.5 py-0.5 hover:bg-up/15 hover:border-up/50 transition-colors">
-                {mk?.label || mid}{win && <span className="text-dim/60"> {win.label}</span>}{row.ret != null && <span className="text-dim/90"> {row.ret}%</span>}<span className="text-dim/40 group-hover:text-accent"> ↗</span>
+                {mk?.label || mid}{win && <span className="text-dim/80"> {win.label}</span>}{row.ret != null && <span className="text-dim/90"> {row.ret}%</span>}<span className="text-dim/55 group-hover:text-accent"> ↗</span>
               </button>
             );
           })}

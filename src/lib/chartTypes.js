@@ -3,10 +3,10 @@
 // is a candlestick series fed transformed OHLC values.
 
 export const CHART_TYPES = [
-  { id: "candles", label: "Kerzen" },
+  { id: "candles", label: "Candles" },
   { id: "heikin", label: "Heikin-Ashi" },
   { id: "bars", label: "Bars" },
-  { id: "line", label: "Linie" },
+  { id: "line", label: "Line" },
   { id: "area", label: "Area" },
 ];
 

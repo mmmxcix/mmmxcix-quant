@@ -40,7 +40,7 @@ function TaskRow({ task, done, onToggle }) {
         title={task.course ? "Completes automatically when the course is finished" : done ? "Mark as open" : "Mark as done"}
         className={cn("mt-0.5 shrink-0 transition-colors", task.course ? "cursor-default" : "hover:scale-110")}
       >
-        {done ? <Check className="w-4 h-4 text-up" /> : <Circle className="w-4 h-4 text-dim/40" />}
+        {done ? <Check className="w-4 h-4 text-up" /> : <Circle className="w-4 h-4 text-dim/55" />}
       </button>
       <div className="flex-1 min-w-0">
         <p className={cn("text-sm", done ? "text-dim line-through decoration-dim/40" : "text-text")}>

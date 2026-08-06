@@ -150,7 +150,7 @@ export default function Academy() {
                     return (
                       <button key={l.id} onClick={() => openLesson(l.id)}
                         className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-bg/60 transition-colors">
-                        {d ? <Check className="w-4 h-4 text-up shrink-0" /> : <Circle className="w-4 h-4 text-dim/40 shrink-0" />}
+                        {d ? <Check className="w-4 h-4 text-up shrink-0" /> : <Circle className="w-4 h-4 text-dim/55 shrink-0" />}
                         <span className={cn("flex-1 text-sm", d ? "text-dim" : "text-text")}>{l.title}</span>
                         <span className="flex items-center gap-1 text-[11px] text-dim shrink-0"><Clock className="w-3 h-3" /> {l.minutes}m</span>
                         <ChevronRight className="w-4 h-4 text-dim shrink-0" />

@@ -228,7 +228,7 @@ export default function Argus() {
                 {Number.isFinite(t.invalidation) && (
                   <p className="text-[10px] font-mono text-dim/80 mt-1">
                     invalidation <span className="text-warn">{fmtNum(t.invalidation, 4)}</span>
-                    <span className="text-dim/60"> · early exit if it closes {t.side === "long" ? "below" : "above"} this</span>
+                    <span className="text-dim/80"> · early exit if it closes {t.side === "long" ? "below" : "above"} this</span>
                   </p>
                 )}
                 {/* Live price + floating (unrealized) P&L — updates every scan (Bug 4). */}
@@ -274,8 +274,8 @@ export default function Argus() {
                       </span>
                     ))}
                     {t.riskChecks.volatility?.elevated && <span className="text-warn/80 font-mono">vol {t.riskChecks.volatility.label} · sized down</span>}
-                    {t.riskChecks.volume?.rvol != null && <span className="text-dim/60 font-mono">rvol {t.riskChecks.volume.rvol}×</span>}
-                    {Number.isFinite(t.riskChecks.heatUsedPct) && <span className="text-dim/60 font-mono">heat {t.riskChecks.heatUsedPct}%/{t.riskChecks.heatCapPct}%</span>}
+                    {t.riskChecks.volume?.rvol != null && <span className="text-dim/80 font-mono">rvol {t.riskChecks.volume.rvol}×</span>}
+                    {Number.isFinite(t.riskChecks.heatUsedPct) && <span className="text-dim/80 font-mono">heat {t.riskChecks.heatUsedPct}%/{t.riskChecks.heatCapPct}%</span>}
                   </div>
                 )}
                 <p className="text-[11px] text-dim mt-1.5 leading-snug">{t.reason}</p>

@@ -215,7 +215,7 @@ function StrategyBook({ id, icon: Icon, strategies, published, openRow, setOpenR
             {dupCount} duplicate {dupCount === 1 ? "copy" : "copies"} collapsed
           </span>
         )}
-        <span className="text-[10px] text-dim/60 ml-auto">click a row for its trade log</span>
+        <span className="text-[10px] text-dim/80 ml-auto">click a row for its trade log</span>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-xs font-mono">
@@ -301,7 +301,7 @@ function StrategyBook({ id, icon: Icon, strategies, published, openRow, setOpenR
                         >
                           {s.incubation.verdict === "diverged" ? "quarantined" : s.incubation.verdict}
                         </span>
-                      ) : <span className="text-dim/40 text-[10px]">—</span>}
+                      ) : <span className="text-dim/55 text-[10px]">—</span>}
                     </td>
                     <td className="py-1.5 pr-3">
                       {s.error
@@ -319,7 +319,7 @@ function StrategyBook({ id, icon: Icon, strategies, published, openRow, setOpenR
                           <CopyButton text={code} label={entry?.language === "python" ? "PY" : "Copy"} />
                           {pyCode && pyCode !== code && <CopyButton text={pyCode} label="PY" />}
                         </span>
-                      ) : <span className="text-dim/40 text-[10px]">—</span>}
+                      ) : <span className="text-dim/55 text-[10px]">—</span>}
                     </td>
                   </tr>
                   {isOpen && !s.error && (

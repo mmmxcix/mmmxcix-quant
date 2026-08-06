@@ -209,7 +209,7 @@ export default function MarketScanPanel({ code, language, capital, feeBps, posit
                 className="rounded-lg border border-line bg-bg/40 p-2 text-left hover:border-accent/50 transition-colors">
                 <p className="text-[9px] uppercase tracking-wide text-dim">{bm.label}</p>
                 <p className="text-sm font-mono text-text">{bm.fmt(value)}</p>
-                <p className="text-[10px] text-dim truncate">{row.label} <span className="text-dim/60">{row.interval}</span></p>
+                <p className="text-[10px] text-dim truncate">{row.label} <span className="text-dim/80">{row.interval}</span></p>
               </button>
             );
           })}
@@ -235,7 +235,7 @@ export default function MarketScanPanel({ code, language, capital, feeBps, posit
               {results.map((r, i) => (
                 <tr key={`${r.symbol}-${r.interval}`} className="border-b border-line/40 last:border-0">
                   <td className="py-1 pr-3 text-dim">{i + 1}</td>
-                  <td className="py-1 pr-3 text-text">{r.label} <span className="text-dim/60 text-[9px] uppercase">{r.cls}</span></td>
+                  <td className="py-1 pr-3 text-text">{r.label} <span className="text-dim/80 text-[9px] uppercase">{r.cls}</span></td>
                   <td className="py-1 pr-3 text-dim">{r.interval}</td>
                   <td className="py-1 pr-3 text-right text-text">{fmtNum(r.m.sharpe, 2)}</td>
                   <td className={cn("py-1 pr-3 text-right", r.m.totalReturnPct >= 0 ? "text-up" : "text-down")}>{fmtNum(r.m.totalReturnPct, 0)}%</td>
