@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
-import { LayoutDashboard, Star, Activity, TrendingUp, ShieldCheck, RefreshCw } from "lucide-react";
+import { useNavigate, useSearchParams, Link } from "react-router-dom";
+import { LayoutDashboard, Star, Activity, TrendingUp, ShieldCheck, RefreshCw, Compass, CandlestickChart, FlaskConical, Radar, GraduationCap, X } from "lucide-react";
 import { fetchCandles, WATCHLIST } from "@/lib/data";
 import { getPortfolio, getWatchlist, subscribe as subscribeStore } from "@/lib/portfolio";
 import WorldClock from "@/components/WorldClock";
@@ -550,6 +550,43 @@ const TABS = [
   { id: "monitor", label: "Monitor", icon: Activity },
 ];
 
+const STARTHERE_KEY = "quant_starthere_dismissed";
+
+// First-run "start here" strip — points a new visitor at the core tools, then
+// gets out of the way (dismissed to localStorage). Only on the Overview tab.
+function StartHere() {
+  const [dismissed, setDismissed] = useState(() => { try { return localStorage.getItem(STARTHERE_KEY) === "1"; } catch { return false; } });
+  if (dismissed) return null;
+  const dismiss = () => { try { localStorage.setItem(STARTHERE_KEY, "1"); } catch { /* private mode */ } setDismissed(true); };
+  const CARDS = [
+    { to: "/charts", icon: CandlestickChart, title: "Explore charts", body: "Live candlesticks, indicators, drawings." },
+    { to: "/backtest", icon: FlaskConical, title: "Backtest a strategy", body: "Deflated Sharpe + walk-forward, honestly." },
+    { to: "/screener", icon: Radar, title: "Screen the market", body: "Find setups across the universe." },
+    { to: "/learn", icon: GraduationCap, title: "Learn the methods", body: "Academy — from candles to ML." },
+  ];
+  return (
+    <div className="relative rounded-xl border border-accent/25 bg-accent/[0.05] p-4 sm:p-5 mb-6">
+      <button onClick={dismiss} aria-label="Dismiss" className="absolute top-3 right-3 text-dim hover:text-text transition-colors"><X className="w-4 h-4" /></button>
+      <div className="flex items-center gap-2 mb-1">
+        <Compass className="w-4 h-4 text-accent" />
+        <p className="text-sm font-semibold">New here? Start with these</p>
+      </div>
+      <p className="text-xs text-dim mb-4">Everything's free while in beta — nothing to set up. <Link to="/welcome" className="text-accent hover:underline">Take the tour →</Link></p>
+      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        {CARDS.map(({ to, icon: Icon, title, body }) => (
+          <Link key={to} to={to} className="rounded-lg border border-line bg-bg/50 p-3.5 hover:border-accent/40 transition-colors">
+            <div className="flex items-center gap-2 mb-1.5">
+              <span className="w-7 h-7 rounded-md grid place-items-center bg-accent/10 text-accent shrink-0"><Icon className="w-4 h-4" /></span>
+              <span className="text-sm font-semibold">{title}</span>
+            </div>
+            <p className="text-xs text-dim leading-snug">{body}</p>
+          </Link>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const [params, setParams] = useSearchParams();
   const view = params.get("view") || "overview";
@@ -557,6 +594,7 @@ export default function Dashboard() {
 
   return (
     <div>
+      {view === "overview" && <StartHere />}
       <p className="text-[10px] tracking-[0.3em] text-dim uppercase mb-1">Markets</p>
       <nav className="flex gap-1 mb-6 border-b border-line overflow-x-auto">
         {TABS.map((t) => (
