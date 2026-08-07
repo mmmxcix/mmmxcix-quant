@@ -122,12 +122,52 @@ function loadGroupState() {
   try { return JSON.parse(localStorage.getItem(NAV_GROUPS_KEY) || "{}"); } catch { return {}; }
 }
 
+const NAV_PINNED_KEY = "quant_nav_pinned";
+function loadPinned() {
+  try { const v = JSON.parse(localStorage.getItem(NAV_PINNED_KEY) || "[]"); return Array.isArray(v) ? v : []; } catch { return []; }
+}
+
+// One nav row: the link plus a hover pin toggle. The pin is a SIBLING of the
+// anchor (not nested inside it) so the markup stays valid. Reused by the Pinned
+// section and the groups.
+function NavRow({ item, collapsed, onNavigate, pinned, onTogglePin }) {
+  const { to, label, icon: Icon, end } = item;
+  return (
+    <div className="relative group">
+      <NavLink
+        to={to} end={end} onClick={onNavigate} title={collapsed ? label : undefined}
+        className={({ isActive }) => cn(
+          "relative flex items-center rounded-lg text-sm transition-colors",
+          collapsed ? "justify-center px-0 py-2.5" : "gap-2.5 pl-3 pr-7 py-[7px]",
+          isActive ? "bg-accent/10 text-accent font-medium" : "text-dim hover:text-text hover:bg-surface"
+        )}
+      >
+        <Icon className="w-4 h-4 shrink-0" />
+        {!collapsed && <span className="truncate">{label}</span>}
+      </NavLink>
+      {!collapsed && (
+        <button
+          type="button" aria-label={pinned ? `Unpin ${label}` : `Pin ${label}`}
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); onTogglePin(to); }}
+          className={cn(
+            "absolute right-1.5 top-1/2 -translate-y-1/2 grid place-items-center w-5 h-5 rounded transition-opacity",
+            pinned ? "text-accent opacity-100" : "text-dim opacity-0 group-hover:opacity-100 hover:text-text"
+          )}
+        >
+          <Star className={cn("w-3.5 h-3.5", pinned && "fill-current")} />
+        </button>
+      )}
+    </div>
+  );
+}
+
 function NavItems({ onNavigate, collapsed = false }) {
   const isDev = useDevNav();
   const { pathname } = useLocation();
   const containerRef = useRef(null);
   const [rail, setRail] = useState(null); // { top, height } of the active item
   const [openGroups, setOpenGroups] = useState(loadGroupState); // { label: false } = collapsed
+  const [pinned, setPinned] = useState(loadPinned); // ordered list of pinned `to` paths
   const groups = isDev
     ? NAV_GROUPS.map((g) => (DEV_ITEMS[g.label] ? { ...g, items: [...g.items, ...DEV_ITEMS[g.label]] } : g))
     : NAV_GROUPS;
@@ -138,6 +178,16 @@ function NavItems({ onNavigate, collapsed = false }) {
     try { localStorage.setItem(NAV_GROUPS_KEY, JSON.stringify(next)); } catch { /* private mode */ }
     return next;
   });
+  const pinnedSet = new Set(pinned);
+  const togglePin = (to) => setPinned((p) => {
+    const next = p.includes(to) ? p.filter((x) => x !== to) : [...p, to];
+    try { localStorage.setItem(NAV_PINNED_KEY, JSON.stringify(next)); } catch { /* private mode */ }
+    return next;
+  });
+  // Pinned rows, in the order they were pinned, dropping any that no longer exist
+  // (e.g. a dev-only item after signing out).
+  const allItems = groups.flatMap((g) => g.items);
+  const pinnedItems = pinned.map((to) => allItems.find((i) => i.to === to)).filter(Boolean);
 
   // The active accent bar is ONE element that slides to the active item on
   // navigation (shared-layout feel) instead of popping per item.
@@ -147,7 +197,7 @@ function NavItems({ onNavigate, collapsed = false }) {
     const el = c.querySelector('[aria-current="page"]');
     if (el) setRail({ top: el.offsetTop + 6, height: el.offsetHeight - 12 });
     else setRail(null);
-  }, [pathname, isDev, collapsed, openGroups]);
+  }, [pathname, isDev, collapsed, openGroups, pinned]);
 
   return (
     <div ref={containerRef} className="relative">
@@ -157,6 +207,16 @@ function NavItems({ onNavigate, collapsed = false }) {
           className="nav-rail absolute -left-2 w-[3px] rounded-full bg-accent"
           style={{ top: rail.top, height: rail.height }}
         />
+      )}
+      {!collapsed && pinnedItems.length > 0 && (
+        <div className="mb-2">
+          <p className="px-3 mb-1 text-[9px] font-semibold uppercase tracking-[0.2em] text-dim flex items-center gap-1.5">
+            <Star className="w-2.5 h-2.5 fill-current" /> Pinned
+          </p>
+          {pinnedItems.map((item) => (
+            <NavRow key={`pin-${item.to}`} item={item} collapsed={collapsed} onNavigate={onNavigate} pinned onTogglePin={togglePin} />
+          ))}
+        </div>
       )}
       {groups.map((group, gi) => {
         const open = groupOpen(group.label);
@@ -175,24 +235,8 @@ function NavItems({ onNavigate, collapsed = false }) {
                 <ChevronDown className={cn("ml-auto w-3 h-3 opacity-0 group-hover:opacity-100 transition-[transform,opacity]", open ? "" : "-rotate-90 opacity-60")} />
               </button>
             )}
-            {open && group.items.map(({ to, label, icon: Icon, end }) => (
-              <NavLink
-                key={to}
-                to={to}
-                end={end}
-                onClick={onNavigate}
-                title={collapsed ? label : undefined}
-                className={({ isActive }) =>
-                  cn(
-                    "relative flex items-center rounded-lg text-sm transition-colors",
-                    collapsed ? "justify-center px-0 py-2.5" : "gap-2.5 px-3 py-[7px]",
-                    isActive ? "bg-accent/10 text-accent font-medium" : "text-dim hover:text-text hover:bg-surface"
-                  )
-                }
-              >
-                <Icon className="w-4 h-4 shrink-0" />
-                {!collapsed && label}
-              </NavLink>
+            {open && group.items.map((item) => (
+              <NavRow key={item.to} item={item} collapsed={collapsed} onNavigate={onNavigate} pinned={pinnedSet.has(item.to)} onTogglePin={togglePin} />
             ))}
           </div>
         );
