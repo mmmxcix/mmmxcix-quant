@@ -5,6 +5,11 @@
   Referrer-Policy: strict-origin-when-cross-origin
   Strict-Transport-Security: max-age=31536000; includeSubDomains
   Permissions-Policy: geolocation=(), microphone=(), camera=()
+  # The SPA serves index.html at EVERY route (/, /charts, /welcome, …), not just
+  # /index.html — so the no-cache must live here or those routes cache a stale
+  # index that points at deleted chunks ("Something went wrong"). The immutable
+  # /assets/* rule below is more specific and still wins for hashed bundles.
+  Cache-Control: no-cache, must-revalidate
   # 'unsafe-eval' is required because the backtest compiles user/AI strategy
   # code with new Function() (JS) and Pyodide's WASM (Python). Known tradeoff for
   # the single-user dev tool; before a public launch the eval moves to a
