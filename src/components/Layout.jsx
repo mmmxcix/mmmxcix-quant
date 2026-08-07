@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { NavLink, Link, useLocation } from "react-router-dom";
-import { LayoutDashboard, CandlestickChart, FlaskConical, Newspaper, Compass, Wrench, Activity, Scale, Star, Briefcase, Radar, GraduationCap, Sigma, Menu, X, Target, BookOpenCheck, Telescope, Cpu, Sun, Moon, Monitor, Waypoints, Search, LogIn , Landmark, Globe, Radio, Palette, ChevronDown, ChevronsLeft, ChevronsRight, User} from "lucide-react";
+import { LayoutDashboard, CandlestickChart, FlaskConical, Newspaper, Compass, Wrench, Activity, Scale, Star, Briefcase, Radar, GraduationCap, Sigma, Menu, X, Target, BookOpenCheck, Telescope, Cpu, Sun, Moon, Monitor, Waypoints, Search, LogIn , Landmark, Globe, Radio, Palette, ChevronDown, Pin, PinOff, User} from "lucide-react";
 import { cn } from "@/lib/utils";
 import DitherBackground from "@/components/DitherBackground";
 import CommandPalette from "@/components/CommandPalette";
@@ -293,12 +293,18 @@ function LegalLinks({ small }) {
 
 export default function Layout({ children }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [collapsed, setCollapsed] = useState(() => {
-    try { return localStorage.getItem("quant_sidebar_collapsed") === "1"; } catch { return false; }
+  // The desktop sidebar is a slim icon rail that auto-EXPANDS ON HOVER — no click.
+  // A pin locks it open (content shifts over); unpinned, the expanded panel just
+  // overlays the content so hovering never reflows the page.
+  const [pinned, setPinned] = useState(() => {
+    try { return localStorage.getItem("quant_sidebar_pinned") === "1"; } catch { return false; }
   });
-  const toggleCollapsed = () => setCollapsed((c) => {
-    const n = !c;
-    try { localStorage.setItem("quant_sidebar_collapsed", n ? "1" : "0"); } catch { /* private mode */ }
+  const [hoverOpen, setHoverOpen] = useState(false);
+  const expanded = pinned || hoverOpen;
+  const collapsed = !expanded; // the rail look (drives brand/labels/footer variants)
+  const togglePinned = () => setPinned((p) => {
+    const n = !p;
+    try { localStorage.setItem("quant_sidebar_pinned", n ? "1" : "0"); } catch { /* private mode */ }
     return n;
   });
   const location = useLocation();
@@ -324,11 +330,16 @@ export default function Layout({ children }) {
       <div className="grain-layer" aria-hidden="true" />
       <CommandPalette />
 
-      {/* Desktop sidebar */}
-      <aside className={cn(
-        "hidden md:flex fixed inset-y-0 left-0 flex-col border-r border-line lg-frost transition-[width] duration-200",
-        collapsed ? "w-16 p-2" : "w-56 p-4"
-      )}>
+      {/* Desktop sidebar — slim rail that expands on hover (overlays), or pins open */}
+      <aside
+        onMouseEnter={() => setHoverOpen(true)}
+        onMouseLeave={() => setHoverOpen(false)}
+        className={cn(
+          "hidden md:flex fixed inset-y-0 left-0 z-40 flex-col border-r border-line lg-frost transition-[width] duration-200",
+          collapsed ? "w-16 p-2" : "w-56 p-4",
+          expanded && !pinned ? "shadow-2xl shadow-black/50" : ""
+        )}
+      >
         <div className={cn("pt-2", collapsed ? "mb-4 grid place-items-center" : "mb-5 px-3")}>
           {collapsed
             ? <span className="text-accent"><BrandGlyph className="w-8 h-8" /></span>
@@ -366,10 +377,6 @@ export default function Layout({ children }) {
                   isActive ? "text-accent border-accent/40 bg-accent/10" : "text-dim hover:text-text")}>
                 <User className="w-4 h-4" />
               </NavLink>
-              <button onClick={toggleCollapsed} title="Expand sidebar"
-                className="grid place-items-center w-9 h-9 rounded-lg border border-line text-dim transition-colors hover:text-text mt-1">
-                <ChevronsRight className="w-4 h-4" />
-              </button>
             </>
           ) : (
           <>
@@ -381,9 +388,10 @@ export default function Layout({ children }) {
                 isActive ? "text-accent border-accent/40 bg-accent/10" : "text-dim hover:text-text")}>
               <Palette className="w-4 h-4" />
             </NavLink>
-            <button onClick={toggleCollapsed} title="Collapse sidebar"
-              className="ml-auto grid place-items-center w-8 h-8 rounded-lg border border-line text-dim transition-colors hover:text-text">
-              <ChevronsLeft className="w-4 h-4" />
+            <button onClick={togglePinned} title={pinned ? "Unpin — auto-collapse on hover-out" : "Pin sidebar open"}
+              className={cn("ml-auto grid place-items-center w-8 h-8 rounded-lg border transition-colors",
+                pinned ? "text-accent border-accent/40 bg-accent/10" : "text-dim border-line hover:text-text")}>
+              {pinned ? <PinOff className="w-4 h-4" /> : <Pin className="w-4 h-4" />}
             </button>
           </div>
           <p className="text-[10px] text-dim leading-relaxed">
@@ -440,7 +448,7 @@ export default function Layout({ children }) {
         </div>
       )}
 
-      <main className={cn("p-3 sm:p-4 md:p-8 pb-24 md:pb-8 transition-[margin] duration-200", collapsed ? "md:ml-16" : "md:ml-56")}>
+      <main className={cn("p-3 sm:p-4 md:p-8 pb-24 md:pb-8 transition-[margin] duration-200", pinned ? "md:ml-56" : "md:ml-16")}>
         {/* keyed by route so each page entry replays the reveal. Capped + centred
             here (not on <main>, which needs its sidebar offset) so ultrawide
             screens don't leave the content hugging the left. */}
