@@ -117,7 +117,7 @@ export default function Landing() {
 
       <nav>
         <Link className="brand" to="/"><Mark size={30} /><span className="wm"><small>MMMXCIX</small>Quant</span></Link>
-        <div className="navlinks"><a href="#honest">[01] Honest</a><a href="#desk">[02] Desk</a><a href="#tools">[03] Tools</a><a href="#faq">[04] Access</a></div>
+        <div className="navlinks"><a href="#honest">Honest</a><a href="#desk">Desk</a><a href="#tools">Tools</a><a href="#faq">Access</a></div>
         <Link className="btn btn-p" to="/">Enter the desk →</Link>
       </nav>
 
