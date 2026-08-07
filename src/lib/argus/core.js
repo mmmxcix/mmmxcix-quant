@@ -295,6 +295,14 @@ export function pyramidAdd(th, addPrice, { maxUnits = 4 } = {}) {
   };
 }
 
+// Structural invalidation must be a DECISIVE, CONFIRMED close beyond the level —
+// not a single wick or a sweep that reclaims. The close has to clear the level by
+// a buffer (fraction of the entry-stop distance) AND still be beyond it on a LATER
+// bar. This stopped Argus cutting trades that then ran to target. `th.invalArmedTs`
+// carries the armed bar between evaluations (evaluateExit therefore mutates it —
+// the agent is its only caller and already mutates the thesis each bar).
+const INVAL_BUFFER = 0.20;
+
 /** Given the latest candle, decide if an open thesis exits, and how. */
 export function evaluateExit(th, candle, { now = Date.now(), maxHoldMs = 3 * 864e5 } = {}) {
   const hi = candle.high, lo = candle.low;
@@ -309,12 +317,20 @@ export function evaluateExit(th, candle, { now = Date.now(), maxHoldMs = 3 * 864
   // If a bar spans both stop and target, assume the stop hit first (conservative).
   if (hitStop) return finalize(th, th.stop, "stop", now);
   if (hitTarget) return finalize(th, th.target, "target", now);
-  // Early THESIS-BREAK exit: the setup's structural level was lost on a CLOSE (the
-  // reason to be in the trade is gone), and the intrabar stop wasn't hit — cut here
-  // for a smaller loss than waiting for the wider stop. Close-based, not intrabar.
+  // Early THESIS-BREAK exit: the setup's structural level is lost — but only when a
+  // close breaks it DECISIVELY (past a buffer) and STAYS broken into a later bar, so
+  // a single sweep-and-reclaim doesn't cut a trade that would have worked.
   if (th.invalidation != null) {
-    const invalid = th.side === "long" ? candle.close < th.invalidation : candle.close > th.invalidation;
-    if (invalid) return finalize(th, candle.close, "invalidated", now);
+    const riskDist = Math.abs(th.entry - th.stop) || 1;
+    const beyond = th.side === "long" ? th.invalidation - candle.close : candle.close - th.invalidation;
+    const broke = beyond >= INVAL_BUFFER * riskDist;
+    const barTs = candle.time ?? now;
+    if (broke) {
+      if (th.invalArmedTs == null) th.invalArmedTs = barTs;            // first decisive break — arm, wait
+      else if (barTs !== th.invalArmedTs) return finalize(th, candle.close, "invalidated", now); // confirmed on a later bar
+    } else {
+      th.invalArmedTs = null;                                          // reclaimed — disarm
+    }
   }
   if (now - th.openedAt > maxHoldMs) return finalize(th, candle.close, "timeout", now);
   return null;

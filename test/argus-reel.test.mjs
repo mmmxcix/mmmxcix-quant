@@ -9,10 +9,17 @@ const longTh = (over = {}) => ({
   invalidation: 99.5, size: 1, riskAmt: 2, liqPrice: null, openedAt: 0, ...over,
 });
 
-test("a close through the invalidation level exits EARLY (before the wider stop)", () => {
-  // low (99.0) never reaches the stop (98), but the close (99.3) is below the
-  // invalidation (99.5) → cut here for a smaller loss.
-  const res = evaluateExit(longTh(), { high: 100.2, low: 99.0, close: 99.3 }, { now: 1000 });
+test("invalidation needs a DECISIVE close confirmed on a later bar — not a single sweep", () => {
+  const th = longTh(); // entry 100, stop 98, invalidation 99.5 → buffer = 0.20*2 = 0.4
+  // shallow poke below 99.5 but inside the buffer (close 99.3, only 0.2 beyond) → no exit
+  assert.equal(evaluateExit(th, { high: 100.2, low: 99.0, close: 99.3, time: 1 }, { now: 1000 }), null);
+  // a decisive close (99.0, 0.5 beyond) arms it but doesn't cut yet
+  assert.equal(evaluateExit(th, { high: 100, low: 98.8, close: 99.0, time: 2 }, { now: 2000 }), null);
+  // reclaim on the next bar → disarm, still open
+  assert.equal(evaluateExit(th, { high: 100, low: 99.6, close: 99.8, time: 3 }, { now: 3000 }), null);
+  // decisive break again, then STILL broken on a later bar → confirmed invalidation
+  assert.equal(evaluateExit(th, { high: 100, low: 98.8, close: 99.0, time: 4 }, { now: 4000 }), null); // arm
+  const res = evaluateExit(th, { high: 99.6, low: 98.8, close: 99.0, time: 5 }, { now: 5000 });          // confirm
   assert.equal(res?.outcome, "invalidated");
   assert.ok(res.R < 0 && res.R > -1, "an invalidation loss is smaller than a full 1R stop-out");
 });
