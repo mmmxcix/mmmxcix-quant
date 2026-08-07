@@ -18,6 +18,10 @@ const ROUTES = [
   ["/learn", "Learn Quant", "An academy, strategy guide and a reference of 30+ quant formulas."],
   ["/coach", "Coach", "A personalised plan to build quant-trading skill."],
   ["/tools", "Tools", "Handy quant utilities."],
+  ["/pricing", "Pricing", "Free while in beta — see what a Pro tier will add. No dark patterns, and your data is never sold."],
+  ["/about", "About & Methodology", "Who's behind MMMXCIX Quant and the honest rules every number is held to — Deflated Sharpe, walk-forward, purged cross-validation."],
+  ["/changelog", "Changelog", "What's new in MMMXCIX Quant — a running record of what's shipped, newest first."],
+  ["/welcome", "The honest quant desk", "Institutional-grade backtesting, in-browser ML and live markets — private, in your browser. No black boxes, no hype."],
   ["/", "Dashboard", "Free, private, browser-based quant tools: backtesting, ML, screener, charts, macro and a live world map."],
 ];
 
