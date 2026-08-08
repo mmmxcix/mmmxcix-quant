@@ -402,19 +402,13 @@ export default function Charts() {
         />
       </div>
 
-      {/* Timeframes + ranges */}
+      {/* Timeframes. The history depth is chosen automatically per interval (rangesFor)
+          and grows as you scroll back — a separate range selector added nothing. */}
       <div className="flex flex-wrap items-center gap-1 mb-3">
         {availableIntervals.map((i) => (
           <button key={i.id} onClick={() => setIntervalId(i.id)}
             className={cn("chip font-mono", interval === i.id ? "chip-active" : "chip-idle")}>
             {i.label}
-          </button>
-        ))}
-        <span className="mx-2 h-4 w-px bg-line" />
-        {validRanges.map((r) => (
-          <button key={r.id} onClick={() => setRange(r.id)}
-            className={cn("chip font-mono", range === r.id ? "chip-active" : "chip-idle")}>
-            {r.label}
           </button>
         ))}
       </div>

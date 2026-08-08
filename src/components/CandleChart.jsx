@@ -138,11 +138,13 @@ export default function CandleChart({
       rightPriceScale: col.rightPriceScale, timeScale: col.timeScale,
       height,
       width: containerRef.current.clientWidth,
-      // Mobile: a vertical swipe starting ON the chart should scroll the PAGE, not
-      // pan the chart — otherwise the page feels "stuck" on the chart. Horizontal
-      // drag still scrolls time; pinch still zooms.
-      handleScroll: { vertTouchDrag: false },
-      handleScale: { axisPressedMouseMove: true, mouseWheel: true, pinch: true },
+      // Let a vertical drag pan the price on both touch and mouse (users expect to
+      // move the chart up/down, especially on mobile where it was previously stuck).
+      // Horizontal drag scrolls time; pinch zooms.
+      handleScroll: { vertTouchDrag: true, horzTouchDrag: true, mouseWheel: true, pressedMouseMove: true },
+      // axisPressedMouseMove: drag the PRICE axis (right) to zoom price in/out; drag
+      // the TIME axis (bottom) to zoom time. mouseWheel zooms; pinch zooms on touch.
+      handleScale: { axisPressedMouseMove: { time: true, price: true }, mouseWheel: true, pinch: true },
     });
     chartRef.current = chart;
     priceSeriesRef.current = addPriceSeries(chart, chartType, col);
