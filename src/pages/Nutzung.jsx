@@ -34,7 +34,7 @@ export default function Nutzung() {
       <p>
         The Service provides tools for market monitoring, backtesting, machine-learning research and educational
         simulation. It is offered <strong className="text-text">free of charge and on a best-effort basis</strong>,
-        currently in beta. There is no guarantee of availability, and we may add, change, suspend, or discontinue
+        currently in alpha. There is no guarantee of availability, and we may add, change, suspend, or discontinue
         features at any time. Paid plans, if introduced, will be governed by additional terms shown at purchase.
       </p>
 

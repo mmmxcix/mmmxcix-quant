@@ -2,7 +2,7 @@ import { Link } from "react-router-dom";
 import { Check, Minus, ArrowRight, ShieldCheck, Sparkles, Lock } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-// Honest pricing — Free while in beta, a fair Pro tier planned for later. No
+// Honest pricing — Free while in alpha, a fair Pro tier planned for later. No
 // invented prices, no dark patterns. Theme-aware (uses the app tokens).
 
 const FREE = [
@@ -55,7 +55,7 @@ export default function Pricing() {
     <div className="max-w-5xl mx-auto px-4 py-8">
       <div className="text-center max-w-2xl mx-auto mb-10">
         <p className="text-[11px] font-mono uppercase tracking-[0.28em] text-accent mb-3">Pricing · honest by default</p>
-        <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-balance">Free while it's beta.<br className="hidden sm:block" /> Fair when it's not.</h1>
+        <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-balance">Free while it's alpha.<br className="hidden sm:block" /> Fair when it's not.</h1>
         <p className="mt-4 text-dim leading-relaxed">
           The whole research desk is free right now — no account, no card, no catch. A Pro
           tier will come later to fund the heavy compute; the core tools stay generous.
@@ -64,19 +64,19 @@ export default function Pricing() {
 
       <div className="grid md:grid-cols-2 gap-5 items-stretch">
         <Tier
-          name="Free" tag="Available now" price="€0" sub="while in beta" highlight
+          name="Free" tag="Available now" price="€0" sub="while in alpha" highlight
           features={FREE}
           cta={<Link to="/" className="btn-primary w-full inline-flex items-center justify-center gap-2">Open the desk <ArrowRight className="w-4 h-4" /></Link>}
         />
         <Tier
-          name="Pro" tag="Planned" price="TBD" sub="fair, after beta" muted
+          name="Pro" tag="Planned" price="TBD" sub="fair, after alpha" muted
           features={PRO}
           cta={
             <div className="text-center">
               <button disabled className="btn-ghost w-full opacity-70 cursor-not-allowed inline-flex items-center justify-center gap-2">
-                <Sparkles className="w-3.5 h-3.5" /> Coming after beta
+                <Sparkles className="w-3.5 h-3.5" /> Coming after alpha
               </button>
-              <p className="text-[11px] text-dim mt-2">Beta users keep founding-member pricing.</p>
+              <p className="text-[11px] text-dim mt-2">Alpha users keep founding-member pricing.</p>
             </div>
           }
         />
@@ -87,7 +87,7 @@ export default function Pricing() {
         {[
           [ShieldCheck, "No dark patterns", "No fake countdowns, no bait pricing, no surprise charges. Ever."],
           [Lock, "Your data isn't the product", "It never leaves your browser — there's nothing to sell."],
-          [Check, "Free stays generous", "The core research tools remain free after beta, not crippled."],
+          [Check, "Free stays generous", "The core research tools remain free after alpha, not crippled."],
         ].map(([Icon, t, d]) => (
           <div key={t} className="flex flex-col gap-1.5">
             <span className="w-8 h-8 rounded-lg grid place-items-center bg-accent/10 text-accent"><Icon className="w-4 h-4" /></span>
@@ -101,8 +101,8 @@ export default function Pricing() {
       <div className="mt-10 max-w-2xl mx-auto">
         <h3 className="text-sm font-mono uppercase tracking-wider text-dim mb-3">Questions</h3>
         {[
-          ["Is it really free right now?", "Yes — the entire desk, no account required. Beta means things move fast and occasionally break; in exchange, it's free."],
-          ["What will Pro cost?", "Not decided yet, and we won't pretend otherwise. It'll be fair, aimed at covering the heavy hosted compute — and beta users lock in founding-member pricing."],
+          ["Is it really free right now?", "Yes — the entire desk, no account required. Alpha means things move fast and occasionally break; in exchange, it's free."],
+          ["What will Pro cost?", "Not decided yet, and we won't pretend otherwise. It'll be fair, aimed at covering the heavy hosted compute — and alpha users lock in founding-member pricing."],
           ["Will you sell my data?", "No. Backtests and ML run in your browser and your positions stay on your device. There's literally nothing to sell."],
           ["Is this investment advice?", "No — it's an educational research desk. Every backtest is hypothetical and shown deflated and out-of-sample."],
         ].map(([q, a]) => (

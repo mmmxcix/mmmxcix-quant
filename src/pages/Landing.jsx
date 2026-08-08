@@ -32,7 +32,7 @@ const STRATS = [
 ];
 
 const FAQ = [
-  ["What does it cost?", "Free while in beta — no account needed to explore the desk. A paid tier will come later for the heavier compute (deep generation, hosted research); the core research tools stay generous."],
+  ["What does it cost?", "Free while in alpha — no account needed to explore the desk. A paid tier will come later for the heavier compute (deep generation, hosted research); the core research tools stay generous."],
   ["Where does my data go?", "Nowhere. Backtests and ML run in your browser; your watchlist and positions live on your device. There's nothing to upload and nothing to leak."],
   ["Is this investment advice?", "No. It's an educational research desk. Backtests are hypothetical and past performance guarantees nothing — which is exactly why every number is shown deflated and out-of-sample."],
   ["Who is behind it?", "An independent quant building the desk in the open — no fund affiliation, no product to pump. The whole pitch is honesty, so the incentives are kept clean."],
@@ -127,7 +127,7 @@ export default function Landing() {
         <h1><span className="l"><span>The honest</span></span><span className="l"><span className="grad">quant desk.</span></span></h1>
         <p className="sub">Institutional-grade backtesting, in-browser ML and live markets — private, in your browser. No black boxes, no hype.</p>
         <div className="heroctas"><Link className="btn btn-p" to="/">Enter the desk →</Link><a className="btn btn-g" href="#desk">See the desk ↓</a></div>
-        <p className="access">// <b>Free while in beta</b> · no account needed · your work never leaves your device</p>
+        <p className="access">// <b>Free while in alpha</b> · no account needed · your work never leaves your device</p>
         <div className="kpis">
           <div className="kpi"><div className="n"><span data-to="12">0</span></div><div className="k">integrated tools</div></div>
           <div className="kpi"><div className="n"><span data-to="10">0</span>y</div><div className="k">backtest history</div></div>
@@ -232,7 +232,7 @@ export default function Landing() {
         <div className="cta reveal d2" style={{ marginTop: 44 }}>
           <div className="ey" style={{ justifyContent: "center", color: "var(--pew-hi)" }}><span className="br">//</span> Ready when you are</div>
           <h2>A quant desk in your browser.</h2>
-          <p className="lead">Free while in beta. No sign-up to look around. The honest numbers are waiting.</p>
+          <p className="lead">Free while in alpha. No sign-up to look around. The honest numbers are waiting.</p>
           <div className="row"><Link className="btn btn-p" to="/">Enter MMMXCIX Quant →</Link><Link className="btn btn-g" to="/pricing">See pricing</Link></div>
         </div>
       </section>

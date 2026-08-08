@@ -6,7 +6,7 @@ const RELEASES = [
   {
     date: "Aug 2026", tag: "Trust & onboarding",
     items: [
-      "Honest pricing page — free while in beta, a fair Pro tier planned (no invented prices, no dark patterns).",
+      "Honest pricing page — free while in alpha, a fair Pro tier planned (no invented prices, no dark patterns).",
       "A dismissible “Start here” strip for new visitors, and this changelog + an About/Methodology page.",
     ],
   },

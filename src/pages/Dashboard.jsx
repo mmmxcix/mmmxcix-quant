@@ -571,7 +571,7 @@ function StartHere() {
         <Compass className="w-4 h-4 text-accent" />
         <p className="text-sm font-semibold">New here? Start with these</p>
       </div>
-      <p className="text-xs text-dim mb-4">Everything's free while in beta — nothing to set up. <Link to="/welcome" className="text-accent hover:underline">Take the tour →</Link></p>
+      <p className="text-xs text-dim mb-4">Everything's free while in alpha — nothing to set up. <Link to="/welcome" className="text-accent hover:underline">Take the tour →</Link></p>
       <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
         {CARDS.map(({ to, icon: Icon, title, body }) => (
           <Link key={to} to={to} className="rounded-lg border border-line bg-bg/50 p-3.5 hover:border-accent/40 transition-colors">

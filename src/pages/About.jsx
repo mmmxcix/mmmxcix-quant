@@ -39,7 +39,7 @@ export default function About() {
         <h2 className="font-semibold mb-2">Who's behind it</h2>
         <p className="text-sm text-dim leading-relaxed">
           Built by an independent quant, in public. No fund affiliation, no paid signals, no
-          conflict of interest — the tools are free while in beta and stay generous after. If a
+          conflict of interest — the tools are free while in alpha and stay generous after. If a
           result can't survive deflation, walk-forward and a real sample, it doesn't ship.
         </p>
         <p className="text-sm mt-3 font-mono text-dim">— MMMXCIX</p>

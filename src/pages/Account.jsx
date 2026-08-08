@@ -72,7 +72,7 @@ export default function Account() {
       <Link to="/pricing" className="rounded-xl border border-line lg-glass p-5 mb-4 flex items-center justify-between gap-3 hover:border-accent/40 transition-colors group">
         <div>
           <h2 className="font-semibold mb-1">Plans &amp; pricing</h2>
-          <p className="text-sm text-dim">Free while in beta — see what a Pro tier will add.</p>
+          <p className="text-sm text-dim">Free while in alpha — see what a Pro tier will add.</p>
         </div>
         <span className="text-accent group-hover:translate-x-0.5 transition-transform">→</span>
       </Link>
