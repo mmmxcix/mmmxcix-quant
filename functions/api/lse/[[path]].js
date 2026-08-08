@@ -33,12 +33,23 @@ export async function onRequest({ request, params, env }) {
     });
   }
   const path = Array.isArray(params.path) ? params.path.join("/") : params.path || "";
-  if (!ALLOWED.some((p) => path === p || path.startsWith(p + "/") || path.startsWith(p + "?"))) {
+  const url = new URL(request.url);
+
+  // Build the upstream URL FIRST, then allowlist the NORMALISED pathname. Checking the
+  // raw path let `v1/candles/../../../dataset/…` pass the prefix test and then normalise
+  // (fetch collapses ../ and \) onto a non-allowlisted endpoint — still on the LSE host,
+  // still carrying the owner's API key (CWE-22, check-vs-use gap). Now the collapsed path
+  // is what's authorised, and the host must not have moved.
+  let upstreamUrl;
+  try { upstreamUrl = new URL(`${BASE}/${path}${url.search}`); }
+  catch { return new Response(JSON.stringify({ error: "bad path" }), { status: 400, headers: { "content-type": "application/json" } }); }
+  const baseHost = new URL(BASE).host;
+  const normPath = upstreamUrl.pathname.replace(/^\/+/, "");
+  if (upstreamUrl.host !== baseHost || !ALLOWED.some((p) => normPath === p || normPath.startsWith(p + "/"))) {
     return new Response(JSON.stringify({ error: "endpoint not allowed" }), { status: 403, headers: { "content-type": "application/json" } });
   }
 
-  const url = new URL(request.url);
-  const upstream = `${BASE}/${path}${url.search}`;
+  const upstream = upstreamUrl.toString();
 
   // Edge-cache successful answers briefly: candle history is daily data, and
   // repeated backtests of the same symbol shouldn't re-hit the upstream.

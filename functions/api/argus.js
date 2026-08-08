@@ -52,7 +52,12 @@ export async function onRequest({ request, env }) {
       const snap = await readSnap();
       return json({ ok: true, state: snap?.state || null, theses: snap?.theses || [], ledger: snap?.ledger || [], journal: snap?.journal || [], skills: snap?.skills || [], retainedSkills: snap?.retainedSkills || [], invalReviews: snap?.invalReviews || [], invalStats: snap?.invalStats || {} });
     }
-    return json({ ok: true, [what]: await read(what) });
+    // The ONLY valid non-"all" read is the agent's command poll. Binding an arbitrary
+    // `what` as a D1 key let a PUBLIC caller read private argus_kv rows (prefs:watchlist/
+    // portfolio, backtest:executor, biasv4:*, telegram, snapshot) — an authorization
+    // bypass (CWE-639). Deny by default; only "commands" is served here.
+    if (what === "commands") return json({ ok: true, commands: (await read("commands")) || [] });
+    return json({ error: "bad_what" }, 400);
   }
 
   if (request.method === "POST") {

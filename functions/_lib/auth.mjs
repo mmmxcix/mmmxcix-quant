@@ -22,7 +22,6 @@ import { D1Dialect } from "kysely-d1";
  * @param {object} opts { db, secret, baseURL, devEmail }
  */
 export function buildAuth({ db, secret, baseURL, devEmail }) {
-  const dev = (devEmail || "admin@mmmxcix.com").toLowerCase();
   return betterAuth({
     appName: "MMMXCIX Quant",
     database: { dialect: new D1Dialect({ database: db }), type: "sqlite" },
@@ -53,15 +52,16 @@ export function buildAuth({ db, secret, baseURL, devEmail }) {
         theme: { type: "string", required: false, input: true },
       },
     },
-    // The single privileged "dev" account: whoever registers with DEV_EMAIL is
-    // minted with role "admin". Every dev tool gates on that role once the old
-    // dev-token check is swapped over — no shared secret to leak.
+    // SECURITY (CWE-287): the admin role must NEVER be derived from a client-claimed
+    // sign-up email. Deriving it from DEV_EMAIL let anyone mint an admin session simply
+    // by registering that address (open registration + no email verification) — Strix
+    // rated it CVSS 9.4. Everyone now signs up as "user"; the single admin account is
+    // provisioned out-of-band (it already exists — to (re)grant admin, promote that user
+    // row directly / via the admin plugin, never through sign-up).
     databaseHooks: {
       user: {
         create: {
-          before: async (user) => ({
-            data: { ...user, role: user.email && user.email.toLowerCase() === dev ? "admin" : "user" },
-          }),
+          before: async (user) => ({ data: { ...user, role: "user" } }),
         },
       },
     },

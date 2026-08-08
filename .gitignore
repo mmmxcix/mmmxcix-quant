@@ -8,3 +8,7 @@ dist
 # Local knowledge-graph tooling (see CLAUDE.md) — never commit, it churns
 # on every graph refresh (learned the hard way in the casino repo).
 graphify-out/
+
+# Strix AI-pentest run artifacts (local)
+strix_run.log
+strix_runs/

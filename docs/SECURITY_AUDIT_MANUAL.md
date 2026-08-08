@@ -87,6 +87,27 @@ real protection. **Fix:** add **Cloudflare WAF rate-limiting rules** (dashboard)
 `/api/bias`, `/api/generate`, `/api/subscribe`, `/api/auth/*` — they run at the edge
 before the function.
 
+## Strix AI-pentest pass (2026-08-08, `functions/` subtree)
+
+Ran the open-source Strix agent (Docker sandbox, via OmniRoute → frontier model) against
+the backend. It **confirmed the clean areas** (no SQLi, no eval/RCE, no SSRF host-escape,
+no secrets) and filed **3 findings** — two of which this manual pass had missed/underrated:
+
+- **S1 = H2 confirmed (CVSS 9.4, CWE-287)** — admin-mint via DEV_EMAIL sign-up. **FIXED**
+  (`auth.mjs`: sign-up always assigns `role:"user"`; admin is out-of-band only).
+- **S2 — NEW (CVSS 5.3, CWE-639)** — `GET /api/argus?what=<key>` bound the param straight
+  to a D1 key, so a public caller could read private `argus_kv` rows (`prefs:watchlist/
+  portfolio`, `commands`, `backtest:executor`), bypassing `/api/prefs` auth. **FIXED**
+  (`argus.js`: `what` allowlisted to `all`/`commands`, else 400).
+- **S3 — under-rated in manual (CVSS 5.3, CWE-22)** — `/api/lse` checked the allowlist on
+  the RAW path, then `fetch()` normalised `../` onto a non-allowlisted upstream endpoint
+  under the owner's key (check-vs-use gap). The manual pass only checked host-escape.
+  **FIXED** (`lse`: allowlist now runs on the normalised pathname + host-unchanged check).
+
+Strix also re-raised I8 (rotate DEV_ACCESS_TOKEN), I9 (rate-limit `/api/auth/*` — Better
+Auth's limiter is opt-in), and flagged `/api/backtest-jobs` → local-executor as a
+high-value RCE chain worth sandboxing/signing. Report: `strix_runs/functions_7af1/`.
+
 ## Suggested fix order
 1. **H1** rate-limit + free-only providers on `/api/bias` (code, quick).
 2. **M3** token-check the `DELETE /api/subscribe` path (code, quick).
