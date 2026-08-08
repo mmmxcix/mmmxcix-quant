@@ -415,7 +415,7 @@ export default function Argus() {
             <History className="w-3.5 h-3.5" /> Invalidation review — was cutting early right?
           </p>
           <p className="text-[11px] text-dim mb-3 leading-snug max-w-2xl">
-            Every early exit is re-checked 12h and 24h later by replaying the original trade — would it have reached target, or the stop first? Setups whose cuts keep proving premature stop getting cut early; the hard stop takes over.
+            Every early exit is re-checked 12h and 24h later by replaying the original trade — would it have reached target, or the stop first? Setups whose cuts keep proving premature get eased or switched off; setups whose cuts keep proving right cut a touch earlier to recover the risk they save.
           </p>
           <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-[11px] mb-3">
             <span className="text-down"><b>{state.invalReview.premature}</b> premature <span className="text-dim">· should have held</span></span>
@@ -427,7 +427,10 @@ export default function Argus() {
             <div className="flex flex-wrap gap-1.5">
               {state.invalReview.kinds.filter((k) => k.premature || k.justified || k.unnecessary).map((k, i) => (
                 <span key={i} className={cn("rounded-lg border px-2 py-1 text-[10px] leading-none",
-                  k.policy === "cut-off" ? "border-down/40 text-down" : k.policy === "cut-later" ? "border-warn/40 text-warn" : "border-line text-dim")}>
+                  k.policy === "cut-off" ? "border-down/40 text-down"
+                    : k.policy === "cut-later" ? "border-warn/40 text-warn"
+                    : (k.policy === "cut-earlier" || k.policy === "cut-sooner") ? "border-up/40 text-up"
+                    : "border-line text-dim")}>
                   <span className="font-mono">{k.kind}</span> <span className="text-dim">{k.premature}p·{k.justified}j</span>
                   {k.policy !== "default" && <span className="ml-1 uppercase tracking-wide font-semibold">→ {k.policy}</span>}
                 </span>

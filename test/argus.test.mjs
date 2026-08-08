@@ -475,13 +475,26 @@ test("wouldHaveHit replays the held trade; verdict maps the invalidation call", 
   assert.equal(isTerminal("would-have-won"), true);
 });
 
-test("invalPolicy loosens the invalidation only for setups whose cuts kept failing", () => {
+test("invalPolicy tunes the invalidation BOTH ways from the review tally", () => {
   assert.deepEqual(invalPolicy(null), {}, "no history → default");
-  assert.deepEqual(invalPolicy({ justified: 5 }), {}, "cuts that worked → keep the default");
+  assert.deepEqual(invalPolicy({ premature: 1, justified: 1 }), {}, "no clear signal → default");
+  // LOOSEN
   assert.equal(invalPolicy({ premature: 3, justified: 0 }).disable, true, "chronically premature → disable the cut");
+  assert.equal(invalPolicy({ premature: 3, justified: 0 }).label, "cut-off");
   const soft = invalPolicy({ premature: 2, unnecessary: 2, justified: 1 });
+  assert.equal(soft.label, "cut-later");
   assert.equal(soft.invalMinAdverse, 0.92, "mostly-unhelpful → cut only when nearly dead");
   assert.equal(soft.invalConfirmBars, 3);
+  // TIGHTEN — cuts kept proving justified → cut earlier to recover saved risk
+  const hard = invalPolicy({ justified: 6, premature: 0 });
+  assert.equal(hard.label, "cut-earlier");
+  assert.equal(hard.invalMinAdverse, 0.60);
+  assert.equal(hard.invalConfirmBars, 2, "sweep-reclaim protection kept even when tightening");
+  const sooner = invalPolicy({ justified: 3, premature: 1 });
+  assert.equal(sooner.label, "cut-sooner");
+  assert.equal(sooner.invalMinAdverse, 0.70);
+  // reversibility: enough premature cuts flip a once-tightened kind back past default
+  assert.equal(invalPolicy({ justified: 4, premature: 5 }).label, "cut-off");
 });
 
 // ── learn.js: a broad single dimension may shrink size but must NEVER skip ────

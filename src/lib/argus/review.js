@@ -46,23 +46,31 @@ export function isTerminal(would) {
 }
 
 /**
- * The invalidation policy for a setup KIND, learned from its retrospection tally
- * `{ premature, justified, unnecessary }`. Setups whose cuts keep proving premature
- * get their invalidation eased (fires later) or disabled entirely — let the hard stop
- * do the work. A justified track record keeps the (already conservative) default.
- * @returns {{}|{disable:true}|{invalMinAdverse:number, invalConfirmBars:number}}
+ * The invalidation policy for a setup KIND, learned BIDIRECTIONALLY from its
+ * retrospection tally `{ premature, justified, unnecessary }`. The default cut fires
+ * at 0.80R adverse over 2 bars; this moves it along a bounded band per kind:
+ *   • cut-off    — premature-heavy → disable the early cut, let the hard stop work.
+ *   • cut-later  — mostly unhelpful → cut only when almost certainly dead (0.92R, 3 bars).
+ *   • default    — no clear signal → the conservative 0.80R / 2-bar default.
+ *   • cut-sooner — justified > unhelpful → recover a little saved risk (0.70R).
+ *   • cut-earlier— strongly justified (cuts kept saving real losses) → 0.60R.
+ * The confirm-bar count stays ≥2 whenever the cut is active, so the sweep-and-reclaim
+ * protection is never dropped; only the disabled case removes the early exit entirely.
+ * Every tier is reversible: if a tightened kind starts cutting prematurely, those
+ * premature counts accumulate and move it back toward default / loosen.
+ * @returns {{}|{label:string,disable?:true,invalMinAdverse?:number,invalConfirmBars?:number}}
  */
 export function invalPolicy(stat) {
   if (!stat) return {};
   const premature = stat.premature || 0;
   const justified = stat.justified || 0;
   const unnecessary = stat.unnecessary || 0;
-  const notHelpful = premature + unnecessary; // cuts that hurt or did nothing
-  // Strongly premature and clearly outweighing the cuts that helped → stop cutting
-  // this setup early at all; the hard stop is the only exit.
-  if (premature >= 3 && premature > justified) return { disable: true };
-  // Mostly unhelpful → still invalidate, but only when almost certainly dead, and
-  // demand a longer sustained break.
-  if (notHelpful >= 3 && notHelpful > justified) return { invalMinAdverse: 0.92, invalConfirmBars: 3 };
+  const bad = premature + unnecessary; // cuts that hurt (premature) or did nothing (unnecessary)
+  // ── LOOSEN: the cuts kept proving wrong ──
+  if (premature >= 3 && premature > justified) return { label: "cut-off", disable: true };
+  if (bad >= 3 && bad > justified) return { label: "cut-later", invalMinAdverse: 0.92, invalConfirmBars: 3 };
+  // ── TIGHTEN: the cuts kept proving right (they saved real losses) → cut a touch earlier ──
+  if (justified >= 4 && justified >= 3 * bad) return { label: "cut-earlier", invalMinAdverse: 0.60, invalConfirmBars: 2 };
+  if (justified >= 3 && justified > bad) return { label: "cut-sooner", invalMinAdverse: 0.70, invalConfirmBars: 2 };
   return {};
 }

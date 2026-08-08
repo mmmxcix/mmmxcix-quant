@@ -340,7 +340,7 @@ function invalReviewSummary() {
     premature += s.premature || 0; justified += s.justified || 0; unnecessary += s.unnecessary || 0;
     const pol = invalPolicy(s);
     kinds.push({ kind, premature: s.premature || 0, justified: s.justified || 0, unnecessary: s.unnecessary || 0,
-      policy: pol.disable ? "cut-off" : pol.invalMinAdverse ? "cut-later" : "default" });
+      policy: pol.label || "default" });
   }
   kinds.sort((a, b) => (b.premature + b.unnecessary) - (a.premature + a.unnecessary));
   return { premature, justified, unnecessary, pending: invalReviews.length, kinds: kinds.slice(0, 12) };
@@ -472,9 +472,10 @@ function tryOpen(inst, setup, halted) {
       heatCap, baseRiskPct: riskPct, maxTradeLev: MAX_TRADE_LEV, portfolioLevCap: PORTFOLIO_LEV_CAP, conviction },
   );
   if (th) {
-    // Retrospective LEARNING: if this KIND's invalidations kept proving premature
-    // (12/24h review), ease or disable the early cut for this trade — let the hard
-    // stop work rather than repeat a cut that would have reached target.
+    // Retrospective LEARNING (bidirectional): the 12/24h reviews tune this KIND's
+    // invalidation. Premature-heavy → ease or disable the early cut (let the hard stop
+    // work); justified-heavy → cut a touch earlier to recover the risk those cuts kept
+    // saving. Every tier is reversible as the tally shifts.
     const pol = invalPolicy(invalStats[th.kind]);
     if (pol.disable && th.invalidation != null) {
       th.invalidation = null;
@@ -482,6 +483,7 @@ function tryOpen(inst, setup, halted) {
     } else if (pol.invalMinAdverse) {
       th.invalMinAdverse = pol.invalMinAdverse;
       th.invalConfirmBars = pol.invalConfirmBars;
+      if (pol.label) console.log(`[${new Date().toISOString()}] INVAL-${pol.label.toUpperCase()} ${th.symbol} ${th.kind} @${pol.invalMinAdverse}R (${JSON.stringify(invalStats[th.kind])})`);
     }
     if (bias && bias.side === th.side) { // enrich a confirmed setup with its catalyst
       th.catalyst = bias.thesis;
