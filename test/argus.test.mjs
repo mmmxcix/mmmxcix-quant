@@ -420,3 +420,100 @@ test("parseFearGreed reads the alternative.me shape + renders into the brief", (
   assert.equal(brief.fearGreed.value, 22);
   assert.match(renderBrief(brief), /Fear & Greed index: 22\/100 \(Extreme Fear\)/);
 });
+
+// ── Invalidation loosening + 12h/24h retrospective review ────────────────────
+import { wouldHaveHit, invalVerdict, isTerminal, invalPolicy } from "../src/lib/argus/review.js";
+
+// Build a thesis directly (bypassing openThesis' slippage/min-stop) so entry, stop
+// and invalidation sit at exact, reasoned levels. riskDist = |entry-stop| = 5.
+const thesis = (over = {}) => ({
+  side: "long", entry: 100, stop: 95, target: 110, invalidation: 98, // invalidation at 0.4R
+  asset: "crypto", size: 50, riskAmt: 250, openedAt: 0, ...over,
+});
+const cb = (o, h, l, c, t) => ({ open: o, high: h, low: l, close: c, time: t }); // bar with a time
+
+test("invalidation no longer cuts a 0.6R wobble that can still run to target", () => {
+  const th = thesis();
+  // Close 97 = 0.6R adverse, beyond the 98 level — but NOT the ≥0.8R (≤96) needed now.
+  for (let t = 1; t <= 5; t++) assert.equal(evaluateExit(th, cb(97.2, 97.5, 96.6, 97, t), { now: 1000 }), null, "0.6R dip does not invalidate");
+  const win = evaluateExit(th, cb(105, 110.2, 104, 110, 6), { now: 1000 }); // then runs to target
+  assert.equal(win?.outcome, "target", "the trade that would have won is left alone");
+});
+
+test("invalidation still fires when DECISIVELY failing: ≥0.8R adverse, sustained 2 bars", () => {
+  const th = thesis();
+  // 95.8 = 4.2/5 = 0.84R adverse (≤96), beyond 98, low 95.5 stays above the 95 stop.
+  assert.equal(evaluateExit(th, cb(96.2, 96.4, 95.5, 95.8, 1), { now: 1000 }), null, "armed on the first decisive bar, waits");
+  const cut = evaluateExit(th, cb(95.9, 96.1, 95.5, 95.8, 2), { now: 1000 }); // confirmed on a DISTINCT bar
+  assert.equal(cut?.outcome, "invalidated", "confirmed break on a later bar cuts");
+});
+
+test("a sweep-and-reclaim resets the invalidation confirm count", () => {
+  const th = thesis();
+  assert.equal(evaluateExit(th, cb(96.2, 96.4, 95.5, 95.8, 1), { now: 1000 }), null, "arm (count 1)");
+  assert.equal(evaluateExit(th, cb(96, 97.6, 95.9, 97.5, 2), { now: 1000 }), null, "reclaim above → reset");
+  assert.equal(evaluateExit(th, cb(96.2, 96.4, 95.5, 95.8, 3), { now: 1000 }), null, "back below is only count 1 again, not a cut");
+});
+
+test("a per-thesis invalidation override (learned) can loosen or disable the cut", () => {
+  const off = thesis({ invalidation: null }); // review disabled it for this kind
+  assert.equal(evaluateExit(off, cb(95.9, 96.1, 95.5, 95.8, 1), { now: 1000 }), null, "no invalidation → never early-cut");
+  assert.equal(evaluateExit(off, cb(95.9, 96.1, 95.5, 95.8, 2), { now: 1000 }), null, "…still open on the hard stop only");
+  const later = thesis({ invalMinAdverse: 0.95, invalConfirmBars: 3 }); // cut only when nearly dead
+  assert.equal(evaluateExit(later, cb(96.2, 96.4, 95.6, 95.8, 1), { now: 1000 }), null, "0.84R is not ≥0.95R → no cut under the loosened policy");
+});
+
+test("wouldHaveHit replays the held trade; verdict maps the invalidation call", () => {
+  assert.equal(wouldHaveHit("long", 95, 110, [cb(100, 111, 99, 108, 1)]), "would-have-won", "high tags target");
+  assert.equal(wouldHaveHit("long", 95, 110, [cb(100, 101, 94, 96, 1)]), "would-have-lost", "low tags stop");
+  assert.equal(wouldHaveHit("long", 95, 110, [cb(100, 111, 94, 100, 1)]), "would-have-lost", "spanning bar is conservatively a stop");
+  assert.equal(wouldHaveHit("long", 95, 110, [cb(100, 101, 99, 100, 1)]), "undecided", "neither level → undecided");
+  assert.equal(invalVerdict("would-have-won"), "premature");
+  assert.equal(invalVerdict("would-have-lost"), "justified");
+  assert.equal(invalVerdict("undecided"), "unnecessary");
+  assert.equal(isTerminal("undecided"), false);
+  assert.equal(isTerminal("would-have-won"), true);
+});
+
+test("invalPolicy loosens the invalidation only for setups whose cuts kept failing", () => {
+  assert.deepEqual(invalPolicy(null), {}, "no history → default");
+  assert.deepEqual(invalPolicy({ justified: 5 }), {}, "cuts that worked → keep the default");
+  assert.equal(invalPolicy({ premature: 3, justified: 0 }).disable, true, "chronically premature → disable the cut");
+  const soft = invalPolicy({ premature: 2, unnecessary: 2, justified: 1 });
+  assert.equal(soft.invalMinAdverse, 0.92, "mostly-unhelpful → cut only when nearly dead");
+  assert.equal(soft.invalConfirmBars, 3);
+});
+
+// ── learn.js: a broad single dimension may shrink size but must NEVER skip ────
+const spread = (n, side, R) => Array.from({ length: n }, (_, i) => ({
+  kind: ["breakout", "orb", "ifvg", "mean-reversion"][i % 4], side,
+  symbol: ["A", "B", "C", "D"][(i >> 1) % 4] + "USDT",
+  outcome: R > 0 ? "target" : "stop", R, pnl: R * 100, openedAt: Date.UTC(2026, 0, 1, 14) + i * 60000,
+}));
+
+test("a blanket single-dim losing bucket cuts size but does NOT freeze trading (skip=false)", () => {
+  // 40 losing shorts spread across 4 kinds × 4 symbols: only the {side:short} bucket
+  // (n=40) clears minSample — a single broad dimension. It must never skip.
+  const lessons = deriveLessons(spread(40, "short", -1), { minSample: 20 });
+  assert.ok(lessons.some((l) => l.dims.side === "short" && l.action === "suppress"), "the broad bucket is a suppress lesson");
+  const a = adjustment(lessons, { kind: "breakout", symbol: "AUSDT", side: "short" }, { minSample: 20 });
+  assert.equal(a.skip, false, "a single broad dimension shrinks size but never skips (the freeze bug)");
+  assert.ok(a.mult < 1, "…it still eases size down");
+});
+
+test("a SPECIFIC, well-sampled, genuinely-broken bucket may still skip", () => {
+  const lessons = deriveLessons(closed(40, "breakout", "short", -1), { minSample: 20 }); // all one kind+symbol+side
+  const a = adjustment(lessons, { kind: "breakout", symbol: "SOLUSDT", side: "short" }, { minSample: 20 });
+  assert.equal(a.skip, true, "a concentrated broken bucket (≥2 dims) skips as before");
+});
+
+test("a premature-reviewed invalidation no longer counts against its bucket", () => {
+  // 30 break-even trades, all invalidated, but every one later reviewed 'premature':
+  // the bucket must NOT read as chronic-invalidation (would have, before the review).
+  const items = Array.from({ length: 30 }, (_, i) => ({
+    kind: "breakout", side: "long", symbol: "SOLUSDT", outcome: "invalidated",
+    invalReview: "premature", R: 0, pnl: 0, openedAt: Date.UTC(2026, 0, 1, 14) + i * 60000,
+  }));
+  const lessons = deriveLessons(items, { minSample: 20 });
+  assert.ok(!lessons.some((l) => l.verdict === "chronic-invalidation"), "premature cuts are excluded from the invalidation signal");
+});

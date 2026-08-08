@@ -18,11 +18,18 @@ const HARD_CUT_EXPECTANCY = -0.30; // ≤ this → the firmer of the two size cu
 const MULT_FLOOR = 0.5, MULT_CEIL = 1.25;
 const BOOST = 1.12, MILD_CUT = 0.85, HARD_CUT = 0.65;
 const SKIP_EXPECTANCY = -0.8, SKIP_WINRATE = 0.28; // only truly broken buckets skip
+// A skip (dropping a setup entirely) MUST come from a SPECIFIC bucket — at least
+// this many defining dimensions (e.g. kind+symbol+side, not the blanket "all shorts"
+// or "all technical"). A single broad dimension covers ~every trade, so letting it
+// skip once froze the whole agent (it "learned" to stop trading). Broad buckets may
+// still shrink SIZE; only a specific, well-sampled, genuinely-broken bucket skips.
+const SKIP_MIN_DIMS = 2;
 // Invalidation rate = share of a bucket's trades cut early because the setup thesis
-// broke. A chronically-invalidated setup is being ENTERED too eagerly — learn to
-// avoid it faster than the raw-expectancy gate alone would.
-const HIGH_INVAL_RATE = 0.50;     // ≥ half the bucket keeps breaking → skip when the edge is negative
-const ELEVATED_INVAL_RATE = 0.38; // enough to firm up the size cut / suppress a break-even bucket
+// broke. Used ONLY to firm up a size cut (never to skip): a raw invalidation is a
+// weak, often-wrong signal — a premature cut that a 12/24h review later reversed is
+// excluded (`c.invalReview === "premature"`), so learning never avoids a setup just
+// because the old, too-eager invalidation kept firing on it.
+const ELEVATED_INVAL_RATE = 0.38; // enough to firm up the size cut on a specific bucket
 
 // ── session bucketing (UTC-hour → trading session) ──────────────────────────
 /** Coarse trading-session bucket for a trade's entry time (UTC hour). */
@@ -119,12 +126,16 @@ function describeDims(d) {
 
 function makeLesson(dims, items) {
   const s = ledgerStats(items);
-  const invalidated = items.reduce((a, c) => a + (c.outcome === "invalidated" ? 1 : 0), 0);
+  // Count only invalidations the retrospective review did NOT rule premature — a
+  // cut that would have reached target is a fault of the (old) invalidation, not
+  // evidence the setup is bad. Unreviewed invalidations still count (innocent until
+  // reviewed); confirmed-premature ones drop out.
+  const invalidated = items.reduce((a, c) => a + (c.outcome === "invalidated" && c.invalReview !== "premature" ? 1 : 0), 0);
   const invalRate = items.length ? invalidated / items.length : 0;
   let verdict, action;
   if (s.expectancy >= STRONG_EXPECTANCY) { verdict = "strong-positive"; action = "boost"; }
   else if (s.expectancy < 0) { verdict = "losing"; action = "suppress"; }
-  else if (invalRate >= HIGH_INVAL_RATE) { verdict = "chronic-invalidation"; action = "suppress"; } // keeps breaking even at ~break-even
+  else if (invalRate >= ELEVATED_INVAL_RATE) { verdict = "chronic-invalidation"; action = "suppress"; } // real breaks at ~break-even → ease off
   else { verdict = "neutral"; action = "neutral"; }
   const word = action === "boost" ? "favor" : action === "suppress" ? "suppress" : "neutral";
   const invalNote = invalRate >= ELEVATED_INVAL_RATE ? `, ${Math.round(invalRate * 100)}% invalidated` : "";
@@ -201,16 +212,19 @@ export function adjustment(lessons, setup, opts = {}) {
       mult *= boost;
       reasons.push(l.text);
     } else if (l.action === "suppress") {
-      // A chronically-invalidated bucket earns the firmer cut even before its
-      // expectancy is catastrophic — the setup keeps entering and breaking.
+      // A high-invalidation bucket earns the firmer cut even before its expectancy
+      // is catastrophic — the setup keeps entering and breaking (real breaks only;
+      // premature cuts are already filtered out of invalRate).
       const firmer = l.expectancy <= hardCutExpectancy || (l.invalRate ?? 0) >= ELEVATED_INVAL_RATE;
       mult *= firmer ? hardCut : mildCut;
       reasons.push(l.text);
-      // Skip entirely: the classic egregiously-negative bucket, OR a setup that
-      // keeps getting invalidated (≥50%) while its edge is negative — stop taking it.
+      // Skip entirely ONLY when a SPECIFIC (≥2-dim), well-sampled bucket is genuinely
+      // broken — egregiously-negative expectancy AND a poor win rate. A single broad
+      // dimension (all shorts / all technical) can shrink size but must NEVER skip:
+      // that once "learned" the agent into trading nothing at all.
+      const specific = Object.keys(l.dims || {}).length >= SKIP_MIN_DIMS;
       const brokenEdge = l.expectancy <= skipExpectancy && l.winRate <= skipWinRate;
-      const chronicInval = (l.invalRate ?? 0) >= HIGH_INVAL_RATE && l.expectancy < 0;
-      if (l.n >= skipMinSample && (brokenEdge || chronicInval)) skip = true;
+      if (specific && l.n >= skipMinSample && brokenEdge) skip = true;
     }
   }
   mult = Math.max(floor, Math.min(ceil, mult));

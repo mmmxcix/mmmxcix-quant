@@ -9,17 +9,14 @@ const longTh = (over = {}) => ({
   invalidation: 99.5, size: 1, riskAmt: 2, liqPrice: null, openedAt: 0, ...over,
 });
 
-test("invalidation needs a DECISIVE close confirmed on a later bar — not a single sweep", () => {
-  const th = longTh(); // entry 100, stop 98, invalidation 99.5 → buffer = 0.20*2 = 0.4
-  // shallow poke below 99.5 but inside the buffer (close 99.3, only 0.2 beyond) → no exit
-  assert.equal(evaluateExit(th, { high: 100.2, low: 99.0, close: 99.3, time: 1 }, { now: 1000 }), null);
-  // a decisive close (99.0, 0.5 beyond) arms it but doesn't cut yet
-  assert.equal(evaluateExit(th, { high: 100, low: 98.8, close: 99.0, time: 2 }, { now: 2000 }), null);
-  // reclaim on the next bar → disarm, still open
-  assert.equal(evaluateExit(th, { high: 100, low: 99.6, close: 99.8, time: 3 }, { now: 3000 }), null);
-  // decisive break again, then STILL broken on a later bar → confirmed invalidation
-  assert.equal(evaluateExit(th, { high: 100, low: 98.8, close: 99.0, time: 4 }, { now: 4000 }), null); // arm
-  const res = evaluateExit(th, { high: 99.6, low: 98.8, close: 99.0, time: 5 }, { now: 5000 });          // confirm
+test("invalidation only cuts when the trade is DECISIVELY failing — near the stop, sustained", () => {
+  const th = longTh(); // entry 100, stop 98 → riskDist 2; needs ≥0.8R adverse (close ≤ 98.4) + confirm
+  // A close beyond the 99.5 level but only ~0.5R adverse (99.0) no longer cuts — this
+  // is the trade that used to get invalidated and then ran to target. Left alone now.
+  for (let t = 1; t <= 4; t++) assert.equal(evaluateExit(th, { high: 100, low: 98.8, close: 99.0, time: t }, { now: 1000 }), null, "a mid-trade wobble is not an invalidation");
+  // Decisively failing: close 98.3 = 0.85R adverse, low 98.05 stays above the 98 stop.
+  assert.equal(evaluateExit(th, { high: 98.6, low: 98.05, close: 98.3, time: 5 }, { now: 5000 }), null, "arm on the first decisive bar");
+  const res = evaluateExit(th, { high: 98.5, low: 98.05, close: 98.3, time: 6 }, { now: 6000 });         // confirm on a later bar
   assert.equal(res?.outcome, "invalidated");
   assert.ok(res.R < 0 && res.R > -1, "an invalidation loss is smaller than a full 1R stop-out");
 });

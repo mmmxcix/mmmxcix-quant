@@ -12,6 +12,7 @@ import { deriveLessons, adjustment, sessionOf } from "../src/lib/argus/learn.js"
 import { marketOpen } from "../src/lib/argus/hours.js";
 import { effectiveHeatCap } from "../src/lib/argus/correlation.js";
 import { buildReflectionMessages, parseReflection, crystallise, skillsFor, unionSkills } from "../src/lib/argus/reflect.js";
+import { wouldHaveHit, invalVerdict, isTerminal, invalPolicy } from "../src/lib/argus/review.js";
 import { callArgusLLM, chatOnce } from "../src/lib/argus/llm.js";
 
 const SITE = process.env.LAB_SITE || "https://quant.mmmxcix.com";
@@ -56,6 +57,12 @@ const PYRAMID_STEP = +(process.env.LAB_ARGUS_PYRAMID_STEP || 1); // add a unit e
 // (reaching the same target with a tighter stop = more exposure) over long swing
 // holds that hinge on news. The cap is the backstop, not the goal. Tunable.
 const MAX_HOLD_MS = +(process.env.LAB_ARGUS_MAX_HOLD_H || 72) * 3600_000;
+// Retrospective review of "invalidated" exits: re-examine each early-cut trade ~12h
+// and again ~24h later, judge whether cutting was right (would it have hit target or
+// the stop?), and LEARN — loosen the invalidation on setups whose cuts kept proving
+// premature. Tunable so a test can compress the horizons.
+const REVIEW_1_MS = +(process.env.LAB_ARGUS_REVIEW1_H || 12) * 3600_000;
+const REVIEW_2_MS = +(process.env.LAB_ARGUS_REVIEW2_H || 24) * 3600_000;
 // News-reachable tickers Argus may trade if a catalyst clearly names them, and a
 // stock→sector-ETF map so the event channel routes a named single-name catalyst
 // to the RIGHT sector (fixes AEP, a UTILITY, being mapped to XLE/energy).
@@ -111,6 +118,8 @@ let journal = [];       // Hermes post-mortems, newest first
 let skills = [];        // lessons crystallised from repeats — consulted before a trade
 let retainedSkills = []; // knowledge kept across a reset (journal cleared, skills survive)
 let reflectQueue = [];  // closed trades awaiting their post-mortem
+let invalReviews = [];  // pending retrospections of invalidated exits {id,symbol,asset,side,kind,stop,target,exitAt,dueAt,stage}
+let invalStats = {};    // learned per-kind tally: { [kind]: { premature, justified, unnecessary } } — survives a reset
 let forceClose = new Set(); // thesis ids the dev asked to close now (drained each cycle)
 let forceCloseReason = new Map(); // thesis id → the dev's reason for closing early (fed to the post-mortem)
 let pendingCommands = []; // raw dev commands drained this cycle, acked once handled
@@ -210,6 +219,7 @@ function manageExits(inst, last5, ledgerAdd) {
       ledgerAdd.push(res);
       closedAll.push(res); // feed the learning ledger
       reflectQueue.push(res); // Hermes: every closed trade earns a post-mortem
+      if (res.outcome === "invalidated") queueInvalReview(res); // was cutting it right? re-judge at 12h/24h
       if (closedAll.length > 600) closedAll = closedAll.slice(-600);
       console.log(`[${new Date().toISOString()}] CLOSE ${res.symbol} ${res.side} ${res.outcome} R=${res.R.toFixed(2)} pnl=${res.pnl.toFixed(2)} eq=${equity.toFixed(0)}`);
     } else {
@@ -261,6 +271,79 @@ async function runReflections(max = 3) {
   // retained across a reset (whose journal entries were cleared) so kept knowledge
   // isn't wiped by a freshly-empty journal.
   skills = unionSkills(retainedSkills, crystallise(journal));
+}
+
+/** Queue a retrospection for an invalidated exit: was cutting it right? First look at
+ *  exit+12h; a still-open verdict is re-checked at exit+24h. */
+function queueInvalReview(res) {
+  invalReviews.push({
+    id: res.id, symbol: res.symbol, asset: res.asset, side: res.side, kind: res.kind,
+    stop: res.stop, target: res.target, exitAt: res.exitAt,
+    dueAt: res.exitAt + REVIEW_1_MS, stage: 1,
+  });
+  if (invalReviews.length > 200) invalReviews = invalReviews.slice(-200);
+}
+
+/** Fold a settled review verdict into the learned per-kind tally + annotate the
+ *  ledger record so the learning loop and the UI both see it. Returns the annotated
+ *  ledger record to re-persist (or null if the record is gone). */
+function recordInvalVerdict(r, would) {
+  const verdict = invalVerdict(would);
+  const s = invalStats[r.kind] || (invalStats[r.kind] = { premature: 0, justified: 0, unnecessary: 0 });
+  s[verdict] = (s[verdict] || 0) + 1;
+  const c = closedAll.find((x) => x.id === r.id);
+  if (c) { c.invalReview = verdict; c.invalWouldHave = would; c.invalReviewedAt = Date.now(); }
+  console.log(`[${new Date().toISOString()}] REVIEW ${r.symbol} ${r.side} ${r.kind} invalidation @+${Math.round((Date.now() - r.exitAt) / 3600000)}h → ${verdict} (${would}) · ${r.kind}: ${s.premature}prem/${s.justified}just/${s.unnecessary}none`);
+  return c || null;
+}
+
+/** Retrospective review pass (full-scan only): judge each due invalidated exit by
+ *  replaying the ORIGINAL trade forward over the candles that followed. A terminal
+ *  outcome (would-have-won / -lost) settles immediately; an undecided one waits for
+ *  the 24h horizon. Learning (invalPolicy) then loosens the invalidation on setups
+ *  whose cuts keep proving premature. Returns ledger records to re-persist. */
+async function processInvalReviews() {
+  const now = Date.now();
+  if (!invalReviews.some((r) => r.dueAt <= now)) return [];
+  const updates = [];
+  const next = [];
+  for (const r of invalReviews) {
+    if (r.dueAt > now) { next.push(r); continue; }
+    const horizonEnd = r.exitAt + (r.stage === 1 ? REVIEW_1_MS : REVIEW_2_MS);
+    let window = null;
+    try {
+      // 5m candles spanning the exit → horizon. 500 bars ≈ 41h of 5m — enough to
+      // cover a 24h horizon even with scan-cadence slack; stocks use a day range.
+      const ds = await loadMarket({ id: r.symbol, asset: r.asset, symbol: r.symbol, interval: "5m", bars: 500, range: "5d" });
+      const all = ds?.candles || [];
+      window = all.filter((c) => c.time * 1000 >= r.exitAt && c.time * 1000 <= horizonEnd);
+    } catch { /* provider hiccup — retry next cycle */ }
+    if (r.asset !== "crypto") await sleep(300); // be gentle on Yahoo
+    if (!window || window.length < 3) { next.push(r); continue; } // not enough data yet — keep it
+    const would = wouldHaveHit(r.side, r.stop, r.target, window);
+    if (r.stage === 1 && !isTerminal(would)) {
+      next.push({ ...r, stage: 2, dueAt: r.exitAt + REVIEW_2_MS }); // undecided at 12h → re-judge at 24h
+      continue;
+    }
+    const rec = recordInvalVerdict(r, would);
+    if (rec) updates.push(rec);
+  }
+  invalReviews = next;
+  return updates;
+}
+
+/** Compact snapshot of the retrospective-review learning for the Argus page. */
+function invalReviewSummary() {
+  let premature = 0, justified = 0, unnecessary = 0;
+  const kinds = [];
+  for (const [kind, s] of Object.entries(invalStats)) {
+    premature += s.premature || 0; justified += s.justified || 0; unnecessary += s.unnecessary || 0;
+    const pol = invalPolicy(s);
+    kinds.push({ kind, premature: s.premature || 0, justified: s.justified || 0, unnecessary: s.unnecessary || 0,
+      policy: pol.disable ? "cut-off" : pol.invalMinAdverse ? "cut-later" : "default" });
+  }
+  kinds.sort((a, b) => (b.premature + b.unnecessary) - (a.premature + a.unnecessary));
+  return { premature, justified, unnecessary, pending: invalReviews.length, kinds: kinds.slice(0, 12) };
 }
 
 const clamp01 = (x) => Math.max(0, Math.min(1, x));
@@ -389,6 +472,17 @@ function tryOpen(inst, setup, halted) {
       heatCap, baseRiskPct: riskPct, maxTradeLev: MAX_TRADE_LEV, portfolioLevCap: PORTFOLIO_LEV_CAP, conviction },
   );
   if (th) {
+    // Retrospective LEARNING: if this KIND's invalidations kept proving premature
+    // (12/24h review), ease or disable the early cut for this trade — let the hard
+    // stop work rather than repeat a cut that would have reached target.
+    const pol = invalPolicy(invalStats[th.kind]);
+    if (pol.disable && th.invalidation != null) {
+      th.invalidation = null;
+      console.log(`[${new Date().toISOString()}] INVAL-OFF ${th.symbol} ${th.kind} — reviews ruled its cuts premature (${JSON.stringify(invalStats[th.kind])})`);
+    } else if (pol.invalMinAdverse) {
+      th.invalMinAdverse = pol.invalMinAdverse;
+      th.invalConfirmBars = pol.invalConfirmBars;
+    }
     if (bias && bias.side === th.side) { // enrich a confirmed setup with its catalyst
       th.catalyst = bias.thesis;
       th.confidence = bias.confidence;
@@ -531,6 +625,8 @@ async function cycle(fullScan) {
       await runEventChannel();
       handleConflicts(); // close positions a fresh opposing catalyst now argues against
       await runReflections();
+      const reviewed = await processInvalReviews(); // judge due invalidated exits (12h/24h) → learn
+      for (const rec of reviewed) ledgerAdd.push(rec); // re-persist the annotated ledger records
       lessons = deriveLessons(closedAll, { minSample: LEARN_MIN });
     }
 
@@ -615,6 +711,9 @@ async function persist(ledgerAdd, extra) {
         halted: extra.halted, universe: activeUniverse().length, events, fng: eventFng,
         skills: skills.slice(0, 8),
         lessons: lessons.slice(0, 8).map((l) => ({ text: l.text, verdict: l.verdict, n: l.n })),
+        // Retrospective-review learning, surfaced for the Argus page: how many
+        // invalidated exits each verdict, which kinds now cut later / not at all.
+        invalReview: invalReviewSummary(),
       };
     })(),
     theses: open,
@@ -622,6 +721,8 @@ async function persist(ledgerAdd, extra) {
     journal: journal.slice(0, 60),   // Hermes post-mortems (newest first)
     skills,                          // rules crystallised from repeated lessons
     retainedSkills,                  // knowledge kept across a reset (survives an empty journal)
+    invalReviews: invalReviews.slice(-200), // pending 12h/24h retrospections
+    invalStats,                      // learned per-kind invalidation tally (survives a reset)
   };
   try {
     const r = await fetch(`${SITE}/api/argus`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
@@ -643,6 +744,17 @@ async function hydrate() {
     if (Array.isArray(j.journal)) journal = j.journal.slice(0, 300);
     if (Array.isArray(j.skills)) skills = j.skills;
     if (Array.isArray(j.retainedSkills)) retainedSkills = j.retainedSkills;
+    if (j.invalStats && typeof j.invalStats === "object") invalStats = j.invalStats;
+    if (Array.isArray(j.invalReviews)) invalReviews = j.invalReviews;
+    // Backfill: any invalidated close still without a review verdict — and not
+    // already queued — gets one, so the retrospection covers the current book too.
+    const queued = new Set(invalReviews.map((r) => r.id));
+    for (const c of closedAll) {
+      if (c.outcome === "invalidated" && !c.invalReview && !queued.has(c.id) && c.exitAt) {
+        invalReviews.push({ id: c.id, symbol: c.symbol, asset: c.asset, side: c.side, kind: c.kind,
+          stop: c.stop, target: c.target, exitAt: c.exitAt, dueAt: c.exitAt + REVIEW_1_MS, stage: 1 });
+      }
+    }
     for (const e of j.state?.events || []) { // restore fresh event biases across restarts
       if (Date.now() - (e.at || 0) < EVENT_TTL) eventBias.set(e.symbol, { side: e.side, thesis: e.thesis, confidence: e.confidence, evidence: [], horizon: e.horizon, at: e.at, model: e.model });
     }
@@ -664,6 +776,7 @@ async function doReset(source) {
   skills = retainedSkills.slice();
   equity = EQUITY0; equityDayStart = EQUITY0;
   open = []; forming = []; closedAll = []; closedToday = []; reflectQueue = [];
+  invalReviews = []; // pending retrospections reference the wiped book — drop them (invalStats KEPT: learned)
   forceClose = new Set(); forceCloseReason = new Map();
   lessons = deriveLessons(closedAll, { minSample: LEARN_MIN });
   eventBias = new Map();

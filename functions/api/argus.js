@@ -50,7 +50,7 @@ export async function onRequest({ request, env }) {
     const what = new URL(request.url).searchParams.get("what") || "all";
     if (what === "all") {
       const snap = await readSnap();
-      return json({ ok: true, state: snap?.state || null, theses: snap?.theses || [], ledger: snap?.ledger || [], journal: snap?.journal || [], skills: snap?.skills || [], retainedSkills: snap?.retainedSkills || [] });
+      return json({ ok: true, state: snap?.state || null, theses: snap?.theses || [], ledger: snap?.ledger || [], journal: snap?.journal || [], skills: snap?.skills || [], retainedSkills: snap?.retainedSkills || [], invalReviews: snap?.invalReviews || [], invalStats: snap?.invalStats || {} });
     }
     return json({ ok: true, [what]: await read(what) });
   }
@@ -112,6 +112,10 @@ export async function onRequest({ request, env }) {
       // retainedSkills = knowledge crystallised before a reset that must survive the
       // journal being cleared (the fresh journal starts empty after a reset).
       if (Array.isArray(body.retainedSkills)) snap.retainedSkills = body.retainedSkills.slice(0, 50);
+      // Retrospective-review state: the pending 12h/24h queue and the learned per-kind
+      // invalidation tally (the latter survives a reset — it's earned knowledge).
+      if (Array.isArray(body.invalReviews)) snap.invalReviews = body.invalReviews.slice(0, 200);
+      if (body.invalStats && typeof body.invalStats === "object") snap.invalStats = body.invalStats;
       // ledgerReplace REPLACES the closed-trade ledger (used by the reset to clear
       // the book); ledgerAdd merges new closes into it (the normal path).
       if (Array.isArray(body.ledgerReplace)) {
