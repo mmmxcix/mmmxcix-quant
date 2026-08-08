@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Radio, TrendingUp, TrendingDown, Trophy, AlertTriangle, Zap, Newspaper, GraduationCap, LineChart, X, Ban, RotateCcw } from "lucide-react";
+import { Radio, TrendingUp, TrendingDown, Trophy, AlertTriangle, Zap, Newspaper, GraduationCap, LineChart, X, Ban, RotateCcw, History } from "lucide-react";
 import { cn, fmtNum } from "@/lib/utils";
 import { GLOSSARY } from "@/lib/glossary";
 import { ledgerStats, tradeR } from "@/lib/argus/core";
@@ -402,6 +402,38 @@ export default function Argus() {
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* Retrospective review — Argus re-judges every early "invalidated" exit 12h
+          and 24h later (replaying the original trade: would it have hit target, or
+          the stop?) and eases the invalidation on setups whose cuts kept proving
+          premature. This is the answer to "was cutting early actually right?". */}
+      {state?.invalReview && (state.invalReview.premature + state.invalReview.justified + state.invalReview.unnecessary + (state.invalReview.pending || 0)) > 0 && (
+        <div className="rounded-xl border border-line lg-glass p-4">
+          <p className="text-xs text-dim font-medium mb-1 flex items-center gap-1.5">
+            <History className="w-3.5 h-3.5" /> Invalidation review — was cutting early right?
+          </p>
+          <p className="text-[11px] text-dim mb-3 leading-snug max-w-2xl">
+            Every early exit is re-checked 12h and 24h later by replaying the original trade — would it have reached target, or the stop first? Setups whose cuts keep proving premature stop getting cut early; the hard stop takes over.
+          </p>
+          <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-[11px] mb-3">
+            <span className="text-down"><b>{state.invalReview.premature}</b> premature <span className="text-dim">· should have held</span></span>
+            <span className="text-up"><b>{state.invalReview.justified}</b> justified <span className="text-dim">· the cut saved the loss</span></span>
+            {state.invalReview.unnecessary > 0 && <span className="text-dim"><b>{state.invalReview.unnecessary}</b> no-op</span>}
+            {state.invalReview.pending > 0 && <span className="text-dim"><b>{state.invalReview.pending}</b> awaiting review</span>}
+          </div>
+          {state.invalReview.kinds?.filter((k) => k.premature || k.justified || k.unnecessary).length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {state.invalReview.kinds.filter((k) => k.premature || k.justified || k.unnecessary).map((k, i) => (
+                <span key={i} className={cn("rounded-lg border px-2 py-1 text-[10px] leading-none",
+                  k.policy === "cut-off" ? "border-down/40 text-down" : k.policy === "cut-later" ? "border-warn/40 text-warn" : "border-line text-dim")}>
+                  <span className="font-mono">{k.kind}</span> <span className="text-dim">{k.premature}p·{k.justified}j</span>
+                  {k.policy !== "default" && <span className="ml-1 uppercase tracking-wide font-semibold">→ {k.policy}</span>}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
