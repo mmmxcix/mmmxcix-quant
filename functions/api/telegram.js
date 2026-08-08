@@ -102,7 +102,7 @@ export async function onRequest(context) {
       try {
         await db.prepare("INSERT INTO argus_kv (key, data, updated_at) VALUES ('telegram', ?, ?) ON CONFLICT(key) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at")
           .bind(JSON.stringify(body.items.slice(0, 150)), Date.now()).run();
-      } catch (e) { return json({ error: "db_write_failed", detail: String(e?.message || e) }, 503); }
+      } catch (e) { return json({ error: "db_write_failed" }, 503); }
     }
     return json({ ok: true, stored: body.items?.length || 0 });
   }

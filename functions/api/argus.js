@@ -76,7 +76,7 @@ export async function onRequest({ request, env }) {
         q.push({ type, id, reason, at: Date.now() });
         await write("commands", q.slice(-50));
       } catch (e) {
-        return json({ error: "db_write_failed", detail: String(e?.message || e) }, 503);
+        return json({ error: "db_write_failed" }, 503);
       }
       return json({ ok: true, queued: { type, id } });
     }
@@ -97,7 +97,7 @@ export async function onRequest({ request, env }) {
         await db.prepare("DELETE FROM argus_kv").run();
         if (kv) { try { await Promise.all([kv.delete("argus:snapshot"), kv.delete("argus:commands")]); } catch { /* legacy */ } }
       } catch (e) {
-        return json({ error: "db_reset_failed", detail: String(e?.message || e) }, 503);
+        return json({ error: "db_reset_failed" }, 503);
       }
       return json({ ok: true, reset: true });
     }
@@ -127,7 +127,7 @@ export async function onRequest({ request, env }) {
       }
       await write("snapshot", snap);
     } catch (e) {
-      return json({ error: "db_write_failed", detail: String(e?.message || e) }, 503);
+      return json({ error: "db_write_failed" }, 503);
     }
     return json({ ok: true });
   }

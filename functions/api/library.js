@@ -63,7 +63,7 @@ export async function onRequest({ request, env }) {
       const entries = (results || []).map((r) => { try { return JSON.parse(r.data); } catch { return null; } }).filter(Boolean);
       return json({ ok: true, entries });
     } catch (e) {
-      return json({ error: "db_read_failed", detail: String(e?.message || e) }, 503);
+      return json({ error: "db_read_failed" }, 503);
     }
   }
 
@@ -106,7 +106,7 @@ export async function onRequest({ request, env }) {
       }
       return json({ error: "empty" }, 400);
     } catch (e) {
-      return json({ error: "db_write_failed", detail: String(e?.message || e) }, 503);
+      return json({ error: "db_write_failed" }, 503);
     }
   }
 

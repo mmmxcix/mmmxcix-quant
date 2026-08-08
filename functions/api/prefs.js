@@ -46,7 +46,7 @@ export async function onRequest({ request, env }) {
       const row = await db.prepare("SELECT data FROM argus_kv WHERE key = ?").bind(`prefs:${name}`).first();
       return json({ ok: true, data: row ? JSON.parse(row.data) : null });
     } catch (e) {
-      return json({ error: "db_read_failed", detail: String(e?.message || e) }, 503);
+      return json({ error: "db_read_failed" }, 503);
     }
   }
 
@@ -65,7 +65,7 @@ export async function onRequest({ request, env }) {
       ).bind(`prefs:${name}`, payload, Date.now()).run();
       return json({ ok: true, count: body.data.length });
     } catch (e) {
-      return json({ error: "db_write_failed", detail: String(e?.message || e) }, 503);
+      return json({ error: "db_write_failed" }, 503);
     }
   }
 

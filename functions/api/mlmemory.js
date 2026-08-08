@@ -83,7 +83,7 @@ export async function onRequest({ request, env }) {
     } catch (e) {
       // KV write budget exhausted etc. — the client keeps its local copy and
       // retries later rather than losing the entry.
-      return json({ error: "kv_write_failed", detail: String(e?.message || e) }, 503);
+      return json({ error: "kv_write_failed" }, 503);
     }
   }
 

@@ -226,10 +226,18 @@ export async function onRequest(context) {
     }
 
     if (method === 'DELETE') {
+      // Token-verified like the GET/POST unsubscribe paths — otherwise anyone could
+      // delete any subscriber by email and enumerate the list. The response is
+      // ALWAYS "removed" (whether or not the record existed or the token matched) so
+      // it leaks nothing about who is subscribed; the delete only happens on a match.
       const url = new URL(request.url);
       const email = normalizeEmail(url.searchParams.get('email'));
+      const token = url.searchParams.get('token') || '';
       if (!email) return json({ error: 'invalid_email' }, 400);
-      await kv.delete(`sub:${email}`);
+      const rl = rateLimit(`subdel:${clientIp(request)}`, 5, 60_000);
+      if (!rl.ok) return json({ error: 'rate_limited' }, 429);
+      const rec = await kv.get(`sub:${email}`, 'json');
+      if (rec && (!rec.confirmToken || rec.confirmToken === token)) await kv.delete(`sub:${email}`);
       return json({ status: 'removed' });
     }
 

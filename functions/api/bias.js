@@ -6,6 +6,8 @@
 // `note:null` when no LLM provider is configured (the client shows the score alone).
 // GET is public (read, cached). Educational — not investment advice.
 
+import { rateLimit, clientIp } from "../_lib/ratelimit.mjs";
+
 const TTL_MS = 2 * 60 * 60 * 1000;        // a symbol's fundamentals/news don't move minute-to-minute
 const GROQ_MODEL = "llama-3.3-70b-versatile";
 const GEMINI_MODELS = ["gemini-flash-latest", "gemini-2.5-flash", "gemini-flash-lite-latest"];
@@ -136,18 +138,11 @@ function parseBias(text, anchor) {
 }
 
 async function callLLM(env, user) {
+  // This endpoint is PUBLIC and un-authenticated, so it uses ONLY the free provider
+  // pool (Groq, Gemini). The paid providers (Anthropic, Mistral-large) are deliberately
+  // NOT in the public chain — otherwise an attacker could bust the per-symbol cache and
+  // run up real spend on a paid key. (Anthropic quality bias belongs behind auth.)
   const chain = [];
-  if (env.ANTHROPIC_API_KEY) chain.push(async () => {
-    const r = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-api-key": env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({ model: ANTHROPIC_MODEL, max_tokens: 700, system: SYSTEM, messages: [{ role: "user", content: user }] }),
-    });
-    if (!r.ok) return null;
-    const d = await r.json();
-    const text = (d?.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n");
-    return text ? { text, model: ANTHROPIC_MODEL } : null;
-  });
   const oai = (base, key, model) => async () => {
     const r = await fetch(`${base}/chat/completions`, {
       method: "POST",
@@ -160,7 +155,6 @@ async function callLLM(env, user) {
     return text ? { text, model } : null;
   };
   if (env.GROQ_API_KEY) chain.push(oai("https://api.groq.com/openai/v1", env.GROQ_API_KEY, GROQ_MODEL));
-  if (env.MISTRAL_API_KEY) chain.push(oai("https://api.mistral.ai/v1", env.MISTRAL_API_KEY, "mistral-large-latest"));
   if (env.GEMINI_API_KEY) chain.push(async () => {
     for (const model of GEMINI_MODELS) {
       const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
@@ -199,10 +193,21 @@ export async function onRequest({ request, env }) {
     return json({ ...cached, cached: true }, 200, 600);
   }
 
-  const hasProvider = env.ANTHROPIC_API_KEY || env.GROQ_API_KEY || env.MISTRAL_API_KEY || env.GEMINI_API_KEY;
+  // Past the cache = about to run fundamentals fetches + a FREE-pool LLM call. Rate-limit
+  // fresh (uncached) reads per IP so the per-symbol cache can't be busted into unbounded
+  // provider calls (H1). Cached hits above stay cheap and unlimited; on a limit we simply
+  // degrade to the deterministic score (note:null), the same as when no LLM is configured.
+  const rl = rateLimit(`bias:${clientIp(request)}`, 12, 60_000);
+  if (!rl.ok) return json({ ok: true, hasLLM: false, note: null, market, symbol, rateLimited: true }, 200, 30);
+
+  const hasProvider = env.GROQ_API_KEY || env.GEMINI_API_KEY; // FREE pool only (public endpoint)
   if (!hasProvider) return json({ ok: true, hasLLM: false, note: null, market, symbol });
 
-  const origin = url.origin;
+  // Pin the origin for the internal self-calls to a known host — never trust the request
+  // Host header (a spoofed one would allow cache poisoning / SSRF-lite via origin).
+  const origin = /(^|\.)mmmxcix-quant\.pages\.dev$/.test(url.hostname) || url.hostname === "quant.mmmxcix.com"
+    ? url.origin
+    : (env.BETTER_AUTH_URL || "https://quant.mmmxcix.com");
   const [f, headlines, tickerNews] = await Promise.all([
     market === "crypto" ? Promise.resolve(null) : fetchFundamentals(origin, symbol),
     fetchHeadlines(origin),

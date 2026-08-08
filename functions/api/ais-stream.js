@@ -11,6 +11,17 @@ import { isAdminRequest } from "../_lib/auth.mjs";
 
 const UPSTREAM = "https://stream.aisstream.io/v0/stream";
 
+// Constant-time compare so the machine token can't be recovered byte-by-byte via
+// response timing (matches every other route; the raw === did not).
+function safeEqual(a, b) {
+  const enc = new TextEncoder();
+  const ab = enc.encode(String(a)), bb = enc.encode(String(b));
+  if (ab.length !== bb.length) return false;
+  let d = 0;
+  for (let i = 0; i < ab.length; i++) d |= ab[i] ^ bb[i];
+  return d === 0;
+}
+
 // Accept the socket first, then fail with a readable error frame — a plain
 // HTTP 4xx on an upgrade request surfaces as an opaque onerror in browsers.
 function refuse(reason) {
@@ -29,7 +40,7 @@ export async function onRequest({ request, env }) {
   // Browser auth: admin session cookie. Machine auth (agents, health checks):
   // ?token= matching the machine token — WS clients can't set headers.
   const url = new URL(request.url);
-  const tokenOk = !!env.DEV_ACCESS_TOKEN && url.searchParams.get("token") === env.DEV_ACCESS_TOKEN;
+  const tokenOk = !!env.DEV_ACCESS_TOKEN && safeEqual(url.searchParams.get("token") || "", env.DEV_ACCESS_TOKEN);
   if (!tokenOk && !(await isAdminRequest(env, request))) return refuse("Sign in with the dev account to use ship tracking.");
 
   let upstream;
