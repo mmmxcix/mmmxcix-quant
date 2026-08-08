@@ -69,7 +69,8 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 function NewsletterCard() {
   const [open, setOpen] = useState(false);
   const [email, setEmail] = useState('');
-  const [status, setStatus] = useState('idle'); // idle | sending | pending | updated | invalid | error | kv
+  const [status, setStatus] = useState('idle'); // idle | sending | pending | updated | invalid | error | kv | noaccept
+  const [accepted, setAccepted] = useState(false); // must accept Terms + Privacy before subscribing
 
   // Digest preferences
   const [categories, setCategories] = useState(['general']); // general | watchlist | portfolio
@@ -95,6 +96,10 @@ function NewsletterCard() {
     }
     if (categories.length === 0) {
       setStatus('nocat');
+      return;
+    }
+    if (!accepted) {
+      setStatus('noaccept');
       return;
     }
     setStatus('sending');
@@ -212,6 +217,16 @@ function NewsletterCard() {
               ))}
             </div>
 
+            <label className="flex items-start gap-2 mb-2 text-[11px] text-dim cursor-pointer">
+              <input
+                type="checkbox"
+                checked={accepted}
+                onChange={(e) => { setAccepted(e.target.checked); if (status === 'noaccept') setStatus('idle'); }}
+                className="mt-0.5 accent-[rgb(var(--c-accent))]"
+                aria-label="Accept Terms and Privacy Policy"
+              />
+              <span>I accept the <a href="/nutzung" className="text-accent hover:underline">Terms &amp; Liability</a> and the <a href="/datenschutz" className="text-accent hover:underline">Privacy Policy</a>.</span>
+            </label>
             <form onSubmit={subscribe} className="flex flex-col sm:flex-row gap-2">
               <input
                 type="email"
@@ -236,6 +251,9 @@ function NewsletterCard() {
             )}
             {status === 'nocat' && (
               <p className="mt-2 text-xs text-red-400">Select at least one category.</p>
+            )}
+            {status === 'noaccept' && (
+              <p className="mt-2 text-xs text-red-400">Please accept the Terms and Privacy Policy to subscribe.</p>
             )}
             {status === 'invalid' && (
               <p className="mt-2 text-xs text-red-400">Please enter a valid email address.</p>

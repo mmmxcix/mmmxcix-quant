@@ -6,7 +6,7 @@ import LegalLayout, { H2 } from "@/components/LegalLayout";
 // and third-party market-data/news fetches from the visitor's browser.
 export default function Datenschutz() {
   return (
-    <LegalLayout title="Privacy Policy" updated="July 7, 2026">
+    <LegalLayout title="Privacy Policy" updated="August 8, 2026">
       <p>
         Protecting your data matters to us. This policy explains, in accordance with the revised Swiss Data
         Protection Act (revDSG) and — where applicable — the EU General Data Protection Regulation (GDPR),
@@ -66,14 +66,28 @@ export default function Datenschutz() {
         behalf for the purpose of sending the newsletter.
       </p>
 
-      <H2>6. AI feature (strategy generator)</H2>
+      <H2>6. User accounts</H2>
       <p>
-        The optional AI strategy generator is access-restricted. If you use it, the text you enter is sent
-        through our server function to an AI provider (Google Gemini or Anthropic) to generate code. Do not
-        enter any personal or confidential data there.
+        If you create an account, we process your <strong className="text-text">email address</strong>, an
+        optional display name, and your password — which is <strong className="text-text">stored only as a
+        salted hash</strong> (scrypt), never in plain text. We also store your login session (a strictly
+        necessary, HttpOnly cookie), an optional two-factor secret and backup codes if you enable 2FA, and your
+        theme preference. This data is held in <em>Cloudflare D1</em> (a database on Cloudflare's infrastructure)
+        and is processed to provide and secure the account — the legal basis is performance of a contract
+        (Art. 6(1)(b) GDPR) and the corresponding revDSG provisions. We keep it until you delete your account,
+        after which it is removed. The session cookie is essential for login and is not used for tracking or
+        advertising.
       </p>
 
-      <H2>7. Your rights</H2>
+      <H2>7. AI features</H2>
+      <p>
+        The optional AI features are access-restricted. If you use them, the text you enter is sent through our
+        server function to a third-party AI provider (currently Anthropic, Mistral, Groq, or Google Gemini) to
+        generate code or analysis. Prompts are not used by us to train models; the providers process them under
+        their own terms. Please do not enter any personal or confidential data there.
+      </p>
+
+      <H2>8. Your rights</H2>
       <p>
         You have the right to access, rectify, erase, and restrict the processing of your data, as well as the
         rights to data portability and objection. To exercise them, contact{" "}
@@ -82,7 +96,7 @@ export default function Datenschutz() {
         FDPIC; in the EU: your national data protection authority).
       </p>
 
-      <H2>8. Changes</H2>
+      <H2>9. Changes</H2>
       <p>
         We update this policy when the site's features change. The version published here applies at any given
         time.

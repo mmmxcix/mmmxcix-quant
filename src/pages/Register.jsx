@@ -13,11 +13,13 @@ export default function Register() {
   const [password, setPassword] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
+  const [accepted, setAccepted] = useState(false);
 
   const submit = async (e) => {
     e.preventDefault();
     setErr("");
     if (password.length < 8) { setErr("Password must be at least 8 characters."); return; }
+    if (!accepted) { setErr("Please accept the Terms and Privacy Policy to create an account."); return; }
     setBusy(true);
     try {
       const { error } = await authClient.signUp.email({ email, password, name: name.trim() || email.split("@")[0] });
@@ -41,6 +43,11 @@ export default function Register() {
         <label className="block text-xs text-dim">Password
           <input type="password" required autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)}
             className="input-base w-full mt-1" placeholder="At least 8 characters" />
+        </label>
+        <label className="flex items-start gap-2 text-[11px] text-dim cursor-pointer pt-1">
+          <input type="checkbox" checked={accepted} onChange={(e) => setAccepted(e.target.checked)}
+            className="mt-0.5 accent-[rgb(var(--c-accent))]" aria-label="Accept Terms and Privacy Policy" />
+          <span>I accept the <a href="/nutzung" target="_blank" rel="noopener" className="text-accent hover:underline">Terms &amp; Liability</a> and the <a href="/datenschutz" target="_blank" rel="noopener" className="text-accent hover:underline">Privacy Policy</a>.</span>
         </label>
         {err && <p className="text-xs text-down">{err}</p>}
         <button type="submit" disabled={busy} className="btn-accent w-full justify-center flex items-center gap-2">
