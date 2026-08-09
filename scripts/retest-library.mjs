@@ -40,6 +40,8 @@ const BAR = {
   minPF: +(process.env.LAB_LIB_MIN_PF || 1.15),
   minTrades: +(process.env.LAB_LIB_MIN_TRADES || 100),
 };
+// Crown-veto floor — matches progressEntry's minTradesPerYear default.
+const MIN_TRADES_PER_YEAR = +(process.env.LAB_LIB_MIN_TPY || 8);
 
 // How long a critical-code-bug strategy may sit in "improve" awaiting a fix
 // before it's declared unfixable and buried. Two retest passes run per day, so
@@ -190,6 +192,37 @@ export async function retestLibrary() {
         await bury(entry, d.failureReason, d.reason);
         continue;
       }
+
+      // ── RISK-EXIT + FREQUENCY POLICY (user rule, Aug 9): a code strategy
+      // without a hard stop/trailing/target is never "done" — it is sidelined
+      // to improve with a concrete brief and its crown is VETOED (the Registry
+      // won't re-crown a vetoed entry) until real risk management exists. A
+      // crowned strategy trading under the frequency floor loses its crown the
+      // same way — "maxed out" must never read as an endorsement of a strategy
+      // that still fails our own bars.
+      const hasHardStop = entry.mode !== "code"
+        || /(stop|target|trailing|trail|\bsl\b|\btp\b)/i.test(String(entry.code || ""));
+      const tpy = res.metrics.spanYears > 0.5 ? (res.metrics.tradesPerYear ?? Infinity) : Infinity;
+      if (!hasHardStop) {
+        entry.crowned = false;
+        entry.crownVeto = "no hard stop-loss/trailing exit";
+        if (entry.status !== "improve") {
+          entry.status = "improve";
+          entry.statusAt = Date.now();
+          moves.push({ name: entry.name, to: "improve", why: "no risk exit" });
+        }
+        entry.failureReason = "No hard stop-loss/trailing exit — the position only leaves on a signal flip, so one adverse move can run unbounded. Add an ATR-based stop (+ trailing); a Python strategy can return a DataFrame with signal/stop/target columns for real intrabar brackets.";
+        await postLibrary({ upsert: entry });
+        continue;
+      }
+      if (entry.crowned && tpy < MIN_TRADES_PER_YEAR) {
+        entry.crowned = false;
+        entry.crownVeto = `only ${tpy.toFixed(1)} trades/yr (need ≥${MIN_TRADES_PER_YEAR})`;
+        moves.push({ name: entry.name, to: entry.status, why: "crown vetoed (trade rate)" });
+      } else if (entry.crownVeto && tpy >= MIN_TRADES_PER_YEAR) {
+        entry.crownVeto = null; // bars cleared again — Cortex may re-crown
+      }
+
       entry.status = d.status;
       entry.failureReason = d.failureReason;
       if (d.changed) {

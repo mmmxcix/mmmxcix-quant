@@ -1139,6 +1139,12 @@ export default function Backtest() {
                   strategy={strategy}
                   code={code}
                   compile={compileStrategy}
+                  // Python-aware: each fold / noisy copy gets its own Pyodide
+                  // signal run — compiling Python as JS was why k-fold and the
+                  // noise test errored on Python strategies.
+                  makeSignalFnFor={async (cs) =>
+                    lang === "python" ? signalsToFn(await runPythonSignals(code, cs)) : compileStrategy(code)
+                  }
                   candles={result.candles}
                   feeBps={feeBps}
                   positionPct={positionPct}

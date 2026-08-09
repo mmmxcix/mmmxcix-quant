@@ -202,20 +202,17 @@ export function walkForwardBuilder({ candles, strategy, folds = 5, feeBps = 10, 
   };
 }
 
-/**
- * K-fold consistency for CODE strategies (no parameters to optimize): run the
- * strategy independently on each sequential fold and check it doesn't live
- * off a single lucky window.
- */
-export function kFoldCode({ candles, makeSignalFn, folds = 5, feeBps = 10, positionPct = 100 }) {
+// Sequential fold slices for the k-fold checks; null when a fold would be too
+// short to mean anything. Shared by the sync and async variants below.
+function kFoldSlices(candles, folds) {
   const seg = Math.floor(candles.length / folds);
   if (seg < 120) return null;
-  const results = [];
-  for (let f = 0; f < folds; f++) {
-    const slice = candles.slice(f * seg, f === folds - 1 ? candles.length : (f + 1) * seg);
-    const r = runBacktest({ candles: slice, signalFn: makeSignalFn(), initialCapital: 10000, feeBps, positionPct });
-    results.push({ fold: f + 1, returnPct: r.metrics.totalReturnPct, pf: r.metrics.profitFactor, trades: r.metrics.tradeCount });
-  }
+  return Array.from({ length: folds }, (_, f) =>
+    candles.slice(f * seg, f === folds - 1 ? candles.length : (f + 1) * seg)
+  );
+}
+
+function kFoldSummary(results, folds) {
   const profitable = results.filter((r) => r.returnPct > 0).length;
   return {
     folds: results,
@@ -225,20 +222,51 @@ export function kFoldCode({ candles, makeSignalFn, folds = 5, feeBps = 10, posit
   };
 }
 
-// ── Price-noise robustness ─────────────────────────────────────────────────
+function kFoldRow(f, r) {
+  return { fold: f + 1, returnPct: r.metrics.totalReturnPct, pf: r.metrics.profitFactor, trades: r.metrics.tradeCount };
+}
 
 /**
- * Re-run the strategy on `runs` noisy copies of the data: every bar's OHLC is
- * shifted by iid Gaussian noise sized in average-true-range units. A real
- * edge survives small perturbations; a curve-fit one shatters.
+ * K-fold consistency for CODE strategies (no parameters to optimize): run the
+ * strategy independently on each sequential fold and check it doesn't live
+ * off a single lucky window.
  */
-export function noiseTest({ candles, makeSignalFn, runs = 25, noiseAtrMult = 0.25, feeBps = 10, positionPct = 100, seed = 1 }) {
-  if (candles.length < 100) return null;
+export function kFoldCode({ candles, makeSignalFn, folds = 5, feeBps = 10, positionPct = 100 }) {
+  const slices = kFoldSlices(candles, folds);
+  if (!slices) return null;
+  const results = slices.map((slice, f) =>
+    kFoldRow(f, runBacktest({ candles: slice, signalFn: makeSignalFn(), initialCapital: 10000, feeBps, positionPct }))
+  );
+  return kFoldSummary(results, folds);
+}
+
+/**
+ * Async k-fold for strategies whose signal fn must be BUILT per candle set —
+ * browser Python (Pyodide computes one signal series per DataFrame, so each
+ * fold needs its own run). `makeSignalFnFor(candles)` may return a promise.
+ * The sync variant above stays for the Node agents (their compiled Python is
+ * a synchronous per-bar fn).
+ */
+export async function kFoldCodeAsync({ candles, makeSignalFnFor, folds = 5, feeBps = 10, positionPct = 100 }) {
+  const slices = kFoldSlices(candles, folds);
+  if (!slices) return null;
+  const results = [];
+  for (let f = 0; f < slices.length; f++) {
+    const fn = await makeSignalFnFor(slices[f]);
+    results.push(kFoldRow(f, runBacktest({ candles: slices[f], signalFn: fn, initialCapital: 10000, feeBps, positionPct })));
+  }
+  return kFoldSummary(results, folds);
+}
+
+// ── Price-noise robustness ─────────────────────────────────────────────────
+
+// Deterministic noisy copies of a candle series (Box–Muller over mulberry32),
+// shifted by iid Gaussian noise sized in average-range units. Shared by the
+// sync and async noise tests so both perturb identically.
+function noisyCopies(candles, runs, noiseAtrMult, seed) {
   let atrSum = 0;
   for (const c of candles) atrSum += c.high - c.low;
   const unit = (atrSum / candles.length) * noiseAtrMult;
-
-  // Deterministic gaussian noise (Box–Muller over mulberry32).
   let s = seed >>> 0;
   const rand = () => {
     s |= 0; s = (s + 0x6d2b79f5) | 0;
@@ -250,22 +278,20 @@ export function noiseTest({ candles, makeSignalFn, runs = 25, noiseAtrMult = 0.2
     const u = Math.max(rand(), 1e-12), v = rand();
     return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
   };
-
-  const base = runBacktest({ candles, signalFn: makeSignalFn(), initialCapital: 10000, feeBps, positionPct });
-  const rets = [];
-  for (let r = 0; r < runs; r++) {
-    const noisy = candles.map((c) => {
+  return Array.from({ length: runs }, () =>
+    candles.map((c) => {
       const e = gauss() * unit;
       return { time: c.time, open: c.open + e, high: c.high + e, low: c.low + e, close: c.close + e, volume: c.volume };
-    });
-    const res = runBacktest({ candles: noisy, signalFn: makeSignalFn(), initialCapital: 10000, feeBps, positionPct });
-    rets.push(res.metrics.totalReturnPct);
-  }
+    })
+  );
+}
+
+function noiseSummary(baseReturnPct, rets, runs) {
   rets.sort((a, b) => a - b);
   const q = (p) => rets[Math.min(rets.length - 1, Math.floor(p * rets.length))];
   const profitable = rets.filter((x) => x > 0).length;
   return {
-    baseReturnPct: base.metrics.totalReturnPct,
+    baseReturnPct,
     medianReturnPct: q(0.5),
     p10ReturnPct: q(0.1),
     p90ReturnPct: q(0.9),
@@ -273,4 +299,38 @@ export function noiseTest({ candles, makeSignalFn, runs = 25, noiseAtrMult = 0.2
     runs,
     verdict: q(0.5) > 0 && profitable / rets.length >= 0.6 ? "pass" : "fail",
   };
+}
+
+/**
+ * Re-run the strategy on `runs` noisy copies of the data: every bar's OHLC is
+ * shifted by iid Gaussian noise sized in average-true-range units. A real
+ * edge survives small perturbations; a curve-fit one shatters.
+ */
+export function noiseTest({ candles, makeSignalFn, runs = 25, noiseAtrMult = 0.25, feeBps = 10, positionPct = 100, seed = 1 }) {
+  if (candles.length < 100) return null;
+  const base = runBacktest({ candles, signalFn: makeSignalFn(), initialCapital: 10000, feeBps, positionPct });
+  const rets = [];
+  for (const noisy of noisyCopies(candles, runs, noiseAtrMult, seed)) {
+    const res = runBacktest({ candles: noisy, signalFn: makeSignalFn(), initialCapital: 10000, feeBps, positionPct });
+    rets.push(res.metrics.totalReturnPct);
+  }
+  return noiseSummary(base.metrics.totalReturnPct, rets, runs);
+}
+
+/**
+ * Async noise test for per-candle-set signal factories (browser Python — each
+ * noisy copy needs its own Pyodide signal run). Perturbs identically to the
+ * sync variant.
+ */
+export async function noiseTestAsync({ candles, makeSignalFnFor, runs = 25, noiseAtrMult = 0.25, feeBps = 10, positionPct = 100, seed = 1, onProgress }) {
+  if (candles.length < 100) return null;
+  const base = runBacktest({ candles, signalFn: await makeSignalFnFor(candles), initialCapital: 10000, feeBps, positionPct });
+  const rets = [];
+  const copies = noisyCopies(candles, runs, noiseAtrMult, seed);
+  for (let i = 0; i < copies.length; i++) {
+    const res = runBacktest({ candles: copies[i], signalFn: await makeSignalFnFor(copies[i]), initialCapital: 10000, feeBps, positionPct });
+    rets.push(res.metrics.totalReturnPct);
+    onProgress?.(i + 1, copies.length);
+  }
+  return noiseSummary(base.metrics.totalReturnPct, rets, runs);
 }

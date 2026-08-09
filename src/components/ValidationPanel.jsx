@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { ShieldCheck, ShieldAlert, Loader2, Play, FlaskConical, Waves, SigmaSquare } from "lucide-react";
-import { walkForwardBuilder, kFoldCode, noiseTest, deflatedSharpe, equityReturns } from "@/lib/validation";
+import { walkForwardBuilder, kFoldCodeAsync, noiseTestAsync, deflatedSharpe, equityReturns } from "@/lib/validation";
 import { cn, fmtNum, fmtPct } from "@/lib/utils";
 
 // The anti-overfitting pipeline, applied to the CURRENT backtest setup:
@@ -27,7 +27,13 @@ function Card({ icon: Icon, title, children }) {
   );
 }
 
-export default function ValidationPanel({ mode, strategy, code, compile, candles, feeBps, positionPct, result, onVerdicts }) {
+export default function ValidationPanel({ mode, strategy, code, compile, makeSignalFnFor, candles, feeBps, positionPct, result, onVerdicts }) {
+  // Per-candle-set signal factory: Python needs a Pyodide run PER fold / noisy
+  // copy (its signals are computed per DataFrame); JS just recompiles. Falls
+  // back to the legacy `compile` prop so the panel stays usable standalone.
+  // (Passing Python code through compileStrategy was the old bug: k-fold and
+  // the noise test errored with `must define a function named "strategy"`.)
+  const signalFnFor = makeSignalFnFor || (async () => compile(code));
   const [wf, setWf] = useState(null);
   const [wfBusy, setWfBusy] = useState(false);
   const [noise, setNoise] = useState(null);
@@ -49,38 +55,36 @@ export default function ValidationPanel({ mode, strategy, code, compile, candles
     });
   }, [wf, dsr, noise, onVerdicts]);
 
-  const runWf = () => {
+  const runWf = async () => {
     setWfBusy(true);
     setWf(null);
-    setTimeout(() => { // let the spinner paint before the sync crunch
-      try {
-        const out = mode === "builder"
-          ? walkForwardBuilder({ candles, strategy, feeBps, positionPct })
-          : kFoldCode({ candles, makeSignalFn: () => compile(code), feeBps, positionPct });
-        setWf(out || { error: "Not enough data (needs ≥ 120 candles per fold — load a longer range)." });
-      } catch (e) {
-        setWf({ error: e.message });
-      } finally {
-        setWfBusy(false);
-      }
-    }, 30);
+    await new Promise((r) => setTimeout(r, 30)); // let the spinner paint first
+    try {
+      const out = mode === "builder"
+        ? walkForwardBuilder({ candles, strategy, feeBps, positionPct })
+        : await kFoldCodeAsync({ candles, makeSignalFnFor: signalFnFor, feeBps, positionPct });
+      setWf(out || { error: "Not enough data (needs ≥ 120 candles per fold — load a longer range)." });
+    } catch (e) {
+      setWf({ error: e.message });
+    } finally {
+      setWfBusy(false);
+    }
   };
 
-  const runNoise = () => {
+  const runNoise = async () => {
     setNoiseBusy(true);
     setNoise(null);
-    setTimeout(() => {
-      try {
-        const makeSignalFn = mode === "builder"
-          ? () => strategy.build(Object.fromEntries(strategy.params.map((p) => [p.key, p.default])))
-          : () => compile(code);
-        setNoise(noiseTest({ candles, makeSignalFn, feeBps, positionPct }) || { error: "Not enough data." });
-      } catch (e) {
-        setNoise({ error: e.message });
-      } finally {
-        setNoiseBusy(false);
-      }
-    }, 30);
+    await new Promise((r) => setTimeout(r, 30));
+    try {
+      const fnFor = mode === "builder"
+        ? async () => strategy.build(Object.fromEntries(strategy.params.map((p) => [p.key, p.default])))
+        : signalFnFor;
+      setNoise((await noiseTestAsync({ candles, makeSignalFnFor: fnFor, feeBps, positionPct })) || { error: "Not enough data." });
+    } catch (e) {
+      setNoise({ error: e.message });
+    } finally {
+      setNoiseBusy(false);
+    }
   };
 
   return (

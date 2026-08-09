@@ -41,9 +41,11 @@ const RULES = [
   {
     id: "no-risk-exit",
     severity: "warn",
-    // No stop / target / trailing / ATR-based exit anywhere: the position only ever
-    // flips on an opposite signal, so a single bad trade can run unbounded.
-    test: (code) => !/(stop|target|trailing|trail|\bsl\b|\btp\b|\.atr|atr\(|drawdown|risk)/i.test(code),
+    // No stop / target / trailing exit anywhere: the position only ever flips
+    // on an opposite signal, so a single bad trade can run unbounded. NOTE:
+    // merely MENTIONING atr/risk no longer suppresses this — three library
+    // strategies computed ATR for their entries yet had no stop at all.
+    test: (code) => !/(stop|target|trailing|trail|\bsl\b|\btp\b|drawdown)/i.test(code),
     msg: "No stop-loss, target or trailing exit — the position rides until an opposite signal, so one bad trade can run unbounded. Add ATR- or structure-based risk management.",
   },
   {

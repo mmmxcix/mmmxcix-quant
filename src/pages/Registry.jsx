@@ -190,7 +190,10 @@ function AgentCandidates() {
       for (const e of getEntries()) {
         if (!e.candidateId || e.status === "graveyard") continue;
         const c = byCand.get(e.candidateId);
-        if (c?.maxed && !e.crowned) setCrowned(e.id, true);
+        // crownVeto: the retest pass stripped the crown for a concrete reason
+        // (no hard stop, too few trades/yr) — don't let Cortex's maxed flag
+        // re-crown it until the veto is cleared by a passing retest.
+        if (c?.maxed && !e.crowned && !e.crownVeto) setCrowned(e.id, true);
         if (!autoPromote) continue;
         let target = null;
         if (tradingIds.has(e.candidateId)) target = "paper";

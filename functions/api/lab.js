@@ -324,8 +324,26 @@ export async function onRequest({ request, env, waitUntil }) {
   if (Array.isArray(body?.promote)) {
     const existing = await readStrategyItems(env);
     const manual = existing.filter((s) => s && !s.auto);
+    // A candidate whose LIBRARY card is sidelined (improve) or buried must not
+    // be auto-promoted back into the paper book — the card carries the fix
+    // brief, and the retest pass re-admits it once it clears. Best-effort: no
+    // DB binding (or a read error) simply skips the filter.
+    const blocked = new Set();
+    try {
+      if (env.DB) {
+        const rows = await env.DB.prepare("SELECT data FROM library WHERE owner = ?").bind("dev").all();
+        for (const r of rows?.results || []) {
+          try {
+            const e = JSON.parse(r.data);
+            if ((e.status === "improve" || e.status === "graveyard") && e.candidateId) blocked.add(String(e.candidateId));
+          } catch { /* skip a bad row */ }
+        }
+      }
+    } catch { /* filter is best-effort */ }
+    const baseCand = (s) => String(s.candidateId || String(s.id).replace(/_(prop|private)(_.*)?$/, ""));
     const incoming = body.promote
       .filter((s) => s && s.id && typeof s.code === "string")
+      .filter((s) => !blocked.has(baseCand(s)))
       .map((s) => ({ ...s, auto: true, profile: s.profile || DEFAULT_PROFILE }));
 
     // Merge newest-first, then apply the cap SEPARATELY per profile so the two
