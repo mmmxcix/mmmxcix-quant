@@ -189,11 +189,15 @@ function AgentCandidates() {
       const order = { factory: 0, validated: 1, paper: 2 };
       for (const e of getEntries()) {
         if (!e.candidateId || e.status === "graveyard") continue;
+        // SIDELINED entries are off-limits for auto-progression AND crowning:
+        // "improve" is a deliberate parking spot (no hard stop, too few
+        // trades/yr, …). `order` has no rank for it, so without this guard a
+        // re-validated candidate dragged its improve entry forward to
+        // Validated, silently undoing the sideline. Only the retest pass (or
+        // the user) moves an improve/vetoed entry back into the pipeline.
+        if (e.status === "improve" || e.crownVeto) continue;
         const c = byCand.get(e.candidateId);
-        // crownVeto: the retest pass stripped the crown for a concrete reason
-        // (no hard stop, too few trades/yr) — don't let Cortex's maxed flag
-        // re-crown it until the veto is cleared by a passing retest.
-        if (c?.maxed && !e.crowned && !e.crownVeto) setCrowned(e.id, true);
+        if (c?.maxed && !e.crowned) setCrowned(e.id, true);
         if (!autoPromote) continue;
         let target = null;
         if (tradingIds.has(e.candidateId)) target = "paper";

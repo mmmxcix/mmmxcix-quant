@@ -324,7 +324,19 @@ export function pruneGraveyard() {
 // keeps its pipeline stage (a crowned Paper strat still trades) and also shows in
 // the Maxed-out column and the 👑 filter.
 export function setCrowned(id, crowned = true) {
-  const next = read().map((e) => (e.id === id ? { ...e, crowned: !!crowned } : e));
+  let changed = false;
+  const next = read().map((e) => {
+    if (e.id !== id) return e;
+    // A vetoed entry (the retest pass stripped its crown for a concrete
+    // reason — no hard stop, too few trades/yr) cannot be re-crowned by ANY
+    // caller until the veto clears. This also defuses stale bundles that
+    // predate the veto check.
+    if (crowned && e.crownVeto) return e;
+    if (!!e.crowned === !!crowned) return e;
+    changed = true;
+    return { ...e, crowned: !!crowned };
+  });
+  if (!changed) return;
   write(next);
   const updated = next.find((e) => e.id === id);
   if (updated) push({ upsert: updated });
