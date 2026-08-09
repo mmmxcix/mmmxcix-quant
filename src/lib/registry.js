@@ -258,6 +258,23 @@ export function saveEntry({ name, market, symbol, interval, range, mode, strateg
   return entry;
 }
 
+// Burying/deleting must remove the strategy EVERYWHERE — including the live
+// paper book, or the lab agent keeps trading a strategy the library considers
+// dead. Fire-and-forget: the admin session cookie authorizes it, offline just
+// means the twice-daily retest pass retires it instead.
+function retireFromAgent(e) {
+  if (!e || typeof fetch === "undefined") return;
+  const ids = [e.id, e.paperId, e.candidateId].filter(Boolean);
+  const codes = e.code ? [e.code] : [];
+  if (!ids.length && !codes.length) return;
+  try {
+    fetch("/api/lab", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ retire: { ids, codes } }), keepalive: true,
+    }).catch(() => {});
+  } catch { /* offline */ }
+}
+
 export function setStatus(id, status) {
   if (!STATUSES.includes(status)) return;
   // Stamp WHEN it entered this stage so the UI can show "newly added to Paper"
@@ -272,6 +289,7 @@ export function setStatus(id, status) {
   write(next);
   const updated = next.find((e) => e.id === id);
   if (updated) push({ upsert: updated });
+  if (updated && status === "graveyard") retireFromAgent(updated);
 }
 
 /** Days left before a buried strategy is auto-deleted (0 = due for deletion),
@@ -294,7 +312,10 @@ export function pruneGraveyard() {
   if (!expired.length) return 0;
   const keep = cur.filter((e) => !expired.includes(e));
   write(keep);
-  for (const e of expired) push({ remove: e.id });
+  for (const e of expired) {
+    push({ remove: e.id });
+    retireFromAgent(e); // safety net for strats buried before retire existed
+  }
   return expired.length;
 }
 
@@ -324,6 +345,8 @@ export function setNote(id, note) {
 }
 
 export function removeEntry(id) {
+  const gone = read().find((e) => e.id === id);
   write(read().filter((e) => e.id !== id));
   push({ remove: id });
+  if (gone) retireFromAgent(gone); // deleted from the library → stop trading it too
 }

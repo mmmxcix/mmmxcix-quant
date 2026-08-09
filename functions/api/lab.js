@@ -264,6 +264,30 @@ export async function onRequest({ request, env, waitUntil }) {
     return json({ ok: true, mode });
   }
 
+  // Retire strategies from the live paper book — the "remove from EVERYWHERE"
+  // hook: burying/deleting a library entry (Registry UI or the retest pass) calls
+  // this so the lab agent stops trading it on its next cycle. Matches by any id
+  // the caller knows (library id, paperId, candidateId) or by normalized code, so
+  // a republished copy under a different id is caught too.
+  if (body?.retire && typeof body.retire === "object") {
+    const ids = new Set((body.retire.ids || []).filter(Boolean).map(String));
+    const normCode = (c) => String(c || "")
+      .replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "").replace(/#[^\n]*/g, "")
+      .replace(/\s+/g, "").toLowerCase();
+    const codeSigs = new Set((body.retire.codes || []).filter(Boolean).map(normCode));
+    const items = await readStrategyItems(env);
+    const keep = items.filter((s) => {
+      if (!s) return false;
+      if (ids.has(String(s.id)) || (s.candidateId && ids.has(String(s.candidateId)))) return false;
+      if (s.code && codeSigs.size && codeSigs.has(normCode(s.code))) return false;
+      return true;
+    });
+    if (keep.length !== items.length) {
+      await env.SUBSCRIBERS.put("lab:strategies", JSON.stringify({ items: tidyStrategies(keep), publishedAt: Date.now() }));
+    }
+    return json({ ok: true, retired: items.length - keep.length, remaining: keep.length });
+  }
+
   // Registry's "Publish to agent": the user's manual paper list. Preserve any
   // research-auto-promoted strategies already stored, so a manual publish never
   // wipes the autonomous ones (and vice-versa).
