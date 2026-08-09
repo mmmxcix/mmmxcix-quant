@@ -17,8 +17,12 @@
 // `atrPeriod`, `rsi_len` are optimizable too — the number-literal RHS keeps it to
 // genuine numeric constants, and SKIP drops obvious loop/temp counters.
 const ID = "[A-Za-z_$][A-Za-z0-9_$]*";
-const TUPLE_RE = new RegExp(`^(\\s*(?:const\\s+|let\\s+|var\\s+)?)(${ID}(?:\\s*,\\s*${ID})+)(\\s*=\\s*)(.+?)(\\s*;?\\s*)$`);
-const SINGLE_RE = new RegExp(`^(\\s*(?:const\\s+|let\\s+|var\\s+)?)(${ID})(\\s*=\\s*)(-?\\d+(?:\\.\\d+)?)(\\s*;?\\s*)$`);
+// The tail tolerates a trailing comment (`x = 20  # period` / `const x = 20; // n`)
+// — real Cortex/user code annotates its constants inline, and requiring a bare
+// line end made the whole panel report "no tunable constants" on such code.
+const TAIL = "(\\s*;?\\s*(?:(?:#|//).*)?)$";
+const TUPLE_RE = new RegExp(`^(\\s*(?:const\\s+|let\\s+|var\\s+)?)(${ID}(?:\\s*,\\s*${ID})+)(\\s*=\\s*)(.+?)${TAIL}`);
+const SINGLE_RE = new RegExp(`^(\\s*(?:const\\s+|let\\s+|var\\s+)?)(${ID})(\\s*=\\s*)(-?\\d+(?:\\.\\d+)?)${TAIL}`);
 const NUM = /^-?\d+(?:\.\d+)?$/;
 const SKIP = /^(i|j|k|l|m|n|x|y|z|_|idx|len|sum|cnt|tmp|acc|out|res|ret)$/; // loop/temp vars, not params
 

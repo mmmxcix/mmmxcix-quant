@@ -5,10 +5,12 @@
 // market: "crypto" → Binance (SYMBOLUSDT); "stock" → Yahoo (equities, ETFs, and
 // FX via the =X suffix). label is what the UI shows.
 
+// Tickers follow Binance renames: MATIC→POL (Sep 2024), RNDR→RENDER (Jul 2024),
+// FTM→S (Sonic, Jan 2025) — the old pairs are delisted and error every scan.
 const crypto = [
-  "BTC", "ETH", "BNB", "SOL", "XRP", "ADA", "DOGE", "AVAX", "DOT", "LINK", "MATIC", "LTC",
+  "BTC", "ETH", "BNB", "SOL", "XRP", "ADA", "DOGE", "AVAX", "DOT", "LINK", "POL", "LTC",
   "BCH", "ATOM", "UNI", "XLM", "ETC", "FIL", "APT", "ARB", "OP", "NEAR", "INJ", "SUI",
-  "SEI", "TIA", "RUNE", "AAVE", "MKR", "LDO", "IMX", "RNDR", "FTM", "ALGO", "VET", "HBAR",
+  "SEI", "TIA", "RUNE", "AAVE", "MKR", "LDO", "IMX", "RENDER", "S", "ALGO", "VET", "HBAR",
   "GRT", "SAND", "MANA", "AXS", "PEPE", "SHIB", "WIF", "TON", "TRX",
 ].map((c) => ({ symbol: `${c}USDT`, market: "crypto", label: `${c}/USDT`, cls: "crypto" }));
 

@@ -49,3 +49,23 @@ test("no constants → empty space, substitution is a no-op", () => {
   assert.equal(codeParamSpace(code).length, 0);
   assert.equal(substituteConstants(code, {}), code);
 });
+
+test("detects INDENTED constants with trailing comments (real Cortex/user code)", () => {
+  // This shape used to report "no tunable constants": params live inside the
+  // def and carry inline comments.
+  const py = `def signals(df):
+    ema_period = 20  # EMA Periode
+    atr_mult = 1.5   # Stop-Abstand
+    return None`;
+  const space = codeParamSpace(py);
+  assert.deepEqual(space.map((p) => p.key).sort(), ["atr_mult", "ema_period"]);
+  const out = substituteConstants(py, { ema_period: 50, atr_mult: 2 });
+  assert.match(out, /ema_period = 50  # EMA Periode/);
+  assert.match(out, /atr_mult = 2   # Stop-Abstand/);
+});
+
+test("detects JS constants with trailing // comments", () => {
+  const js = `const lookback = 50; // bars\nfunction strategy(ctx){ return "flat"; }`;
+  assert.deepEqual(codeParamSpace(js).map((p) => p.key), ["lookback"]);
+  assert.match(substituteConstants(js, { lookback: 80 }), /const lookback = 80; \/\/ bars/);
+});

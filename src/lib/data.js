@@ -219,13 +219,31 @@ async function fetchYahooIntraday(symbol, yInterval, fromSec, toSec) {
   return [...seen.values()].sort((x, y) => x.time - y.time);
 }
 
+// Resolve a range id into { days, yahoo }. Accepts the curated RANGES ids AND
+// generic "<n>y|mo|d" strings ("10y", "2y", "7d") — callers like the market
+// scanner ask for windows the UI chip list doesn't carry, and the old silent
+// fallback to RANGES[1] ("5d") starved every such request down to ~5 bars,
+// which broke Find-best-market outright (0 kept, everything "no data").
+// Yahoo natively accepts 2y/10y range strings, so they pass straight through.
+export function resolveRange(range) {
+  const def = RANGES.find((r) => r.id === range);
+  if (def) return def;
+  const m = /^(\d+)(y|mo|d)$/.exec(String(range || ""));
+  if (m) {
+    const n = +m[1];
+    const days = m[2] === "y" ? n * 365 : m[2] === "mo" ? n * 30 : n;
+    return { id: range, yahoo: range, days };
+  }
+  return RANGES[1];
+}
+
 /**
  * Fetch candles. Either a relative `range` (default) or an explicit period
  * `{ from, to }` (unix SECONDS) — the period wins when both are given.
  */
 export async function fetchCandles({ market, symbol, interval = "1d", range = "1y", from, to, maxBars }) {
   const iDef = intervalDef(interval);
-  const rDef = RANGES.find((r) => r.id === range) || RANGES[1];
+  const rDef = resolveRange(range);
   if (!iDef.markets.includes(market)) {
     throw new Error(`Interval ${iDef.label} is not available for this market.`);
   }
