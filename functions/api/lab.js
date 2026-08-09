@@ -111,6 +111,17 @@ function hasCriticalBug(s) {
   if (shortBracket && stopBelow && !stopAbove) return true;
   const longBracket = /\bsignal\s*:\s*["']long["'][^}]*\b(stop|target)\b/.test(c) || /["']long["']\s*,\s*(stop|target)/.test(c);
   if (longBracket && stopAbove && !stopBelow) return true;
+  // Self-inclusive rolling-extreme exit (mirrors strategyAudit): an exit level
+  // of close.rolling(n).min() includes the current close, so `close < level`
+  // can never fire — the described exit is dead code.
+  if (/df\[['"]close['"]\]\s*<\s*df\[['"]close['"]\]\.rolling\([^)]*\)\.min\(\)(?!\s*\.shift)/.test(c)) return true;
+  if (/df\[['"]close['"]\]\s*>\s*df\[['"]close['"]\]\.rolling\([^)]*\)\.max\(\)(?!\s*\.shift)/.test(c)) return true;
+  for (const m of c.matchAll(/(?:df\[['"](\w+)['"]\]|(\w+))\s*=\s*df\[['"]close['"]\]\.rolling\([^)]*\)\.(min|max)\(\)\s*$/gm)) {
+    const name = m[1] || m[2];
+    const ref = m[1] ? `df\\[['"]${name}['"]\\]` : `\\b${name}\\b`;
+    const cmp = m[3] === "min" ? "<" : ">";
+    if (new RegExp(`df\\[['"]close['"]\\]\\s*${cmp}\\s*${ref}(?!\\s*\\.shift)`).test(c)) return true;
+  }
   return false;
 }
 

@@ -80,6 +80,38 @@ const RULES = [
     msg: "The strategy returns a single constant side on every path — that's a static position, not a signal. The decision must depend on the price data.",
   },
   {
+    id: "self-inclusive-extreme-exit",
+    severity: "critical",
+    // Pandas: an exit level built as close.rolling(n).min() INCLUDES the
+    // current close, so `close < exit_level` is mathematically impossible —
+    // the exit is dead code and the tested behavior is not the described
+    // strategy (found in the wild: "EMA trend (long)" / "Bitcoin-Google").
+    // Correct code shifts the window (`.shift(1)`), which suppresses this.
+    // Mirror for a max-based breakout exit with a strict `>`.
+    test: (code) => {
+      if (/df\[['"]close['"]\]\s*<\s*df\[['"]close['"]\]\.rolling\([^)]*\)\.min\(\)(?!\s*\.shift)/.test(code)) return true;
+      if (/df\[['"]close['"]\]\s*>\s*df\[['"]close['"]\]\.rolling\([^)]*\)\.max\(\)(?!\s*\.shift)/.test(code)) return true;
+      // Named form: X = df['close'].rolling(n).min()  …  df['close'] < X
+      for (const m of code.matchAll(/(?:df\[['"](\w+)['"]\]|(\w+))\s*=\s*df\[['"]close['"]\]\.rolling\([^)]*\)\.(min|max)\(\)\s*$/gm)) {
+        const name = m[1] || m[2];
+        const ref = m[1] ? `df\\[['"]${name}['"]\\]` : `\\b${name}\\b`;
+        const cmp = m[3] === "min" ? "<" : ">";
+        if (new RegExp(`df\\[['"]close['"]\\]\\s*${cmp}\\s*${ref}(?!\\s*\\.shift)`).test(code)) return true;
+      }
+      return false;
+    },
+    msg: "Impossible exit: the exit level is close.rolling(n).min()/max() INCLUDING the current bar, so `close < min` (or `close > max`) can never be true — the exit is dead code and positions only ever leave when the entry condition lapses. Shift the window (`.rolling(n).min().shift(1)`) or build the level from low/high.",
+  },
+  {
+    id: "prev-bar-anchored-bracket",
+    severity: "warn",
+    // A "stop loss / target" computed as the ONE-BAR return (close[i] vs
+    // close[i-1]) is not a bracket from the entry price — the stated risk
+    // management doesn't exist; it merely reacts to single-bar moves.
+    test: (code) => /\.iloc\[i\]\s*-\s*df\[['"]close['"]\]\.iloc\[i\s*-\s*1\]\s*\)\s*\/\s*df\[['"]close['"]\]\.iloc\[i\s*-\s*1\]\s*[<>]=?\s*-?\s*\w*(stop|target|tp|sl)\w*/i.test(code),
+    msg: "The stop/target is measured on the PREVIOUS bar's one-bar move, not from the entry price — a 2% stop that only sees single-bar drops lets a slow 10% bleed through. Anchor the bracket to the recorded entry price.",
+  },
+  {
     id: "hardcoded-price-level",
     severity: "warn",
     // A literal price compared against close/price (e.g. `close > 4270`) welds

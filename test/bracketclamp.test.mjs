@@ -131,6 +131,39 @@ test("audit does NOT flag a correct dual-side strategy (both stop signs present)
   assert.equal(auditStrategy(code, "js").findings.some((f) => f.id === "inverted-short-bracket"), false);
 });
 
+test("audit catches the impossible self-inclusive rolling-min exit (dead exit)", () => {
+  // The real pattern from "Bitcoin-Google" / "EMA trend (long)": the exit level
+  // includes the current close, so close < exit_level can never be true.
+  const broken = `def signals(df):
+    df['exit_level'] = df['close'].rolling(10).min()
+    exit_condition = df['close'] < df['exit_level']
+    return exit_condition`;
+  const a = auditStrategy(broken, "python");
+  assert.ok(a.findings.some((f) => f.id === "self-inclusive-extreme-exit"));
+  assert.ok(a.blocked);
+  // The corrected form (shifted window) must NOT fire.
+  const fixed = `def signals(df):
+    df['exit_level'] = df['close'].rolling(10).min().shift(1)
+    exit_condition = df['close'] < df['exit_level']
+    return exit_condition`;
+  assert.equal(auditStrategy(fixed, "python").findings.some((f) => f.id === "self-inclusive-extreme-exit"), false);
+  // A low-based level is fine too (low can be under the close).
+  const lowBased = `def signals(df):
+    df['exit_level'] = df['low'].rolling(10).min()
+    exit_condition = df['close'] < df['exit_level']
+    return exit_condition`;
+  assert.equal(auditStrategy(lowBased, "python").findings.some((f) => f.id === "self-inclusive-extreme-exit"), false);
+});
+
+test("audit warns on a stop/target anchored to the previous bar, not the entry", () => {
+  // The real pattern from "DAX30 -LONG SET UP": a one-bar move is not a bracket.
+  const code = `def signals(df):
+    if (df['close'].iloc[i] - df['close'].iloc[i-1]) / df['close'].iloc[i-1] <= -stop_loss:
+        signals.iloc[i] = 0`;
+  const a = auditStrategy(code, "python");
+  assert.ok(a.findings.some((f) => f.id === "prev-bar-anchored-bracket"));
+});
+
 test("audit warns on hardcoded price levels but not indicator thresholds", () => {
   const hard = `function strategy(ctx){ return ctx.close > 4270 && ctx.close < 4330 ? "long" : "flat"; }`;
   assert.ok(auditStrategy(hard, "js").findings.some((f) => f.id === "hardcoded-price-level"));
