@@ -490,8 +490,10 @@ export default function WorldMap() {
         if (!r.ok) return;
         const j = await r.json();
         if (!alive) return;
-        disastersRef.current = (j.disasters || []).map(([lat, lon, type, alert, name, country, date, severity]) =>
-          ({ lat, lon, type, alert, name, country, date, severity, u: mercX(lon), v: mercY(lat) }));
+        disastersRef.current = (j.disasters || [])
+          .filter(([lat, lon]) => Number.isFinite(+lat) && Number.isFinite(+lon)) // drop null/NaN coords (bad GDACS geometries)
+          .map(([lat, lon, type, alert, name, country, date, severity]) =>
+            ({ lat, lon, type, alert, name, country, date, severity, u: mercX(lon), v: mercY(lat) }));
         needsDraw.current = true;
       } catch { /* keep last */ }
     };

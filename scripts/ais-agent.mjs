@@ -360,28 +360,56 @@ setTimeout(sweepConflicts, 30_000);
 const DISASTERS_EVERY_MS = 60 * 60_000; // GDACS updates slowly; hourly saves KV writes
 const GDACS_TYPES = { FL: "FL", DR: "DR", TC: "TC", WF: "WF" }; // drop EQ (USGS covers quakes)
 const ALERT = { Green: 0, Orange: 1, Red: 2 };
+
+// GDACS returns MANY features per event — a Point (current position), a LineString
+// (cyclone track) and several Polygons (forecast cones / affected areas), all sharing
+// one eventid. The old parser read c[1] as a latitude on ALL of them, so a Polygon's
+// nested coordinate became NaN (→ null) and every geometry-part duplicated the event
+// (e.g. one cyclone appeared 118×). Extract ONE representative [lon,lat] per geometry
+// and keep ONE marker per eventid, preferring the Point (the real current position).
+function gdacsPoint(g) {
+  if (!g || !Array.isArray(g.coordinates)) return null;
+  const c = g.coordinates;
+  const ok = (x, y) => (Number.isFinite(+x) && Number.isFinite(+y) ? [+x, +y] : null);
+  if (g.type === "Point") return ok(c[0], c[1]);
+  if (g.type === "LineString" && c.length) { const m = c[Math.floor(c.length / 2)]; return Array.isArray(m) ? ok(m[0], m[1]) : null; }
+  if (g.type === "Polygon" && Array.isArray(c[0]) && c[0].length) { // centroid of the outer ring
+    let sx = 0, sy = 0, n = 0;
+    for (const pt of c[0]) if (Array.isArray(pt) && Number.isFinite(+pt[0]) && Number.isFinite(+pt[1])) { sx += +pt[0]; sy += +pt[1]; n++; }
+    return n ? [sx / n, sy / n] : null;
+  }
+  return null;
+}
 async function sweepDisasters() {
   try {
     const r = await fetch("https://www.gdacs.org/gdacsapi/api/events/geteventlist/MAP", { signal: AbortSignal.timeout(60_000) });
     if (!r.ok) throw new Error(`GDACS HTTP ${r.status}`);
     const j = await r.json();
-    const out = [];
+    const byEvent = new Map(); // eventid -> best feature {p, pt, isPoint}
     for (const f of j.features || []) {
-      const p = f.properties || {}, g = f.geometry || {};
+      const p = f.properties || {};
       if (!GDACS_TYPES[p.eventtype]) continue;
-      const c = g.coordinates;
-      if (!Array.isArray(c) || c.length < 2) continue;
+      const pt = gdacsPoint(f.geometry);
+      if (!pt) continue;
+      const id = p.eventid ?? `${p.eventtype}:${p.name}`;
+      const isPoint = f.geometry?.type === "Point";
+      const cur = byEvent.get(id);
+      // Keep one per event: a Point (current position) beats a track/area centroid.
+      if (!cur || (isPoint && !cur.isPoint)) byEvent.set(id, { p, pt, isPoint });
+    }
+    const out = [];
+    for (const { p, pt } of byEvent.values()) {
       const sd = p.severitydata || {};
       out.push([
-        +(+c[1]).toFixed(2), +(+c[0]).toFixed(2), p.eventtype, ALERT[p.alertlevel] ?? 0,
-        String(p.name || "").slice(0, 60), String(p.country || "").slice(0, 40),
+        +(+pt[1]).toFixed(2), +(+pt[0]).toFixed(2), p.eventtype, ALERT[p.alertlevel] ?? 0,
+        String(p.name || p.eventname || "").slice(0, 60), String(p.country || "").slice(0, 40),
         String(p.fromdate || "").slice(0, 10), String(sd.severitytext || "").slice(0, 40),
       ]);
     }
     // Red first, then orange — most severe stays if we ever cap.
     out.sort((a, b) => b[3] - a[3]);
     await pushJson("/api/disasters", { disasters: out }, "disasters");
-    console.log(`[${new Date().toISOString()}] disasters: pushed ${out.length} GDACS events → ok`);
+    console.log(`[${new Date().toISOString()}] disasters: pushed ${out.length} GDACS events (deduped from ${(j.features || []).length} features) → ok`);
   } catch (e) { console.error(`GDACS sweep failed: ${e.message}`); }
 }
 setInterval(sweepDisasters, DISASTERS_EVERY_MS);
