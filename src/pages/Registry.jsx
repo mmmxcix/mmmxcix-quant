@@ -162,21 +162,26 @@ function AgentCandidates() {
       } catch { /* offline — skip the paper step this pass */ }
       if (!alive) return;
 
-      // Surface paper-book strategies that have NO registry card — e.g. manually
-      // published strats (candidateId=none). Without this they trade invisibly, so
-      // "not all strats are in the Registry". Adopt each ONCE (deduped by paperId).
+      // Adopt EVERY live paper-book (lab-agent) strategy that has no library card yet —
+      // whether or not it links a Cortex candidate. Previously anything with a
+      // candidateId was skipped as "handled elsewhere", so a strategy whose candidate
+      // was evicted/never imported kept trading INVISIBLY: "not all strats are in the
+      // Registry/library". Deduped by paperId, code, AND candidateId. Runs whenever the
+      // Registry is open, so opening it reconciles the whole lab book into the library.
       const known = getEntries();
       const havePaperId = new Set(known.filter((e) => e.paperId).map((e) => e.paperId));
       const haveCode = new Set(known.filter((e) => e.code).map((e) => e.code));
+      const haveCand = new Set(known.filter((e) => e.candidateId).map((e) => e.candidateId));
       for (const s of paperItems) {
-        if (!s || !s.id || s.candidateId || !s.code) continue;         // linked/codeless → handled elsewhere
-        if (havePaperId.has(s.id) || haveCode.has(s.code)) continue;   // already in the library
+        if (!s || !s.id || !s.code) continue;                          // need code to show/backtest
+        if (havePaperId.has(s.id) || haveCode.has(s.code)) continue;   // already adopted
+        if (s.candidateId && haveCand.has(s.candidateId)) continue;    // its candidate card already exists
         saveEntry({
           name: s.name || "Paper strategy", market: s.market, symbol: s.symbol, interval: s.interval,
           mode: "code", code: s.code, language: s.language || null,
           positionPct: s.positionPct ?? 100, feeBps: s.feeBps ?? 10, leverage: s.leverage ?? 1,
-          status: "paper", paperId: s.id,
-          failureReason: "Adopted from the paper book — published without a backtest, so it has no validation metrics.",
+          status: "paper", paperId: s.id, candidateId: s.candidateId || null,
+          failureReason: "Adopted from the live paper book so it appears in the library and pipeline.",
         });
       }
 
