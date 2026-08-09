@@ -181,13 +181,41 @@ export function runBacktest({ candles, signalFn, initialCapital = 10000, feeBps 
 
   // Intrabar bracket exit for the position carried into / opened on bar i.
   // Stop is assumed to fill before the target when both sit inside the bar.
+  //
+  // FILL HONESTY: a bracket can never fill at a price the market never offered
+  // from this bar's open onward. A long's sell-stop that sits AT/ABOVE the open
+  // (side-inverted stop math, or a gap through a trailing stop) fills at the
+  // OPEN — the market price — not at the fantasy level above it. Without this
+  // clamp, a strategy whose stop lands above entry (e.g. `stop = close + atr`
+  // sign bug, or an optimizer driving riskMultiplier negative) exits EVERY
+  // trade at a profit and compounds into nonsense (100% win rate, 10^150
+  // equity). Likewise a limit target the bar already opened beyond fills at
+  // the open. Clamped fills are reported once via `warnings`.
+  let bracketClampWarned = false;
+  const clampWarn = (side, kind) => {
+    if (bracketClampWarned) return;
+    bracketClampWarned = true;
+    warnings.push(`⚠ Bracket sanity: a ${side} ${kind} sat beyond the bar's open and was filled at the OPEN instead (no fantasy fills). Check the strategy's stop/target math — sign, R-multiple, or an optimizer-driven parameter.`);
+  };
   const checkBrackets = (bar, i) => {
     if (position === "long") {
-      if (stopLevel !== null && bar.low <= stopLevel) return closePosition(stopLevel, i, "stop");
-      if (targetLevel !== null && bar.high >= targetLevel) return closePosition(targetLevel, i, "target");
+      if (stopLevel !== null && bar.low <= stopLevel) {
+        if (stopLevel > bar.open) clampWarn("long", "stop");
+        return closePosition(Math.min(stopLevel, bar.open), i, "stop");
+      }
+      if (targetLevel !== null && bar.high >= targetLevel) {
+        if (targetLevel < bar.open) clampWarn("long", "target");
+        return closePosition(Math.max(targetLevel, bar.open), i, "target");
+      }
     } else if (position === "short") {
-      if (stopLevel !== null && bar.high >= stopLevel) return closePosition(stopLevel, i, "stop");
-      if (targetLevel !== null && bar.low <= targetLevel) return closePosition(targetLevel, i, "target");
+      if (stopLevel !== null && bar.high >= stopLevel) {
+        if (stopLevel < bar.open) clampWarn("short", "stop");
+        return closePosition(Math.max(stopLevel, bar.open), i, "stop");
+      }
+      if (targetLevel !== null && bar.low <= targetLevel) {
+        if (targetLevel > bar.open) clampWarn("short", "target");
+        return closePosition(Math.min(targetLevel, bar.open), i, "target");
+      }
     }
   };
 
@@ -390,6 +418,13 @@ export function runBacktest({ candles, signalFn, initialCapital = 10000, feeBps 
   const winRatePct = trades.length > 0 ? (wins.length / trades.length) * 100 : 0;
   const profitFactor =
     grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? Infinity : 0;
+
+  // Honesty net: no real edge wins EVERY one of dozens of trades. A perfect
+  // record over a real sample means the backtest is measuring an artifact
+  // (bracket bug, corrupt data), not an edge — say so instead of printing it.
+  if (trades.length >= 20 && grossLoss === 0 && grossProfit > 0) {
+    warnings.push(`⚠ Implausible result: ${trades.length} trades without a single loss. No real strategy does this — the numbers are almost certainly an artifact (bracket levels, data, or look-ahead). Do not trust this run.`);
+  }
 
   return {
     equity,

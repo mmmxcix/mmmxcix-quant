@@ -80,6 +80,34 @@ const RULES = [
     msg: "The strategy returns a single constant side on every path — that's a static position, not a signal. The decision must depend on the price data.",
   },
   {
+    id: "hardcoded-price-level",
+    severity: "warn",
+    // A literal price compared against close/price (e.g. `close > 4270`) welds
+    // the strategy to ONE instrument's current price régime: run it anywhere
+    // else (or after a big move) and it either never trades or fires
+    // constantly. 3+ digits so indicator thresholds (rsi > 70) don't trip it.
+    test: (code) => /\b(close|price|open|high|low)\b\s*[<>]=?\s*\d{3,}(?:\.\d+)?\b/.test(code)
+      || /\d{3,}(?:\.\d+)?\s*[<>]=?\s*\b(close|price|open|high|low)\b/.test(code),
+    msg: "Hardcoded price level compared against price (e.g. `close > 4270`) — this welds the strategy to one instrument at one point in time; on any other symbol or after a trend it stops working or fires constantly. Use relative levels (Donchian bands, swing highs/lows, % offsets) instead.",
+  },
+  {
+    id: "inverted-long-bracket",
+    severity: "critical",
+    // Mirror of inverted-short-bracket: a LONG whose stop is ONLY ever computed
+    // ABOVE entry (close + …) — the sell-stop sits in profit, so (before the
+    // engine's fill clamp) every trade exited at a guaranteed gain. A correct
+    // dual-side strategy computes a `close − …` stop for its long, which
+    // suppresses this.
+    test: (code) => {
+      const longBracket = /\bsignal\s*:\s*["']long["'][^}]*\b(stop|target)\b/.test(code) || /["']long["']\s*,\s*(stop|target)/.test(code);
+      if (!longBracket) return false;
+      const stopAbove = /\bstop\b\s*[:=][^;\n]*\b(close|price|entry|hl2|mid)\b[^;\n]*\+/.test(code);
+      const stopBelow = /\bstop\b\s*[:=][^;\n]*\b(close|price|entry|hl2|mid)\b[^;\n]*-/.test(code);
+      return stopAbove && !stopBelow;
+    },
+    msg: "Side-inverted brackets: a LONG uses a stop computed ABOVE entry (close + …) — a sell-stop above the market triggers immediately and (uncorrected) books a guaranteed profit every trade. A long's stop must be BELOW entry, its target ABOVE. Compute stop/target per side.",
+  },
+  {
     id: "inverted-short-bracket",
     severity: "critical",
     // A SHORT that reuses long-style brackets: stop computed BELOW entry

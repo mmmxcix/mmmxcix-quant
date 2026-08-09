@@ -7,6 +7,40 @@
 // Every function returns an array ALIGNED with its input: index i of the
 // output corresponds to index i of the input. Bars that fall inside the
 // indicator's warm-up window are `null`.
+//
+// MEMOIZED: every exported indicator caches its result per input ARRAY (and
+// parameter set). Generated strategies call e.g. `ema(closes(candles), 200)`
+// on EVERY bar of a backtest — without the cache that is O(N²) over the run
+// (minutes on a 20k-bar series), with it the first bar computes and every
+// later bar hits. `closes()` is memoized too, so the derived array keeps its
+// identity and downstream lookups hit. A cheap staleness probe (length + last
+// element's values) invalidates the cache when a live chart appends or
+// rewrites the current bar, so this is safe for streaming data as well.
+
+const memoStore = new WeakMap(); // input array → Map<"fn:params" → {len, probe, result}>
+
+// A tiny fingerprint of the array's last element: for candle arrays the OHLC
+// of the live bar (which streaming updates mutate in place), for number
+// arrays the number itself. Length + this probe catches both append and
+// in-place rewrite of the current bar.
+function lastProbe(arr) {
+  const last = arr.length ? arr[arr.length - 1] : null;
+  if (last && typeof last === "object") return `${last.close}|${last.high}|${last.low}`;
+  return last;
+}
+
+function memoize(name, arr, params, compute) {
+  if (!Array.isArray(arr)) return compute();
+  const key = `${name}:${params.join(",")}`;
+  let m = memoStore.get(arr);
+  const probe = lastProbe(arr);
+  const hit = m && m.get(key);
+  if (hit && hit.len === arr.length && hit.probe === probe) return hit.result;
+  const result = compute();
+  if (!m) { m = new Map(); memoStore.set(arr, m); }
+  m.set(key, { len: arr.length, probe, result });
+  return result;
+}
 
 /**
  * Extract the close prices from a candle array.
@@ -14,7 +48,7 @@
  * @returns {number[]}
  */
 export function closes(candles) {
-  return candles.map((c) => c.close);
+  return memoize("closes", candles, [], () => candles.map((c) => c.close));
 }
 
 /**
@@ -24,6 +58,9 @@ export function closes(candles) {
  * @returns {(number|null)[]}
  */
 export function sma(values, period) {
+  return memoize("sma", values, [period], () => smaRaw(values, period));
+}
+function smaRaw(values, period) {
   const out = new Array(values.length).fill(null);
   if (period <= 0 || values.length < period) return out;
 
@@ -45,6 +82,9 @@ export function sma(values, period) {
  * @returns {(number|null)[]}
  */
 export function ema(values, period) {
+  return memoize("ema", values, [period], () => emaRaw(values, period));
+}
+function emaRaw(values, period) {
   const out = new Array(values.length).fill(null);
   if (period <= 0 || values.length < period) return out;
 
@@ -71,6 +111,9 @@ export function ema(values, period) {
  * @returns {(number|null)[]}
  */
 export function rsi(values, period) {
+  return memoize("rsi", values, [period], () => rsiRaw(values, period));
+}
+function rsiRaw(values, period) {
   const out = new Array(values.length).fill(null);
   if (period <= 0 || values.length <= period) return out;
 
@@ -105,6 +148,9 @@ export function rsi(values, period) {
  * @returns {(number|null)[]}
  */
 export function roc(values, period) {
+  return memoize("roc", values, [period], () => rocRaw(values, period));
+}
+function rocRaw(values, period) {
   const out = new Array(values.length).fill(null);
   if (period <= 0) return out;
   for (let i = period; i < values.length; i++) {
@@ -124,6 +170,9 @@ export function roc(values, period) {
  * @returns {(number|null)[]}
  */
 export function atr(candles, period) {
+  return memoize("atr", candles, [period], () => atrRaw(candles, period));
+}
+function atrRaw(candles, period) {
   const out = new Array(candles.length).fill(null);
   if (period <= 0 || candles.length < period) return out;
 
@@ -160,6 +209,9 @@ export function atr(candles, period) {
  * @returns {({upper:number, mid:number, lower:number}|null)[]}
  */
 export function bollinger(values, period, mult) {
+  return memoize("bollinger", values, [period, mult], () => bollingerRaw(values, period, mult));
+}
+function bollingerRaw(values, period, mult) {
   const out = new Array(values.length).fill(null);
   if (period <= 0 || values.length < period) return out;
 
@@ -193,6 +245,9 @@ export function bollinger(values, period, mult) {
  * @returns {({upper:number, lower:number}|null)[]}
  */
 export function donchian(candles, period) {
+  return memoize("donchian", candles, [period], () => donchianRaw(candles, period));
+}
+function donchianRaw(candles, period) {
   const out = new Array(candles.length).fill(null);
   if (period <= 0 || candles.length <= period) return out;
 
@@ -220,6 +275,9 @@ export function donchian(candles, period) {
  * @returns {({macd:number, signal:number, hist:number}|null)[]}
  */
 export function macd(values, fast = 12, slow = 26, signalPeriod = 9) {
+  return memoize("macd", values, [fast, slow, signalPeriod], () => macdRaw(values, fast, slow, signalPeriod));
+}
+function macdRaw(values, fast, slow, signalPeriod) {
   const out = new Array(values.length).fill(null);
   const emaFast = ema(values, fast);
   const emaSlow = ema(values, slow);
@@ -256,6 +314,9 @@ export function macd(values, fast = 12, slow = 26, signalPeriod = 9) {
  * @returns {({value:number, dir:number}|null)[]}  dir = +1 up (long), -1 down
  */
 export function supertrend(candles, period = 10, mult = 3) {
+  return memoize("supertrend", candles, [period, mult], () => supertrendRaw(candles, period, mult));
+}
+function supertrendRaw(candles, period, mult) {
   const out = new Array(candles.length).fill(null);
   const a = atr(candles, period);
   let fUpper = null, fLower = null;   // current final bands
@@ -301,6 +362,9 @@ export function supertrend(candles, period = 10, mult = 3) {
  * @returns {({value:number, slope:number, slopePct:number, resStd:number, z:number}|null)[]}
  */
 export function linreg(values, period) {
+  return memoize("linreg", values, [period], () => linregRaw(values, period));
+}
+function linregRaw(values, period) {
   const out = new Array(values.length).fill(null);
   if (period < 2 || values.length < period) return out;
   // x = 0..period-1 is fixed each window, so its sums are constant.
