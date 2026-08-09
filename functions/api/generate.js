@@ -25,7 +25,9 @@ import { isAdminRequest } from "../_lib/auth.mjs";
 
 const ANTHROPIC_MODEL = "claude-sonnet-5";
 const MISTRAL_MODEL = "codestral-latest"; // Mistral's code-specialised model
-const GROQ_MODEL = "llama-3.3-70b-versatile";
+// Fallback LIST — Groq retires models on a schedule (llama-3.3-70b-versatile
+// died Aug 2026). Each entry becomes its own chain step; order = best first.
+const GROQ_MODELS = ["openai/gpt-oss-120b", "openai/gpt-oss-20b"];
 // Free-tier quotas differ wildly per model — on 429/404 we walk down this
 // list instead of failing (flash-lite has the most generous free limits).
 const GEMINI_MODELS = ["gemini-flash-latest", "gemini-2.5-flash", "gemini-flash-lite-latest", "gemini-2.5-flash-lite"];
@@ -615,7 +617,7 @@ export async function onRequest({ request, env }) {
   const chain = [];
   if (env.ANTHROPIC_API_KEY) chain.push(() => callAnthropic(env, userMsg, system));
   if (env.MISTRAL_API_KEY) chain.push(() => callOpenAICompatible("https://api.mistral.ai/v1", env.MISTRAL_API_KEY, MISTRAL_MODEL, userMsg, system));
-  if (env.GROQ_API_KEY) chain.push(() => callOpenAICompatible("https://api.groq.com/openai/v1", env.GROQ_API_KEY, GROQ_MODEL, userMsg, system));
+  if (env.GROQ_API_KEY) for (const m of GROQ_MODELS) chain.push(() => callOpenAICompatible("https://api.groq.com/openai/v1", env.GROQ_API_KEY, m, userMsg, system));
   if (env.GEMINI_API_KEY) chain.push(() => callGemini(env, userMsg, system));
 
   let text = "";

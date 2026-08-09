@@ -9,7 +9,10 @@
 import { rateLimit, clientIp } from "../_lib/ratelimit.mjs";
 
 const TTL_MS = 2 * 60 * 60 * 1000;        // a symbol's fundamentals/news don't move minute-to-minute
-const GROQ_MODEL = "llama-3.3-70b-versatile";
+// Fallback LIST like the Gemini one below — Groq retires models on a schedule
+// (llama-3.3-70b-versatile died Aug 2026 and silently killed all AI content
+// while the key still read as "present"). Order = best first.
+const GROQ_MODELS = ["openai/gpt-oss-120b", "openai/gpt-oss-20b"];
 const GEMINI_MODELS = ["gemini-flash-latest", "gemini-2.5-flash", "gemini-flash-lite-latest"];
 const ANTHROPIC_MODEL = "claude-sonnet-5";
 
@@ -154,7 +157,7 @@ async function callLLM(env, user) {
     const text = d?.choices?.[0]?.message?.content || "";
     return text ? { text, model } : null;
   };
-  if (env.GROQ_API_KEY) chain.push(oai("https://api.groq.com/openai/v1", env.GROQ_API_KEY, GROQ_MODEL));
+  if (env.GROQ_API_KEY) for (const m of GROQ_MODELS) chain.push(oai("https://api.groq.com/openai/v1", env.GROQ_API_KEY, m));
   if (env.GEMINI_API_KEY) chain.push(async () => {
     for (const model of GEMINI_MODELS) {
       const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {

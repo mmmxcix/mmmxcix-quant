@@ -23,7 +23,10 @@
 import { rateLimit, clientIp } from "../_lib/ratelimit.mjs";
 
 const TTL_MS = 2 * 60 * 60 * 1000; // 2h — matches bias.js; news/fundamentals don't move minute-to-minute
-const GROQ_MODEL = "llama-3.3-70b-versatile";
+// Fallback LIST like the Gemini one — Groq retires models on a schedule
+// (llama-3.3-70b-versatile died Aug 2026 and silently killed all AI content
+// while the key still read as "present"). Order = best first.
+const GROQ_MODELS = ["openai/gpt-oss-120b", "openai/gpt-oss-20b"];
 const GEMINI_MODELS = ["gemini-flash-latest", "gemini-2.5-flash", "gemini-flash-lite-latest"];
 const MAX_TOKENS = 2200;
 
@@ -129,15 +132,19 @@ async function fetchFundamentalsLite(origin, symbol) {
 async function callLLM(env, user) {
   const chain = [];
   if (env.GROQ_API_KEY) chain.push(async () => {
-    const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-      method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${env.GROQ_API_KEY}` },
-      body: JSON.stringify({ model: GROQ_MODEL, max_tokens: MAX_TOKENS, temperature: 0.3, messages: [{ role: "system", content: SYSTEM }, { role: "user", content: user }] }),
-    });
-    if (!r.ok) return null;
-    const d = await r.json();
-    const text = d?.choices?.[0]?.message?.content || "";
-    return text ? { text, model: GROQ_MODEL } : null;
+    for (const model of GROQ_MODELS) {
+      const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${env.GROQ_API_KEY}` },
+        body: JSON.stringify({ model, max_tokens: MAX_TOKENS, temperature: 0.3, messages: [{ role: "system", content: SYSTEM }, { role: "user", content: user }] }),
+      });
+      if (r.ok) {
+        const d = await r.json();
+        const text = d?.choices?.[0]?.message?.content || "";
+        if (text) return { text, model };
+      } else if (r.status !== 429 && r.status !== 400 && r.status !== 404) break; // 400/404 = retired/unknown model → try the next
+    }
+    return null;
   });
   if (env.GEMINI_API_KEY) chain.push(async () => {
     for (const model of GEMINI_MODELS) {

@@ -248,7 +248,10 @@ const LLM_URL = (process.env.LAB_LLM_URL || "").replace(/\/+$/, "");
 // once it's connected. A nightly agent reading many papers would burn it fast.
 // Default to a concrete FREE model; override with LAB_LLM_MODEL if your OmniRoute
 // names it differently. Any failure falls back to the site's provider chain.
-const LLM_MODEL = process.env.LAB_LLM_MODEL || "groq/llama-3.3-70b-versatile";
+// Default routed through OmniRoute's groq/ provider — llama-3.3-70b-versatile
+// was retired by Groq in Aug 2026, so the default now targets its official
+// replacement. LAB_LLM_MODEL still overrides.
+const LLM_MODEL = process.env.LAB_LLM_MODEL || "groq/openai/gpt-oss-120b";
 const LLM_CRITIQUE_MODEL = process.env.LAB_LLM_CRITIQUE_MODEL || LLM_MODEL;
 
 async function callLocalRouter(system, user, model) {
