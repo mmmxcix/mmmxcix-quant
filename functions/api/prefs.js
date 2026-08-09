@@ -30,7 +30,7 @@ async function authorized(env, request, body) {
 
 // Only a small allow-list of keys, each a JSON array, capped so this can't be
 // abused as general storage.
-const ALLOWED = new Set(["watchlist", "portfolio"]);
+const ALLOWED = new Set(["watchlist", "portfolio", "deposits"]);
 const MAX_BYTES = 128 * 1024;
 
 export async function onRequest({ request, env }) {

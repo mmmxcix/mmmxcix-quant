@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
-import { Trash2, Pencil, Check, X, Wallet, Plus, BadgeDollarSign, RotateCcw, DownloadCloud, Loader2 } from "lucide-react";
+import { Trash2, Pencil, Check, X, Wallet, Plus, BadgeDollarSign, RotateCcw, DownloadCloud, Loader2, Banknote } from "lucide-react";
 import SymbolSearch from "@/components/SymbolSearch";
 import { MARKETS, fetchCandles } from "@/lib/data";
 import { fetchQuotes } from "@/lib/quotes";
@@ -12,7 +12,12 @@ import {
   removePosition,
   subscribe,
   isClosed,
+  getDeposits,
+  addDeposit,
+  removeDeposit,
+  cashUSD,
 } from "@/lib/portfolio";
+import { fxRateToUSD, DEPOSIT_CURRENCIES } from "@/lib/fx";
 import { ibkrActive, fetchIbkrPositions } from "@/lib/ibkr";
 import { cn, fmtNum, fmtPrice, fmtPct } from "@/lib/utils";
 
@@ -72,8 +77,17 @@ function SummaryCard({ label, value, sub, tone = "text-text", big = false }) {
 
 export default function Portfolio() {
   const [positions, setPositions] = useState(() => getPortfolio());
+  const [deposits, setDeposits] = useState(() => getDeposits());
   const [quotes, setQuotes] = useState({}); // "market:SYMBOL" → { price, changePct }
   const [firstLoad, setFirstLoad] = useState(true);
+
+  // Deposit form (cash model: account is kept in USD, FX frozen at deposit date)
+  const [depositAmount, setDepositAmount] = useState("");
+  const [depositCurrency, setDepositCurrency] = useState("CHF");
+  const [depositDate, setDepositDate] = useState(todayStr);
+  const [depositBusy, setDepositBusy] = useState(false);
+  const [depositErr, setDepositErr] = useState("");
+  const [showDeposits, setShowDeposits] = useState(false);
 
   // Add form
   const [market, setMarket] = useState("crypto");
@@ -99,7 +113,14 @@ export default function Portfolio() {
   const [importing, setImporting] = useState(false);
   const [importMsg, setImportMsg] = useState("");
 
-  useEffect(() => subscribe(() => setPositions(getPortfolio())), []);
+  useEffect(
+    () =>
+      subscribe(() => {
+        setPositions(getPortfolio());
+        setDeposits(getDeposits());
+      }),
+    []
+  );
 
   // Only OPEN positions need live quotes — closed ones are frozen at the sale.
   const openPositions = useMemo(() => positions.filter((p) => !isClosed(p)), [positions]);
@@ -227,6 +248,26 @@ export default function Portfolio() {
     };
   }, [positions, quotes]);
 
+  // ── Cash (derived: deposits − buys + realized sells, all USD) ─────────────
+  const cash = useMemo(() => cashUSD(positions, deposits), [positions, deposits]);
+  const accountValue = cash + totals.totalValue;
+
+  const handleDeposit = async () => {
+    const amt = Number(String(depositAmount).replace(",", "."));
+    if (!(amt > 0) || depositBusy) return;
+    setDepositBusy(true);
+    setDepositErr("");
+    try {
+      const rate = await fxRateToUSD(depositCurrency, depositDate);
+      addDeposit({ amount: amt, currency: depositCurrency, date: depositDate, rate, usd: amt * rate });
+      setDepositAmount("");
+    } catch (e) {
+      setDepositErr(String(e?.message || e));
+    } finally {
+      setDepositBusy(false);
+    }
+  };
+
   // ── Add ────────────────────────────────────────────────────────────────────
   const canSubmit = symbol.trim() !== "" && Number(String(shares).replace(",", ".")) > 0;
 
@@ -324,8 +365,25 @@ export default function Portfolio() {
 
       {/* Summary */}
       <div className={cn("grid grid-cols-2 gap-3 mb-6", totals.hasClosed ? "lg:grid-cols-6" : "lg:grid-cols-5")}>
-        <SummaryCard label="Total value" value={fmtNum(totals.totalValue, 2)} big />
-        <SummaryCard label="Invested" value={fmtNum(totals.totalCost, 2)} big />
+        <SummaryCard
+          label="Account value · USD"
+          value={fmtNum(accountValue, 2)}
+          sub={`positions ${fmtNum(totals.totalValue, 2)}`}
+          big
+        />
+        <SummaryCard
+          label="Cash · USD"
+          value={fmtNum(cash, 2)}
+          sub={deposits.length ? `${deposits.length} deposit${deposits.length === 1 ? "" : "s"}` : "no deposits yet"}
+          tone={cash < 0 ? "text-down" : "text-text"}
+          big
+        />
+        <SummaryCard
+          label="Invested"
+          value={fmtNum(totals.totalCost, 2)}
+          sub={`${totals.count} position${totals.count === 1 ? "" : "s"}`}
+          big
+        />
         <SummaryCard
           label="Today's P/L"
           value={totals.dayHasData ? (totals.dayPnl >= 0 ? "+" : "") + fmtNum(totals.dayPnl, 2) : "–"}
@@ -349,7 +407,105 @@ export default function Portfolio() {
             big
           />
         )}
-        <SummaryCard label="Positions" value={String(totals.count)} big />
+      </div>
+
+      {/* Cash & deposits */}
+      <div className="rounded-xl border border-line lg-glass p-4 mb-6">
+        <div className="flex items-center justify-between gap-2 mb-1">
+          <p className="text-xs text-dim font-medium flex items-center gap-1.5">
+            <Banknote className="w-3.5 h-3.5" /> Cash &amp; deposits
+          </p>
+          {deposits.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowDeposits((v) => !v)}
+              className="chip chip-idle !text-[11px]"
+            >
+              {showDeposits ? "Hide history" : `History (${deposits.length})`}
+            </button>
+          )}
+        </div>
+        <p className="text-[11px] text-dim mb-3 leading-relaxed">
+          Fund the account in any currency — it's converted to USD at the ECB daily rate of the
+          chosen date and the account runs in USD from there. Buys deduct cash, sales add the
+          proceeds back.
+        </p>
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="text-xs text-dim">
+            Amount
+            <input
+              type="number"
+              min={0}
+              step="any"
+              value={depositAmount}
+              onChange={(e) => setDepositAmount(e.target.value)}
+              placeholder="0"
+              className="input-base w-32 mt-1 font-mono block"
+            />
+          </label>
+          <label className="text-xs text-dim">
+            Currency
+            <select
+              value={depositCurrency}
+              onChange={(e) => setDepositCurrency(e.target.value)}
+              className="input-base w-24 mt-1 font-mono block"
+            >
+              {DEPOSIT_CURRENCIES.map((c) => (
+                <option key={c} value={c}>{c}</option>
+              ))}
+            </select>
+          </label>
+          <label className="text-xs text-dim">
+            Date
+            <input
+              type="date"
+              value={depositDate}
+              max={todayStr()}
+              onChange={(e) => setDepositDate(e.target.value)}
+              className="input-base w-36 mt-1 font-mono block"
+            />
+          </label>
+          <button
+            type="button"
+            onClick={handleDeposit}
+            disabled={!(Number(String(depositAmount).replace(",", ".")) > 0) || depositBusy}
+            className="btn-accent flex items-center gap-1.5 disabled:opacity-40"
+          >
+            {depositBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+            Deposit
+          </button>
+        </div>
+        {depositErr && <p className="text-[11px] text-down mt-2">{depositErr}</p>}
+        {cash < 0 && (
+          <p className="text-[11px] text-down mt-2">
+            Cash is negative — your buys exceed your deposits. Add a deposit (dated before the
+            buys, if you like) to cover them.
+          </p>
+        )}
+        {showDeposits && deposits.length > 0 && (
+          <div className="mt-3 space-y-1">
+            <div className="grid grid-cols-[auto_1fr_auto_auto_auto] gap-x-4 text-[10px] uppercase tracking-wider text-dim">
+              <span>Date</span><span>Deposit</span><span className="text-right">Rate</span><span className="text-right">USD</span><span />
+            </div>
+            {[...deposits]
+              .sort((a, b) => String(b.date).localeCompare(String(a.date)) || (b.addedAt || 0) - (a.addedAt || 0))
+              .map((d) => (
+                <div key={d.id} className="grid grid-cols-[auto_1fr_auto_auto_auto] gap-x-4 items-center text-xs font-mono">
+                  <span className="text-dim">{d.date}</span>
+                  <span>{fmtNum(d.amount, 2)} {d.currency}</span>
+                  <span className="text-right text-dim">{d.currency === "USD" ? "–" : fmtNum(d.rate, 4)}</span>
+                  <span className="text-right font-semibold">{fmtNum(d.usd, 2)}</span>
+                  <button
+                    onClick={() => removeDeposit(d.id)}
+                    title="Remove deposit"
+                    className="text-dim hover:text-down transition-colors justify-self-end"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ))}
+          </div>
+        )}
       </div>
 
       {/* HRP suggested allocation */}

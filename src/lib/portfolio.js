@@ -13,11 +13,18 @@
 //   Watchlist entry : { market, symbol, name }
 //   Portfolio pos.  : { id, market, symbol, name, shares, avgPrice, addedAt,
 //                       buyDate?, sellPrice?, sellDate? }
+//   Deposit         : { id, amount, currency, date (YYYY-MM-DD), rate, usd, addedAt }
 //   buyDate/sellDate are ms timestamps. A position with a sellPrice is CLOSED:
 //   its P/L is realized and the equity graph freezes it at the sale proceeds.
+//
+// CASH MODEL: the account is kept in USD. Cash is DERIVED, never stored:
+//   cashUSD = Σ deposits.usd  −  Σ buys (shares×avgPrice)  +  Σ realized sells
+//             (shares×sellPrice)
+// so it stays consistent under edits, deletes and cross-device merges for free.
 
 const WATCHLIST_KEY = "quant_watchlist";
 const PORTFOLIO_KEY = "quant_portfolio";
+const DEPOSITS_KEY = "quant_deposits";
 
 // ── Safe storage layer ───────────────────────────────────────────────────────
 // In-memory shadow so reads still work if localStorage is unavailable.
@@ -70,7 +77,11 @@ function writeArray(key, arr) {
 // portfolio once). Every write is mirrored to the server, and syncFromServer()
 // merges the two on load — NON-destructively, union by identity, so nothing is
 // ever lost from either side.
-const SERVER_NAME = { [WATCHLIST_KEY]: "watchlist", [PORTFOLIO_KEY]: "portfolio" };
+const SERVER_NAME = {
+  [WATCHLIST_KEY]: "watchlist",
+  [PORTFOLIO_KEY]: "portfolio",
+  [DEPOSITS_KEY]: "deposits",
+};
 
 async function pushToServer(key, arr) {
   const name = SERVER_NAME[key];
@@ -103,12 +114,28 @@ function mergePortfolio(a, b) {
   return [...by.values()];
 }
 
+function mergeDeposits(a, b) {
+  const by = new Map();
+  for (const e of [...a, ...b]) {
+    if (!e || !e.id) continue;
+    const cur = by.get(e.id);
+    if (!cur || (e.addedAt || 0) >= (cur.addedAt || 0)) by.set(e.id, e);
+  }
+  return [...by.values()];
+}
+
+const SYNC_KEYS = [
+  [WATCHLIST_KEY, mergeWatchlist],
+  [PORTFOLIO_KEY, mergePortfolio],
+  [DEPOSITS_KEY, mergeDeposits],
+];
+
 /** Pull watchlist + portfolio from the server and MERGE with local (union, newer
  *  wins). Never destroys local-only entries; pushes the merged truth back up. */
 export async function syncFromServer() {
   if (typeof fetch === "undefined") return false;
   let changed = false;
-  for (const [key, merge] of [[WATCHLIST_KEY, mergeWatchlist], [PORTFOLIO_KEY, mergePortfolio]]) {
+  for (const [key, merge] of SYNC_KEYS) {
     try {
       const r = await fetch(`/api/prefs?key=${SERVER_NAME[key]}`);
       if (!r.ok) continue;
@@ -131,7 +158,7 @@ export async function syncFromServer() {
  *  shrink-guard backup. Union — never removes current entries. */
 export function restoreBackups() {
   let recovered = 0;
-  for (const [key, merge] of [[WATCHLIST_KEY, mergeWatchlist], [PORTFOLIO_KEY, mergePortfolio]]) {
+  for (const [key, merge] of SYNC_KEYS) {
     const raw = safeGet(key + "_backup");
     if (!raw) continue;
     try {
@@ -172,7 +199,7 @@ function emit() {
 // Cross-tab sync: another tab wrote one of our keys → notify local listeners.
 if (typeof window !== "undefined") {
   window.addEventListener("storage", (e) => {
-    if (e.key === WATCHLIST_KEY || e.key === PORTFOLIO_KEY || e.key === null) emit();
+    if (e.key === WATCHLIST_KEY || e.key === PORTFOLIO_KEY || e.key === DEPOSITS_KEY || e.key === null) emit();
   });
 }
 
@@ -290,6 +317,47 @@ export function removePosition(id) {
   const next = getPortfolio().filter((p) => p.id !== id);
   writeArray(PORTFOLIO_KEY, next);
   return next;
+}
+
+// ── Deposits & cash ──────────────────────────────────────────────────────────
+export function getDeposits() {
+  return readArray(DEPOSITS_KEY);
+}
+
+// { amount, currency, date: "YYYY-MM-DD", rate, usd } — rate/usd are computed by
+// the caller (see fx.js) at the deposit's DATE, then frozen here forever.
+export function addDeposit({ amount, currency, date, rate, usd }) {
+  const dep = {
+    id: genId(),
+    amount: toNum(amount),
+    currency: String(currency || "USD").toUpperCase(),
+    date: /^\d{4}-\d{2}-\d{2}$/.test(String(date)) ? date : new Date().toISOString().slice(0, 10),
+    rate: toNum(rate) || 1,
+    usd: toNum(usd),
+    addedAt: Date.now(),
+  };
+  if (!(dep.amount > 0) || !(dep.usd > 0)) return getDeposits();
+  const next = [...getDeposits(), dep];
+  writeArray(DEPOSITS_KEY, next);
+  return next;
+}
+
+export function removeDeposit(id) {
+  const next = getDeposits().filter((d) => d.id !== id);
+  writeArray(DEPOSITS_KEY, next);
+  return next;
+}
+
+/** Derived USD cash balance: deposits in, buys out, realized sells back in.
+ *  Can go negative when positions were bought without a covering deposit. */
+export function cashUSD(positions = getPortfolio(), deposits = getDeposits()) {
+  let cash = 0;
+  for (const d of deposits) cash += toNum(d.usd);
+  for (const p of positions) {
+    cash -= toNum(p.shares) * toNum(p.avgPrice);
+    if (isClosed(p)) cash += toNum(p.shares) * toNum(p.sellPrice);
+  }
+  return cash;
 }
 
 // ── Cross-feature helper ─────────────────────────────────────────────────────
