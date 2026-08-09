@@ -14,7 +14,12 @@ import { rateLimit, clientIp } from '../_lib/ratelimit.mjs';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const VALID_CATEGORIES = new Set(['general', 'watchlist', 'portfolio']);
-const VALID_SOURCES = new Set(['CNBC', 'Yahoo Finance', 'CoinDesk', 'MarketWatch', 'Investing.com', 'Cointelegraph']);
+// Must mirror every `source` in functions/api/news.js's FEEDS — was missing all
+// 6 Tier-1 sources, so picking one in the subscribe form got silently dropped.
+const VALID_SOURCES = new Set([
+  'Federal Reserve', 'SEC', 'BLS', 'BBC Business', 'The Guardian', 'NPR Business',
+  'CNBC', 'Yahoo Finance', 'CoinDesk', 'MarketWatch', 'Investing.com', 'Cointelegraph',
+]);
 const MAX_SYMBOLS = 100;
 
 const CORS_HEADERS = {

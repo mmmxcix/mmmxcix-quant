@@ -142,7 +142,10 @@ function extractTag(block, tag) {
 }
 
 function cleanText(raw) {
-  return decodeEntities(stripHtml(stripCdata(raw))).trim();
+  // Decode BEFORE stripping: a source that HTML-escapes its own markup (e.g.
+  // "&lt;p&gt;...&lt;/p&gt;") only becomes a literal tag after decoding, so
+  // stripping first (the old order) let those tags leak into the output.
+  return stripHtml(decodeEntities(stripCdata(raw))).trim();
 }
 
 function parseFeed(xml, feed) {

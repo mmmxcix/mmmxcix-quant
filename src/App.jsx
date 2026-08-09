@@ -12,7 +12,7 @@ import { useSession } from "@/lib/authClient";
 // shell. hubs.jsx exports several named hubs, hence the .then() default-mapping.
 const Dashboard = lazy(() => import("@/pages/Dashboard"));
 const Charts = lazy(() => import("@/pages/Charts"));
-const News = lazy(() => import("@/pages/News"));
+const NewsHub = lazy(() => import("@/pages/NewsHub"));
 const Tools = lazy(() => import("@/pages/Tools"));
 const Regimes = lazy(() => import("@/pages/Regimes"));
 const Coach = lazy(() => import("@/pages/Coach"));
@@ -89,7 +89,6 @@ export default function App() {
               <Routes>
                 <Route path="/" element={<HomeOrWelcome />} />
                 <Route path="/charts" element={<Charts />} />
-                <Route path="/news" element={<News />} />
                 <Route path="/watchlist" element={<Redir to="/?view=watchlist" />} />
                 <Route path="/monitor" element={<Redir to="/?view=monitor" />} />
                 <Route path="/tools" element={<Tools />} />
@@ -120,6 +119,10 @@ export default function App() {
                 <Route path="/portfolio" element={<Redir to="/portfolio/holdings" replace />} />
                 <Route path="/portfolio/:tab" element={<PortfolioHub />} />
                 <Route path="/options" element={<Redir to="/portfolio/options" replace />} />
+
+                {/* News hub (+ Briefing) */}
+                <Route path="/news" element={<Redir to="/news/headlines" replace />} />
+                <Route path="/news/:tab" element={<NewsHub />} />
 
                 {/* Screener hub (+ Anomalies) */}
                 <Route path="/screener" element={<Redir to="/screener/scan" replace />} />

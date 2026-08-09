@@ -2,8 +2,12 @@
 //
 // Sends a personalized daily market digest to every confirmed subscriber:
 //   • a MARKET SNAPSHOT strip (BTC / ETH / SPY / QQQ day moves, up/down coloured)
-//   • news sections per the subscriber's prefs (portfolio/watchlist symbol
-//     matching, categories, freeOnly, sources) with summary + relative time
+//   • an AI-synthesized MARKET PULSE + curated TOP STORIES (functions/api/briefing.js
+//     — same endpoint the on-site Briefing tab uses, one batched call per run)
+//   • per-subscriber "YOUR HOLDINGS" cards for their portfolio/watchlist symbols —
+//     LLM-confirmed relevance + a grounded why/expectation, not a bare-ticker regex
+//   • a raw-teaser fallback (categories/freeOnly/sources) if the briefing call is
+//     unreachable or a category comes back empty, so nobody is ever sent nothing
 //   • a dynamic subject line carrying the day's biggest moves
 //   • a TOKENIZED unsubscribe link + RFC 8058 one-click headers (deliverability)
 //
@@ -15,8 +19,12 @@
 //   RESEND_API_KEY    — Resend API key (secret)
 //   DIGEST_FROM       — sender address, e.g. "MMMXCIX Quant <digest@mmmxcix.com>"
 //   DIGEST_TEST_TOKEN — token for manual test runs via GET ?token=
+//
+// No secret is needed for the /api/briefing call — it's public + rate-limited
+// on that end (same model as functions/api/bias.js), so nothing new to configure.
 
 const NEWS_URL = 'https://quant.mmmxcix.com/api/news';
+const BRIEFING_URL = 'https://quant.mmmxcix.com/api/briefing';
 const SITE_URL = 'https://quant.mmmxcix.com/news';
 const CONFIRM_BASE = 'https://quant.mmmxcix.com/api/subscribe';
 const YAHOO_PROXY = 'https://quant.mmmxcix.com/api/yahoo/v8/finance/chart';
@@ -37,6 +45,13 @@ const C = {
   faint: '#8a8d94',
   up: '#0b6e47',
   down: '#be2830',
+  // Pewter Blue — the site's real, shipped --c-accent (src/index.css), used
+  // here to mark AI-synthesized content, same role as BiasSection.jsx's
+  // "News & data" card on-site. accentBg/accentBorder are flat-hex email-safe
+  // approximations of the site's bg-accent/5 and border-accent/30 tints.
+  accent: '#4A648C',
+  accentBg: '#f5f7fa',
+  accentBorder: '#c9d1dd',
 };
 
 function sleep(ms) {
@@ -121,7 +136,7 @@ async function fetchSnapshot() {
   return out;
 }
 
-// ── news selection (unchanged personalization model) ────────────────────────
+// ── news selection ───────────────────────────────────────────────────────
 async function fetchAllNews() {
   const res = await fetch(NEWS_URL, { headers: { accept: 'application/json' } });
   if (!res.ok) throw new Error(`news fetch failed: HTTP ${res.status}`);
@@ -130,47 +145,67 @@ async function fetchAllNews() {
   return data.items;
 }
 
-function matchesSymbols(item, symbols) {
-  if (!symbols || symbols.length === 0) return false;
-  const hay = `${item.title || ''} ${item.description || ''}`.toLowerCase();
-  for (const s of symbols) {
-    const ticker = String(s.symbol || '').replace(/usdt$/i, '').toLowerCase();
-    if (ticker.length >= 2 && new RegExp(`\\b${ticker.replace(/[^a-z0-9]/gi, '')}\\b`).test(hay)) return true;
-    const name = String(s.name || '').toLowerCase().trim();
-    if (name.length >= 3 && hay.includes(name)) return true;
-  }
-  return false;
+// AI-synthesized market pulse + curated stories + per-symbol relevance — ONE
+// batched call per run for the UNION of every confirmed subscriber's symbols
+// (see runDigest), shared with the on-site Briefing tab. All relevance
+// matching now lives in this one endpoint: the old local matchesSymbols() did
+// a bare `\bTICKER\b` regex, which matched "NOW" (ServiceNow) against the
+// common English word "now" appearing incidentally in unrelated headlines —
+// that logic is gone from here, replaced by functions/api/briefing.js's
+// LLM-confirmed (or, with no LLM, name-only) matching.
+async function fetchBriefing(symbols) {
+  try {
+    const res = await fetch(BRIEFING_URL, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ symbols }),
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch { return null; }
 }
 
-function selectForPrefs(allItems, prefs) {
+// Raw fallback pool (free/source filters only, no relevance matching) — used
+// when the briefing call is unreachable, or a category's briefing data comes
+// back empty, so a subscriber is never silently sent nothing they asked for.
+function rawPool(allItems, prefs) {
   const p = prefs || {};
   const freeOnly = p.freeOnly !== false;
   const sourceSet = Array.isArray(p.sources) && p.sources.length ? new Set(p.sources) : null;
-
-  const pool = allItems.filter((it) => {
+  return allItems.filter((it) => {
     if (freeOnly && it.access !== 'free') return false;
     if (sourceSet && !sourceSet.has(it.source)) return false;
     return true;
   });
+}
 
+// Builds one subscriber's sections from the SHARED briefing result (their own
+// symbols looked up in it) plus the raw fallback pool for "general".
+function buildSections(prefs, allItems, briefing) {
+  const p = prefs || {};
   const categories = Array.isArray(p.categories) && p.categories.length ? p.categories : ['general'];
   const sections = [];
-  const seen = new Set();
-
-  const pushSection = (label, items) => {
-    const unique = items.filter((it) => it.link && !seen.has(it.link));
-    unique.forEach((it) => seen.add(it.link));
-    if (unique.length) sections.push({ label, items: unique.slice(0, MAX_ITEMS_PER_TOPIC) });
-  };
 
   if (categories.includes('portfolio') || categories.includes('watchlist')) {
     const label = categories.includes('portfolio') && categories.includes('watchlist')
       ? 'Your symbols' : categories.includes('portfolio') ? 'Your portfolio' : 'Your watchlist';
-    pushSection(label, pool.filter((it) => matchesSymbols(it, p.symbols)));
+    const mySymbols = [...new Set((p.symbols || []).map((s) => String(s.symbol || '').toUpperCase()).filter(Boolean))];
+    const holdings = mySymbols
+      .map((sym) => (briefing?.symbols?.[sym] ? { symbol: sym, ...briefing.symbols[sym] } : null))
+      .filter((h) => h && (h.relevantHeadlines?.length > 0 || h.why))
+      .slice(0, MAX_ITEMS_PER_TOPIC);
+    if (holdings.length) sections.push({ kind: 'holdings', label, holdings });
   }
+
   if (categories.includes('general')) {
-    pushSection('General finance news', pool.slice(0, MAX_ITEMS));
+    if (briefing?.stories?.length) {
+      sections.push({ kind: 'stories', label: 'Top stories', pulse: briefing.pulse, items: briefing.stories });
+    } else {
+      const items = rawPool(allItems, p).slice(0, MAX_ITEMS);
+      if (items.length) sections.push({ kind: 'raw', label: 'General finance news', items });
+    }
   }
+
   return { sections };
 }
 
@@ -217,13 +252,84 @@ function buildEmail(sections, snapshot, date, email, unsubToken) {
   const unsubUrl = unsubscribeUrl(email, unsubToken);
   const now = date;
 
-  let sectionsHtml = '';
+  // The market pulse rides on whichever section carries it (the 'stories'
+  // section, if the briefing call succeeded) — rendered once, above sections.
+  const pulse = sections.find((s) => s.kind === 'stories' && s.pulse)?.pulse;
+  let sectionsHtml = pulse
+    ? `
+      <tr>
+        <td style="padding:14px 0 4px 0;">
+          <div style="border:1px solid ${C.accentBorder};background:${C.accentBg};border-radius:10px;padding:14px 16px;">
+            <div style="font-size:10px;letter-spacing:1px;text-transform:uppercase;color:${C.accent};font-weight:700;margin-bottom:6px;">
+              ✦ Market pulse
+            </div>
+            <div style="font-size:13px;color:${C.ink};line-height:1.6;">${escapeHtml(pulse.summary)}</div>
+          </div>
+        </td>
+      </tr>`
+    : '';
+
   for (const section of sections) {
+    const label = `
+      <tr>
+        <td style="padding:20px 0 6px 0;">
+          <span style="display:inline-block;padding:2px 10px;border:1px solid ${C.line};border-radius:999px;
+                       font-size:11px;letter-spacing:1px;text-transform:uppercase;color:${C.dim};">
+            ${escapeHtml(section.label)}
+          </span>
+        </td>
+      </tr>`;
+
+    // "Your holdings" — one card per symbol: stance lean, grounded why/
+    // expectation, then the LLM-confirmed (not bare-ticker-matched) headlines.
+    if (section.kind === 'holdings') {
+      const cards = section.holdings
+        .map((h) => {
+          const stanceColor = h.stance === 'long' ? C.up : h.stance === 'short' ? C.down : C.dim;
+          const stanceLabel = h.stance === 'long' ? '▲ LONG LEAN' : h.stance === 'short' ? '▼ SHORT LEAN' : '● NEUTRAL';
+          const why = h.why
+            ? `<div style="font-size:12px;color:${C.ink};line-height:1.5;margin-top:6px;">${escapeHtml(h.why)}</div>`
+            : '';
+          const expectation = h.expectation
+            ? `<div style="font-size:11px;color:${C.accent};line-height:1.5;margin-top:4px;">→ ${escapeHtml(h.expectation)}</div>`
+            : '';
+          const links = (h.relevantHeadlines || [])
+            .slice(0, 3)
+            .map(
+              (it) => `
+            <div style="padding:3px 0;">
+              <a href="${escapeHtml(it.link)}" style="color:${C.ink};font-size:12px;text-decoration:none;">${escapeHtml(it.title)}</a>
+              <span style="font-size:10px;color:${C.faint};"> · ${escapeHtml(it.source || '')}</span>
+            </div>`
+            )
+            .join('');
+          return `
+          <tr>
+            <td style="padding:0 0 8px 0;">
+              <div style="border:1px solid ${C.line};border-radius:10px;padding:12px 14px;">
+                <span style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;font-weight:700;color:${C.ink};">${escapeHtml(h.symbol)}</span>
+                <span style="font-size:11px;color:${C.dim};margin-left:8px;">${escapeHtml(h.name || '')}</span>
+                <div style="font-size:10px;font-weight:700;letter-spacing:0.5px;color:${stanceColor};margin-top:4px;">${stanceLabel}</div>
+                ${why}${expectation}
+                ${links}
+              </div>
+            </td>
+          </tr>`;
+        })
+        .join('');
+      sectionsHtml += label + cards;
+      continue;
+    }
+
+    // 'stories' (curated + synthesized) and 'raw' (fallback teaser) sections
+    // share the same row shape — 'stories' items carry `synthesis` instead of
+    // the publisher's raw `description`.
     const rows = section.items
       .map((it) => {
         const meta = [it.source, relTime(it.pubDate, now)].filter(Boolean).join(' · ');
-        const desc = it.description
-          ? `<div style="font-size:12px;color:${C.dim};line-height:1.5;margin-top:3px;">${escapeHtml(it.description)}</div>`
+        const body = it.synthesis || it.description;
+        const desc = body
+          ? `<div style="font-size:12px;color:${C.dim};line-height:1.5;margin-top:3px;">${escapeHtml(body)}</div>`
           : '';
         return `
           <tr>
@@ -238,17 +344,7 @@ function buildEmail(sections, snapshot, date, email, unsubToken) {
           </tr>`;
       })
       .join('');
-
-    sectionsHtml += `
-      <tr>
-        <td style="padding:20px 0 6px 0;">
-          <span style="display:inline-block;padding:2px 10px;border:1px solid ${C.line};border-radius:999px;
-                       font-size:11px;letter-spacing:1px;text-transform:uppercase;color:${C.dim};">
-            ${escapeHtml(section.label)}
-          </span>
-        </td>
-      </tr>
-      ${rows}`;
+    sectionsHtml += label + rows;
   }
 
   const html = `
@@ -291,11 +387,22 @@ function buildEmail(sections, snapshot, date, email, unsubToken) {
   if (snapshot.length) {
     text += `\n${snapshot.map((m) => `${m.label} ${fmtPrice(m.price)} (${fmtPct(m.changePct)})`).join(' · ')}\n`;
   }
+  if (pulse) text += `\nMarket pulse: ${pulse.summary}\n`;
   for (const section of sections) {
     text += `\n## ${section.label}\n`;
+    if (section.kind === 'holdings') {
+      for (const h of section.holdings) {
+        text += `- ${h.symbol} (${h.name || h.symbol}) — ${h.stance}\n`;
+        if (h.why) text += `  ${h.why}\n`;
+        if (h.expectation) text += `  → ${h.expectation}\n`;
+        for (const it of (h.relevantHeadlines || []).slice(0, 3)) text += `  · ${it.title}\n    ${it.link}\n`;
+      }
+      continue;
+    }
     for (const it of section.items) {
       const meta = [it.source, relTime(it.pubDate, now)].filter(Boolean).join(' · ');
-      text += `- ${it.title}${meta ? ` (${meta})` : ''}\n  ${it.link}\n`;
+      const body = it.synthesis || it.description;
+      text += `- ${it.title}${meta ? ` (${meta})` : ''}\n${body ? `  ${body}\n` : ''}  ${it.link}\n`;
     }
   }
   text += `\n--\nUnsubscribe: ${unsubUrl}\nMore news: ${SITE_URL}\nNot investment advice.\n`;
@@ -380,6 +487,19 @@ async function runDigest(env) {
   const records = await listSubscriberRecords(env.SUBSCRIBERS);
   const now = new Date();
 
+  // ONE batched synthesis call for the whole run: union every confirmed
+  // subscriber's symbols so the shared per-symbol D1 cache in
+  // functions/api/briefing.js does the work once, not once per subscriber.
+  const symbolUnion = new Map();
+  for (const rec of records) {
+    if (!rec.confirmed) continue;
+    for (const s of rec.prefs?.symbols || []) {
+      const key = String(s?.symbol || '').toUpperCase();
+      if (key && !symbolUnion.has(key)) symbolUnion.set(key, s);
+    }
+  }
+  const briefing = await fetchBriefing([...symbolUnion.values()]);
+
   let sent = 0, failed = 0, confirmSent = 0, skippedEmpty = 0;
 
   for (const rec of records) {
@@ -403,13 +523,13 @@ async function runDigest(env) {
         await env.SUBSCRIBERS.put(`sub:${rec.email}`, JSON.stringify(rec));
       }
 
-      // Confirmed: build the personalized digest.
-      let { sections } = selectForPrefs(allItems, rec.prefs);
+      // Confirmed: build the personalized digest from the shared briefing.
+      let { sections } = buildSections(rec.prefs, allItems, briefing);
       // Never go silent on a confirmed subscriber: if a symbol-only prefs set
       // matched nothing today, fall back to general market news so they still
       // get the daily snapshot instead of an unexplained empty inbox.
       if (sections.length === 0) {
-        sections = selectForPrefs(allItems, { ...rec.prefs, categories: ['general'] }).sections;
+        sections = buildSections({ ...rec.prefs, categories: ['general'] }, allItems, briefing).sections;
       }
       if (sections.length === 0) { skippedEmpty++; continue; } // feed truly empty (e.g. news down)
       await sendMail(env, rec.email, buildEmail(sections, snapshot, now, rec.email, rec.confirmToken));
@@ -420,7 +540,11 @@ async function runDigest(env) {
     }
   }
 
-  return { subscribers: records.length, sent, failed, confirmSent, skippedEmpty, items: allItems.length, snapshot: snapshot.length };
+  return {
+    subscribers: records.length, sent, failed, confirmSent, skippedEmpty,
+    items: allItems.length, snapshot: snapshot.length,
+    briefing: briefing ? { hasLLM: briefing.hasLLM, symbols: Object.keys(briefing.symbols || {}).length, stories: briefing.stories?.length || 0 } : null,
+  };
 }
 
 export default {
@@ -449,9 +573,16 @@ export default {
 
     try {
       // Render-only preview: see today's digest in the browser, nothing sent.
+      // ?symbols=AAPL,NOW also exercises the "Your holdings" briefing path.
       if (url.searchParams.get('preview')) {
         const [allItems, snapshot] = await Promise.all([fetchAllNews(), fetchSnapshot()]);
-        const { sections } = selectForPrefs(allItems, { categories: ['general'], freeOnly: true });
+        const symbolsParam = url.searchParams.get('symbols');
+        const previewSymbols = symbolsParam
+          ? symbolsParam.split(',').map((s) => ({ market: 'stock', symbol: s.trim() }))
+          : [];
+        const briefing = await fetchBriefing(previewSymbols);
+        const categories = previewSymbols.length ? ['general', 'portfolio'] : ['general'];
+        const { sections } = buildSections({ categories, freeOnly: true, symbols: previewSymbols }, allItems, briefing);
         const mail = buildEmail(sections, snapshot, new Date(), 'preview@example.com', 'preview');
         return new Response(mail.html, { headers: { 'content-type': 'text/html; charset=utf-8' } });
       }
