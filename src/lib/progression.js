@@ -29,7 +29,7 @@ function buryReason(m, wp) {
  * @returns {{status:string, failureReason:(string|null), reason:string, changed:boolean}}
  */
 export function progressEntry(entry, retest, bar = {}) {
-  const { minSharpe = 0.8, minPF = 1.15, minTrades = 30, bhMargin = 0 } = bar;
+  const { minSharpe = 0.8, minPF = 1.15, minTrades = 30, minTradesPerYear = 8, bhMargin = 0 } = bar;
   const cur = entry?.status || "factory";
   const m = retest?.metrics;
   const wp = retest?.windowProfile || null;
@@ -53,6 +53,19 @@ export function progressEntry(entry, retest, bar = {}) {
   //    for a mild flaw — only from the earlier stages.
   if (wp && (wp.profile === "good-early" || wp.profile === "good-late" || wp.profile === "erratic") && cur !== "paper") {
     return { status: "improve", failureReason: wp.summary, reason: `window:${wp.profile}`, changed: cur !== "improve" };
+  }
+
+  // 2b) TOO FEW TRADES PER YEAR — profitable, but too infrequent to trust (a handful
+  //     of trades across years could be luck). Instead of clearing OR burying it,
+  //     sideline to "improve" with a trades-focused reason, so Cortex specifically
+  //     tries to RAISE the trade frequency next round rather than lose the idea.
+  const tpy = m.spanYears > 0.5 ? (m.tradesPerYear ?? m.tradeCount / m.spanYears) : Infinity;
+  if (tpy < minTradesPerYear && m.totalReturnPct > 0 && cur !== "paper") {
+    return {
+      status: "improve",
+      failureReason: `only ${tpy.toFixed(1)} trades/yr (need ≥${minTradesPerYear}/yr) — raise the trade frequency: looser entry, shorter holds, or more instruments/sessions`,
+      reason: "too-few-trades/yr", changed: cur !== "improve",
+    };
   }
 
   // 3) CLEARS THE BAR — real, consistent edge. Advance one rung (or rescue an

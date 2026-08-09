@@ -409,6 +409,8 @@ export function runBacktest({ candles, signalFn, initialCapital = 10000, feeBps 
       winRatePct,
       profitFactor,
       tradeCount: trades.length,
+      spanYears,                              // backtest calendar length — lets the gate demand a min trades/YEAR, not just an absolute count (30 trades over 10y = luck)
+      tradesPerYear: spanYears > 0 ? trades.length / spanYears : trades.length,
       exposurePct: (barsInMarket / n) * 100,
       // Total funding paid (positive) or received (negative) over the run, as a
       // % of starting capital. Only meaningful when fundingRates were supplied.

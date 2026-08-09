@@ -38,6 +38,7 @@ export const PROFILES = {
     },
     validation: {
       minTrades: 30,           // more trades = the DSR estimate means something
+      minTradesPerYear: 12,    // …AND a rate floor: 30 trades over 10y is luck, not an edge (≥1/month)
       minProfitFactor: 1.25,
       minReturnPct: 0,
       maxBacktestDrawdownPct: 15, // hard ceiling: a 20% backtest DD breaches an 8% live rule
@@ -85,6 +86,7 @@ export const PROFILES = {
     },
     validation: {
       minTrades: 20,
+      minTradesPerYear: 8,     // rate floor too — a few lucky trades across years is not an edge
       minProfitFactor: 1.35,   // HIGHER than prop — deeper holes must pay better
       minReturnPct: 0,
       maxBacktestDrawdownPct: 35,
@@ -143,6 +145,15 @@ export function judgeMetrics({ profileId, perSet, dsrPct }) {
     const m = s.m;
     if (m.tradeCount < v.minTrades) {
       return { pass: false, reason: `only ${m.tradeCount} trades on ${s.name} (need ≥${v.minTrades})` };
+    }
+    // …and enough trades PER YEAR: an absolute count can be reached by a handful of
+    // lucky trades spread across a decade, so a rate floor makes the edge earn it.
+    // The reason names "trades/yr" so the improve loop knows to raise trade frequency.
+    if (v.minTradesPerYear && m.spanYears > 0.5) {
+      const perYear = m.tradesPerYear ?? m.tradeCount / m.spanYears;
+      if (perYear < v.minTradesPerYear) {
+        return { pass: false, reason: `only ${perYear.toFixed(1)} trades/yr on ${s.name} over ${m.spanYears.toFixed(1)}y (need ≥${v.minTradesPerYear}/yr — too few to rule out luck)` };
+      }
     }
     if (m.totalReturnPct <= v.minReturnPct) {
       return { pass: false, reason: `no edge on ${s.name} (ret ${m.totalReturnPct.toFixed(0)}%)` };
