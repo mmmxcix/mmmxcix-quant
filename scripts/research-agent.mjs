@@ -540,6 +540,15 @@ function gauntlet(code, datasets, globalTrials, lang) {
     return { pass: false, reason: `audit: ${c.id} — ${c.msg.slice(0, 90)}` };
   }
 
+  // HARD RISK-EXIT REQUIREMENT (user rule, Aug 9): a strategy without any
+  // stop/trailing/target must never reach the paper book, however good its
+  // numbers. Rejected HERE (the source) so a stop-less idea goes into the
+  // improve pool with a reason that tells the next iteration exactly what to
+  // add — instead of being promoted and then evicted by the library police.
+  if (!/(stop|target|trailing|trail|\bsl\b|\btp\b)/i.test(code)) {
+    return { pass: false, reason: "no hard stop-loss/trailing exit — add an ATR-based stop (+ trailing) or stop/target brackets; risk management is required before promotion" };
+  }
+
   // Pass 1 — cheap: run every market, keep the ones that made money at all.
   const ran = [];
   for (const { name, market, candles } of datasets) {
@@ -551,7 +560,11 @@ function gauntlet(code, datasets, globalTrials, lang) {
       return { pass: false, reason: `runtime(${name}): ${e.message.slice(0, 55)}` };
     }
     // A strategy error is fatal everywhere, not just here — bail immediately.
-    if (res.warnings.length) return { pass: false, reason: `strategy error (${name}): ${res.warnings[0].slice(0, 70)}` };
+    // (The engine's "Bracket sanity" clamp note is informational — a trailing
+    // stop overtaken by a weekend gap fills at the open, which is honest, not
+    // fatal. Everything else, incl. the implausible-result warning, rejects.)
+    const fatal = res.warnings.filter((w) => !w.includes("Bracket sanity"));
+    if (fatal.length) return { pass: false, reason: `strategy error (${name}): ${fatal[0].slice(0, 70)}` };
     ran.push({ name, market, candles, feeBps, m: res.metrics, equity: res.equity });
   }
 

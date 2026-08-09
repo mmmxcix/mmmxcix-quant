@@ -328,14 +328,25 @@ export async function onRequest({ request, env, waitUntil }) {
     // be auto-promoted back into the paper book — the card carries the fix
     // brief, and the retest pass re-admits it once it clears. Best-effort: no
     // DB binding (or a read error) simply skips the filter.
-    const blocked = new Set();
+    const blocked = new Set();      // candidate ids of sidelined/buried cards
+    const blockedCode = new Set();  // …and their normalized CODE
+    const blockedName = new Set();  // …and their name identity
+    const normCode = (c) => String(c || "")
+      .replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "").replace(/#[^\n]*/g, "")
+      .replace(/\s+/g, "").toLowerCase();
     try {
       if (env.DB) {
         const rows = await env.DB.prepare("SELECT data FROM library WHERE owner = ?").bind("dev").all();
         for (const r of rows?.results || []) {
           try {
             const e = JSON.parse(r.data);
-            if ((e.status === "improve" || e.status === "graveyard") && e.candidateId) blocked.add(String(e.candidateId));
+            if (e.status !== "improve" && e.status !== "graveyard") continue;
+            if (e.candidateId) blocked.add(String(e.candidateId));
+            // Cortex re-discovers the SAME idea under a fresh candidate id, so
+            // an id-only filter let a sidelined strategy walk straight back into
+            // the paper book. Block by code and by name identity as well.
+            if (e.code) blockedCode.add(normCode(e.code));
+            if (e.name) blockedName.add(nameKey(e));
           } catch { /* skip a bad row */ }
         }
       }
@@ -343,7 +354,10 @@ export async function onRequest({ request, env, waitUntil }) {
     const baseCand = (s) => String(s.candidateId || String(s.id).replace(/_(prop|private)(_.*)?$/, ""));
     const incoming = body.promote
       .filter((s) => s && s.id && typeof s.code === "string")
-      .filter((s) => !blocked.has(baseCand(s)))
+      .filter((s) => !blocked.has(baseCand(s)) && !blockedCode.has(normCode(s.code)) && !blockedName.has(nameKey(s)))
+      // Risk-exit gate at the door: no stop/trailing/target = no paper book,
+      // whatever the numbers say (mirrors the research gauntlet's own check).
+      .filter((s) => /(stop|target|trailing|trail|\bsl\b|\btp\b)/i.test(String(s.code || "")))
       .map((s) => ({ ...s, auto: true, profile: s.profile || DEFAULT_PROFILE }));
 
     // Merge newest-first, then apply the cap SEPARATELY per profile so the two

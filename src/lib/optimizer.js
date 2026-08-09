@@ -60,15 +60,60 @@ function rangeFor(v) {
   return { min: +min.toFixed(6), max: +max.toFixed(6), step, integer: Number.isInteger(v) };
 }
 
-/** Param space [{key,default,min,max,step,integer}] from a code string, or []. */
+// ── inline indicator literals ───────────────────────────────────────────────
+// Most generated strategies never declare constants — every number sits inside
+// the call: `ewm(span=20)`, `rolling(14)`, `sma(closes, 50)`. Those ARE the
+// tunable parameters, so detect them positionally and expose each occurrence as
+// its own param (`span_1`, `rolling_2`, …). Substitution is by absolute string
+// offset, applied right-to-left, so two identical literals stay independent.
+const KW_RE = /\b(span|window|periods|min_periods|alpha|com|halflife|length|period|mult|multiplier)\s*=\s*(\d+(?:\.\d+)?)/g;
+// NOTE: `shift` is deliberately NOT here — a shift is causality alignment (use
+// yesterday's value), not a tunable parameter; sweeping it would silently
+// change what the strategy is allowed to see.
+const CALL_RE = /\.(rolling|ewm|sma|ema|rsi|atr|roc|donchian|bollinger)\(\s*(\d+(?:\.\d+)?)\s*[,)]/g;
+
+function parseInline(code) {
+  const src = String(code || "");
+  const out = [];
+  const seen = {};
+  const add = (name, numStr, start) => {
+    const v = Number(numStr);
+    if (!Number.isFinite(v) || v === 0) return; // 0 has no meaningful sweep range
+    seen[name] = (seen[name] || 0) + 1;
+    out.push({ key: `${name}_${seen[name]}`, value: v, start, end: start + numStr.length });
+  };
+  for (const m of src.matchAll(KW_RE)) add(m[1], m[2], m.index + m[0].lastIndexOf(m[2]));
+  for (const m of src.matchAll(CALL_RE)) add(m[1], m[2], m.index + m[0].lastIndexOf(m[2]));
+  return out.sort((a, b) => a.start - b.start);
+}
+
+/** Param space [{key,default,min,max,step,integer}] from a code string, or [].
+ *  Named constants first, then inline indicator literals (span=20, rolling(14)),
+ *  capped so a Python sweep over a busy file stays tractable. */
 export function codeParamSpace(code) {
   const { consts } = parseConstants(code);
-  return Object.entries(consts).map(([key, v]) => ({ key, default: v, ...rangeFor(v) }));
+  const named = Object.entries(consts).map(([key, v]) => ({ key, default: v, ...rangeFor(v) }));
+  const inline = parseInline(code).map((p) => ({ key: p.key, default: p.value, inline: true, ...rangeFor(p.value) }));
+  return [...named, ...inline].slice(0, 12);
 }
 
 /** Return a copy of `code` with the detected constants set to `values` (a
  *  {KEY:num} map). Assignments not present in `values` are left untouched. */
 export function substituteConstants(code, values) {
+  // Inline literals FIRST, by absolute offset and right-to-left so earlier
+  // offsets stay valid. Replacing a number with a number keeps the line
+  // structure intact, so the line-based pass below still lines up.
+  const inline = parseInline(code);
+  if (inline.length) {
+    let src = String(code);
+    for (let i = inline.length - 1; i >= 0; i--) {
+      const p = inline[i];
+      const nv = values[p.key];
+      if (nv == null) continue;
+      src = src.slice(0, p.start) + nv + src.slice(p.end);
+    }
+    code = src;
+  }
   const { assigns, lines } = parseConstants(code);
   const out = [...lines];
   for (const a of assigns) {

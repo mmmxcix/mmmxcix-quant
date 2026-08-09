@@ -64,6 +64,41 @@ test("detects INDENTED constants with trailing comments (real Cortex/user code)"
   assert.match(out, /atr_mult = 2   # Stop-Abstand/);
 });
 
+test("detects INLINE indicator literals when a strategy declares no constants", () => {
+  // The real Cortex shape: every number lives inside the call, so the panel used
+  // to report "no tunable constants" and the optimizer was unusable.
+  const py = `def signals(df):
+    ema20 = df['close'].ewm(span=20, adjust=False).mean()
+    ema50 = df['close'].ewm(span=50, adjust=False).mean()
+    atr = df['high'].rolling(14).max()
+    return ema20 > ema50`;
+  const space = codeParamSpace(py);
+  assert.deepEqual(space.map((p) => p.key), ["span_1", "span_2", "rolling_1"]);
+  assert.deepEqual(space.map((p) => p.default), [20, 50, 14]);
+});
+
+test("substitutes each inline occurrence independently, by position", () => {
+  const py = `def signals(df):
+    a = df['close'].ewm(span=20).mean()
+    b = df['close'].ewm(span=20).mean()
+    return a > b`;
+  const out = substituteConstants(py, { span_1: 12, span_2: 60 });
+  assert.match(out, /a = df\['close'\]\.ewm\(span=12\)/);
+  assert.match(out, /b = df\['close'\]\.ewm\(span=60\)/);
+});
+
+test("named constants and inline literals coexist without clobbering each other", () => {
+  const py = `def signals(df):
+    lookback = 30  # named
+    ema = df['close'].ewm(span=20).mean()
+    return ema`;
+  const space = codeParamSpace(py);
+  assert.deepEqual(space.map((p) => p.key), ["lookback", "span_1"]);
+  const out = substituteConstants(py, { lookback: 45, span_1: 9 });
+  assert.match(out, /lookback = 45  # named/);
+  assert.match(out, /ewm\(span=9\)/);
+});
+
 test("detects JS constants with trailing // comments", () => {
   const js = `const lookback = 50; // bars\nfunction strategy(ctx){ return "flat"; }`;
   assert.deepEqual(codeParamSpace(js).map((p) => p.key), ["lookback"]);
