@@ -124,13 +124,17 @@ const BINANCE_INTERVAL_SEC = INTERVAL_SECONDS;
 // while still giving e.g. 2.7 years of 4h or 16 years of daily data.
 const MAX_CRYPTO_BARS = 6000;
 
-async function fetchBinance(symbol, interval, rangeDays, window) {
-  // Binance caps at 1000 klines per call; paginate backwards with endTime
-  // until the range (or the MAX_CRYPTO_BARS cap) is covered. `window`
-  // ({from,to} unix sec) overrides the relative range for period backtests.
+async function fetchBinance(symbol, interval, rangeDays, window, maxBars = MAX_CRYPTO_BARS) {
+  // Binance caps at 1000 klines per call; paginate backwards with endTime until the
+  // range (or the `maxBars` cap) is covered — always STITCHING several 1000-kline
+  // windows into one continuous series. `window` ({from,to} unix sec) overrides the
+  // relative range for period backtests. Charts pass the default 6000 cap for
+  // responsiveness; a backtest passes a much higher cap so a short interval actually
+  // covers its full requested duration (1m × 1mo needs 43k bars, not 6k = ~4 days).
+  const cap = maxBars || MAX_CRYPTO_BARS;
   const sec = BINANCE_INTERVAL_SEC[interval] || 86400;
   const spanSec = window ? window.to - window.from : rangeDays * 86400;
-  const need = Math.min(MAX_CRYPTO_BARS, Math.ceil(spanSec / sec));
+  const need = Math.min(cap, Math.ceil(spanSec / sec));
   const cutoff = window ? window.from : Date.now() / 1000 - rangeDays * 86400;
 
   let out = [];
@@ -159,7 +163,7 @@ async function fetchBinance(symbol, interval, rangeDays, window) {
     if (rows.length < 1000) break; // history exhausted
     if (out[0].time <= cutoff) break; // range covered
   }
-  return out.filter((c) => c.time >= cutoff).slice(-MAX_CRYPTO_BARS);
+  return out.filter((c) => c.time >= cutoff).slice(-cap);
 }
 
 async function fetchYahoo(symbol, yahooInterval, yahooRange, window) {
@@ -219,7 +223,7 @@ async function fetchYahooIntraday(symbol, yInterval, fromSec, toSec) {
  * Fetch candles. Either a relative `range` (default) or an explicit period
  * `{ from, to }` (unix SECONDS) — the period wins when both are given.
  */
-export async function fetchCandles({ market, symbol, interval = "1d", range = "1y", from, to }) {
+export async function fetchCandles({ market, symbol, interval = "1d", range = "1y", from, to, maxBars }) {
   const iDef = intervalDef(interval);
   const rDef = RANGES.find((r) => r.id === range) || RANGES[1];
   if (!iDef.markets.includes(market)) {
@@ -230,7 +234,7 @@ export async function fetchCandles({ market, symbol, interval = "1d", range = "1
   const isMaxDaily = !window && range === "max" && (iDef.yahoo === "1d" || iDef.yahoo === "1wk");
   let candles;
   if (market === "crypto") {
-    candles = await fetchBinance(symbol, iDef.binance, rDef.days, window);
+    candles = await fetchBinance(symbol, iDef.binance, rDef.days, window, maxBars);
   } else if (YAHOO_SUBHOUR[iDef.yahoo]) {
     // Sub-hour → chunked + clamped period requests (a plain range 422s past the cap).
     candles = await fetchYahooIntraday(symbol, iDef.yahoo, window ? window.from : now - rDef.days * 86400, window ? window.to : now);

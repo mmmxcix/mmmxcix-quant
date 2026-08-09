@@ -431,7 +431,7 @@ export default function Backtest() {
             rangeDays: validRanges.find((r) => r.id === range)?.days ?? 365,
             from, to,
           })
-        : await fetchCandles({ market, symbol: symbol.trim().toUpperCase(), interval, range, from, to });
+        : await fetchCandles({ market, symbol: symbol.trim().toUpperCase(), interval, range, from, to, maxBars: 150000 /* #4: lift the 6000 chart cap so a short interval covers its FULL requested duration, stitched from many 1000-kline windows */ });
       let signalFn;
       if (mode === "builder") {
         // Untouched preset → run the fast native implementation (its Python twin
@@ -477,6 +477,23 @@ export default function Backtest() {
           res.warnings.unshift(
             `Data mismatch: you requested ${interval} candles but the source delivered ~${Math.round(med / 86400) >= 1 ? Math.round(med / 86400) + "-day" : Math.round(med / 3600) + "-hour"} bars for this range. Indicator periods now mean something else — pick a shorter range or a larger interval.`
           );
+        }
+      }
+      // #4 Honesty: a crypto backtest STITCHES many 1000-kline provider windows into
+      // one continuous series. Say how many windows were assembled, and warn loudly if
+      // the provider ran out of history before the requested duration (so the run
+      // silently covers a shorter span than the range label implies).
+      if (market === "crypto" && candles.length > 1) {
+        const bars = candles.length;
+        const spanDays = (candles[bars - 1].time - candles[0].time) / 86400;
+        const windows = Math.ceil(bars / 1000);
+        const reqDays = customPeriod ? (to - from) / 86400 : (validRanges.find((r) => r.id === range)?.days ?? null);
+        const fmt = (d) => (d >= 60 ? (d / 30).toFixed(d >= 300 ? 0 : 1) + " months" : d.toFixed(0) + " days");
+        if (reqDays && spanDays < reqDays * 0.85) {
+          res.warnings.unshift(`Data-limited: you asked for ~${fmt(reqDays)} but Binance only has ${fmt(spanDays)} of ${interval} history — the backtest covers that shorter span.`);
+        }
+        if (windows > 1) {
+          res.warnings.push(`Stitched: assembled from ${windows} data windows — ${bars.toLocaleString()} ${interval} bars over ${fmt(spanDays)}.`);
         }
       }
       setResult({ ...res, candles, symbol: symbol.trim().toUpperCase(), candleCount: candles.length });
