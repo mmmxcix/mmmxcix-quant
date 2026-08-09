@@ -37,8 +37,15 @@ export const PROFILES = {
       blackout: [],
     },
     validation: {
-      minTrades: 30,           // more trades = the DSR estimate means something
-      minTradesPerYear: 12,    // …AND a rate floor: 30 trades over 10y is luck, not an edge (≥1/month)
+      // Sample-size research (Aug 2026): ~30 trades is only the CLT floor,
+      // ~100 is basic reliability, 200–500 is the institutional standard
+      // (López de Prado). Per single market our 10y windows cap what a sane
+      // 8–12 trades/yr strategy can produce at ~80–120, so the per-market
+      // floor sits at "basic reliability" and the institutional confidence
+      // comes from minPooledTrades across ALL tested markets below.
+      minTrades: 100,          // per market — below this, variance dominates the estimate
+      minTradesPerYear: 12,    // …AND a rate floor: sparse trades over 10y is luck, not an edge (≥1/month)
+      minPooledTrades: 300,    // across ALL markets combined (judged when perSet spans >1 market)
       minProfitFactor: 1.25,
       minReturnPct: 0,
       maxBacktestDrawdownPct: 15, // hard ceiling: a 20% backtest DD breaches an 8% live rule
@@ -85,8 +92,11 @@ export const PROFILES = {
       blackout: [],
     },
     validation: {
-      minTrades: 20,
+      // See the prop note: 80 ≈ what a healthy 8-trades/yr strategy can even
+      // produce on a 10y window; the institutional sample comes from pooling.
+      minTrades: 80,
       minTradesPerYear: 8,     // rate floor too — a few lucky trades across years is not an edge
+      minPooledTrades: 300,    // across ALL markets combined (judged when perSet spans >1 market)
       minProfitFactor: 1.35,   // HIGHER than prop — deeper holes must pay better
       minReturnPct: 0,
       maxBacktestDrawdownPct: 35,
@@ -163,6 +173,18 @@ export function judgeMetrics({ profileId, perSet, dsrPct }) {
     }
     if (m.maxDrawdownPct > v.maxBacktestDrawdownPct) {
       return { pass: false, reason: `drawdown ${m.maxDrawdownPct.toFixed(0)}% > ${v.maxBacktestDrawdownPct}% on ${s.name}` };
+    }
+  }
+
+  // Pooled sample floor — statistical confidence comes from the TOTAL trade
+  // count across venues (institutional standard: 200–500), not from any single
+  // market clearing its per-market floor. Only judged when perSet actually
+  // spans several markets: the per-market callers (research pass 2, the
+  // revalidator) pass one set at a time and must not trip a pooled bar.
+  if (v.minPooledTrades && perSet.length > 1) {
+    const pooled = perSet.reduce((s, x) => s + (x.m?.tradeCount || 0), 0);
+    if (pooled < v.minPooledTrades) {
+      return { pass: false, reason: `only ${pooled} trades pooled across ${perSet.length} markets (need ≥${v.minPooledTrades} total — raise the trade frequency or make it work on more markets)` };
     }
   }
 

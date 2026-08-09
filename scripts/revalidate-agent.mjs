@@ -170,6 +170,13 @@ function revalidate(candidate, datasetsById, globalTrials) {
   if (!stillWorking.length) {
     return { pass: false, reason: Object.values(reasons)[0] || "decayed everywhere", byMarket };
   }
+  // Same pooled sample floor as the research gauntlet: surviving markets must
+  // still add up to a defensible TOTAL sample, not just each clear their own bar.
+  const MIN_POOLED_TRADES = +(process.env.LAB_MIN_POOLED_TRADES || 300);
+  const pooledTrades = stillWorking.reduce((s, mid) => s + (byMarket[mid].n ?? 0), 0);
+  if (pooledTrades < MIN_POOLED_TRADES) {
+    return { pass: false, reason: `pooled sample too thin on re-validation (${pooledTrades} trades across ${stillWorking.length} market(s), need ≥${MIN_POOLED_TRADES} total)`, byMarket };
+  }
   const best = stillWorking.slice().sort((a, b) => (byMarket[b].dsr ?? 0) - (byMarket[a].dsr ?? 0))[0];
   return {
     pass: true, byMarket, markets: stillWorking, bestMarket: best,

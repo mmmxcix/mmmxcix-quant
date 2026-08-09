@@ -29,7 +29,11 @@ function buryReason(m, wp) {
  * @returns {{status:string, failureReason:(string|null), reason:string, changed:boolean}}
  */
 export function progressEntry(entry, retest, bar = {}) {
-  const { minSharpe = 0.8, minPF = 1.15, minTrades = 30, minTradesPerYear = 8, bhMargin = 0 } = bar;
+  // minTrades 100: sample-size research (Aug 2026) — ~30 is only the CLT
+  // floor; below ~100 trades variance dominates and a lucky streak looks like
+  // an edge. 100 is what a healthy 8–12 trades/yr strategy produces on the
+  // 10y windows the library re-tests on.
+  const { minSharpe = 0.8, minPF = 1.15, minTrades = 100, minTradesPerYear = 8, bhMargin = 0 } = bar;
   const cur = entry?.status || "factory";
   const m = retest?.metrics;
   const wp = retest?.windowProfile || null;
@@ -40,7 +44,9 @@ export function progressEntry(entry, retest, bar = {}) {
 
   // 1) DEAD — degenerate trade count, lost money, or negative risk-adjusted return.
   //    Goes to the graveyard (out of the library) with a recorded reason.
-  const degenerate = m.tradeCount < Math.max(10, Math.floor(minTrades / 3));
+  //    (Burial threshold is deliberately far below the ADVANCEMENT floor: a
+  //    profitable 40-trade strategy is sidelined to improve, not executed.)
+  const degenerate = m.tradeCount < Math.max(10, Math.floor(minTrades / 5));
   const lost = !(m.totalReturnPct > 0);
   const negSharpe = Number.isFinite(m.sharpe) && m.sharpe < 0;
   if (degenerate || lost || negSharpe) {
@@ -71,9 +77,16 @@ export function progressEntry(entry, retest, bar = {}) {
   // 3) CLEARS THE BAR — real, consistent edge. Advance one rung (or rescue an
   //    "improve" strategy back into the pipeline). Note: reaching "paper" is a
   //    STATUS only; handing it to the live agent stays a manual "Publish" click.
+  //
+  //    SHARPE IS TIERED BY SAMPLE SIZE (t-stat ≈ SR·√n): a thin sample can only
+  //    convince with a strong signal. ≥300 trades → the base bar; 150–299 →
+  //    at least 1.0; under 150 → at least 1.2.
+  const sharpeBar = m.tradeCount >= 300 ? minSharpe
+    : m.tradeCount >= 150 ? Math.max(minSharpe, 1.0)
+    : Math.max(minSharpe, 1.2);
   const clears =
     m.tradeCount >= minTrades &&
-    Number.isFinite(m.sharpe) && m.sharpe >= minSharpe &&
+    Number.isFinite(m.sharpe) && m.sharpe >= sharpeBar &&
     (!Number.isFinite(m.profitFactor) || m.profitFactor >= minPF) &&
     (m.buyHoldSharpe == null || !Number.isFinite(m.buyHoldSharpe) || m.sharpe >= m.buyHoldSharpe + bhMargin);
 

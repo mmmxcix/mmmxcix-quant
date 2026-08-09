@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { progressEntry } from "../src/lib/progression.js";
 
-const strong = { metrics: { sharpe: 1.4, profitFactor: 1.8, totalReturnPct: 120, tradeCount: 80, buyHoldSharpe: 0.6 }, windowProfile: { profile: "consistent", summary: "held throughout" } };
+const strong = { metrics: { sharpe: 1.4, profitFactor: 1.8, totalReturnPct: 120, tradeCount: 320, buyHoldSharpe: 0.6 }, windowProfile: { profile: "consistent", summary: "held throughout" } };
 const dead = { metrics: { sharpe: -0.3, profitFactor: 0.7, totalReturnPct: -25, tradeCount: 40 } };
 const decayed = { metrics: { sharpe: 1.0, profitFactor: 1.3, totalReturnPct: 60, tradeCount: 50, buyHoldSharpe: 0.5 }, windowProfile: { profile: "good-early", summary: "profitable early then decayed" } };
 const marginal = { metrics: { sharpe: 0.4, profitFactor: 1.05, totalReturnPct: 15, tradeCount: 50, buyHoldSharpe: 0.3 }, windowProfile: { profile: "consistent", summary: "ok" } };

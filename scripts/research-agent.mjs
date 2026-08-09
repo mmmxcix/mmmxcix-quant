@@ -662,6 +662,21 @@ function gauntlet(code, datasets, globalTrials, lang) {
     };
   }
 
+  // POOLED sample floor — the per-market bars guarantee no single venue is
+  // noise, but institutional-grade confidence (200–500 trades, López de Prado)
+  // comes from the TOTAL sample across the winning venues. A candidate whose
+  // pooled count is thin isn't proven wrong, just unproven — the reason names
+  // frequency/markets so the improve loop pushes in that direction.
+  const MIN_POOLED_TRADES = +(process.env.LAB_MIN_POOLED_TRADES || 300);
+  const pooledTrades = winningMarkets.reduce((s, name) => s + (byMarket[name].n ?? 0), 0);
+  if (pooledTrades < MIN_POOLED_TRADES) {
+    return {
+      pass: false,
+      reason: `only ${pooledTrades} trades pooled across ${winningMarkets.length} winning market(s) (need ≥${MIN_POOLED_TRADES} total) — raise the trade frequency or make the edge work on more markets`,
+      byMarket, trials,
+    };
+  }
+
   // Report the strongest venue as the headline.
   const best = winningMarkets
     .slice()

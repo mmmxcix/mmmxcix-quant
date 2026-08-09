@@ -31,11 +31,14 @@ const TOKEN = process.env.LAB_TOKEN;
 const DAY_MS = 86_400_000;
 
 // Quality bar for advancement — tunable via env, defaults matching the research
-// agent's "a quant would find this attractive" standard.
+// agent's "a quant would find this attractive" standard. minTrades 100 per the
+// Aug 2026 sample-size calibration (30 was only the CLT floor — below ~100
+// trades a lucky streak looks like an edge); the Sharpe bar tiers up on thin
+// samples inside progressEntry (≥1.2 under 150 trades, ≥1.0 under 300).
 const BAR = {
   minSharpe: +(process.env.LAB_LIB_MIN_SHARPE || 0.8),
   minPF: +(process.env.LAB_LIB_MIN_PF || 1.15),
-  minTrades: +(process.env.LAB_LIB_MIN_TRADES || 30),
+  minTrades: +(process.env.LAB_LIB_MIN_TRADES || 100),
 };
 
 // How long a critical-code-bug strategy may sit in "improve" awaiting a fix
