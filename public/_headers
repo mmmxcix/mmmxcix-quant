@@ -17,10 +17,13 @@
   # the Pyodide runtime + numpy/pandas wheels (Python backtesting) — a reputable
   # CDN, loaded only when the user opts into Python mode. connect-src covers
   # Binance (crypto data) + self (proxied Yahoo, news, api) + jsdelivr (Pyodide
-  # wheel fetches) + the local IBKR Client Portal Gateway (dev-only live quotes;
+  # wheel fetches) + api.frankfurter.dev (ECB reference rates — the Portfolio's
+  # multi-currency deposit converts to USD at the deposit date's rate; without
+  # this entry every non-USD deposit died with a bare "Failed to fetch")
+  # + the local IBKR Client Portal Gateway (dev-only live quotes;
   # harmless for visitors — nothing listens on their localhost:5000 unless they
   # run the gateway themselves).
-  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-eval' https://cdn.jsdelivr.net; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' https://api.binance.com wss://stream.binance.com:9443 wss://stream.aisstream.io https://earthquake.usgs.gov https://generativelanguage.googleapis.com https://cdn.jsdelivr.net https://localhost:5000 https://127.0.0.1:5000; frame-ancestors 'none'; base-uri 'self'; form-action 'self'
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-eval' https://cdn.jsdelivr.net; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' https://api.frankfurter.dev https://api.binance.com wss://stream.binance.com:9443 wss://stream.aisstream.io https://earthquake.usgs.gov https://generativelanguage.googleapis.com https://cdn.jsdelivr.net https://localhost:5000 https://127.0.0.1:5000; frame-ancestors 'none'; base-uri 'self'; form-action 'self'
 
 # Hashed build assets are content-addressed: the filename changes whenever the
 # bytes change, so they can be cached forever. (Pages' default was

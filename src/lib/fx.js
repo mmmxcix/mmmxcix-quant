@@ -20,7 +20,15 @@ export async function fxRateToUSD(currency, dateStr) {
   const cur = String(currency || "USD").toUpperCase();
   if (cur === "USD") return 1;
   const date = /^\d{4}-\d{2}-\d{2}$/.test(String(dateStr)) ? dateStr : "latest";
-  const res = await fetch(`${BASE}/${date}?from=${cur}&to=USD`);
+  let res;
+  try {
+    res = await fetch(`${BASE}/${date}?from=${cur}&to=USD`);
+  } catch (e) {
+    // A CSP block surfaces here as a bare "Failed to fetch" with no hint of the
+    // cause — which is exactly how this shipped broken once (api.frankfurter.dev
+    // was missing from connect-src in public/_headers).
+    throw new Error(`Couldn't reach the exchange-rate service (${String(e.message || e)}). Book the deposit in USD, or try again.`);
+  }
   if (!res.ok) throw new Error(`FX lookup failed (${res.status})`);
   const json = await res.json();
   const rate = Number(json?.rates?.USD);
