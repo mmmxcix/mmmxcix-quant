@@ -54,16 +54,20 @@ function Redir({ to }) {
   return <Navigate to={`${to}${search}`} replace />;
 }
 
-// The root gate: the welcome page is the entry point for anyone who hasn't signed
-// up yet. Redirect to /welcome when the visitor is FIRST-TIME (no `quant_welcomed`
-// flag) OR has no account (not signed in). Only signed-in users who've been here
-// land straight on the dashboard. Search params (?view= deep links) pass through.
+// The root gate: /welcome is the entry point the FIRST time someone arrives.
+// It is deliberately NOT an auth wall — the landing page itself promises "free
+// while in alpha · no account needed", and requiring a session here made the
+// site unusable: a signed-out visitor clicking "Enter the desk" (which links to
+// "/") was bounced straight back to /welcome, forever. So the only condition is
+// "has this browser seen the welcome page?", which Landing sets on mount.
+// A signed-in user always goes through, flag or not. Search params (?view=
+// deep links) pass through.
 function HomeOrWelcome() {
   const { data: session, isPending } = useSession();
   let welcomed = true;
   try { welcomed = !!localStorage.getItem("quant_welcomed"); } catch { /* private mode → skip */ }
   if (isPending) return <RouteFallback />; // wait for the session before deciding (no /welcome flash)
-  if (!welcomed || !session?.user) return <Navigate to="/welcome" replace />;
+  if (!welcomed && !session?.user) return <Navigate to="/welcome" replace />;
   return <Dashboard />;
 }
 

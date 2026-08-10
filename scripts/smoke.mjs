@@ -59,9 +59,59 @@ try {
       console.log(`✗ ${path} → nav failed: ${e.message.slice(0, 90)}`);
     }
   }
+
+  // ── First-visit flow ──────────────────────────────────────────────────────
+  // Route rendering alone cannot catch this, and it has already broken once:
+  // the root gate additionally required a SESSION, so a signed-out visitor
+  // clicking "Enter the desk" (which links to "/") was bounced back to
+  // /welcome forever — the entire site unreachable without an account, on a
+  // landing page that promises "no account needed". Each check runs in its own
+  // browser context so localStorage really is empty, like a new machine.
+  const flow = async (label, fn) => {
+    const ctx = await browser.createBrowserContext();
+    const page = await ctx.newPage();
+    try {
+      const problem = await fn(page);
+      if (problem) { fails++; console.log(`✗ ${label} → ${problem}`); }
+      else console.log(`✓ ${label}`);
+    } catch (e) {
+      fails++; console.log(`✗ ${label} → ${e.message.slice(0, 90)}`);
+    } finally { await ctx.close(); }
+  };
+  const at = (page) => new URL(page.url()).pathname;
+  const settle = (ms = 1200) => new Promise((r) => setTimeout(r, ms));
+
+  await flow("first visit to / lands on /welcome", async (page) => {
+    await page.goto(`http://localhost:${PORT}/`, { waitUntil: "networkidle2", timeout: 30000 });
+    await settle();
+    return at(page) === "/welcome" ? null : `landed on ${at(page)}`;
+  });
+
+  await flow("'Enter the desk' actually enters the desk", async (page) => {
+    await page.goto(`http://localhost:${PORT}/welcome`, { waitUntil: "networkidle2", timeout: 30000 });
+    await settle();
+    const clicked = await page.evaluate(() => {
+      const el = [...document.querySelectorAll("a")].find((a) => /enter the desk/i.test(a.textContent || ""));
+      if (!el) return false;
+      el.click();
+      return true;
+    });
+    if (!clicked) return "no 'Enter the desk' link on the landing page";
+    await settle(1800);
+    return at(page) !== "/welcome" ? null : "bounced straight back to /welcome (redirect loop)";
+  });
+
+  await flow("a returning visitor goes straight to the desk", async (page) => {
+    await page.goto(`http://localhost:${PORT}/welcome`, { waitUntil: "networkidle2", timeout: 30000 });
+    await settle(800);
+    await page.goto(`http://localhost:${PORT}/`, { waitUntil: "networkidle2", timeout: 30000 });
+    await settle();
+    return at(page) === "/" ? null : `sent back to ${at(page)}`;
+  });
+
   await browser.close();
 } finally {
   preview.kill();
 }
-console.log(fails === 0 ? `\nSMOKE PASS — ${ROUTES.length} routes clean` : `\nSMOKE FAIL — ${fails}/${ROUTES.length} routes broken`);
+console.log(fails === 0 ? `\nSMOKE PASS — ${ROUTES.length} routes + first-visit flow clean` : `\nSMOKE FAIL — ${fails} check(s) broken`);
 process.exit(fails === 0 ? 0 : 1);
