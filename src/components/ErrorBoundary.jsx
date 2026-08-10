@@ -16,10 +16,18 @@ import { Component } from "react";
 // error card after a deploy. The reload is guarded to one shot, so casting wide is safe.
 const CHUNK_ERROR = /dynamically imported module|module script|Importing a module|disallowed MIME type|ChunkLoadError|Loading chunk|Failed to fetch/i;
 const RECOVER_KEY = "quant_chunk_recover";
+// The guard is a COOLDOWN, not a one-shot. It used to be "already tried this
+// session", and sessionStorage lives as long as the tab: a tab left open across
+// several deploys healed itself once and then showed the error card forever,
+// because every later deploy found the flag already set. A cooldown still makes
+// a reload loop impossible (a genuinely broken chunk can't recover twice within
+// the window) while letting each new deploy heal.
+const RECOVER_COOLDOWN_MS = 20_000;
 
 async function recoverFromStaleChunks() {
   try {
-    if (sessionStorage.getItem(RECOVER_KEY)) return false; // already tried this session
+    const last = Number(sessionStorage.getItem(RECOVER_KEY) || 0);
+    if (Date.now() - last < RECOVER_COOLDOWN_MS) return false; // just tried — don't loop
     sessionStorage.setItem(RECOVER_KEY, String(Date.now()));
   } catch { /* private mode — still worth one reload */ }
   try {
@@ -67,8 +75,13 @@ export default class ErrorBoundary extends Component {
       <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: 24, fontFamily: "system-ui, sans-serif" }}>
         <div style={{ maxWidth: 460, textAlign: "center" }}>
           <h1 style={{ fontSize: 20, marginBottom: 8 }}>Something went wrong on this page</h1>
-          <p style={{ color: "#6b7280", fontSize: 14, lineHeight: 1.6, marginBottom: 20 }}>
+          <p style={{ color: "#6b7280", fontSize: 14, lineHeight: 1.6, marginBottom: 12 }}>
             The rest of the app is fine. Reload the page, or go back to the dashboard.
+          </p>
+          {/* Show WHAT broke. A bare "something went wrong" is undiagnosable —
+              neither the user nor I could tell a stale chunk from a real bug. */}
+          <p style={{ color: "#9ca3af", fontSize: 11, fontFamily: "ui-monospace, monospace", lineHeight: 1.5, marginBottom: 20, wordBreak: "break-word" }}>
+            {String(this.state.error?.message || this.state.error).slice(0, 200)}
           </p>
           <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
             <button onClick={() => window.location.reload()}

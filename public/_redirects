@@ -7,7 +7,13 @@
 # the server responded with a MIME type of text/html" and the whole app died
 # behind the error boundary — for hours, surviving ordinary reloads. A 404 is not
 # cached as a valid module, so the next load just retries.
-/assets/*  /assets/:splat  404
+# VERIFIED INEFFECTIVE (Aug 10 2026): the self-referential form below returned
+# HTTP 200 with the SPA's index.html for a deleted chunk — measured directly.
+# Pointing at a REAL file gives Pages something it can actually serve with a 404
+# status, so a stale chunk fails as a 404 (not cacheable as a module) instead of
+# as an HTML/MIME mismatch. The client also self-heals (ErrorBoundary), which is
+# what actually guarantees recovery.
+/assets/*  /404.html  404
 
 # SPA fallback for real routes.
 /* /index.html 200
