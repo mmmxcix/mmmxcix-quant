@@ -1,19 +1,21 @@
-# A MISSING hashed asset must 404 — it must never fall through to index.html.
+# A MISSING hashed asset ideally 404s so a browser never caches index.html as a
+# JS module ("Expected a JavaScript-or-Wasm module script but the server
+# responded with a MIME type of text/html"), which used to kill the app behind
+# the error boundary for hours.
 #
-# Why this line exists: with only the SPA rule below, a request for a chunk that
-# wasn't at the edge yet (the seconds mid-deploy) returned index.html with HTTP
-# 200 and a 4-hour Cache-Control. Browsers cached that HTML *as* the module, so
-# every later load failed with "Expected a JavaScript-or-Wasm module script but
-# the server responded with a MIME type of text/html" and the whole app died
-# behind the error boundary — for hours, surviving ordinary reloads. A 404 is not
-# cached as a valid module, so the next load just retries.
-# VERIFIED INEFFECTIVE (Aug 10 2026): the self-referential form below returned
-# HTTP 200 with the SPA's index.html for a deleted chunk — measured directly.
-# Pointing at a REAL file gives Pages something it can actually serve with a 404
-# status, so a stale chunk fails as a 404 (not cacheable as a module) instead of
-# as an HTML/MIME mismatch. The client also self-heals (ErrorBoundary), which is
-# what actually guarantees recovery.
-/assets/*  /404.html  404
+# TWO approaches were tried and BOTH failed on Cloudflare Pages — do not retry
+# them without reading this:
+#   1. `/assets/*  /assets/:splat  404` — self-referential; measured, it still
+#      returned HTTP 200 with index.html. No effect at all.
+#   2. `/assets/*  /404.html  404` + a public/404.html — this DID make dead
+#      chunks 404, but adding a root 404.html makes Pages serve it as the
+#      global not-found page, which OVERRIDES the SPA rule below: every deep
+#      link (/charts, /impressum, /portfolio/holdings) broke instantly. Caught
+#      in production. Never ship a root 404.html with a client-side router.
+#
+# So the stale-chunk problem is handled where it can be handled reliably: the
+# client. src/components/ErrorBoundary.jsx detects a failed dynamic import and
+# reloads once (20s cooldown), which recovers the tab after every deploy.
 
 # SPA fallback for real routes.
 /* /index.html 200
