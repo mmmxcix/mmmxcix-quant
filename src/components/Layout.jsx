@@ -4,6 +4,7 @@ import { LayoutDashboard, CandlestickChart, FlaskConical, Newspaper, Compass, Wr
 import { cn } from "@/lib/utils";
 import DitherBackground from "@/components/DitherBackground";
 import CommandPalette from "@/components/CommandPalette";
+import SkipLink from "@/components/SkipLink";
 import Brandmark, { BrandGlyph } from "@/components/Brandmark";
 import { authClient, useSession, signOut } from "@/lib/authClient";
 import { THEME_MODES, applyThemeMode, getThemeMode, storeThemeMode } from "@/lib/theme";
@@ -288,6 +289,7 @@ function LegalLinks({ small }) {
       <Link to="/impressum" className={cn("transition-colors", c)}>Legal Notice</Link>
       <Link to="/datenschutz" className={cn("transition-colors", c)}>Privacy</Link>
       <Link to="/nutzung" className={cn("transition-colors", c)}>Terms</Link>
+      <Link to="/accessibility" className={cn("transition-colors", c)}>Accessibility</Link>
     </div>
   );
 }
@@ -331,6 +333,8 @@ export default function Layout({ children }) {
   return (
     <div className="min-h-screen">
       <div className="ambient-bg" aria-hidden="true" />
+      {/* First in the DOM on purpose: it must be the first Tab stop. */}
+      <SkipLink />
       <DitherBackground />
       <div className="grain-layer" aria-hidden="true" />
       <CommandPalette />
@@ -450,7 +454,7 @@ export default function Layout({ children }) {
         </div>
       )}
 
-      <main className={cn("p-3 sm:p-4 md:p-8 pb-24 md:pb-8 transition-[margin] duration-200", pinned ? "md:ml-56" : "md:ml-16")}>
+      <main id="main-content" tabIndex={-1} className={cn("p-3 sm:p-4 md:p-8 pb-24 md:pb-8 transition-[margin] duration-200", pinned ? "md:ml-56" : "md:ml-16")}>
         {/* keyed by route so each page entry replays the reveal. Capped + centred
             here (not on <main>, which needs its sidebar offset) so ultrawide
             screens don't leave the content hugging the left. */}

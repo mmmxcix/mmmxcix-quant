@@ -10,8 +10,9 @@
     "test": "node --test",
     "smoke": "vite build && node scripts/smoke.mjs",
     "shots": "vite build && node scripts/shots.mjs",
-    "check": "node --test && vite build && node scripts/smoke.mjs",
-    "og": "node scripts/og-png.mjs"
+    "check": "node --test && vite build && node scripts/smoke.mjs && node scripts/a11y.mjs",
+    "og": "node scripts/og-png.mjs",
+    "a11y": "vite build && node scripts/a11y.mjs"
   },
   "dependencies": {
     "@fontsource-variable/bricolage-grotesque": "^5.3.0",

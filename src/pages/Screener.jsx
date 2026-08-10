@@ -112,14 +112,14 @@ export default function Screener() {
             </button>
           ))}
         </div>
-        <select value={rsiFilter} onChange={(e) => setRsiFilter(e.target.value)} className="input-base text-sm">
+        <select aria-label="RSI filter" value={rsiFilter} onChange={(e) => setRsiFilter(e.target.value)} className="input-base text-sm">
           {RSI_OPTS.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
         </select>
-        <select value={trendFilter} onChange={(e) => setTrendFilter(e.target.value)} className="input-base text-sm">
+        <select aria-label="Trend filter" value={trendFilter} onChange={(e) => setTrendFilter(e.target.value)} className="input-base text-sm">
           {TREND_OPTS.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
         </select>
         {market === "stock" && (
-          <select value={sectorFilter} onChange={(e) => setSectorFilter(e.target.value)} className="input-base text-sm">
+          <select aria-label="Sector filter" value={sectorFilter} onChange={(e) => setSectorFilter(e.target.value)} className="input-base text-sm">
             <option value="any">Sector: all</option>
             {sectors.map((sec) => <option key={sec} value={sec}>{sec}</option>)}
           </select>

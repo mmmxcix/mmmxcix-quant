@@ -702,6 +702,7 @@ export default function Backtest() {
             {/* Preset picker — loads the strategy into the editor as Python */}
             <div className="flex items-center gap-2">
               <select
+                aria-label="Strategy preset"
                 value={presetDirty ? "" : strategyId}
                 onChange={(e) => { if (e.target.value) { setStrategyId(e.target.value); setParamValues({}); setPresetDirty(false); } }}
                 className="input-base w-full">
@@ -750,7 +751,7 @@ export default function Backtest() {
                         title={target === "pine" ? "TradingView Pine Script (presets only)"
                           : target === "cpp" || target === "q" || target === "rust" ? `${LANG_LABEL[target]} reference — not runnable here; a scaffold + the exact source to port to your own engine`
                           : `Copy as ${LANG_LABEL[target]}`}
-                        className="text-[11px] text-dim hover:text-accent transition-colors">
+                        className="text-[11px] text-dim hover:text-accent transition-colors min-w-[24px] min-h-[24px] px-1 inline-flex items-center justify-center">
                         {copied === target ? <Check className="w-3.5 h-3.5 text-up inline" />
                           : target === "js" ? "JS" : target === "python" ? "PY" : target === "pine" ? "Pine" : target === "cpp" ? "C++" : target === "rust" ? "Rust" : "q"}
                       </button>
@@ -758,6 +759,7 @@ export default function Backtest() {
                   </div>
                 </div>
                 <textarea
+                  aria-label="Strategy code"
                   value={code}
                   onChange={(e) => { setCode(e.target.value); setPresetDirty(true); }}
                   spellCheck={false}

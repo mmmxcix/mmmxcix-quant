@@ -302,3 +302,30 @@ summary:focus-visible {
 @media (prefers-reduced-motion: reduce) {
   .grain-layer { opacity: calc(var(--grain) * 0.7); }
 }
+
+/* Skip link (WCAG 2.4.1 Bypass Blocks) — off-screen until it takes keyboard
+   focus, then a solid, high-contrast chip in the top-left. Never display:none:
+   that would remove it from the tab order entirely, which is the whole point. */
+.skip-link {
+  position: fixed;
+  top: 0.5rem;
+  left: 0.5rem;
+  z-index: 100;
+  transform: translateY(-200%);
+  padding: 0.6rem 1rem;
+  border-radius: 8px;
+  background: rgb(var(--c-accent));
+  color: #fff;
+  font-size: 0.875rem;
+  font-weight: 600;
+  text-decoration: none;
+  box-shadow: 0 6px 24px rgb(0 0 0 / 0.35);
+}
+.skip-link:focus-visible,
+.skip-link:focus {
+  transform: translateY(0);
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
+/* The sticky top bars must not cover the heading we just jumped to (2.4.11). */
+:target { scroll-margin-top: 5rem; }

@@ -1,9 +1,11 @@
 import { Link } from "react-router-dom";
+import SkipLink from "@/components/SkipLink";
 
 // Standalone shell for the public legal pages. Uses the quant design tokens.
 export default function LegalLayout({ title, updated, children }) {
   return (
     <div className="min-h-screen">
+      <SkipLink />
       <div className="ambient-bg" aria-hidden="true" />
       <header className="border-b border-line">
         <div className="max-w-3xl mx-auto px-6 h-14 flex items-center justify-between">
@@ -16,7 +18,7 @@ export default function LegalLayout({ title, updated, children }) {
         </div>
       </header>
 
-      <main className="max-w-3xl mx-auto px-6 py-12">
+      <main id="main-content" tabIndex={-1} className="max-w-3xl mx-auto px-6 py-12">
         <h1 className="text-3xl font-bold mb-1 text-text">{title}</h1>
         {updated && <p className="text-xs text-dim mb-8">Stand: {updated}</p>}
         <div className="space-y-5 text-sm leading-relaxed text-dim">{children}</div>
@@ -27,6 +29,7 @@ export default function LegalLayout({ title, updated, children }) {
           <Link to="/impressum" className="hover:text-text transition-colors">Legal Notice</Link>
           <Link to="/datenschutz" className="hover:text-text transition-colors">Privacy</Link>
           <Link to="/nutzung" className="hover:text-text transition-colors">Terms</Link>
+          <Link to="/accessibility" className="hover:text-text transition-colors">Accessibility</Link>
           <span className="ml-auto">© {new Date().getFullYear()} MMMXCIX</span>
         </div>
       </footer>

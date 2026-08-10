@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { Loader2, ShieldCheck } from "lucide-react";
 import { authClient } from "@/lib/authClient";
+import SkipLink from "@/components/SkipLink";
 
 // Full-page sign-in. Two steps: credentials, then (only if the account has 2FA
 // enabled) a TOTP code. Renders outside the app chrome.
@@ -87,8 +88,9 @@ export default function Login() {
 export function AuthShell({ title, children }) {
   return (
     <div className="min-h-screen grid place-items-center px-4">
+      <SkipLink />
       <div className="ambient-bg" aria-hidden="true" />
-      <div className="w-full max-w-sm rounded-2xl border border-line lg-glass p-6 shadow-xl view-in">
+      <main id="main-content" tabIndex={-1} className="w-full max-w-sm rounded-2xl border border-line lg-glass p-6 shadow-xl view-in">
         <div className="mb-5">
           <p className="text-[10px] tracking-[0.3em] text-dim uppercase">MMMXCIX</p>
           <p className="text-lg font-bold tracking-tight">Quant</p>
@@ -98,7 +100,7 @@ export function AuthShell({ title, children }) {
         <p className="mt-5 text-[10px] text-dim leading-relaxed">
           Not investment advice. Backtests are hypothetical — past performance guarantees nothing.
         </p>
-      </div>
+      </main>
     </div>
   );
 }

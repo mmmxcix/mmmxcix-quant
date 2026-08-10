@@ -524,9 +524,15 @@ export default function Charts() {
           })}
           <div className="flex items-center gap-1.5 sm:gap-1 ml-1">
             {DRAW_COLORS.map((c) => (
-              <button key={c} onClick={() => setDrawColor(c)} title="Drawing color"
-                className={cn("w-5 h-5 sm:w-4 sm:h-4 rounded-full border", drawColor === c ? "border-white" : "border-transparent")}
-                style={{ background: c }} />
+              // The visible swatch stays small; the BUTTON is padded out to the
+              // 24x24 minimum (WCAG 2.5.8) so it can actually be hit on a phone.
+              <button key={c} onClick={() => setDrawColor(c)} aria-label={`Drawing colour ${c}`}
+                aria-pressed={drawColor === c} title="Drawing color"
+                className="w-6 h-6 grid place-items-center rounded-full">
+                <span aria-hidden="true"
+                  className={cn("block w-4 h-4 rounded-full border", drawColor === c ? "border-white" : "border-transparent")}
+                  style={{ background: c }} />
+              </button>
             ))}
           </div>
         </div>

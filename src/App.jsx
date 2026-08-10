@@ -27,6 +27,7 @@ const WorldMap = lazy(() => import("@/pages/WorldMap"));
 const Impressum = lazy(() => import("@/pages/Impressum"));
 const Datenschutz = lazy(() => import("@/pages/Datenschutz"));
 const Nutzung = lazy(() => import("@/pages/Nutzung"));
+const Barrierefreiheit = lazy(() => import("@/pages/Barrierefreiheit"));
 const Login = lazy(() => import("@/pages/Login"));
 const Register = lazy(() => import("@/pages/Register"));
 const Account = lazy(() => import("@/pages/Account"));
@@ -82,6 +83,7 @@ export default function App() {
         <Route path="/impressum" element={<Impressum />} />
         <Route path="/datenschutz" element={<Datenschutz />} />
         <Route path="/nutzung" element={<Nutzung />} />
+        <Route path="/accessibility" element={<Barrierefreiheit />} />
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
         <Route path="/welcome" element={<Landing />} />

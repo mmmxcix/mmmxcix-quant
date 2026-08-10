@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import "@fontsource-variable/geist";
 import "@fontsource-variable/jetbrains-mono";
 import "./landing.css";
+import SkipLink from "@/components/SkipLink";
 
 export const WELCOMED_KEY = "quant_welcomed";
 
@@ -110,6 +111,7 @@ export default function Landing() {
 
   return (
     <div className="lp" ref={rootRef}>
+      <SkipLink />
       <div className="glow" />
       <div className="frame"><b /><b /><b /><b /></div>
       <div className="sidelabel">The honest quant desk</div>
@@ -121,6 +123,7 @@ export default function Landing() {
         <Link className="btn btn-p" to="/">Enter the desk →</Link>
       </nav>
 
+      <main id="main-content" tabIndex={-1}>
       <header className="hero">
         <canvas ref={canvasRef} />
         <div className="part"><span className="dot" /> <span className="br">[</span> Quantitative research desk <span className="br">/</span> live <span className="br">]</span></div>
@@ -237,9 +240,11 @@ export default function Landing() {
         </div>
       </section>
 
+      </main>
+
       <footer>
         <Link className="brand" to="/"><Mark size={22} /><span style={{ fontWeight: 800, fontSize: 14 }}>Quant</span></Link>
-        <div style={{ display: "flex", gap: 18, flexWrap: "wrap" }}><Link to="/pricing">PRICING</Link><Link to="/about">ABOUT</Link><Link to="/changelog">CHANGELOG</Link><Link to="/nutzung">TERMS</Link><Link to="/datenschutz">PRIVACY</Link><Link to="/impressum">IMPRINT</Link></div>
+        <div style={{ display: "flex", gap: 18, flexWrap: "wrap" }}><Link to="/pricing">PRICING</Link><Link to="/about">ABOUT</Link><Link to="/changelog">CHANGELOG</Link><Link to="/nutzung">TERMS</Link><Link to="/datenschutz">PRIVACY</Link><Link to="/impressum">IMPRINT</Link><Link to="/accessibility">ACCESSIBILITY</Link></div>
         <span>EDUCATIONAL · NOT INVESTMENT ADVICE · HYPOTHETICAL RESULTS GUARANTEE NOTHING</span>
       </footer>
     </div>
