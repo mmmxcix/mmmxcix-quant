@@ -7,7 +7,7 @@
 // side is VECTORISED: it receives the whole OHLCV as a pandas DataFrame and
 // returns one signal per bar (1 long / 0 flat / -1 short). JS then runs the
 // exact same fill/fee/buy-hold engine over those signals — identical accounting,
-// identical honesty (fills at next open, no look-ahead), just the signal logic
+// identical honesty (same execution model + costs, no look-ahead), just the signal logic
 // written in Python.
 //
 // Pyodide (~6 MB core + numpy/pandas wheels) loads lazily on first use, only

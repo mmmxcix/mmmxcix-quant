@@ -2,13 +2,35 @@
 //
 // Position model: flat / long / short (all-in on current equity).
 //
-// Execution model:
+// Execution model (`execution` option — "auto" | "close" | "next-open"):
 //   * signalFn(ctx) is called once per bar AFTER that bar closes.
-//   * The return decides the target position for the NEXT bar's open:
-//       - "long" | "short" | "flat"  (a plain string), or
-//       - { signal: "long"|"short"|"flat", stop, target }  (bracket order).
-//     Direction changes and flattening execute at the next bar's open — never
-//     on the bar the signal was generated on.
+//   * WHERE that decision fills depends on the model:
+//
+//     "close"      — fills at THIS bar's close, plus `slippageBps` against you.
+//                    Models a system that reacts in milliseconds: the bar ends,
+//                    the signal is computed, the order goes out immediately.
+//     "next-open"  — fills at the NEXT bar's open. Correct when the market is
+//                    shut between the two (a daily stock bar closes at 16:00;
+//                    the next tradeable price really is tomorrow's open).
+//     "auto"       — the default. Intraday bars (median spacing < 24h) use
+//                    "close"; daily and larger use "next-open".
+//
+//   WHY auto is not just "always next-open" (which is what this engine used to
+//   do): on a 15m bar, waiting for the next open charges the strategy a
+//   15-MINUTE execution delay that no real system has — a handicap, not
+//   conservatism, and it silently kills every fast-decaying edge. On daily
+//   stock bars the next open genuinely is the next liquidity. On daily crypto
+//   (24/7) close and next open are adjacent prices anyway, so the choice
+//   barely moves the result.
+//
+//   The honest cost of reacting instantly is the SPREAD, not a delay — that is
+//   what `slippageBps` is for. It is applied against you on every market fill
+//   (entries, signal exits, and stop fills, which are market orders once
+//   triggered) and NOT on target/limit fills, which fill at your price or not
+//   at all.
+//
+//   Returns: "long" | "short" | "flat" (a plain string), or
+//            { signal, stop, target } (bracket order).
 //   * Bracket exits (stop / target) are LIVE orders: once in a position they
 //     are checked intrabar against each bar's high/low (including the entry
 //     bar) and fill at the bracket price the moment it is touched. If both the
@@ -71,7 +93,7 @@ function normalizeSignal(raw) {
  *                  the classic all-in model.
  * @returns {{ equity:Array, buyHold:Array, trades:Array, metrics:Object, warnings:string[] }}
  */
-export function runBacktest({ candles, signalFn, initialCapital = 10000, feeBps = 10, positionPct = 100, leverage = 1, fundingRates = null }) {
+export function runBacktest({ candles, signalFn, initialCapital = 10000, feeBps = 10, positionPct = 100, leverage = 1, fundingRates = null, execution = "auto", slippageBps = 0 }) {
   const warnings = [];
 
   const emptyResult = () => ({
@@ -111,12 +133,28 @@ export function runBacktest({ candles, signalFn, initialCapital = 10000, feeBps 
   const n = candles.length;
   let liquidated = false; // set once leverage drives equity to zero
 
+  // --- Execution model -----------------------------------------------------
+  // Bar spacing decides the "auto" model, so it is measured up front (the
+  // metrics section below reuses it for annualisation).
+  const spacings = [];
+  for (let i = 1; i < n; i++) spacings.push(candles[i].time - candles[i - 1].time);
+  const medianSpacing = median(spacings);
+  const DAY = 86400;
+  const fillMode = execution === "close" || execution === "next-open"
+    ? execution
+    : medianSpacing > 0 && medianSpacing < DAY ? "close" : "next-open";
+  const fillOnClose = fillMode === "close";
+  // Adverse price adjustment for MARKET fills — the spread you actually cross.
+  const slip = Math.max(0, Number(slippageBps) || 0) / 10000;
+  // side: "buy" pays up, "sell" receives less. Limit/target fills pass slip=0.
+  const withSlip = (price, side) => (side === "buy" ? price * (1 + slip) : price * (1 - slip));
+
   // --- Portfolio state -----------------------------------------------------
   let equityVal = initialCapital; // realised equity; equals cash while flat
   let position = "flat"; // "long" | "short" | "flat"
   let dir = 0; // +1 long, -1 short, 0 flat
   let units = 0; // asset units in the open position
-  let pending = null; // { signal, stop, target } to execute at the next open
+  let pending = null; // { signal, stop, target } awaiting its fill (see fillMode)
 
   // Open-trade bookkeeping.
   let entryTime = 0;
@@ -197,11 +235,14 @@ export function runBacktest({ candles, signalFn, initialCapital = 10000, feeBps 
     bracketClampWarned = true;
     warnings.push(`⚠ Bracket sanity: a ${side} ${kind} sat beyond the bar's open and was filled at the OPEN instead (no fantasy fills). Check the strategy's stop/target math — sign, R-multiple, or an optimizer-driven parameter.`);
   };
+  // A triggered STOP becomes a market order, so it pays the spread like any
+  // other market fill. A TARGET is a resting limit — it fills at your price or
+  // not at all, never worse.
   const checkBrackets = (bar, i) => {
     if (position === "long") {
       if (stopLevel !== null && bar.low <= stopLevel) {
         if (stopLevel > bar.open) clampWarn("long", "stop");
-        return closePosition(Math.min(stopLevel, bar.open), i, "stop");
+        return closePosition(withSlip(Math.min(stopLevel, bar.open), "sell"), i, "stop");
       }
       if (targetLevel !== null && bar.high >= targetLevel) {
         if (targetLevel < bar.open) clampWarn("long", "target");
@@ -210,11 +251,29 @@ export function runBacktest({ candles, signalFn, initialCapital = 10000, feeBps 
     } else if (position === "short") {
       if (stopLevel !== null && bar.high >= stopLevel) {
         if (stopLevel < bar.open) clampWarn("short", "stop");
-        return closePosition(Math.max(stopLevel, bar.open), i, "stop");
+        return closePosition(withSlip(Math.max(stopLevel, bar.open), "buy"), i, "stop");
       }
       if (targetLevel !== null && bar.low <= targetLevel) {
         if (targetLevel > bar.open) clampWarn("short", "target");
         return closePosition(Math.min(targetLevel, bar.open), i, "target");
+      }
+    }
+  };
+
+  // Apply a decided order at `price`. Shared by both fill models so the
+  // reversal / bracket-update semantics can never drift between them.
+  const applyPending = (p, price, i) => {
+    const sig = p.signal;
+    if (position !== "flat" && (sig === "flat" || sig !== position)) {
+      closePosition(withSlip(price, position === "long" ? "sell" : "buy"), i, "signal");
+    }
+    if (sig === "long" || sig === "short") {
+      if (position === "flat") {
+        openPosition(sig, withSlip(price, sig === "long" ? "buy" : "sell"), i, p.stop, p.target);
+      } else if (sig === position) {
+        // Same direction: allow bracket updates (e.g. trailing the stop).
+        if (p.stop !== undefined) stopLevel = finiteOrNull(p.stop);
+        if (p.target !== undefined) targetLevel = finiteOrNull(p.target);
       }
     }
   };
@@ -235,26 +294,17 @@ export function runBacktest({ candles, signalFn, initialCapital = 10000, feeBps 
   for (let i = 0; i < n; i++) {
     const bar = candles[i];
 
-    // 1) Execute the order decided on the previous bar, at this bar's open.
-    if (pending !== null) {
-      const sig = pending.signal;
-      // Close the current position if we're flattening or reversing.
-      if (position !== "flat" && (sig === "flat" || sig !== position)) {
-        closePosition(bar.open, i, "signal");
-      }
-      if (sig === "long" || sig === "short") {
-        if (position === "flat") {
-          openPosition(sig, bar.open, i, pending.stop, pending.target);
-        } else if (sig === position) {
-          // Same direction: allow bracket updates (e.g. trailing the stop).
-          if (pending.stop !== undefined) stopLevel = finiteOrNull(pending.stop);
-          if (pending.target !== undefined) targetLevel = finiteOrNull(pending.target);
-        }
-      }
+    // 1) next-open model: execute the PREVIOUS bar's decision at this open.
+    //    (In the close model there is never a carried-over order — it filled
+    //    on the bar that produced it.)
+    if (!fillOnClose && pending !== null) {
+      applyPending(pending, bar.open, i);
       pending = null;
     }
 
-    // 2) Intrabar bracket exit for whatever position we now hold this bar.
+    // 2) Intrabar bracket exit for whatever position we hold INTO this bar. A
+    //    position opened later at this bar's close cannot be stopped out by
+    //    prices that printed before it existed — that is why this runs first.
     const inPositionThisBar = position !== "flat";
     checkBrackets(bar, i);
     if (inPositionThisBar) barsInMarket++;
@@ -275,18 +325,21 @@ export function runBacktest({ candles, signalFn, initialCapital = 10000, feeBps 
       }
     }
 
-    // 3) Mark to market at this bar's close. Under leverage, a mark ≤ 0 means the
-    // account was wiped out — liquidate once, then the curve stays at zero.
-    const mv = markToMarket(bar.close);
-    if (!liquidated && mv <= 0) {
+    // Liquidation check on the pre-decision mark: under leverage a mark ≤ 0
+    // means the account was wiped out before any new order could matter.
+    if (!liquidated && markToMarket(bar.close) <= 0) {
       liquidated = true;
       warnings.unshift(`⚠ Liquidated at ${lev}x leverage — equity hit zero on ${new Date(bar.time * 1000).toISOString().slice(0, 10)}. The result past this point is void; lower the leverage.`);
       equityVal = 0; position = "flat"; dir = 0; units = 0; stopLevel = null; targetLevel = null;
     }
-    equity.push({ time: bar.time, value: liquidated ? 0 : mv });
-    if (liquidated) { prevDayIndex = Math.floor(bar.time / 86400); continue; }
+    if (liquidated) {
+      equity.push({ time: bar.time, value: 0 });
+      prevDayIndex = Math.floor(bar.time / 86400);
+      continue;
+    }
 
-    // 4) Evaluate the signal for this closed bar (executes next bar).
+    // 3) Evaluate the signal for this closed bar. In the close model it fills
+    //    immediately below; in the next-open model it waits for the next bar.
     const dayIndex = Math.floor(bar.time / 86400);
     const d = new Date(bar.time * 1000);
     const session = {
@@ -320,12 +373,24 @@ export function runBacktest({ candles, signalFn, initialCapital = 10000, feeBps 
       pending = { signal: "flat" };
     }
     signals[i] = pending.signal === "long" ? 1 : pending.signal === "short" ? -1 : 0;
+
+    // 4) close model: the order goes out the moment the bar closes and fills
+    //    at that close plus the spread — a system reacting in milliseconds.
+    if (fillOnClose) {
+      applyPending(pending, bar.close, i);
+      pending = null;
+    }
+
+    // 5) Mark to market at this bar's close, AFTER any fill, so an entry made
+    //    on this close shows up as its own cost (fee + spread), not as free.
+    equity.push({ time: bar.time, value: markToMarket(bar.close) });
   }
 
-  // 5) Force-close any open position at the last bar's close.
+  // 6) Force-close any open position at the last bar's close (a market exit,
+  //    so it pays the spread like any other).
   const last = candles[n - 1];
   if (position !== "flat") {
-    closePosition(last.close, n - 1, "eod");
+    closePosition(withSlip(last.close, position === "long" ? "sell" : "buy"), n - 1, "eod");
     // The last mark-to-market excluded the exit fee — correct it to realised.
     equity[equity.length - 1] = { time: last.time, value: equityVal };
   }
@@ -353,10 +418,8 @@ export function runBacktest({ candles, signalFn, initialCapital = 10000, feeBps 
   }
 
   // Annualized Sharpe (rf = 0) from per-bar equity returns. Periods per year
-  // are inferred from the median bar spacing in seconds.
-  const spacings = [];
-  for (let i = 1; i < n; i++) spacings.push(candles[i].time - candles[i - 1].time);
-  const medianSpacing = median(spacings);
+  // come from the median bar spacing measured at the top (it also picks the
+  // execution model).
   const periodsPerYear = medianSpacing > 0 ? SECONDS_PER_YEAR / medianSpacing : 0;
 
   // Annualised Sharpe of any equity curve. Buy & hold gets one too, so a
@@ -447,6 +510,10 @@ export function runBacktest({ candles, signalFn, initialCapital = 10000, feeBps 
       spanYears,                              // backtest calendar length — lets the gate demand a min trades/YEAR, not just an absolute count (30 trades over 10y = luck)
       tradesPerYear: spanYears > 0 ? trades.length / spanYears : trades.length,
       exposurePct: (barsInMarket / n) * 100,
+      // Which execution model actually ran — "auto" resolves by bar size, and a
+      // result should always be able to say how its fills were priced.
+      execution: fillMode,
+      slippageBps: slip * 10000,
       // Total funding paid (positive) or received (negative) over the run, as a
       // % of starting capital. Only meaningful when fundingRates were supplied.
       fundingPaidPct: funding ? (fundingPaid / initialCapital) * 100 : null,

@@ -93,15 +93,21 @@ test("a gap beyond the target fills at the (better) open — the market price", 
 
 test("a flawless run over 20+ trades raises the implausible-result warning", () => {
   // Monotonic +2% bars; each trade takes a legitimate +1% target — all winners.
+  // Stop signalling before the end so no position is force-closed flat at the
+  // last bar: that dangling exit is a fee-only loser and has nothing to do
+  // with what this test is about.
   const candles = [];
   let p = 100;
-  for (let i = 0; i < 30; i++) { candles.push(bar(i, p, p * 1.02, p, p * 1.02)); p *= 1.02; }
+  for (let i = 0; i < 34; i++) { candles.push(bar(i, p, p * 1.02, p, p * 1.02)); p *= 1.02; }
   const r = runBacktest({
     candles,
-    signalFn: (ctx) => (ctx.position === "flat" ? { signal: "long", target: ctx.close * 1.01 } : "flat"),
+    signalFn: (ctx) =>
+      ctx.position === "flat" && ctx.index < candles.length - 2
+        ? { signal: "long", target: ctx.close * 1.01 }
+        : "flat",
     feeBps: 1,
   });
-  assert.ok(r.trades.length >= 20);
+  assert.ok(r.trades.length >= 20, `expected 20+ trades, got ${r.trades.length}`);
   assert.equal(r.metrics.winRatePct, 100);
   assert.ok(r.warnings.some((w) => w.includes("Implausible result")), "expected the implausible-result warning");
 });

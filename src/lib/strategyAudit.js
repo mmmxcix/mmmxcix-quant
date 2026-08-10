@@ -36,7 +36,7 @@ const RULES = [
     severity: "warn",
     // Common subtle look-ahead: deciding AND filling on the same bar's close.
     test: (code) => /\bfuture\b|next[_ ]?bar|tomorrow|forward[- ]?fill.*signal/i.test(code),
-    msg: "Mentions future/next-bar data — make sure the signal at bar i is executed at bar i+1's open, never on the same close it was computed from.",
+    msg: "Mentions future/next-bar data — a decision at bar i may only use information available up to bar i's close. (The ENGINE decides where that decision fills; the strategy must never read a bar that hasn't happened.)",
   },
   {
     id: "no-risk-exit",

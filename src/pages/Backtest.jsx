@@ -92,6 +92,9 @@ export default function Backtest() {
   const [feeBps, setFeeBps] = useState(handoff?.feeBps ?? 10);
   const [positionPct, setPositionPct] = useState(handoff?.positionPct ?? 100);
   const [leverage, setLeverage] = useState(handoff?.leverage ?? 1);
+  // Execution realism: where an order fills, and what crossing the spread costs.
+  const [execution, setExecution] = useState(handoff?.execution ?? "auto");
+  const [slippageBps, setSlippageBps] = useState(handoff?.slippageBps ?? 0);
   const [applyFunding, setApplyFunding] = useState(false); // perp funding (crypto)
   const [running, setRunning] = useState(false);
   const [error, setError] = useState(null);
@@ -454,7 +457,7 @@ export default function Backtest() {
           if (!fundingRates.length) setError("No perp funding history for this symbol — ran without funding.");
         } catch (e) { setError(`Funding unavailable (${e.message}) — ran without it.`); }
       }
-      const res = runBacktest({ candles, signalFn, initialCapital: capital, feeBps, positionPct, leverage, fundingRates });
+      const res = runBacktest({ candles, signalFn, initialCapital: capital, feeBps, positionPct, leverage, fundingRates, execution, slippageBps });
       // Data sanity: if the source silently delivered a coarser granularity
       // than requested (Yahoo does this for long intraday ranges), say so
       // loudly — indicator periods would mean something entirely different.
@@ -660,6 +663,20 @@ export default function Backtest() {
                 Leverage (×)
                 <input type="number" value={leverage} min={1} max={100} step={1}
                   onChange={(e) => setLeverage(Math.min(100, Math.max(1, +e.target.value || 1)))} className="input-base w-full mt-1 font-mono" />
+              </label>
+              <label className="text-xs text-dim" title="The spread you cross on every MARKET fill — entries, signal exits and triggered stops. Limit targets fill at your price and pay nothing. Separate from the fee, which is commission.">
+                Slippage (bps)
+                <input type="number" value={slippageBps} min={0} max={100} step={1}
+                  onChange={(e) => setSlippageBps(Math.max(0, +e.target.value || 0))} className="input-base w-full mt-1 font-mono" />
+              </label>
+              <label className="text-xs text-dim" title="Where a decision fills. Auto: intraday bars fill at that bar's close (a real system reacts in milliseconds); daily and larger fill at the next open, because the market is genuinely shut in between.">
+                Execution
+                <select value={execution} onChange={(e) => setExecution(e.target.value)}
+                  className="input-base w-full mt-1 font-mono text-xs">
+                  <option value="auto">Auto (realistic)</option>
+                  <option value="close">Signal bar close</option>
+                  <option value="next-open">Next bar open</option>
+                </select>
               </label>
             </div>
             {/* Perp funding — crypto only. Ignoring funding is where most crypto
