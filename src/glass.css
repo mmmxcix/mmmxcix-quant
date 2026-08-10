@@ -31,6 +31,15 @@ body {
 .dither-bg {
   position: fixed;
   inset: 0;
+  /* A <canvas> is a REPLACED element: with inset:0 but width/height auto it is
+     laid out at its INTRINSIC size (the width/height attributes), not stretched
+     to the viewport. The buffer is sized in device pixels, so on a 1.5x display
+     the element was rendered 1.5x too large and the cursor dent landed ~50% too
+     far right — perfect on a 1x monitor, visibly off on a scaled laptop. These
+     two lines are what actually pins the box to the viewport. */
+  width: 100%;
+  height: 100%;
+  display: block;
   z-index: -2;
   pointer-events: none;
   /* Intensity knob. The wave's troughs already sit on --c-bg, so fading the
