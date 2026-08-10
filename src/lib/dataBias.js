@@ -101,7 +101,11 @@ export function tfHorizon(tfSeconds) {
   const s = tfSeconds || 3600;
   return s <= 3600 ? "short" : s <= 86400 ? "medium" : "long";
 }
-export const HORIZON_LABEL = { short: "days", medium: "weeks", long: "months" };
+// Concrete windows, not "days / weeks / months". The API prompt names these
+// exact horizons, so a target labelled "~1 month" really is the model's
+// estimate for a month out — vague buckets made the read look imprecise even
+// when the number behind it was specific.
+export const HORIZON_LABEL = { short: "~1 week", medium: "~1 month", long: "~6 months" };
 
 // Map an LLM/verbal verdict to a normalized strength so it can feed combineBias.
 export function verdictNorm(verdict, confidence = 0.6) {

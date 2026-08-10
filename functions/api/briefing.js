@@ -133,10 +133,18 @@ async function callLLM(env, user) {
   const chain = [];
   if (env.GROQ_API_KEY) chain.push(async () => {
     for (const model of GROQ_MODELS) {
+      // gpt-oss bills its chain-of-thought against max_tokens and returns it in
+      // a separate field — keep the reasoning short so the budget goes to the
+      // actual answer (see bias.js for the failure this prevents).
+      const reasoner = /gpt-oss/i.test(model);
       const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${env.GROQ_API_KEY}` },
-        body: JSON.stringify({ model, max_tokens: MAX_TOKENS, temperature: 0.3, messages: [{ role: "system", content: SYSTEM }, { role: "user", content: user }] }),
+        body: JSON.stringify({
+          model, max_tokens: MAX_TOKENS, temperature: 0.3,
+          ...(reasoner ? { reasoning_effort: "low" } : {}),
+          messages: [{ role: "system", content: SYSTEM }, { role: "user", content: user }],
+        }),
       });
       if (r.ok) {
         const d = await r.json();

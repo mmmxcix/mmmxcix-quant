@@ -25,12 +25,14 @@ function json(body, status = 200, maxAge = 0) {
 
 const SYSTEM =
   "You are a markets analyst writing a SHORT, balanced fundamental + news read for an educational charting tool. " +
-  "This is NOT investment advice. Judge the likely directional lean on three horizons — short (days), medium (weeks), " +
-  "long (months) — from the fundamentals and current headlines provided plus your general knowledge, and always name the " +
+  "This is NOT investment advice. Judge the likely directional lean on three EXPLICIT horizons — short = about 1 WEEK " +
+  "from now, medium = about 1 MONTH from now, long = about 6 MONTHS from now (the UI labels them with exactly those " +
+  "windows, so your targets must mean those dates) — from the fundamentals and current headlines provided plus your " +
+  "general knowledge, and always name the " +
   "main risk to your view. Also give a concrete PRICE TARGET for each horizon: your single best point estimate, in the " +
   "SAME units as the current price given below. TARGETS MUST BE REALISTIC FOR THE HORIZON, anchored to the CURRENT price: " +
-  "a days target is normally within a few percent up to ~15% of the current price; a weeks target within ~30%; a months " +
-  "target within ~100% even for a volatile name. NEVER return a multiple of the current price over days/weeks — a target " +
+  "a 1-week target is normally within a few percent up to ~15% of the current price; a 1-month target within ~30%; a " +
+  "6-month target within ~100% even for a volatile name. NEVER return a multiple of the current price over days/weeks — a target " +
   "that is 3x–10x the current price is wrong. If you cannot make a realistic call, null that horizon. " +
   "GROUND THE READ IN THE COMPANY'S ACTUAL SITUATION, not generic platitudes: name the concrete drivers a trader would " +
   "actually cite — the sector's supply/demand dynamics and pricing cycle (e.g. the DRAM/memory cycle for a chipmaker), key " +
@@ -140,17 +142,30 @@ function parseBias(text, anchor) {
   };
 }
 
-async function callLLM(env, user) {
+async function callLLM(env, user, validate) {
   // This endpoint is PUBLIC and un-authenticated, so it uses ONLY the free provider
   // pool (Groq, Gemini). The paid providers (Anthropic, Mistral-large) are deliberately
   // NOT in the public chain — otherwise an attacker could bust the per-symbol cache and
   // run up real spend on a paid key. (Anthropic quality bias belongs behind auth.)
   const chain = [];
   const oai = (base, key, model) => async () => {
+    // gpt-oss is a REASONING model: its chain-of-thought is billed against
+    // max_tokens and returned in a SEPARATE `reasoning` field. Below ~1000
+    // tokens the reasoning eats the entire budget and `content` comes back
+    // EMPTY — which is exactly why this read failed intermittently after the
+    // migration off the retired llama model. Give it room, keep the reasoning
+    // short, and ask for guaranteed-parseable JSON.
+    const reasoner = /gpt-oss/i.test(model);
     const r = await fetch(`${base}/chat/completions`, {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
-      body: JSON.stringify({ model, max_tokens: 700, temperature: 0.3, messages: [{ role: "system", content: SYSTEM }, { role: "user", content: user }] }),
+      body: JSON.stringify({
+        model,
+        max_tokens: reasoner ? 2400 : 700,
+        temperature: 0.3,
+        ...(reasoner ? { reasoning_effort: "low", response_format: { type: "json_object" } } : {}),
+        messages: [{ role: "system", content: SYSTEM }, { role: "user", content: user }],
+      }),
     });
     if (!r.ok) return null;
     const d = await r.json();
@@ -170,7 +185,18 @@ async function callLLM(env, user) {
     }
     return null;
   });
-  for (const step of chain) { try { const out = await step(); if (out?.text) return out; } catch { /* next provider */ } }
+  // Validate INSIDE the chain: an answer that can't be parsed is as useless as
+  // no answer, so it must fall through to the next model instead of ending the
+  // request. (Previously the first non-empty reply won, parsing happened after
+  // the chain, and a single garbled response meant no read at all.)
+  for (const step of chain) {
+    try {
+      const out = await step();
+      if (!out?.text) continue;
+      const parsed = validate ? validate(out.text) : out.text;
+      if (parsed) return { ...out, parsed };
+    } catch { /* next provider */ }
+  }
   return null;
 }
 
@@ -218,11 +244,13 @@ export async function onRequest({ request, env }) {
   ]);
   const priceParam = Number(url.searchParams.get("price"));
   const anchor = Number.isFinite(priceParam) && priceParam > 0 ? priceParam : (f?.price ?? 0);
-  const out = await callLLM(env, evidence(market, symbol, f, headlines, anchor || null, tickerNews));
-  const parsed = out ? parseBias(out.text, anchor) : null;
-  if (!parsed) return json({ ok: true, hasLLM: !!out, note: null, market, symbol });
+  const out = await callLLM(env, evidence(market, symbol, f, headlines, anchor || null, tickerNews), (t) => parseBias(t, anchor));
+  // A provider EXISTS but produced nothing usable — say that, rather than
+  // letting the UI claim "no LLM provider configured", which sent me looking
+  // at the wrong thing (the key) for an hour.
+  if (!out?.parsed) return json({ ok: true, hasLLM: false, llmFailed: true, note: null, market, symbol }, 200, 30);
 
-  const payload = { ok: true, hasLLM: true, market, symbol, anchorPrice: anchor || null, ...parsed, model: out.model, at: Date.now() };
+  const payload = { ok: true, hasLLM: true, market, symbol, anchorPrice: anchor || null, ...out.parsed, model: out.model, at: Date.now() };
   try { await write(payload); } catch { /* cache best-effort */ }
   return json({ ...payload, cached: false }, 200, 600);
 }

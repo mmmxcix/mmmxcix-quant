@@ -175,7 +175,9 @@ function DataBiasBody({ market, state, biasTF, live }) {
           </div>
         ) : (
           <div className="rounded-lg border border-line bg-bg/30 p-3 text-[12px] text-dim leading-relaxed">
-            {note && note.hasLLM === false
+            {note?.llmFailed
+              ? "The live news read didn't come back this time — showing the fundamental score only. Reload in a moment; the read is cached once it succeeds."
+              : note && note.hasLLM === false
               ? "The live news read is off (no LLM provider configured) — showing the fundamental score only."
               : "No news read available for this symbol right now — showing the fundamental score only."}
           </div>
@@ -190,9 +192,9 @@ function DataBiasBody({ market, state, biasTF, live }) {
             {market !== "crypto" && info?.targetMean != null && (
               <TargetRow label="Analyst mean (~12mo)" price={info.targetMean} live={live} />
             )}
-            <TargetRow label={`In ${HORIZON_LABEL.short} (days)`} price={t.short} live={live} maxMove={0.3} highlight={horizon === "short"} />
-            <TargetRow label={`In ${HORIZON_LABEL.medium} (weeks)`} price={t.medium} live={live} maxMove={0.7} highlight={horizon === "medium"} />
-            <TargetRow label={`In ${HORIZON_LABEL.long} (months)`} price={t.long} live={live} maxMove={2} highlight={horizon === "long"} />
+            <TargetRow label={`In ${HORIZON_LABEL.short}`} price={t.short} live={live} maxMove={0.3} highlight={horizon === "short"} />
+            <TargetRow label={`In ${HORIZON_LABEL.medium}`} price={t.medium} live={live} maxMove={0.7} highlight={horizon === "medium"} />
+            <TargetRow label={`In ${HORIZON_LABEL.long}`} price={t.long} live={live} maxMove={2} highlight={horizon === "long"} />
             <p className="text-[10px] text-dim/80 pt-1.5 leading-relaxed">AI point estimates from fundamentals + news, not a promise. Row for the chosen {biasTF} timeframe is highlighted.</p>
           </div>
         ) : (

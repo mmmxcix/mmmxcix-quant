@@ -188,18 +188,39 @@ export default function DitherBackground() {
     obs.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
 
     const mouse = { x: -1, y: -1 };
-    const onMove = (e) => { mouse.x = e.clientX * dpr; mouse.y = e.clientY * dpr; };
-    window.addEventListener("pointermove", onMove);
 
+    // Size the buffer from the canvas's OWN box, and map the pointer through
+    // that same box. Using window.innerWidth here is subtly wrong: the canvas
+    // is `position:fixed; inset:0`, so it spans the viewport MINUS a classic
+    // scrollbar, while innerWidth INCLUDES it. The buffer was then stretched
+    // over a narrower box and the cursor dent drifted further behind the real
+    // pointer the closer it got to the right edge — very visible on a small
+    // laptop screen, nearly invisible on a wide monitor. Reading the rect also
+    // makes this correct under browser zoom and per-monitor DPI changes.
+    let rect = canvas.getBoundingClientRect();
+    let dprNow = dpr;
     const resize = () => {
-      canvas.width = window.innerWidth * dpr;
-      canvas.height = window.innerHeight * dpr;
+      dprNow = Math.min(2, window.devicePixelRatio || 1); // can change per monitor
+      rect = canvas.getBoundingClientRect();
+      canvas.width = Math.max(1, Math.round(rect.width * dprNow));
+      canvas.height = Math.max(1, Math.round(rect.height * dprNow));
       gl.viewport(0, 0, canvas.width, canvas.height);
     };
     resize();
+
+    const onMove = (e) => {
+      mouse.x = (e.clientX - rect.left) * dprNow;
+      mouse.y = (e.clientY - rect.top) * dprNow;
+    };
+    window.addEventListener("pointermove", onMove);
+
     let rz;
     const onResize = () => { clearTimeout(rz); rz = setTimeout(resize, 120); };
     window.addEventListener("resize", onResize);
+    // Dragging the window to a display with different scaling changes
+    // devicePixelRatio without necessarily firing resize.
+    const dprQuery = matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+    dprQuery.addEventListener?.("change", onResize);
 
     let raf = 0;
     const frame = (t) => {
@@ -219,6 +240,7 @@ export default function DitherBackground() {
       obs.disconnect();
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("resize", onResize);
+      dprQuery.removeEventListener?.("change", onResize);
       const ext = gl.getExtension("WEBGL_lose_context");
       if (ext) ext.loseContext();
     };
