@@ -38,6 +38,7 @@ export default function ValidationPanel({ mode, strategy, code, compile, makeSig
   const [wfBusy, setWfBusy] = useState(false);
   const [noise, setNoise] = useState(null);
   const [noiseBusy, setNoiseBusy] = useState(false);
+  const [noiseStep, setNoiseStep] = useState(0);
   const [trials, setTrials] = useState(10);
 
   const dsr = useMemo(() => {
@@ -63,7 +64,11 @@ export default function ValidationPanel({ mode, strategy, code, compile, makeSig
       const out = mode === "builder"
         ? walkForwardBuilder({ candles, strategy, feeBps, positionPct })
         : await kFoldCodeAsync({ candles, makeSignalFnFor: signalFnFor, feeBps, positionPct });
-      setWf(out || { error: "Not enough data (needs ≥ 120 candles per fold — load a longer range)." });
+      // Name the actual shortfall — "not enough data" without the number is the
+      // kind of message you have to go read the source to act on.
+      setWf(out || {
+        error: `Not enough data: ${candles.length} candles is under the 600 this needs (5 folds × 120). Load a longer range or a smaller interval.`,
+      });
     } catch (e) {
       setWf({ error: e.message });
     } finally {
@@ -74,12 +79,23 @@ export default function ValidationPanel({ mode, strategy, code, compile, makeSig
   const runNoise = async () => {
     setNoiseBusy(true);
     setNoise(null);
+    setNoiseStep(0);
     await new Promise((r) => setTimeout(r, 30));
     try {
       const fnFor = mode === "builder"
         ? async () => strategy.build(Object.fromEntries(strategy.params.map((p) => [p.key, p.default])))
         : signalFnFor;
-      setNoise((await noiseTestAsync({ candles, makeSignalFnFor: fnFor, feeBps, positionPct })) || { error: "Not enough data." });
+      const out = await noiseTestAsync({
+        candles, makeSignalFnFor: fnFor, feeBps, positionPct,
+        // Python re-derives its signals for every noisy copy through Pyodide, so
+        // this can take a minute. Report each run — a progress-less minute is
+        // indistinguishable from a hang.
+        onProgress: async (done) => {
+          setNoiseStep(done);
+          await new Promise((r) => setTimeout(r, 0)); // let React paint
+        },
+      });
+      setNoise(out || { error: "Not enough data (needs ≥ 100 candles)." });
     } catch (e) {
       setNoise({ error: e.message });
     } finally {
@@ -184,8 +200,13 @@ export default function ValidationPanel({ mode, strategy, code, compile, makeSig
               </p>
               <button onClick={runNoise} disabled={noiseBusy} className="btn-accent flex items-center gap-1.5 !py-1.5 text-xs">
                 {noiseBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
-                {noiseBusy ? "Running 25 sims…" : "Run"}
+                {noiseBusy ? `Running sims… ${noiseStep}/25` : "Run"}
               </button>
+              {noiseBusy && mode !== "builder" && (
+                <p className="text-[10px] text-dim mt-1.5">
+                  Python re-derives its signals for every noisy copy — this takes a minute on a long range.
+                </p>
+              )}
             </>
           )}
           {noise?.error && <p className="text-xs text-down">{noise.error}</p>}

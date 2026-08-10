@@ -72,19 +72,46 @@ const KW_RE = /\b(span|window|periods|min_periods|alpha|com|halflife|length|peri
 // change what the strategy is allowed to see.
 const CALL_RE = /\.(rolling|ewm|sma|ema|rsi|atr|roc|donchian|bollinger)\(\s*(\d+(?:\.\d+)?)\s*[,)]/g;
 
+// COUPLED LITERALS: the same number often has to appear twice in one
+// expression to stay valid — the canonical case is
+//   df['x'].rolling(5).apply(lambda w: np.polyfit(np.arange(5), w, 1)[0])
+// where sweeping `rolling(5)` alone makes numpy throw "expected x and y to
+// have same first dimension" on every bar. So a parameter owns EVERY
+// occurrence of its value on its own line and they move together.
 function parseInline(code) {
   const src = String(code || "");
+  const anchors = [];
+  for (const m of src.matchAll(KW_RE)) anchors.push({ name: m[1], num: m[2], start: m.index + m[0].lastIndexOf(m[2]) });
+  for (const m of src.matchAll(CALL_RE)) anchors.push({ name: m[1], num: m[2], start: m.index + m[0].lastIndexOf(m[2]) });
+  anchors.sort((a, b) => a.start - b.start);
+
   const out = [];
   const seen = {};
-  const add = (name, numStr, start) => {
-    const v = Number(numStr);
-    if (!Number.isFinite(v) || v === 0) return; // 0 has no meaningful sweep range
-    seen[name] = (seen[name] || 0) + 1;
-    out.push({ key: `${name}_${seen[name]}`, value: v, start, end: start + numStr.length });
-  };
-  for (const m of src.matchAll(KW_RE)) add(m[1], m[2], m.index + m[0].lastIndexOf(m[2]));
-  for (const m of src.matchAll(CALL_RE)) add(m[1], m[2], m.index + m[0].lastIndexOf(m[2]));
-  return out.sort((a, b) => a.start - b.start);
+  const claimed = new Set(); // offsets already owned by an earlier parameter
+  for (const a of anchors) {
+    const v = Number(a.num);
+    if (!Number.isFinite(v) || v === 0) continue; // 0 has no meaningful sweep range
+    if (claimed.has(a.start)) continue;           // a previous group already owns it
+
+    const lineStart = src.lastIndexOf("\n", a.start - 1) + 1;
+    let lineEnd = src.indexOf("\n", a.start);
+    if (lineEnd === -1) lineEnd = src.length;
+    const line = src.slice(lineStart, lineEnd);
+
+    // Every standalone occurrence of the SAME literal on this line. The guards
+    // stop 5 from matching inside 15, 5.5 or foo5.
+    const ranges = [];
+    const lit = a.num.replace(".", "\\.");
+    for (const mm of line.matchAll(new RegExp(`(?<![\\w.])${lit}(?![\\w.])`, "g"))) {
+      ranges.push({ start: lineStart + mm.index, end: lineStart + mm.index + a.num.length });
+    }
+    if (!ranges.length) ranges.push({ start: a.start, end: a.start + a.num.length });
+    for (const r of ranges) claimed.add(r.start);
+
+    seen[a.name] = (seen[a.name] || 0) + 1;
+    out.push({ key: `${a.name}_${seen[a.name]}`, value: v, ranges });
+  }
+  return out;
 }
 
 /** Param space [{key,default,min,max,step,integer}] from a code string, or [].
@@ -104,14 +131,16 @@ export function substituteConstants(code, values) {
   // offsets stay valid. Replacing a number with a number keeps the line
   // structure intact, so the line-based pass below still lines up.
   const inline = parseInline(code);
-  if (inline.length) {
+  const edits = [];
+  for (const p of inline) {
+    const nv = values[p.key];
+    if (nv == null) continue;
+    for (const r of p.ranges) edits.push({ ...r, nv });
+  }
+  if (edits.length) {
+    edits.sort((a, b) => b.start - a.start);
     let src = String(code);
-    for (let i = inline.length - 1; i >= 0; i--) {
-      const p = inline[i];
-      const nv = values[p.key];
-      if (nv == null) continue;
-      src = src.slice(0, p.start) + nv + src.slice(p.end);
-    }
+    for (const e of edits) src = src.slice(0, e.start) + e.nv + src.slice(e.end);
     code = src;
   }
   const { assigns, lines } = parseConstants(code);

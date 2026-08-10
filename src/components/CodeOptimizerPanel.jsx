@@ -50,6 +50,7 @@ export default function CodeOptimizerPanel({ code, language, candles, capital, f
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState(0);
   const [results, setResults] = useState(null); // sorted desc by score
+  const [diag, setDiag] = useState(null);       // why combos were dropped
   const [applied, setApplied] = useState(false);
   const [xKey, setXKey] = useState(params[0]?.key);
   const [yKey, setYKey] = useState(params[1]?.key ?? params[0]?.key);
@@ -75,11 +76,16 @@ export default function CodeOptimizerPanel({ code, language, candles, capital, f
   }
 
   async function run() {
-    setRunning(true); setResults(null); setApplied(false); setProgress(0);
+    setRunning(true); setResults(null); setApplied(false); setProgress(0); setDiag(null);
     const combos = gridCombos(params, 5, language === "python" ? 48 : 220);
     const levs = sweepLev ? LEV_GRID : [leverage];
     const get = OBJECTIVES[obj].get;
     const out = [];
+    // Tally WHY combos were dropped. An empty result table used to be a silent
+    // dead end — the actual cause (every variant erroring, or every one
+    // liquidating) was invisible.
+    const d = { tested: 0, kept: 0, errored: 0, liquidated: 0, noTrades: 0, firstError: null };
+    const note = (msg) => { if (!d.firstError && msg) d.firstError = String(msg).slice(0, 150); };
     for (let i = 0; i < combos.length; i++) {
       const src = substituteConstants(code, combos[i]);
       let fn = null;
@@ -87,17 +93,23 @@ export default function CodeOptimizerPanel({ code, language, candles, capital, f
         // Compile the signals ONCE per param combo, then sweep leverage cheaply —
         // leverage only changes the fill engine's sizing, not the signals.
         fn = language === "python" ? signalsToFn(await runPythonSignals(src, candles)) : compileStrategy(src);
-      } catch { setProgress((i + 1) / combos.length); continue; }
+      } catch (e) { d.tested++; d.errored++; note(e?.message); setProgress((i + 1) / combos.length); continue; }
       for (const lev of levs) {
+        d.tested++;
         try {
           const r = runBacktest({ candles, signalFn: fn, initialCapital: capital, feeBps, positionPct, leverage: lev });
           // Keep usable runs only — a liquidation voids the equity curve (common at
           // high leverage), but a stray non-fatal warning shouldn't drop the combo.
           const liquidated = r.warnings.some((w) => /liquidat/i.test(w));
-          if (!liquidated && r.metrics.tradeCount > 0) {
+          const errored = r.warnings.find((w) => /Strategy error/i.test(w));
+          if (liquidated) d.liquidated++;
+          else if (errored) { d.errored++; note(errored); }
+          else if (r.metrics.tradeCount === 0) d.noTrades++;
+          else {
+            d.kept++;
             out.push({ params: combos[i], lev, m: r.metrics, score: get(r.metrics), returns: r.trades.map((t) => t.pnlPct / 100) });
           }
-        } catch { /* skip a broken combo */ }
+        } catch (e) { d.errored++; note(e?.message); }
       }
       setProgress((i + 1) / combos.length);
       // Yield so the progress bar paints and the tab stays responsive.
@@ -105,6 +117,7 @@ export default function CodeOptimizerPanel({ code, language, candles, capital, f
     }
     out.sort((a, b) => b.score - a.score);
     setResults(out);
+    setDiag(d);
     setRunning(false);
   }
 
@@ -161,6 +174,27 @@ export default function CodeOptimizerPanel({ code, language, candles, capital, f
           {language === "python" && <span className="text-[10px] text-dim">Python sweeps are capped at 48 sets (Pyodide).</span>}
         </div>
       </div>
+
+      {/* Never a silent dead end: say what happened to the variants. */}
+      {diag && !running && (
+        <div className="text-[10px] font-mono text-dim flex flex-wrap gap-x-3">
+          <span className="text-up">{diag.kept} usable</span>
+          {diag.errored > 0 && <span className="text-down">{diag.errored} errored</span>}
+          {diag.liquidated > 0 && <span className="text-warn">{diag.liquidated} liquidated</span>}
+          {diag.noTrades > 0 && <span>{diag.noTrades} no trades</span>}
+          <span>· {diag.tested} tested</span>
+        </div>
+      )}
+      {diag && !running && diag.kept === 0 && (
+        <p className="text-[11px] text-warn leading-relaxed">
+          No parameter set produced a usable run.{" "}
+          {diag.errored > 0 && <>Every variant errored — the strategy likely couples one of these
+            numbers to something else in the same expression, so changing it alone breaks the code.
+            {diag.firstError && <span className="text-dim"> First error: {diag.firstError}</span>}</>}
+          {diag.errored === 0 && diag.noTrades > 0 && "Every variant stopped trading — the swept range is outside what this strategy tolerates."}
+          {diag.errored === 0 && diag.liquidated > 0 && ` Every variant liquidated at ${leverage}x — lower the leverage.`}
+        </p>
+      )}
 
       {best && (
         <div className="rounded-lg border border-up/40 bg-up/5 p-3">

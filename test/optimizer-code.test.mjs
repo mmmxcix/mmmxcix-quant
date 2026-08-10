@@ -87,6 +87,42 @@ test("substitutes each inline occurrence independently, by position", () => {
   assert.match(out, /b = df\['close'\]\.ewm\(span=60\)/);
 });
 
+test("COUPLED literals on one line move together (rolling(n) + np.arange(n))", () => {
+  // The real breakage: sweeping rolling(5) alone left np.arange(5) at 5, and
+  // numpy threw "expected x and y to have same first dimension" on every bar,
+  // so EVERY optimizer variant of this strategy failed.
+  const py = `def signals(df):
+    df['slope'] = df['atr'].rolling(5).apply(lambda x: np.polyfit(np.arange(5), x, 1)[0], raw=True)
+    return df['slope']`;
+  const space = codeParamSpace(py);
+  assert.deepEqual(space.map((p) => p.key), ["rolling_1"], "one parameter, not two competing ones");
+  const out = substituteConstants(py, { rolling_1: 9 });
+  assert.match(out, /rolling\(9\)/);
+  assert.match(out, /np\.arange\(9\)/, "the coupled literal must move with it");
+  assert.equal(/rolling\(5\)|arange\(5\)/.test(out), false, "no stale 5 left behind");
+});
+
+test("same-value literals on DIFFERENT lines stay independent parameters", () => {
+  const py = `def signals(df):
+    a = df['close'].rolling(14).max()
+    b = df['low'].rolling(14).min()
+    return a - b`;
+  const space = codeParamSpace(py);
+  assert.deepEqual(space.map((p) => p.key), ["rolling_1", "rolling_2"]);
+  const out = substituteConstants(py, { rolling_1: 20, rolling_2: 30 });
+  assert.match(out, /df\['close'\]\.rolling\(20\)/);
+  assert.match(out, /df\['low'\]\.rolling\(30\)/);
+});
+
+test("a literal is not matched inside a longer number", () => {
+  const py = `def signals(df):
+    return df['close'].rolling(5).mean() * 15 + 0.5`;
+  const out = substituteConstants(py, { rolling_1: 8 });
+  assert.match(out, /rolling\(8\)/);
+  assert.match(out, /\* 15/, "15 must not become 18");
+  assert.match(out, /0\.5/, "0.5 must not be touched");
+});
+
 test("named constants and inline literals coexist without clobbering each other", () => {
   const py = `def signals(df):
     lookback = 30  # named
