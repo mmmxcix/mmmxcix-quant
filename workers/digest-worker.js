@@ -547,9 +547,29 @@ async function runDigest(env) {
   };
 }
 
+// Refresh the /api/vol volatility snapshot (DoltHub → D1). It rides this
+// worker's daily cron because the upstream needs ~30-60s per full pull — far
+// too slow for a user-facing request, and exactly what a scheduled job is for.
+// Needs DEV_ACCESS_TOKEN as a worker secret; without it the call is skipped
+// silently (the page then just shows an older snapshot, labelled as stale).
+async function syncVolSnapshot(env) {
+  if (!env.DEV_ACCESS_TOKEN) return { skipped: 'no_token' };
+  try {
+    const r = await fetch('https://quant.mmmxcix.com/api/vol', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token: env.DEV_ACCESS_TOKEN, sync: true }),
+    });
+    return await r.json().catch(() => ({ error: 'bad_json' }));
+  } catch (e) {
+    return { error: String(e.message || e).slice(0, 120) };
+  }
+}
+
 export default {
   async scheduled(_event, env, ctx) {
     ctx.waitUntil(runDigest(env));
+    ctx.waitUntil(syncVolSnapshot(env));
   },
 
   // Manual test runs: GET https://<worker>/?token=<DIGEST_TEST_TOKEN>
