@@ -1,9 +1,10 @@
-import { FlaskConical, Scale, Briefcase, Sigma, GraduationCap, BookOpenCheck, Compass, Radar, Telescope, Grid3x3, BrainCircuit, Landmark, CalendarDays, Database, Ship, Plane, CalendarSearch } from "lucide-react";
+import { FlaskConical, Scale, Briefcase, Sigma, GraduationCap, BookOpenCheck, Compass, Radar, Telescope, Grid3x3, BrainCircuit, Landmark, CalendarDays, Database, Ship, Plane, CalendarSearch, Activity } from "lucide-react";
 import TabHub from "@/components/TabHub";
 import Backtest from "@/pages/Backtest";
 import Compare from "@/pages/Compare";
 import Portfolio from "@/pages/Portfolio";
 import Options from "@/pages/Options";
+import Volatility from "@/pages/Volatility";
 import Academy from "@/pages/Academy";
 import Guide from "@/pages/Guide";
 import Resources from "@/pages/Resources";
@@ -36,6 +37,7 @@ export function PortfolioHub() {
     <TabHub base="/portfolio" tabs={[
       { id: "holdings", label: "Portfolio", icon: Briefcase, el: <Portfolio /> },
       { id: "options", label: "Options", icon: Sigma, el: <Options /> },
+      { id: "volatility", label: "Volatility", icon: Activity, el: <Volatility /> },
     ]} />
   );
 }
