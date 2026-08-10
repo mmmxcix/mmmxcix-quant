@@ -105,7 +105,12 @@ async function syncSnapshot(db) {
       };
     }
     fetched += rows.length;
-    if (!truncated || rows.length < PAGE) break;
+    // Page until a SHORT page arrives. Do NOT gate this on the `truncated`
+    // flag: with an explicit LIMIT the upstream reports plain "Success" even
+    // when more rows exist, which stopped the very first sync at 1000 of
+    // ~2,300 symbols.
+    if (rows.length < PAGE) break;
+    void truncated;
   }
   const snap = { date, at: Date.now(), count: Object.keys(bySymbol).length, fetched, bySymbol };
   await writeSnapshot(db, snap);
