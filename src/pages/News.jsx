@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { ChevronDown, ExternalLink, Mail, RefreshCw, Search, Radio } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { distinctSymbols } from '@/lib/portfolio';
+import { saveDigestSyncTarget, clearDigestSyncTarget } from '@/lib/digestSync';
 
 // Sources selectable for the digest, with their access tier (matches
 // functions/api/news.js). "partial" sources are hidden when free-only is on.
@@ -115,8 +116,13 @@ function NewsletterCard() {
       });
       const data = await res.json().catch(() => ({}));
       if (res.status === 503 && data.error === 'kv_not_configured') setStatus('kv');
-      else if (res.ok && data.status === 'updated') setStatus('updated');
-      else if (res.ok && data.status === 'pending_confirm') { setStatus('pending'); }
+      else if (res.ok && (data.status === 'updated' || data.status === 'pending_confirm')) {
+        setStatus(data.status === 'updated' ? 'updated' : 'pending');
+        // Turns on (or off) auto-resync so this symbol list never goes stale
+        // again — see src/lib/digestSync.js.
+        if (wantsSymbols) saveDigestSyncTarget({ email: value, prefs: { categories, freeOnly, sources }, symbols });
+        else clearDigestSyncTarget();
+      }
       else setStatus('error');
     } catch {
       setStatus('error');
@@ -537,6 +543,7 @@ export default function News() {
               </span>
             )}
             <select
+              aria-label="Sort headlines"
               value={sortBy}
               onChange={(e) => setSortBy(e.target.value)}
               className="rounded-xl border border-line lg-glass px-3 py-2 text-sm text-text focus:outline-none focus:border-accent/40"

@@ -8,6 +8,7 @@ import Brandmark, { BrandGlyph } from "@/components/Brandmark";
 import { authClient, useSession, signOut } from "@/lib/authClient";
 import { THEME_MODES, applyThemeMode, getThemeMode, storeThemeMode } from "@/lib/theme";
 import { syncFromServer as syncPrefs, restoreBackups } from "@/lib/portfolio";
+import { initDigestAutoResync } from "@/lib/digestSync";
 
 // ⌘ on macOS, Ctrl elsewhere — shown in the quick-nav affordance.
 const KBD_HINT = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform) ? "⌘K" : "Ctrl K";
@@ -314,6 +315,10 @@ export default function Layout({ children }) {
   useEffect(() => {
     restoreBackups();
     syncPrefs();
+    // Keeps an active digest subscription's symbol list in sync with the live
+    // portfolio/watchlist — see src/lib/digestSync.js for why this lives here
+    // (the persistent app shell) rather than on the News page.
+    return initDigestAutoResync();
   }, []);
 
   // Close the mobile drawer on route change and lock body scroll while open.
@@ -415,13 +420,10 @@ export default function Layout({ children }) {
             <Search className="w-5 h-5" />
           </button>
           <ThemeToggle className="w-9 h-9" />
-          <button
-            onClick={() => setDrawerOpen(true)}
-            aria-label="Open menu"
-            className="p-2 -mr-2 rounded-lg text-dim hover:text-text active:bg-surface transition-colors"
-          >
-            <Menu className="w-5 h-5" />
-          </button>
+          {/* No hamburger here: the bottom tab bar's "More" opens the very same
+              drawer, and two controls for one menu is a coin-flip for the user
+              (and two tab stops to the same place for a screen reader). The
+              bottom one wins — it is thumb-reachable and carries a text label. */}
         </div>
       </header>
 
@@ -477,9 +479,9 @@ export default function Layout({ children }) {
             <span>{label}</span>
           </NavLink>
         ))}
-        <button onClick={() => setDrawerOpen(true)}
+        <button onClick={() => setDrawerOpen(true)} aria-expanded={drawerOpen} aria-haspopup="menu"
           className="flex-1 flex flex-col items-center justify-center gap-0.5 py-2 text-[10px] font-medium text-dim hover:text-text transition-colors">
-          <Menu className="w-[22px] h-[22px]" strokeWidth={1.9} /><span>More</span>
+          <Menu className="w-[22px] h-[22px]" strokeWidth={1.9} aria-hidden="true" /><span>More</span>
         </button>
       </nav>
     </div>
