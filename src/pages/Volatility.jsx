@@ -58,16 +58,21 @@ function SymbolView() {
     return () => { alive = false; };
   }, [symbol]);
 
+  // A month-ago → week-ago → today read of implied vol. The upstream can't
+  // serve a full daily history fast enough for an interactive page (a
+  // per-symbol query there is a full table scan), so the snapshot carries
+  // these three checkpoints instead — enough to see the direction.
   const series = useMemo(() => {
-    if (!data?.history?.length) return [];
-    const pts = (key) => data.history
-      .map((h, i) => (h[key] == null ? null : { x: i, y: h[key] * 100 }))
-      .filter(Boolean);
-    return [
-      { label: "Implied vol", color: "var(--c-accent)", points: pts("iv") },
-      { label: "Realised vol", color: "var(--c-dim)", points: pts("hv") },
-    ].filter((s) => s.points.length > 1);
+    if (!data) return [];
+    const pts = [
+      { x: 0, y: data.ivMonthAgo },
+      { x: 1, y: data.ivWeekAgo },
+      { x: 2, y: data.iv },
+    ].filter((p) => p.y != null).map((p) => ({ x: p.x, y: p.y * 100 }));
+    if (pts.length < 2) return [];
+    return [{ label: "Implied vol", color: "var(--c-accent)", points: pts }];
   }, [data]);
+  const TREND_LABELS = ["1 month ago", "1 week ago", "today"];
 
   const rankV = ivRankVerdict(data?.ivRank);
   const premV = premiumVerdict(data?.ivPremium);
@@ -98,6 +103,11 @@ function SymbolView() {
       )}
       {error && !loading && <p className="text-sm text-down py-6">{error}</p>}
 
+      {data?.stale && !loading && (
+        <p className="text-[11px] text-warn mb-3">
+          The volatility snapshot is a few days old ({data.date}) — the daily sync hasn't run recently.
+        </p>
+      )}
       {data && !loading && (
         <>
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
@@ -107,7 +117,11 @@ function SymbolView() {
               sub={rankV?.label}
               tone={rankV?.tone}
             />
-            <Stat label="IV percentile" value={data.ivPercentile == null ? "–" : `${fmtNum(data.ivPercentile, 0)}%`} sub="days below today" />
+            <Stat
+              label="Vs. other names"
+              value={data.crossPercentile == null ? "–" : `${fmtNum(data.crossPercentile, 0)}%`}
+              sub="of the universe ranks lower"
+            />
             <Stat label="Implied vol" value={pct(data.iv)} sub={`realised ${pct(data.hv)}`} />
             <Stat
               label="IV / realised"
@@ -133,19 +147,18 @@ function SymbolView() {
 
           {series.length > 0 && (
             <div className="rounded-xl border border-line lg-glass p-4">
-              <p className="text-xs text-dim font-medium mb-2">
-                Implied vs realised volatility · last {data.history.length} sessions
-              </p>
+              <p className="text-xs text-dim font-medium mb-2">Where implied vol has come from</p>
               <XYLineChart
                 series={series}
-                height={220}
+                height={180}
                 zeroLine={false}
                 fmtY={(v) => `${v.toFixed(0)}%`}
-                fmtX={(v) => data.history[Math.round(v)]?.d ?? ""}
+                fmtX={(v) => TREND_LABELS[Math.round(v)] ?? ""}
               />
               <p className="text-[11px] text-dim mt-2 leading-relaxed">
-                Implied is what options cost; realised is what the stock actually did. Implied above
-                realised is the normal state — the gap is the premium sellers collect for carrying risk.
+                Implied is what options cost; realised ({pct(data.hv)}, a week ago {pct(data.hvWeekAgo)})
+                is what the stock actually did. Implied above realised is the normal state — that gap is
+                the premium sellers collect for carrying the risk.
               </p>
             </div>
           )}
@@ -210,6 +223,7 @@ function LeadersView() {
           <p className="text-[11px] text-dim mb-3">
             {data.universe.toLocaleString()} optionable symbols ranked on {data.date}. IV rank is each name's
             implied vol relative to its OWN 12-month range — so a quiet utility and a biotech are comparable.
+            {data.stale && <span className="text-warn"> Snapshot is a few days old.</span>}
           </p>
           <div className="grid lg:grid-cols-2 gap-3">
             <Table title="Vol most expensive (premium sellers look here)" icon={TrendingUp} rows={data.rich} tone="text-down" />

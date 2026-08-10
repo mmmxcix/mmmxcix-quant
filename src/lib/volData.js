@@ -15,25 +15,25 @@ async function get(params) {
   if (!data.ok) {
     if (data.error === "no_data") throw new Error(`No options data for "${params.symbol}" — the database covers US-listed optionable names.`);
     if (data.error === "rate_limited") throw new Error("Too many requests — wait a minute.");
-    if (data.error === "upstream_unavailable") throw new Error("The free volatility database is not responding right now.");
+    if (data.error === "not_synced") throw new Error("The volatility snapshot hasn't been synced yet.");
     throw new Error(data.detail || data.error || "Request failed.");
   }
   return data;
 }
 
-/** IV/HV history + 52-week extremes + IV rank/percentile for one symbol. */
+/** One symbol's volatility card: IV/HV, 52-week band, IV rank, week/month ago. */
 export function fetchIv(symbol) {
   return get({ what: "iv", symbol });
-}
-
-/** The most recent full option chain (strike, bid/ask, IV, Greeks). */
-export function fetchVolChain(symbol) {
-  return get({ what: "chain", symbol });
 }
 
 /** Cross-market IV-rank leaders: where premium is richest and cheapest today. */
 export function fetchIvLeaders() {
   return get({ what: "leaders" });
+}
+
+/** Snapshot freshness — when the universe was last pulled from upstream. */
+export function fetchVolStatus() {
+  return get({ what: "status" });
 }
 
 /**
