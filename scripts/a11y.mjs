@@ -123,7 +123,15 @@ try {
   for (const route of ROUTES) {
     try {
       await page.goto(`${base}${route}`, { waitUntil: "domcontentloaded", timeout: 40000 });
-      await new Promise((r) => setTimeout(r, 2500));
+      // Wait for the app to actually PAINT before judging it. A fixed sleep is
+      // fine locally but far too short against production (real API calls), and
+      // auditing an unrendered page invents findings — a run against the live
+      // site reported "no h1" on 13 routes purely because nothing had rendered.
+      await page.waitForFunction(
+        () => document.querySelector("main")?.innerText.trim().length > 40,
+        { timeout: 25000, polling: 300 },
+      ).catch(() => { /* genuinely empty page — let the audit report it */ });
+      await new Promise((r) => setTimeout(r, 1200));
       // mark this browser as "seen the welcome page" so / renders the app
       await page.evaluate(() => { try { localStorage.setItem("quant_welcomed", "1"); } catch { /* ignore */ } });
       const found = await page.evaluate(audit);
