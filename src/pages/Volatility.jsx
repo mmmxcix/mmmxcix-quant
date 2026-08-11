@@ -3,6 +3,8 @@ import { Activity, Loader2, TrendingUp, TrendingDown, Info } from "lucide-react"
 import SymbolSearch from "@/components/SymbolSearch";
 import XYLineChart from "@/components/XYLineChart";
 import { fetchIv, fetchIvLeaders, ivRankVerdict, premiumVerdict } from "@/lib/volData";
+import { fetchCandles } from "@/lib/data";
+import { allEstimators, ESTIMATOR_NOTES } from "@/lib/volEstimators";
 import { cn, fmtNum } from "@/lib/utils";
 
 // Volatility — the RELATIVE view of options pricing that a live chain can't
@@ -47,6 +49,11 @@ function SymbolView() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  // Our OWN realised vol, computed from candles. The upstream's `hv` is a
+  // close-to-close number, which throws away everything that happened inside
+  // each bar — worth showing next to a range-based estimate rather than
+  // trusting on its own.
+  const [rv, setRv] = useState(null);
 
   useEffect(() => {
     let alive = true;
@@ -55,6 +62,15 @@ function SymbolView() {
       .then((d) => { if (alive) setData(d); })
       .catch((e) => { if (alive) setError(e.message); })
       .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [symbol]);
+
+  useEffect(() => {
+    let alive = true;
+    setRv(null);
+    fetchCandles({ market: "stock", symbol, interval: "1d", range: "1y" })
+      .then((candles) => { if (alive) setRv(allEstimators(candles, 30, 252)); })
+      .catch(() => { if (alive) setRv({ error: true }); });
     return () => { alive = false; };
   }, [symbol]);
 
@@ -144,6 +160,42 @@ function SymbolView() {
             {rankV && <p className="text-[11px] text-dim mt-3 leading-relaxed">{rankV.note}</p>}
             {premV && <p className="text-[11px] text-dim mt-1 leading-relaxed">{premV.note}</p>}
           </div>
+
+          {/* Our own realised vol, several ways. The single "realised" number
+              upstream is close-to-close; these use the whole candle. */}
+          {rv && !rv.error && rv.yangZhang != null && (
+            <div className="rounded-xl border border-line lg-glass p-4 mb-5">
+              <div className="flex flex-wrap items-baseline gap-x-3 mb-2">
+                <p className="text-xs text-dim font-medium">Realised volatility, measured five ways</p>
+                <p className="text-[11px] text-dim">30-day window, annualised</p>
+              </div>
+              <div className="space-y-1">
+                {[
+                  ["yangZhang", "Yang-Zhang"],
+                  ["rogersSatchell", "Rogers-Satchell"],
+                  ["garmanKlass", "Garman-Klass"],
+                  ["parkinson", "Parkinson"],
+                  ["closeToClose", "Close-to-close"],
+                ].map(([key, label]) => (
+                  <div key={key} className="grid grid-cols-[10rem_5rem_1fr] gap-x-3 items-baseline text-[11px]">
+                    <span className={cn("font-mono", key === "yangZhang" ? "text-text font-semibold" : "text-dim")}>{label}</span>
+                    <span className={cn("font-mono text-right", key === "yangZhang" ? "text-accent font-semibold" : "text-dim")}>
+                      {rv[key] == null ? "–" : `${fmtNum(rv[key] * 100, 1)}%`}
+                    </span>
+                    <span className="text-dim/80 leading-snug">{ESTIMATOR_NOTES[key]}</span>
+                  </div>
+                ))}
+              </div>
+              {data.iv != null && rv.yangZhang > 0 && (
+                <p className="text-[11px] text-dim mt-3 leading-relaxed">
+                  Against Yang-Zhang the option premium is{" "}
+                  <span className="font-mono text-text">{fmtNum(data.iv / rv.yangZhang, 2)}×</span> realised — the ratio
+                  in the card above uses the upstream's close-to-close figure, which ignores everything that
+                  happened inside each bar, so the two will disagree on anything that swings intraday.
+                </p>
+              )}
+            </div>
+          )}
 
           {series.length > 0 && (
             <div className="rounded-xl border border-line lg-glass p-4">
