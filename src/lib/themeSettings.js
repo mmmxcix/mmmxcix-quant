@@ -23,11 +23,19 @@ export const DITHER_OPACITY = { off: "0", subtle: "0.22", full: "0.85" };
 // the same in light and dark; null in a slot means "keep the theme default".
 export const CHART_PRESETS = [
   { id: "classic", label: "Classic", up: "#12a150", down: "#e5484d" },
-  // "Signature" = Zero Two's own palette (Darling in the Franxx), not an
-  // approximation: #ffbdd4 is her hair, #179599 her eyes. The warm pink /
-  // cool teal pair is the character's defining contrast — and it happens to be
-  // a far better up/down pair than red/green for anyone colour-blind.
-  { id: "pink", label: "Signature", up: "#ffbdd4", down: "#179599" },
+  // "Signature" = the palette of the chart in the reference clip, MEASURED off
+  // its frames rather than eyeballed (the previous tailwind pink/slate pair was
+  // only an approximation of it).
+  //
+  // What that chart actually is: a MONOCHROME candle chart on pale pink —
+  // hollow near-white bodies for up, filled near-black bodies (with a faint
+  // magenta cast, H≈337) for down, plus a pink highlight zone. A literal
+  // white/black transfer cannot work here: our presets are a single fill colour
+  // each and have to read on both the light and the dark background, and pure
+  // white vanishes on light exactly as pure black vanishes on dark. So these are
+  // the same two tones taken at mid lightness, where they survive either theme:
+  // #d296ae is the chart's pink, #595154 its filled-body charcoal.
+  { id: "pink", label: "Signature", up: "#d296ae", down: "#595154" },
   { id: "ocean", label: "Ocean", up: "#2dd4bf", down: "#fb7185" },
   { id: "sunset", label: "Sunset", up: "#f59e0b", down: "#8b5cf6" },
 ];

@@ -88,7 +88,7 @@ function initMeans(X, K, rnd) {
  * @param {object} opts   { K=3, iters=50, seed=1, tol=1e-4 }
  * @returns {{K,D,startLog,transLog,means,vars,logLik,iterations}}
  */
-export function fit(X, { K = 3, iters = 50, seed = 1, tol = 1e-4 } = {}) {
+export function fit(X, { K = 3, iters = 50, seed = 1, tol = 1e-4, stickiness = 0 } = {}) {
   const T = X.length, D = X[0].length;
   const rnd = mulberry32(seed);
 
@@ -161,10 +161,20 @@ export function fit(X, { K = 3, iters = 50, seed = 1, tol = 1e-4 } = {}) {
 
     // ── M-step ──
     for (let k = 0; k < K; k++) startLog[k] = Math.log(Math.max(gamma[0][k], 1e-12));
+    // Transition update with a STICKY prior: `stickiness` pseudo-counts are added
+    // to the diagonal before normalising. Without it, EM happily fits a regime
+    // that flips every few bars — statistically fine, useless as a "regime",
+    // because a state you leave immediately cannot be traded. This is the
+    // standard sticky-HMM prior (Fox et al.); it biases toward persistence
+    // WITHOUT looking ahead, so the live/filtered path benefits too — unlike
+    // smoothing the decoded path after the fact, which would be hindsight.
     for (let i = 0; i < K; i++) {
       let denom = 0;
-      for (let j = 0; j < K; j++) denom += xiSum[i][j];
-      for (let j = 0; j < K; j++) transLog[i][j] = Math.log(Math.max(xiSum[i][j] / (denom || 1), 1e-12));
+      for (let j = 0; j < K; j++) denom += xiSum[i][j] + (i === j ? stickiness : 0);
+      for (let j = 0; j < K; j++) {
+        const count = xiSum[i][j] + (i === j ? stickiness : 0);
+        transLog[i][j] = Math.log(Math.max(count / (denom || 1), 1e-12));
+      }
     }
     for (let k = 0; k < K; k++) {
       let gsum = 0;
