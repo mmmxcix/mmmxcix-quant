@@ -96,6 +96,20 @@ function candidatesFor(items, symbol, name) {
     .slice(0, MAX_CANDIDATES_PER_SYMBOL);
 }
 
+// Merge two candidate lists (ticker-specific search first — that's the more
+// targeted source), de-duping by link, capped to MAX_CANDIDATES_PER_SYMBOL.
+function mergeCandidates(a, b) {
+  const seen = new Set();
+  const out = [];
+  for (const it of [...a, ...b]) {
+    if (!it.link || seen.has(it.link)) continue;
+    seen.add(it.link);
+    out.push(it);
+    if (out.length >= MAX_CANDIDATES_PER_SYMBOL) break;
+  }
+  return out;
+}
+
 // No-LLM / beyond-enrichment-cap fallback: company NAME only, never the bare
 // ticker — this is the actual fix for the "NOW" false-positive class when
 // there's no LLM confirmation step available to catch it.
@@ -124,6 +138,30 @@ async function fetchFundamentalsLite(origin, symbol) {
     };
     return Object.values(out).some((v) => v != null) ? out : null;
   } catch { return null; }
+}
+
+// Ticker-specific search (same Yahoo endpoint + reasoning as bias.js's
+// fetchTickerNews) — the general /api/news pool is 12 mainstream finance RSS
+// feeds that essentially never cover small/micro-cap names, so a symbol like
+// a quantum-computing or biotech micro-cap can have real, current news that
+// never shows up as a candidate without this. Still just a CANDIDATE source —
+// Yahoo tags a story with `relatedTickers` even when it's only tangentially
+// about that symbol (e.g. a "top picks" roundup), so these go through the
+// same LLM confirmation step as pool matches, never trusted outright.
+async function fetchTickerNews(origin, symbol) {
+  try {
+    const r = await fetch(`${origin}/api/yahoo/v1/finance/search?q=${encodeURIComponent(symbol)}&newsCount=8&quotesCount=0&enableFuzzyQuery=false`);
+    if (!r.ok) return [];
+    const d = await r.json();
+    return (d?.news || [])
+      .filter((n) => n.title && n.link)
+      .map((n) => ({
+        title: n.title,
+        link: n.link,
+        source: n.publisher || "Yahoo Finance",
+        pubDate: Number.isFinite(n.providerPublishTime) ? new Date(n.providerPublishTime * 1000).toISOString() : "",
+      }));
+  } catch { return []; }
 }
 
 // Provider chain — same free-tier-only reasoning as bias.js: this is a public,
@@ -192,7 +230,10 @@ function buildPrompt(needMarket, generalPool, symbolBlocks) {
       if (fl.length) lines.push(`Fundamentals: ${fl.join(", ")}`);
     }
     if (b.candidates.length) {
-      lines.push("Candidate headlines:\n" + b.candidates.map((it, i) => `${i}: ${it.title} — ${trim(it.description, DESC_TRIM)}`).join("\n"));
+      lines.push("Candidate headlines:\n" + b.candidates.map((it, i) => {
+        const desc = trim(it.description, DESC_TRIM);
+        return desc ? `${i}: ${it.title} — ${desc}` : `${i}: ${it.title}`;
+      }).join("\n"));
     } else {
       lines.push("Candidate headlines: (none found today)");
     }
@@ -280,8 +321,12 @@ export async function onRequest({ request, env }) {
   if (needsWork && hasProvider && newsPool.length) {
     const generalPool = needMarket ? newsPool.slice(0, MAX_GENERAL_POOL) : [];
     const symbolBlocks = await Promise.all(staleSymbols.map(async (s) => {
-      const candidates = candidatesFor(newsPool, s.symbol, s.name);
-      const fundamentals = s.market === "crypto" ? null : await fetchFundamentalsLite(origin, s.symbol);
+      const poolCandidates = candidatesFor(newsPool, s.symbol, s.name);
+      const [tickerNews, fundamentals] = await Promise.all([
+        s.market === "crypto" ? Promise.resolve([]) : fetchTickerNews(origin, s.symbol),
+        s.market === "crypto" ? Promise.resolve(null) : fetchFundamentalsLite(origin, s.symbol),
+      ]);
+      const candidates = mergeCandidates(tickerNews, poolCandidates);
       return { ticker: s.symbol, name: s.name, market: s.market, candidates, fundamentals };
     }));
 
