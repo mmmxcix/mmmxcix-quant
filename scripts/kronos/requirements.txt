@@ -1,0 +1,11 @@
+# Kronos forecasting service — see forecast.py
+#
+# torch: install the CUDA build for your card FIRST, from pytorch.org, otherwise
+# pip resolves the CPU wheel and the RTX 5080 sits idle. For CUDA 12.x:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu124
+torch>=2.1
+pandas>=2.0
+numpy>=1.24
+huggingface_hub>=0.23
+safetensors>=0.4
+einops>=0.7

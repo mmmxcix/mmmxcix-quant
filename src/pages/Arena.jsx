@@ -107,17 +107,84 @@ function Scoreboard({ scores }) {
   );
 }
 
+// Kronos is a foundation model for candlestick sequences, run on the PC by
+// scripts/kronos/forecast.py. It belongs on this page for the same reason the
+// order-book strategies do: it is a claim under test, and what is shown is how
+// it SCORED, not how confident its forecast looks.
+function Kronos({ data }) {
+  const rows = data?.scoreboard || [];
+  const latest = data?.forecasts || [];
+  return (
+    <div className="rounded-xl border border-line lg-glass p-5 mb-5">
+      <h2 className="font-semibold mb-1">Kronos, against a random walk</h2>
+      <p className="text-sm text-dim mb-3">
+        A pretrained candlestick model forecasting 24 hours ahead. The only number that matters
+        is whether it beats repeating the last close — a baseline most price models quietly
+        fail. Skill is the share of the naive error it removes; negative means it did worse
+        than doing nothing.
+      </p>
+      {!rows.length ? (
+        <p className="text-sm text-dim" role="status">
+          {latest.length
+            ? "Forecasts are out; none has reached its horizon yet, so there is nothing to report."
+            : "No forecasts yet — the service has not reported."}
+        </p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <caption className="sr-only">Kronos forecast skill against a random walk</caption>
+            <thead>
+              <tr className="text-left text-[11px] uppercase tracking-wide text-dim">
+                <th scope="col" className="font-medium py-1 pr-4">Market</th>
+                <th scope="col" className="font-medium py-1 pr-4">Graded</th>
+                <th scope="col" className="font-medium py-1 pr-4">Beat naive</th>
+                <th scope="col" className="font-medium py-1 pr-4">Avg skill</th>
+                <th scope="col" className="font-medium py-1">Direction</th>
+              </tr>
+            </thead>
+            <tbody className="font-mono">
+              {rows.map((r) => (
+                <tr key={r.symbol} className="border-t border-line">
+                  <th scope="row" className="py-1 pr-4 font-sans font-medium text-left">{r.symbol}</th>
+                  <td className="py-1 pr-4">{r.n}</td>
+                  <td className="py-1 pr-4">{fmt(r.beatNaivePct, 0)}%</td>
+                  <td className={cn("py-1 pr-4", r.avgSkillPct > 0 ? "text-up" : "text-down")}>
+                    {r.avgSkillPct > 0 ? "+" : ""}{fmt(r.avgSkillPct, 1)}%
+                  </td>
+                  <td className="py-1">{fmt(r.directionPct, 0)}%</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {data?.scoredCount > 0 && rows.every((r) => r.n < 20) && (
+            <p className="text-xs text-dim mt-3">
+              Fewer than 20 graded forecasts per market — far too few to conclude anything either
+              way. Shown because hiding a result until it looks good is how track records lie.
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Arena() {
   const [data, setData] = useState(null);
+  const [kronos, setKronos] = useState(null);
   const [err, setErr] = useState(null);
 
   useEffect(() => {
     let alive = true;
     const load = async () => {
       try {
-        const r = await fetch("/api/arena");
-        const j = await r.json();
-        if (alive) { setData(j); setErr(j?.ok ? null : (j?.error || "unavailable")); }
+        const [a, k] = await Promise.all([
+          fetch("/api/arena").then((r) => r.json()).catch(() => null),
+          fetch("/api/kronos").then((r) => r.json()).catch(() => null),
+        ]);
+        if (!alive) return;
+        setData(a);
+        setKronos(k);
+        setErr(a?.ok ? null : (a?.error || "unavailable"));
       } catch { if (alive) setErr("offline"); }
     };
     load();
@@ -162,6 +229,8 @@ export default function Arena() {
       </div>
 
       <Scoreboard scores={data?.scores} />
+
+      <Kronos data={kronos} />
 
       {err && (
         <p className="text-sm text-down mb-4" role="status">
