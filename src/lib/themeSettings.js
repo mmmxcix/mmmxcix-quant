@@ -23,7 +23,11 @@ export const DITHER_OPACITY = { off: "0", subtle: "0.22", full: "0.85" };
 // the same in light and dark; null in a slot means "keep the theme default".
 export const CHART_PRESETS = [
   { id: "classic", label: "Classic", up: "#12a150", down: "#e5484d" },
-  { id: "pink", label: "Signature", up: "#f472b6", down: "#64748b" },
+  // "Signature" = Zero Two's own palette (Darling in the Franxx), not an
+  // approximation: #ffbdd4 is her hair, #179599 her eyes. The warm pink /
+  // cool teal pair is the character's defining contrast — and it happens to be
+  // a far better up/down pair than red/green for anyone colour-blind.
+  { id: "pink", label: "Signature", up: "#ffbdd4", down: "#179599" },
   { id: "ocean", label: "Ocean", up: "#2dd4bf", down: "#fb7185" },
   { id: "sunset", label: "Sunset", up: "#f59e0b", down: "#8b5cf6" },
 ];
