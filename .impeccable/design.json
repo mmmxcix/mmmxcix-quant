@@ -1,0 +1,181 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-07-22T00:00:00.000Z",
+  "title": "Design System: MMMXCIX Quant",
+  "extensions": {
+    "colorMeta": {
+      "paper": {
+        "role": "neutral",
+        "displayName": "Paper",
+        "canonical": "#fafafb",
+        "tonalRamp": ["#0c0c0f", "#18181a", "#29292b", "#38383a", "#4c4c4e", "#6b6b6e", "#9e9ea4", "#f4f4f5"]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "Surface",
+        "canonical": "#ffffff",
+        "tonalRamp": ["#0c0c0f", "#18181a", "#29292b", "#38383a", "#4c4c4e", "#6b6b6e", "#9e9ea4", "#f4f4f5"]
+      },
+      "silver": {
+        "role": "neutral",
+        "displayName": "Silver",
+        "canonical": "#e4e4e7",
+        "tonalRamp": ["#0c0c0f", "#18181a", "#29292b", "#38383a", "#4c4c4e", "#6b6b6e", "#9e9ea4", "#f4f4f5"]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Ink",
+        "canonical": "#0c0c0f",
+        "tonalRamp": ["#0c0c0f", "#18181a", "#29292b", "#38383a", "#4c4c4e", "#6b6b6e", "#9e9ea4", "#f4f4f5"]
+      },
+      "dim": {
+        "role": "neutral",
+        "displayName": "Dim",
+        "canonical": "#585860",
+        "tonalRamp": ["#0c0c0f", "#18181a", "#29292b", "#38383a", "#4c4c4e", "#6b6b6e", "#9e9ea4", "#f4f4f5"]
+      },
+      "accent": {
+        "role": "primary",
+        "displayName": "Graphite Ink",
+        "canonical": "#18181a",
+        "tonalRamp": ["#0c0c0f", "#18181a", "#29292b", "#38383a", "#4c4c4e", "#6b6b6e", "#9e9ea4", "#f4f4f5"]
+      },
+      "signal-up": {
+        "role": "secondary",
+        "displayName": "Deep Signal Green",
+        "canonical": "#0b6e47",
+        "tonalRamp": ["#052e1e", "#0b6e47", "#157a52", "#21976a", "#2fae7e", "#4ac28c", "#7dd6ab", "#b8ecd1"]
+      },
+      "signal-down": {
+        "role": "secondary",
+        "displayName": "Deep Signal Red",
+        "canonical": "#be2830",
+        "tonalRamp": ["#4a0f13", "#7a1a20", "#be2830", "#d43a3f", "#e85258", "#ee7278", "#f4a0a3", "#fbd2d4"]
+      },
+      "signal-warn": {
+        "role": "secondary",
+        "displayName": "Dark Signal Ochre",
+        "canonical": "#8a5e07",
+        "tonalRamp": ["#3d2a03", "#664707", "#8a5e07", "#b07d15", "#cf9530", "#e0af52", "#edc687", "#f8e3c0"]
+      }
+    },
+    "typographyMeta": {
+      "title": { "displayName": "Title", "purpose": "Page/section identity — the Quant wordmark, panel headers. Never larger than 1.125rem; there is no display tier." },
+      "body": { "displayName": "Body", "purpose": "Nav items, prose, form controls, general UI text. Fixed rem scale, not fluid clamp()." },
+      "label": { "displayName": "Label", "purpose": "Uppercase micro-labels: nav group headers, the MMMXCIX eyebrow, tracked annotations." },
+      "data": { "displayName": "Data / Mono", "purpose": "Any number a user reads live or historically — KPI values, prices, countdowns, kbd hints. Always tabular-nums." }
+    },
+    "shadows": [
+      { "name": "glass-ambient-light", "value": "0 1px 2px rgba(12,12,15,0.05), 0 14px 34px -14px rgba(12,12,15,0.16)", "purpose": "Resting shadow under every .lg-glass panel in light mode." },
+      { "name": "glass-ambient-dark", "value": "0 1px 2px rgba(0,0,0,0.55), 0 22px 46px -18px rgba(0,0,0,0.8)", "purpose": "Resting shadow under every .lg-glass panel in dark mode." },
+      { "name": "hover-lift-bloom", "value": "0 2px 6px rgb(12 12 15 / 0.06), 0 24px 48px -20px rgb(12 12 15 / 0.28)", "purpose": "Added shadow when an .hover-lift card is hovered, alongside a 3px upward translate." }
+    ],
+    "motion": [
+      { "name": "ease-reveal", "value": "cubic-bezier(0.2, 0.7, 0.2, 1)", "purpose": "Default easing for page entry, staggered card reveals, and hover-lift transforms." },
+      { "name": "duration-control", "value": "150ms", "purpose": "Color/background/border/transform transitions on buttons, chips, inputs." },
+      { "name": "duration-page-entry", "value": "220ms", "purpose": "view-in — the whole page's entry animation, kept task-length." },
+      { "name": "duration-card-stagger-step", "value": "30ms", "purpose": "Delay increment between successive .stagger children." },
+      { "name": "duration-chart-reveal", "value": "700ms", "purpose": "draw-in / wipe-in — self-drawing sparkline and chart-line reveals." },
+      { "name": "duration-tick-flash", "value": "600ms", "purpose": "flash-up / flash-down — brief tint when a live value changes." },
+      { "name": "duration-skeleton-shimmer", "value": "1400ms", "purpose": "Loading skeleton sheen loop." },
+      { "name": "duration-pulse-dot", "value": "2400ms", "purpose": "Live/armed status ripple loop." },
+      { "name": "duration-ambient-drift", "value": "96000ms–120000ms", "purpose": "Background glow drift — deliberately slow so it's felt, not seen." }
+    ],
+    "breakpoints": [
+      { "name": "sm", "value": "640px" },
+      { "name": "md", "value": "768px" },
+      { "name": "lg", "value": "1024px" },
+      { "name": "xl", "value": "1280px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Nav Item (active)",
+      "kind": "nav",
+      "refersTo": "nav-item-active",
+      "description": "Sidebar navigation link in its active state — accent-tinted fill plus a left accent bar.",
+      "html": "<a class=\"ds-nav-item ds-nav-item--active\" href=\"#\"><span class=\"ds-nav-icon\" aria-hidden=\"true\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"3\" y=\"3\" width=\"7\" height=\"9\"></rect><rect x=\"14\" y=\"3\" width=\"7\" height=\"5\"></rect><rect x=\"14\" y=\"12\" width=\"7\" height=\"9\"></rect><rect x=\"3\" y=\"16\" width=\"7\" height=\"5\"></rect></svg></span>Dashboard</a>",
+      "css": ".ds-nav-item { position: relative; display: flex; align-items: center; gap: 10px; border-radius: 8px; padding: 7px 12px; font-family: Inter, system-ui, sans-serif; font-size: 0.875rem; text-decoration: none; transition: color 150ms, background-color 150ms; } .ds-nav-item--active { background: rgba(24,24,26,0.10); color: #18181a; font-weight: 500; } .ds-nav-item--active::before { content: ''; position: absolute; left: -8px; top: 6px; bottom: 6px; width: 3px; border-radius: 999px; background: #18181a; } .ds-nav-icon { display: inline-flex; width: 16px; height: 16px; flex-shrink: 0; }"
+    },
+    {
+      "name": "Nav Item (idle)",
+      "kind": "nav",
+      "refersTo": "nav-item-idle",
+      "description": "Sidebar navigation link at rest, brightening to full ink on hover.",
+      "html": "<a class=\"ds-nav-item ds-nav-item--idle\" href=\"#\">Charts</a>",
+      "css": ".ds-nav-item--idle { color: #585860; } .ds-nav-item--idle:hover { color: #0c0c0f; background: #ffffff; }"
+    },
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-accent",
+      "description": "Ink-tinted primary action button.",
+      "html": "<button class=\"ds-btn-accent\">Run Backtest</button>",
+      "css": ".ds-btn-accent { background: rgba(24,24,26,0.15); border: 1px solid rgba(24,24,26,0.40); color: #18181a; border-radius: 8px; padding: 8px 16px; font-family: Inter, system-ui, sans-serif; font-size: 0.875rem; font-weight: 600; cursor: pointer; transition: color 150ms, background-color 150ms, border-color 150ms, transform 150ms; } .ds-btn-accent:hover { background: rgba(24,24,26,0.25); } .ds-btn-accent:active { transform: scale(0.97); } .ds-btn-accent:focus-visible { outline: 2px solid rgba(24,24,26,0.55); outline-offset: 2px; border-radius: 6px; } .ds-btn-accent:disabled { opacity: 0.4; cursor: not-allowed; }"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "Secondary action button, surface background with a hairline border.",
+      "html": "<button class=\"ds-btn-ghost\">Cancel</button>",
+      "css": ".ds-btn-ghost { background: #ffffff; border: 1px solid #e4e4e7; color: #585860; border-radius: 8px; padding: 8px 12px; font-family: Inter, system-ui, sans-serif; font-size: 0.875rem; cursor: pointer; transition: color 150ms, background-color 150ms, border-color 150ms, transform 150ms; } .ds-btn-ghost:hover { color: #0c0c0f; border-color: rgba(228,228,231,0.8); } .ds-btn-ghost:active { transform: scale(0.97); }"
+    },
+    {
+      "name": "Filter Chip (active/idle)",
+      "kind": "chip",
+      "refersTo": "chip",
+      "description": "Pill-shaped toggle used for timeframe and filter selection.",
+      "html": "<div style=\"display:flex; gap:8px;\"><span class=\"ds-chip ds-chip--active\">1D</span><span class=\"ds-chip ds-chip--idle\">1W</span></div>",
+      "css": ".ds-chip { display: inline-block; padding: 4px 12px; border-radius: 999px; font-family: Inter, system-ui, sans-serif; font-size: 0.75rem; border: 1px solid transparent; cursor: pointer; user-select: none; transition: color 150ms, background-color 150ms, border-color 150ms, transform 150ms; } .ds-chip:active { transform: scale(0.97); } .ds-chip--active { border-color: rgba(24,24,26,0.5); color: #18181a; background: rgba(24,24,26,0.10); } .ds-chip--idle { border-color: #e4e4e7; color: #585860; background: rgba(12,12,15,0.05); } .ds-chip--idle:hover { color: #0c0c0f; background: rgba(12,12,15,0.09); }"
+    },
+    {
+      "name": "Text Input",
+      "kind": "input",
+      "refersTo": "input-base",
+      "description": "Standard text field used across screener and backtest forms.",
+      "html": "<input class=\"ds-input\" type=\"text\" placeholder=\"Symbol…\" />",
+      "css": ".ds-input { background: #ffffff; border: 1px solid #e4e4e7; border-radius: 8px; padding: 8px 12px; font-family: Inter, system-ui, sans-serif; font-size: 0.875rem; color: #0c0c0f; outline: none; transition: border-color 150ms; } .ds-input::placeholder { color: rgba(88,88,96,0.6); } .ds-input:focus { border-color: rgba(24,24,26,0.5); }"
+    },
+    {
+      "name": "KPI / Glass Card",
+      "kind": "card",
+      "refersTo": "kpi-card",
+      "description": "Frosted glass metric card used across Dashboard, Portfolio and Monitor.",
+      "html": "<div class=\"ds-kpi-card\"><p class=\"ds-kpi-label\">Equity</p><div class=\"ds-kpi-value\">$128,430</div></div>",
+      "css": ".ds-kpi-card { position: relative; overflow: hidden; border-radius: 12px; border: 1px solid #e4e4e7; padding: 16px; background: rgba(255,255,255,0.74); backdrop-filter: blur(16px) saturate(140%); box-shadow: 0 1px 2px rgba(12,12,15,0.05), 0 14px 34px -14px rgba(12,12,15,0.16); transition: transform 180ms cubic-bezier(0.2,0.7,0.2,1), box-shadow 180ms ease, border-color 180ms ease; } .ds-kpi-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 1px; background: linear-gradient(90deg, transparent 0%, rgba(12,12,15,0.16) 50%, transparent 100%); } .ds-kpi-card:hover { transform: translateY(-3px); border-color: rgba(24,24,26,0.35); box-shadow: 0 2px 6px rgba(12,12,15,0.06), 0 24px 48px -20px rgba(12,12,15,0.28); } .ds-kpi-label { font-family: Inter, system-ui, sans-serif; font-size: 0.625rem; text-transform: uppercase; letter-spacing: 0.05em; color: #585860; margin-bottom: 8px; } .ds-kpi-value { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 1.5rem; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1; color: #0c0c0f; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Frosted Signal",
+    "overview": "Every quant tool has the same job: pull signal out of noise. This system makes that job literal. Underneath the interface sits a WebGL dither field and a fine grain layer — actual visual noise, drifting so slowly (a 96–120 second cycle) it registers as atmosphere, not motion. Over it sits frosted glass: panels that blur and saturate whatever noise sits behind them into a soft, present depth. Above all of that, the interface itself renders in exactly two non-negotiable colors — near-black ink on near-white paper by day, near-white ink on near-black paper by night — with a single rule standing guard: nothing on this screen is allowed to carry color except the market data itself. The accent isn't a brand hue borrowed from a style guide; the accent is the ink. When something turns green or red, that's not decoration, that's the answer to the only question a trader actually asked.\n\nThis is a product register system: the user is in a task, and the interface's job is to disappear into that task with the fluency of Linear or a Bloomberg terminal — not to perform a brand identity at them. It explicitly rejects the loud, gamified, glow-everywhere register of consumer trading apps: no rainbow category chips, no level-up celebration animation, no mascot. Restraint is the whole point; a monochrome interface reads as more serious, not less, because the only thing left to notice is the data.",
+    "keyCharacteristics": [
+      "Two-color monochrome ramp (paper/ink) per theme; color reserved entirely for up/down/warn market signals.",
+      "Frosted glass over a slow WebGL dither + grain field — depth you feel, not decoration you notice.",
+      "Inter for every UI surface; JetBrains Mono exclusively for live or historical numbers.",
+      "Motion is short and task-length (page entry ≤0.3s), never a performance the user has to sit through.",
+      "Every interactive state (hover/focus-visible/active/disabled) is explicit and consistent across all controls."
+    ],
+    "rules": [
+      { "name": "The Accent-Is-Ink Rule", "body": "There is no separate brand accent color. In light mode the accent is Graphite Ink; in dark mode it is near-white. The interface's only \"color\" is its own ink, at full opacity, on interactive elements — never a hue borrowed from a marketing palette.", "section": "colors" },
+      { "name": "The One-Hue-Per-Fact Rule", "body": "Green, red, and ochre are reserved exclusively for real market facts. They never appear as decoration, category-coding, or brand flourish.", "section": "colors" },
+      { "name": "The Numerals-Are-Mono Rule", "body": "Any value that is a number a user reads live or historically renders in JetBrains Mono with tabular-nums. Everything else stays in Inter.", "section": "typography" },
+      { "name": "The Felt-Not-Seen Rule", "body": "The ambient gradient glows and the dither/grain field must never be identifiable as an object on the page — they drift on 96–120 second cycles specifically so a user never catches them moving.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do keep color to exactly four roles: the ink/paper ramp, and up/down/warn signal colors.",
+      "Do render every live or historical number in JetBrains Mono with tabular-nums.",
+      "Do keep page-entry motion at or under ~0.3s and stagger children in ~30ms steps.",
+      "Do collapse every animation, transform, and the grain-layer opacity under prefers-reduced-motion.",
+      "Do give every interactive control all of default / hover / focus-visible / active / disabled.",
+      "Do use .lg-frost for fixed chrome and the lighter .lg-glass for in-content cards."
+    ],
+    "donts": [
+      "Don't introduce a decorative brand accent color.",
+      "Don't let the ambient glow, dither field, or grain layer become identifiable as a moving object.",
+      "Don't paint an opaque background on <body>.",
+      "Don't reach for a display/hero font size or a fluid clamp() heading.",
+      "Don't add gamified flourish — level-up glows, confetti, mascots, rainbow category coding."
+    ]
+  }
+}

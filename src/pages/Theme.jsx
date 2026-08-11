@@ -23,13 +23,19 @@ function Preview() {
       <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ height: 120 }} aria-label="Colour preview">
         {CANDLES.map((k, i) => {
           const up = k.c >= k.o;
-          const col = up ? "rgb(var(--c-up))" : "rgb(var(--c-down))";
+          // Same fallback chain the real chart uses: candle override → semantic
+          // token. The outline falls back to the body colour, so it is invisible
+          // for palettes without an ink and a true outline for those with one.
+          const body = up ? "var(--c-candle-up, var(--c-up))" : "var(--c-candle-down, var(--c-down))";
+          const col = `rgb(${body})`;
+          const line = `rgb(var(--c-candle-ink-active, ${body}))`;
           const cx = i * cw + cw / 2;
           return (
             <g key={i}>
-              <line x1={cx} x2={cx} y1={y(k.h)} y2={y(k.l)} style={{ stroke: col }} strokeWidth="1.5" />
+              <line x1={cx} x2={cx} y1={y(k.h)} y2={y(k.l)} style={{ stroke: line }} strokeWidth="1.5" />
               <rect x={cx - bw / 2} y={y(Math.max(k.o, k.c))} width={bw}
-                height={Math.max(2, Math.abs(y(k.o) - y(k.c)))} style={{ fill: col }} rx="1" />
+                height={Math.max(2, Math.abs(y(k.o) - y(k.c)))}
+                style={{ fill: col, stroke: line }} strokeWidth="1" rx="1" />
             </g>
           );
         })}
@@ -75,6 +81,17 @@ export default function Theme() {
   const activePreset = CHART_PRESETS.find((p) => p.up === prefs.up && p.down === prefs.down);
   const dirty = prefs.up || prefs.down || prefs.accent || prefs.dither !== "default";
 
+  // A preset may carry candle-only body colours (see CHART_PRESETS). Picking one
+  // must also CLEAR those slots when the new preset has none, or Signature's
+  // white bodies would survive a switch to Classic. Choosing a colour by hand
+  // clears the matching override for the same reason — otherwise the picked
+  // colour would show everywhere except in the candles it was picked for.
+  const applyPreset = (p) => setThemePrefs({
+    up: p.up, down: p.down,
+    candleUp: p.candleUp ?? null, candleDown: p.candleDown ?? null,
+    ink: p.ink ?? null, inkDark: p.inkDark ?? null,
+  });
+
   return (
     <div className="max-w-2xl mx-auto px-4 py-6">
       <div className="flex items-center gap-2 mb-1">
@@ -97,10 +114,12 @@ export default function Theme() {
 
         <div className="grid sm:grid-cols-2 gap-4 items-start">
           <div className="flex flex-col gap-4">
-            <ColorControl label="Bull / up" value={prefs.up} fallback={FALLBACK.up}
-              onChange={(v) => setThemePrefs({ up: v })} onClear={() => setThemePrefs({ up: null })} />
-            <ColorControl label="Bear / down" value={prefs.down} fallback={FALLBACK.down}
-              onChange={(v) => setThemePrefs({ down: v })} onClear={() => setThemePrefs({ down: null })} />
+            <ColorControl label="Bull / up" value={prefs.candleUp || prefs.up} fallback={FALLBACK.up}
+              onChange={(v) => setThemePrefs({ up: v, candleUp: null, ink: null, inkDark: null })}
+              onClear={() => setThemePrefs({ up: null, candleUp: null, ink: null, inkDark: null })} />
+            <ColorControl label="Bear / down" value={prefs.candleDown || prefs.down} fallback={FALLBACK.down}
+              onChange={(v) => setThemePrefs({ down: v, candleDown: null, ink: null, inkDark: null })}
+              onClear={() => setThemePrefs({ down: null, candleDown: null, ink: null, inkDark: null })} />
             <ColorControl label="Accent" value={prefs.accent} fallback={FALLBACK.accent}
               onChange={(v) => setThemePrefs({ accent: v })} onClear={() => setThemePrefs({ accent: null })} />
           </div>
@@ -111,10 +130,14 @@ export default function Theme() {
           <p className="text-[11px] uppercase tracking-wide text-dim mb-2">Presets</p>
           <div className="flex flex-wrap gap-2">
             {CHART_PRESETS.map((p) => (
-              <button key={p.id} onClick={() => setThemePrefs({ up: p.up, down: p.down })}
+              <button key={p.id} onClick={() => applyPreset(p)}
                 className={cn("chip flex items-center gap-1.5", activePreset?.id === p.id ? "chip-active" : "chip-idle")}>
-                <span className="w-2.5 h-2.5 rounded-full" style={{ background: p.up }} />
-                <span className="w-2.5 h-2.5 rounded-full -ml-1" style={{ background: p.down }} />
+                {/* Swatches show the CANDLE colours where a preset defines them, with
+                    the ink outline — otherwise Signature's dot would read as plain white. */}
+                <span className="w-2.5 h-2.5 rounded-full"
+                  style={{ background: p.candleUp || p.up, border: p.ink ? `1px solid ${p.ink}` : undefined }} />
+                <span className="w-2.5 h-2.5 rounded-full -ml-1"
+                  style={{ background: p.candleDown || p.down, border: p.ink ? `1px solid ${p.ink}` : undefined }} />
                 {p.label}
                 {activePreset?.id === p.id && <Check className="w-3 h-3" />}
               </button>

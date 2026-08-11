@@ -15,12 +15,25 @@ function chartColors() {
   };
   const grid = dark ? "#141a26" : "rgba(17,21,40,0.06)";
   const border = dark ? "#1c2433" : "rgba(17,21,40,0.12)";
+  // Candle bodies may be overridden independently of the semantic up/down
+  // tokens (see CHART_PRESETS): a palette can want a body colour that would be
+  // illegible as text. `ink`, when set, outlines every body and draws the wicks,
+  // which is what keeps a near-white or near-black body visible on either theme.
+  const bodyUp = rgb("--c-candle-up") || rgb("--c-up") || "#10b981";
+  const bodyDown = rgb("--c-candle-down") || rgb("--c-down") || "#ef4444";
+  // Resolved by index.css to the light or dark ink for the active theme, so the
+  // wicks never end up drawn in the background colour.
+  const ink = rgb("--c-candle-ink-active");
   return {
-    up: rgb("--c-up") || "#10b981",
-    down: rgb("--c-down") || "#ef4444",
+    up: bodyUp,
+    down: bodyDown,
     accent: rgb("--c-accent") || "#2dd4bf",
-    wickUp: rgb("--c-up", 0.53) || "rgba(16,185,129,0.53)",
-    wickDown: rgb("--c-down", 0.53) || "rgba(239,68,68,0.53)",
+    // Outline defaults to the body colour (no visible border), so palettes that
+    // don't set `ink` look exactly as they did before.
+    borderUp: ink || bodyUp,
+    borderDown: ink || bodyDown,
+    wickUp: ink || rgb("--c-up", 0.53) || "rgba(16,185,129,0.53)",
+    wickDown: ink || rgb("--c-down", 0.53) || "rgba(239,68,68,0.53)",
     accentTop: rgb("--c-accent", 0.28) || "rgba(45,212,191,0.28)",
     accentBottom: rgb("--c-accent", 0.02) || "rgba(45,212,191,0.02)",
     vol: dark ? "#1c2433" : "rgba(17,21,40,0.10)",
@@ -63,7 +76,7 @@ function addPriceSeries(chart, type, c) {
   }
   // candles + heikin-ashi both use a candlestick series
   return chart.addCandlestickSeries({
-    upColor: c.up, downColor: c.down, borderUpColor: c.up, borderDownColor: c.down,
+    upColor: c.up, downColor: c.down, borderUpColor: c.borderUp, borderDownColor: c.borderDown,
     wickUpColor: c.wickUp, wickDownColor: c.wickDown,
   });
 }
@@ -118,14 +131,16 @@ export default function CandleChart({
         try {
           ps.applyOptions({
             color: c.accent, lineColor: c.accent, topColor: c.accentTop, bottomColor: c.accentBottom,
-            upColor: c.up, downColor: c.down, borderUpColor: c.up, borderDownColor: c.down,
+            upColor: c.up, downColor: c.down, borderUpColor: c.borderUp, borderDownColor: c.borderDown,
             wickUpColor: c.wickUp, wickDownColor: c.wickDown,
           });
         } catch { /* options not valid for this series type — harmless */ }
       }
     };
     const obs = new MutationObserver(apply);
-    obs.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    // "style" is watched too: the custom palette is applied as inline CSS vars on
+    // <html>, so without it a colour change only reached an open chart on remount.
+    obs.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme", "style"] });
     return () => obs.disconnect();
   }, []);
 

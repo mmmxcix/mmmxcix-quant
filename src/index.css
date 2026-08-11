@@ -20,6 +20,12 @@
   --c-on-accent: 255 255 255; /* text/icon colour on a solid accent fill (light theme) */
   --c-up: 11 110 71;        /* #0b6e47 — deeper green; the old #158f60 washed out on white and in /10 tints */
   --c-down: 190 40 48;      /* #be2830 — deeper red for the same reason */
+  /* Candle outline actually in force. A palette that outlines its candles (see
+     CHART_PRESETS) supplies BOTH inks, because the outline also draws the wicks:
+     a near-black one is invisible on the dark ground and the highs/lows would
+     silently disappear. Unset for palettes without an outline, which is what
+     makes the chart fall back to borderless bodies. */
+  --c-candle-ink-active: var(--c-candle-ink);
   --c-warn: 138 94 7;       /* #8a5e07 — dark ochre; raw yellow-400 was ~1.5:1 (invisible) on white. ~5.6:1 here */
 
   /* Data-viz series colors (chart overlays, indicator panes). Deeper on white,
@@ -57,6 +63,7 @@
   --c-on-accent: 11 13 18;  /* near-ink text on the (lighter) accent fill reads better on dark */
   --c-up: 74 194 140;       /* #4ac28c — a touch brighter for tint legibility */
   --c-down: 232 82 88;      /* #e85258 */
+  --c-candle-ink-active: var(--c-candle-ink-dark);
   --c-warn: 224 175 82;     /* #e0af52 — warm amber, legible on charcoal (~8:1) */
 
   --viz-blue: #38bdf8;

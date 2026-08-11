@@ -20,7 +20,10 @@
     var p = JSON.parse(localStorage.getItem("quant_theme_prefs") || "{}");
     var root = document.documentElement;
     var toTrip = function (h) { var mm = /^#?([0-9a-f]{6})$/i.exec((h || "").trim()); if (!mm) return null; var n = parseInt(mm[1], 16); return ((n >> 16) & 255) + " " + ((n >> 8) & 255) + " " + (n & 255); };
-    [["--c-up", p.up], ["--c-down", p.down], ["--c-accent", p.accent]].forEach(function (kv) { var t = kv[1] && toTrip(kv[1]); if (t) root.style.setProperty(kv[0], t); });
+    [["--c-up", p.up], ["--c-down", p.down], ["--c-accent", p.accent],
+     ["--c-candle-up", p.candleUp], ["--c-candle-down", p.candleDown],
+     ["--c-candle-ink", p.ink], ["--c-candle-ink-dark", p.inkDark],
+    ].forEach(function (kv) { var t = kv[1] && toTrip(kv[1]); if (t) root.style.setProperty(kv[0], t); });
     var dop = { off: "0", subtle: "0.22", full: "0.85" }[p.dither];
     if (dop != null) root.style.setProperty("--dither-opacity", dop);
     root.dataset.dither = p.dither || "default";
