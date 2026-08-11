@@ -381,10 +381,24 @@ export function ledgerStats(closed) {
   if (!n) return { n: 0, wins: 0, winRate: 0, pnl: 0, sumR: 0, avgR: 0, expectancy: 0 };
   const wins = closed.filter((c) => c.pnl > 0).length;
   const pnl = closed.reduce((a, c) => a + c.pnl, 0);
-  const sumR = closed.reduce((a, c) => a + tradeR(c), 0);
+  const rs = closed.map((c) => tradeR(c));
+  const sumR = rs.reduce((a, r) => a + r, 0);
+  const avgR = sumR / n;
+  // Dispersion of R, so a caller can ask whether a negative expectancy is
+  // EVIDENCE or noise. Without it, "is this bucket broken?" can only be a
+  // fixed threshold, which is sample-blind: -0.50R over 50 trades is far
+  // stronger evidence than -0.85R over 6, yet a threshold ranks them the
+  // other way round.
+  const varR = n > 1 ? rs.reduce((a, r) => a + (r - avgR) ** 2, 0) / (n - 1) : 0;
+  const sdR = Math.sqrt(varR);
+  const se = n > 1 && sdR > 0 ? sdR / Math.sqrt(n) : 0;
   return {
     n, wins, winRate: wins / n, pnl, sumR,
-    avgR: sumR / n,
-    expectancy: sumR / n, // R-expectancy per trade
+    avgR,
+    expectancy: avgR, // R-expectancy per trade
+    sdR,
+    // t-statistic of "expectancy < 0". <= -2 is ~95% one-sided confidence that
+    // this bucket genuinely loses, rather than having had a bad run.
+    tStat: se > 0 ? avgR / se : 0,
   };
 }

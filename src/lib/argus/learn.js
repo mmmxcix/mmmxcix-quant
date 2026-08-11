@@ -18,6 +18,20 @@ const HARD_CUT_EXPECTANCY = -0.30; // ≤ this → the firmer of the two size cu
 const MULT_FLOOR = 0.5, MULT_CEIL = 1.25;
 const BOOST = 1.12, MILD_CUT = 0.85, HARD_CUT = 0.65;
 const SKIP_EXPECTANCY = -0.8, SKIP_WINRATE = 0.28; // only truly broken buckets skip
+// EVIDENCE-BASED SKIP (Aug 2026). The threshold pair above is sample-blind, and
+// that cost real money: `breakout` ran 50 trades at a 10% win rate and −0.50R
+// expectancy — −2,655 of the account — yet never skipped, because −0.50 never
+// reaches −0.8 and a single-dimension bucket was barred from skipping at all.
+// Meanwhile a 6-trade bucket at −0.85R WOULD have skipped. That ranking is
+// backwards: what matters is whether the loss is EVIDENCE, not whether it is
+// large. So a bucket may also skip when its mean R is negative with real
+// statistical confidence (t ≤ −2, ~95% one-sided) over a decent sample.
+const SKIP_T_STAT = -2.0;      // one-sided ~95% confidence that expectancy < 0
+const SKIP_EVIDENCE_MIN_N = 25; // …over at least this many trades
+// The guard the 2-dimension rule was really reaching for: never disable so much
+// of the book that the agent stops trading. A skip is refused if the bucket
+// covers more than this share of all closed trades.
+const SKIP_MAX_BOOK_SHARE = 0.5;
 // A skip (dropping a setup entirely) MUST come from a SPECIFIC bucket — at least
 // this many defining dimensions (e.g. kind+symbol+side, not the blanket "all shorts"
 // or "all technical"). A single broad dimension covers ~every trade, so letting it
@@ -143,6 +157,7 @@ function makeLesson(dims, items) {
   return {
     dims, verdict, action,
     n: s.n, wins: s.wins, winRate: s.winRate, avgR: s.avgR, expectancy: s.expectancy, pnl: s.pnl, invalRate,
+    sdR: s.sdR, tStat: s.tStat,
     text,
   };
 }
@@ -167,7 +182,12 @@ export function deriveLessons(closed, { minSample = 20, max = 50 } = {}) {
     }
     for (const { dims, items } of groups.values()) {
       if (items.length < minSample) continue;
-      lessons.push(makeLesson(dims, items));
+      // bookShare feeds the anti-freeze guard in `adjustment`: a bucket that
+      // covers most of the closed book must never be allowed to skip, however
+      // convincing its numbers, or the agent learns to stop trading entirely.
+      const lesson = makeLesson(dims, items);
+      lesson.bookShare = list.length ? items.length / list.length : 0;
+      lessons.push(lesson);
     }
   }
   lessons.sort((a, b) => {
@@ -202,6 +222,7 @@ export function adjustment(lessons, setup, opts = {}) {
     boost = BOOST, mildCut = MILD_CUT, hardCut = HARD_CUT,
     hardCutExpectancy = HARD_CUT_EXPECTANCY,
     skipExpectancy = SKIP_EXPECTANCY, skipWinRate = SKIP_WINRATE, skipMinSample = minSample,
+    skipTStat = SKIP_T_STAT, skipEvidenceMinN = SKIP_EVIDENCE_MIN_N, skipMaxBookShare = SKIP_MAX_BOOK_SHARE,
   } = opts;
   let mult = 1, skip = false;
   const reasons = [];
@@ -224,7 +245,16 @@ export function adjustment(lessons, setup, opts = {}) {
       // that once "learned" the agent into trading nothing at all.
       const specific = Object.keys(l.dims || {}).length >= SKIP_MIN_DIMS;
       const brokenEdge = l.expectancy <= skipExpectancy && l.winRate <= skipWinRate;
+      // (a) the original rule: a SPECIFIC bucket whose numbers are egregious.
       if (specific && l.n >= skipMinSample && brokenEdge) skip = true;
+      // (b) evidence rule: ANY bucket — including a single `kind` — whose mean R
+      //     is negative with statistical confidence over a real sample. This is
+      //     what finally catches a setup that bleeds steadily instead of
+      //     spectacularly. `bookShare` (set by the caller from the ledger) is the
+      //     anti-freeze guard: a bucket covering most of the book never skips.
+      const provenLoser = (l.tStat ?? 0) <= skipTStat && l.n >= skipEvidenceMinN;
+      const tooBroad = (l.bookShare ?? 0) > skipMaxBookShare;
+      if (provenLoser && !tooBroad) skip = true;
     }
   }
   mult = Math.max(floor, Math.min(ceil, mult));
