@@ -15,6 +15,7 @@ const ROUTES = [
   ["/news", "Market News", "A market-news digest with a personalised daily email."],
   ["/portfolio", "Portfolio", "A simulated book with realized P/L and a Hierarchical Risk Parity allocation."],
   ["/regimes", "Market Regimes", "Hidden-Markov market-regime detection, live vs hindsight."],
+  ["/arena", "Arena", "Live paper trading for order-book strategies that cannot be backtested."],
   ["/learn", "Learn Quant", "An academy, strategy guide and a reference of 30+ quant formulas."],
   ["/coach", "Coach", "A personalised plan to build quant-trading skill."],
   ["/tools", "Tools", "Handy quant utilities."],

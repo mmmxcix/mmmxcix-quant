@@ -23,6 +23,7 @@ const COMMANDS = [
   { label: "Event Lab", to: "/backtest/events", group: "Strategy" },
   { label: "Market-Making Simulator", to: "/backtest/mm", group: "Strategy" },
   { label: "Regimes", to: "/regimes", group: "Strategy" },
+  { label: "Arena", to: "/arena", group: "Strategy" },
   { label: "Portfolio", to: "/portfolio", group: "Strategy" },
   { label: "Tools", to: "/tools", group: "Strategy" },
   { label: "Cortex · Registry", to: "/cortex/registry", group: "Cortex" },

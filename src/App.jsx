@@ -15,6 +15,7 @@ const Charts = lazy(() => import("@/pages/Charts"));
 const NewsHub = lazy(() => import("@/pages/NewsHub"));
 const Tools = lazy(() => import("@/pages/Tools"));
 const Regimes = lazy(() => import("@/pages/Regimes"));
+const Arena = lazy(() => import("@/pages/Arena"));
 const Coach = lazy(() => import("@/pages/Coach"));
 const Cortex = lazy(() => import("@/pages/Cortex"));
 const Argus = lazy(() => import("@/pages/Argus"));
@@ -99,6 +100,7 @@ export default function App() {
                 <Route path="/monitor" element={<Redir to="/?view=monitor" />} />
                 <Route path="/tools" element={<Tools />} />
                 <Route path="/regimes" element={<Regimes />} />
+                <Route path="/arena" element={<Arena />} />
                 <Route path="/coach" element={<Coach />} />
                 <Route path="/argus" element={<Argus />} />
                 <Route path="/account" element={<Account />} />

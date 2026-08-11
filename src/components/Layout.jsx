@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { NavLink, Link, useLocation } from "react-router-dom";
-import { LayoutDashboard, CandlestickChart, FlaskConical, Newspaper, Compass, Wrench, Activity, Scale, Star, Briefcase, Radar, GraduationCap, Sigma, Menu, X, Target, BookOpenCheck, Telescope, Cpu, Sun, Moon, Monitor, Waypoints, Search, LogIn , Landmark, Globe, Radio, Palette, ChevronDown, Pin, PinOff, User} from "lucide-react";
+import { LayoutDashboard, CandlestickChart, FlaskConical, Newspaper, Compass, Wrench, Activity, Scale, Star, Briefcase, Radar, GraduationCap, Sigma, Menu, X, Target, BookOpenCheck, Telescope, Cpu, Sun, Moon, Monitor, Waypoints, Search, LogIn , Landmark, Globe, Radio, Palette, ChevronDown, Pin, PinOff, User, Swords} from "lucide-react";
 import { cn } from "@/lib/utils";
 import DitherBackground from "@/components/DitherBackground";
 import CommandPalette from "@/components/CommandPalette";
@@ -91,6 +91,7 @@ const NAV_GROUPS = [
     items: [
       { to: "/backtest", label: "Backtest", icon: FlaskConical },
       { to: "/regimes", label: "Regimes", icon: Waypoints },
+      { to: "/arena", label: "Arena", icon: Swords },
       { to: "/portfolio", label: "Portfolio", icon: Briefcase },
       { to: "/tools", label: "Tools", icon: Wrench },
       // Argus is public — anyone can watch what the agent does (paper only). The
