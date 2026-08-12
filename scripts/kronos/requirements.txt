@@ -1,9 +1,13 @@
 # Kronos forecasting service — see forecast.py
 #
-# torch: install the CUDA build for your card FIRST, from pytorch.org, otherwise
-# pip resolves the CPU wheel and the RTX 5080 sits idle. For CUDA 12.x:
-#   pip install torch --index-url https://download.pytorch.org/whl/cu124
-torch>=2.1
+# torch: install the CUDA build FIRST, from the PyTorch index, otherwise pip
+# resolves the CPU wheel and the GPU sits idle.
+#
+# The RTX 50-series (Blackwell, sm_120) needs the CUDA 12.8 build. The cu124
+# wheels carry no sm_120 kernels and will either fall back to the CPU or fail
+# outright on a 5080:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu128
+torch>=2.7
 pandas>=2.0
 numpy>=1.24
 huggingface_hub>=0.23

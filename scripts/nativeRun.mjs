@@ -14,6 +14,10 @@
 //   q:    signals:{[t] ... }  returning one signal per row of t
 
 import { writeFileSync, mkdtempSync, rmSync } from "node:fs";
+// EVERY spawn here passes windowsHide: true. Without it Windows allocates a
+// console for g++/q/the compiled binary and a black window flashes over
+// whatever the user is doing — Cortex compiles on a timer, so it flashed at
+// random moments and was hard to trace back to this file.
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -25,7 +29,7 @@ const QBIN = process.env.LAB_Q || "q";
 
 /** Which native toolchains are available on this machine. */
 export function detectTools() {
-  const has = (cmd, args) => { try { return spawnSync(cmd, args, { stdio: "ignore", timeout: 5000 }).error == null; } catch { return false; } };
+  const has = (cmd, args) => { try { return spawnSync(cmd, args, { stdio: "ignore", timeout: 5000, windowsHide: true }).error == null; } catch { return false; } };
   return {
     node: true,
     python: true,               // Pyodide ships in-process — always available
@@ -68,15 +72,15 @@ int main() {
 `;
 
 function cppSignals(code, candles) {
-  if (spawnSync(GPP, ["--version"], { timeout: 5000 }).error) return { toolMissing: "g++" };
+  if (spawnSync(GPP, ["--version"], { timeout: 5000, windowsHide: true }).error) return { toolMissing: "g++" };
   const dir = mkdtempSync(join(tmpdir(), "cppbt-"));
   try {
     const src = join(dir, "strat.cpp");
     const exe = join(dir, process.platform === "win32" ? "strat.exe" : "strat.out");
     writeFileSync(src, cppSource(code));
-    const comp = spawnSync(GPP, ["-O2", "-std=c++17", "-o", exe, src], { encoding: "utf8", timeout: 60000 });
+    const comp = spawnSync(GPP, ["-O2", "-std=c++17", "-o", exe, src], { encoding: "utf8", timeout: 60000, windowsHide: true });
     if (comp.status !== 0) return { error: "compile: " + (comp.stderr || "unknown").split("\n").filter(Boolean).slice(0, 4).join(" | ").slice(0, 400) };
-    const run = spawnSync(exe, [], { input: candlesCsv(candles), encoding: "utf8", maxBuffer: 128 * 1024 * 1024, timeout: 60000 });
+    const run = spawnSync(exe, [], { input: candlesCsv(candles), encoding: "utf8", maxBuffer: 128 * 1024 * 1024, timeout: 60000, windowsHide: true });
     if (run.status !== 0) return { error: "runtime: " + (run.stderr || `exit ${run.status}`).slice(0, 300) };
     const sig = run.stdout.trim().split("\n").filter((x) => x !== "").map((x) => parseInt(x, 10) || 0);
     if (sig.length !== candles.length) return { error: `C++ returned ${sig.length} signals for ${candles.length} bars` };
@@ -88,7 +92,7 @@ function cppSignals(code, candles) {
 // The user code defines signals:{[t] ...}. We load the candle CSV into a table t
 // and print one signal per row. q must be installed + licensed (free personal ed).
 function qSignals(code, candles) {
-  if (spawnSync(QBIN, ["-q"], { timeout: 5000, input: "exit 0" }).error) return { toolMissing: "q" };
+  if (spawnSync(QBIN, ["-q"], { timeout: 5000, input: "exit 0", windowsHide: true }).error) return { toolMissing: "q" };
   const dir = mkdtempSync(join(tmpdir(), "qbt-"));
   try {
     const csv = join(dir, "candles.csv");
@@ -102,7 +106,7 @@ function qSignals(code, candles) {
       "-1 \"\\n\" sv string `int$res;\n" +
       "exit 0;\n";
     writeFileSync(script, q);
-    const run = spawnSync(QBIN, [script, "-q"], { encoding: "utf8", timeout: 60000, maxBuffer: 128 * 1024 * 1024 });
+    const run = spawnSync(QBIN, [script, "-q"], { encoding: "utf8", timeout: 60000, maxBuffer: 128 * 1024 * 1024, windowsHide: true });
     if (run.status !== 0 && run.status !== null) return { error: "q: " + (run.stderr || run.stdout || `exit ${run.status}`).slice(0, 300) };
     const sig = (run.stdout || "").trim().split("\n").filter((x) => /^-?\d+$/.test(x.trim())).map((x) => parseInt(x, 10) || 0);
     if (sig.length !== candles.length) return { error: `q returned ${sig.length} signals for ${candles.length} bars` };
@@ -124,14 +128,14 @@ const _cppBins = new Map(); // code → { exe } | Error
 function ensureCppBinary(code) {
   const cached = _cppBins.get(code);
   if (cached) { if (cached instanceof Error) throw cached; return cached; }
-  if (spawnSync(GPP, ["--version"], { timeout: 5000 }).error) {
+  if (spawnSync(GPP, ["--version"], { timeout: 5000, windowsHide: true }).error) {
     const e = new Error("g++ not installed"); e.toolMissing = "g++"; _cppBins.set(code, e); throw e;
   }
   const dir = mkdtempSync(join(tmpdir(), "cppc-"));
   const src = join(dir, "strat.cpp");
   const exe = join(dir, process.platform === "win32" ? "strat.exe" : "strat.out");
   writeFileSync(src, cppSource(code));
-  const comp = spawnSync(GPP, ["-O2", "-std=c++17", "-o", exe, src], { encoding: "utf8", timeout: 60000 });
+  const comp = spawnSync(GPP, ["-O2", "-std=c++17", "-o", exe, src], { encoding: "utf8", timeout: 60000, windowsHide: true });
   if (comp.status !== 0) {
     try { rmSync(dir, { recursive: true, force: true }); } catch { /* noop */ }
     const e = new Error("compile: " + (comp.stderr || "unknown").split("\n").filter(Boolean).slice(0, 4).join(" | ").slice(0, 400));
@@ -141,7 +145,7 @@ function ensureCppBinary(code) {
 }
 
 function runCppBinary(exe, candles) {
-  const run = spawnSync(exe, [], { input: candlesCsv(candles), encoding: "utf8", maxBuffer: 128 * 1024 * 1024, timeout: 60000 });
+  const run = spawnSync(exe, [], { input: candlesCsv(candles), encoding: "utf8", maxBuffer: 128 * 1024 * 1024, timeout: 60000, windowsHide: true });
   if (run.status !== 0) throw new Error("runtime: " + (run.stderr || `exit ${run.status}`).slice(0, 300));
   const sig = run.stdout.trim().split("\n").filter((x) => x !== "").map((x) => parseInt(x, 10) || 0);
   if (sig.length !== candles.length) throw new Error(`C++ returned ${sig.length} signals for ${candles.length} bars`);
@@ -161,7 +165,7 @@ export function compileCppStrategy(code) {
 
 /** Compile q strategy → a candle-agnostic signalFn (interpreted; run per array). */
 export function compileQStrategy(code) {
-  if (spawnSync(QBIN, ["-q"], { timeout: 5000, input: "exit 0" }).error) {
+  if (spawnSync(QBIN, ["-q"], { timeout: 5000, input: "exit 0", windowsHide: true }).error) {
     const e = new Error("q not installed"); e.toolMissing = "q"; throw e;
   }
   const cache = new WeakMap();

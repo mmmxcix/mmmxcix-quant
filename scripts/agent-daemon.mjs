@@ -17,7 +17,7 @@
 // Each run's output is appended to ~/.mmmxcix-<name>.log. One instance per agent
 // at a time — an overrun is skipped, not stacked.
 
-import { fork } from "node:child_process";
+import { fork, spawn } from "node:child_process";
 import { openSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -69,6 +69,28 @@ function runPersistent(name, file) {
   child.on("error", (e) => restart(`error ${e.message}`));
 }
 
+/** Run a PYTHON script on a schedule. fork() only works for node, so this is a
+ *  plain spawn — but with windowsHide AND stdio pointed at a log file, so no
+ *  console is inherited or created and nothing can flash. */
+function runPython(name, args) {
+  if (running.has(name)) {
+    console.log(`[${stamp()}] ${name}: previous run still going — skipped`);
+    return;
+  }
+  running.add(name);
+  let fd;
+  try { fd = openSync(logFor(name), "a"); } catch { fd = "ignore"; }
+  const child = spawn("python", args, {
+    cwd: fileURLToPath(new URL("..", import.meta.url)),
+    stdio: ["ignore", fd, fd],
+    windowsHide: true,
+    env: process.env,
+  });
+  console.log(`[${stamp()}] ${name}: started (pid ${child.pid})`);
+  child.on("exit", (code) => { running.delete(name); console.log(`[${stamp()}] ${name}: finished (exit ${code})`); });
+  child.on("error", (e) => { running.delete(name); console.error(`[${stamp()}] ${name}: failed — ${e.message}`); });
+}
+
 // ── schedule helpers ────────────────────────────────────────────────────────
 const MIN = 60_000;
 
@@ -107,5 +129,19 @@ atHours([7], () => runAgent("mine", "mine-library.mjs"));
 // LAB_EXECUTOR=0 (e.g. on a machine without the toolchains).
 if (process.env.LAB_EXECUTOR !== "0") runPersistent("executor", "executor-agent.mjs");
 
-console.log(`[${stamp()}] agent-daemon running — lab/15min · research/04:00 · revalidate/08,11,14,17,20 · discover/12:00 · retest/06,18 · mine/07 · executor/persistent`);
+// Arena: a persistent websocket client on the Binance book, paper-trading the
+// order-book strategies that cannot be backtested (see src/lib/arena.js). It
+// belongs here rather than in its own autostart entry for the reason at the top
+// of this file — forked, so it never creates a console to be hijacked. It also
+// needs to run CONTINUOUSLY: the micro-price model needs ~25 minutes of live
+// book before it can be fitted at all, so a scheduled pass would never get one.
+// Opt out with ARENA_AGENT=0.
+if (process.env.ARENA_AGENT !== "0") runPersistent("arena", "arena-agent.mjs");
+
+// Kronos: forecasts crypto 24h ahead and grades the PREVIOUS forecasts against
+// a random walk. Python, so it is a scheduled pass rather than a fork — see
+// runPython below for why that still cannot pop a window.
+if (process.env.KRONOS_AGENT !== "0") atHours([1, 13], () => runPython("kronos", ["scripts/kronos/forecast.py"]));
+
+console.log(`[${stamp()}] agent-daemon running — lab/15min · research/04:00 · revalidate/08,11,14,17,20 · discover/12:00 · retest/06,18 · mine/07 · executor/persistent · arena/persistent · kronos/01,13`);
 runAgent("lab", "lab-agent.mjs"); // one immediate pass so a restart isn't idle for 15 min

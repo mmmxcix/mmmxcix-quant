@@ -19,7 +19,7 @@ Setup (one time):
     # weights download automatically on first run (~500MB for base)
 
 Run:
-    DEV_ACCESS_TOKEN=... python scripts/kronos/forecast.py
+    LAB_TOKEN=... python scripts/kronos/forecast.py
     python scripts/kronos/forecast.py --dry          # no push, prints instead
     python scripts/kronos/forecast.py --model small  # mini | small | base
 
@@ -38,7 +38,9 @@ import urllib.request
 from datetime import datetime, timezone
 
 API = os.environ.get("KRONOS_API", "https://quant.mmmxcix.com/api/kronos")
-TOKEN = os.environ.get("DEV_ACCESS_TOKEN", "")
+# LAB_TOKEN is the fleet-wide name for this secret; DEV_ACCESS_TOKEN is what the
+# Cloudflare binding calls it. Accept either.
+TOKEN = os.environ.get("LAB_TOKEN") or os.environ.get("DEV_ACCESS_TOKEN", "")
 
 # Model sizes as published. The tokenizer is shared; -2k pairs with the larger
 # context window and is only worth it if you feed more than 512 bars.
@@ -160,7 +162,7 @@ def push(payload: dict, dry: bool) -> None:
     if dry or not TOKEN:
         print(json.dumps(payload, indent=2)[:4000])
         if not TOKEN and not dry:
-            print("DEV_ACCESS_TOKEN not set — nothing pushed.", file=sys.stderr)
+            print("LAB_TOKEN not set — nothing pushed.", file=sys.stderr)
         return
     body = json.dumps({**payload, "token": TOKEN}).encode()
     req = urllib.request.Request(API, data=body, headers={"content-type": "application/json"})

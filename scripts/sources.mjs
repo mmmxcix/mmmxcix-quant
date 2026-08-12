@@ -349,7 +349,7 @@ const YT_QUERIES = [
 ];
 
 async function ytdlp(args, timeout = 60000) {
-  const { stdout } = await exec("yt-dlp", args, { timeout, maxBuffer: 12 * 1024 * 1024 });
+  const { stdout } = await exec("yt-dlp", args, { timeout, maxBuffer: 12 * 1024 * 1024, windowsHide: true });
   return stdout;
 }
 

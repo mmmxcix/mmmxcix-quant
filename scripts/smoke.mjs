@@ -25,7 +25,7 @@ const ROUTES = [
   "/coach", "/cortex/registry", "/cortex/paper", "/cortex/riskgate", "/cortex/brain",
 ];
 
-const preview = spawn(process.execPath, ["node_modules/vite/bin/vite.js", "preview", "--port", String(PORT)], { stdio: "ignore" });
+const preview = spawn(process.execPath, ["node_modules/vite/bin/vite.js", "preview", "--port", String(PORT)], { stdio: "ignore", windowsHide: true });
 await new Promise((r) => setTimeout(r, 2500));
 
 let fails = 0;

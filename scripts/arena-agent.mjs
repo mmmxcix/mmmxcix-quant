@@ -5,7 +5,8 @@
 // the strategies on paper, and pushes the state to /api/arena.
 //
 // Run:  node scripts/arena-agent.mjs
-// Env:  DEV_ACCESS_TOKEN (required to push), ARENA_API (default production),
+// Env:  LAB_TOKEN (required to push; DEV_ACCESS_TOKEN also accepted),
+//       ARENA_API (default production),
 //       ARENA_SYMBOLS (default BTCUSDT,ETHUSDT), ARENA_DRY=1 to run without pushing.
 //
 // Nothing here touches real money and no API key is involved — bookTicker is a
@@ -21,7 +22,10 @@ import {
 } from "../src/lib/arena.js";
 
 const API = process.env.ARENA_API || "https://quant.mmmxcix.com/api/arena";
-const TOKEN = process.env.DEV_ACCESS_TOKEN || "";
+// LAB_TOKEN is what the rest of the fleet uses (argus, lab, ais); the API calls
+// the same secret DEV_ACCESS_TOKEN, so accept either name rather than making
+// this the one agent that needs its own variable.
+const TOKEN = process.env.LAB_TOKEN || process.env.DEV_ACCESS_TOKEN || "";
 const DRY = process.env.ARENA_DRY === "1";
 const SYMBOLS = (process.env.ARENA_SYMBOLS || "BTCUSDT,ETHUSDT").split(",").map((s) => s.trim()).filter(Boolean);
 
@@ -289,7 +293,7 @@ async function push() {
 
 async function main() {
   if (!TOKEN && !DRY) {
-    console.error("DEV_ACCESS_TOKEN is not set — run with ARENA_DRY=1 to trade locally without pushing.");
+    console.error("LAB_TOKEN is not set — run with ARENA_DRY=1 to trade locally without pushing.");
     process.exit(1);
   }
   console.log(`arena: ${SYMBOLS.join(", ")} · stake ${STAKE} · evict at t<=${ARENA_RULES.evictTStat} after ${ARENA_RULES.minTrades} trades`);

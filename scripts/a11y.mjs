@@ -112,7 +112,7 @@ function audit() {
 const results = [];
 let preview;
 if (!SITE) {
-  preview = spawn(process.execPath, ["node_modules/vite/bin/vite.js", "preview", "--port", String(PORT)], { stdio: "ignore" });
+  preview = spawn(process.execPath, ["node_modules/vite/bin/vite.js", "preview", "--port", String(PORT)], { stdio: "ignore", windowsHide: true });
   await new Promise((r) => setTimeout(r, 3000));
 }
 const base = SITE || `http://localhost:${PORT}`;

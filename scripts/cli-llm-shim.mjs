@@ -36,7 +36,8 @@ function cors(res) {
 // hung CLI can't wedge the shim.
 function runCli(prompt) {
   return new Promise((resolve, reject) => {
-    const child = spawn(CLI, CLI_ARGS, { stdio: ["pipe", "pipe", "pipe"] });
+    // windowsHide keeps the CLI from flashing a console window on every call.
+    const child = spawn(CLI, CLI_ARGS, { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
     let out = "", err = "";
     const timer = setTimeout(() => { child.kill("SIGKILL"); reject(new Error("CLI timed out")); }, TIMEOUT_MS);
     child.stdout.on("data", (d) => (out += d));
