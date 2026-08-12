@@ -46,6 +46,7 @@ export async function onRequest({ request, env }) {
       forecasts: snap?.forecasts || [],
       scoreboard: snap?.scoreboard || [],
       scoredCount: snap?.scoredCount || 0,
+      account: snap?.account || null,
       updatedAt: snap?.updatedAt || 0,
     });
   }
@@ -71,11 +72,34 @@ export async function onRequest({ request, env }) {
       directionPct: num(s.directionPct),
     })) : [];
 
+    // The paper account: budget, equity and every decision including the ones
+    // not to trade. Bounded here as well as at the source — a public endpoint
+    // must not grow without limit because an agent got chatty.
+    const a = body.account && typeof body.account === "object" ? body.account : null;
+    const trade = (t) => ({
+      symbol: str(t.symbol, 20), side: t.side === "short" ? "short" : "long",
+      entry: num(t.entry), exit: num(t.exit), stop: num(t.stop), target: num(t.target),
+      stake: num(t.stake), riskAmt: num(t.riskAmt), pnl: num(t.pnl), R: num(t.R),
+      reason: str(t.reason, 24), openedAt: num(t.openedAt), closedAt: num(t.closedAt),
+    });
+    const account = a ? {
+      budget: num(a.budget), equity: num(a.equity), returnPct: num(a.returnPct),
+      n: num(a.n), wins: num(a.wins), winRate: num(a.winRate),
+      avgR: num(a.avgR), tStat: num(a.tStat), maxDrawdownPct: num(a.maxDrawdownPct),
+      startedAt: num(a.startedAt),
+      open: Array.isArray(a.open) ? a.open.slice(0, 12).map(trade) : [],
+      closed: Array.isArray(a.closed) ? a.closed.slice(-60).map(trade) : [],
+      journal: Array.isArray(a.journal) ? a.journal.slice(-80).map((j) => ({
+        at: num(j.at), symbol: str(j.symbol, 20),
+        action: str(j.action, 24), detail: str(j.detail, 240),
+      })) : [],
+    } : null;
+
     try {
       await db.prepare(
         "INSERT INTO argus_kv (key, data, updated_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at"
       ).bind(KEY, JSON.stringify({
-        forecasts, scoreboard, scoredCount: num(body.scoredCount), updatedAt: Date.now(),
+        forecasts, scoreboard, account, scoredCount: num(body.scoredCount), updatedAt: Date.now(),
       }), Date.now()).run();
     } catch { return json({ error: "db_write_failed" }, 503); }
 

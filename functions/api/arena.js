@@ -86,6 +86,14 @@ export async function onRequest({ request, env }) {
   ).bind(KEY, JSON.stringify(obj), Date.now()).run();
 
   if (request.method === "GET") {
+    // The fleet switch. Public GET on purpose: the PC daemon polls it without a
+    // session, and the state (running / paused) leaks nothing. Only WRITING is
+    // gated, and only to an admin session.
+    if (new URL(request.url).searchParams.get("what") === "control") {
+      const snap = await read();
+      const c = snap?.control || { paused: false, at: 0, source: "default" };
+      return json({ ok: true, control: c, agentSeenAt: snap?.agentSeenAt || 0 });
+    }
     const snap = await read();
     return json({
       ok: true,
@@ -99,6 +107,18 @@ export async function onRequest({ request, env }) {
   if (request.method === "POST") {
     let body;
     try { body = await request.json(); } catch { return json({ error: "bad_json" }, 400); }
+
+    // The fleet switch, flipped from the browser. Admin session only — this
+    // stops real work on the user's machine, so a leaked machine token must not
+    // be able to reach it.
+    if (body.control && typeof body.control === "object") {
+      if (!(await isAdminRequest(env, request))) return json({ error: "unauthorized" }, 401);
+      const snap = (await read()) || {};
+      const control = { paused: !!body.control.paused, at: Date.now(), source: "web" };
+      try { await write({ ...snap, control, updatedAt: Date.now() }); }
+      catch { return json({ error: "db_write_failed" }, 503); }
+      return json({ ok: true, control });
+    }
 
     // Human-side control: retire an entrant by hand. Session-gated, like the
     // argus command channel — a machine token must not be able to do this.
@@ -125,6 +145,21 @@ export async function onRequest({ request, env }) {
       return json({ ok: true, reset: true });
     }
 
+    // The daemon reports the state it is ACTUALLY in, which may be newer than
+    // the web's (someone double-clicked the local toggle). Without this the
+    // switch would show what was last asked for rather than what is true.
+    if (body.controlState && typeof body.controlState === "object") {
+      const snap = (await read()) || {};
+      const control = {
+        paused: !!body.controlState.paused,
+        at: num(body.controlState.at),
+        source: str(body.controlState.source, 16) || "agent",
+      };
+      try { await write({ ...snap, control, agentSeenAt: Date.now() }); }
+      catch { return json({ error: "db_write_failed" }, 503); }
+      return json({ ok: true, control });
+    }
+
     if (!Array.isArray(body.entries)) return json({ error: "bad_entries" }, 400);
     const entries = body.entries.slice(0, MAX_ENTRIES).map(sanitiseEntry).filter(Boolean);
     const book = body.book && typeof body.book === "object" ? {
@@ -141,7 +176,10 @@ export async function onRequest({ request, env }) {
       modelCoverage: num(x.modelCoverage),
     })) : [];
 
-    try { await write({ entries, book, scores, updatedAt: Date.now() }); }
+    // Preserve the switch across snapshot writes — the agent pushes entries every
+    // 30s and would otherwise erase the control row on each one.
+    const prev = (await read()) || {};
+    try { await write({ ...prev, entries, book, scores, updatedAt: Date.now() }); }
     catch { return json({ error: "db_write_failed" }, 503); }
     return json({ ok: true, saved: entries.length });
   }

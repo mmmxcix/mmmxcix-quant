@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Swords, Activity, TrendingDown, Info, CircleDot } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ARENA_RULES } from "@/lib/arena";
+import FleetSwitch from "@/components/FleetSwitch";
 
 // The arena: live paper trading for strategies that CANNOT be backtested.
 // See src/lib/arena.js for why (no historical order-book depth) and
@@ -107,6 +108,87 @@ function Scoreboard({ scores }) {
   );
 }
 
+// Kronos runs on a fixed paper budget and writes down every decision, the same
+// way Argus does. Forecast error alone cannot answer "is this useful": a model
+// can beat a random walk on average and still lose money, because being closer
+// on the quiet days does not pay for being wrong on the violent ones. The
+// account is what makes that visible.
+function Account({ acct }) {
+  if (!acct) return null;
+  const up = acct.returnPct >= 0;
+  const since = acct.startedAt ? new Date(acct.startedAt * 1000).toLocaleDateString() : null;
+  return (
+    <div className="mb-4">
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-3">
+        <span className="font-mono text-2xl font-semibold">{fmt(acct.equity, 2)}</span>
+        <span className="text-sm text-dim">of {fmt(acct.budget, 0)} USDT paper</span>
+        <span className={cn("font-mono text-sm font-semibold", up ? "text-up" : "text-down")}>
+          {up ? "+" : ""}{fmt(acct.returnPct, 2)}%
+        </span>
+        {since && <span className="text-xs text-dim">since {since}</span>}
+      </div>
+
+      <dl className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-3">
+        {[
+          ["Trades", fmt(acct.n, 0)],
+          ["Win rate", `${fmt(acct.winRate, 0)}%`],
+          ["Avg R", fmt(acct.avgR, 2)],
+          ["t-stat", fmt(acct.tStat, 2)],
+          ["Max DD", `${fmt(acct.maxDrawdownPct, 1)}%`],
+        ].map(([k, v]) => (
+          <div key={k}>
+            <dt className="text-[11px] uppercase tracking-wide text-dim">{k}</dt>
+            <dd className="font-mono text-sm">{v}</dd>
+          </div>
+        ))}
+      </dl>
+
+      {acct.open?.length > 0 && (
+        <div className="rounded-lg border border-line bg-surface/40 p-3 mb-3">
+          <p className="text-[11px] uppercase tracking-wide text-dim mb-1.5">Open right now</p>
+          <ul className="space-y-1">
+            {acct.open.map((t, i) => (
+              <li key={i} className="text-sm font-mono flex flex-wrap gap-x-3">
+                <span className="font-sans font-medium">{t.symbol}</span>
+                <span className={t.side === "long" ? "text-up" : "text-down"}>{t.side}</span>
+                <span>{fmt(t.stake, 0)} USDT @ {fmt(t.entry, 2)}</span>
+                <span className="text-dim">stop {fmt(t.stop, 2)} · target {fmt(t.target, 2)}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {acct.journal?.length > 0 && (
+        <details className="rounded-lg border border-line bg-surface/40 p-3">
+          <summary className="cursor-pointer text-[11px] uppercase tracking-wide text-dim">
+            Decision log ({acct.journal.length})
+          </summary>
+          <p className="text-xs text-dim mt-2 mb-2">
+            Every decision, including the ones not to trade — those are what a track record
+            normally loses.
+          </p>
+          <ol className="space-y-1.5 max-h-72 overflow-y-auto">
+            {[...acct.journal].reverse().map((j, i) => (
+              <li key={i} className="text-xs border-l-2 border-line pl-2">
+                <span className="font-mono text-dim">
+                  {new Date(j.at * 1000).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                </span>{" "}
+                <span className="font-medium">{j.symbol}</span>{" "}
+                <span className={cn(
+                  j.action?.startsWith("open") ? "text-accent"
+                    : j.action === "no trade" ? "text-dim" : "text-fg"
+                )}>{j.action}</span>
+                <span className="text-dim"> — {j.detail}</span>
+              </li>
+            ))}
+          </ol>
+        </details>
+      )}
+    </div>
+  );
+}
+
 // Kronos is a foundation model for candlestick sequences, run on the PC by
 // scripts/kronos/forecast.py. It belongs on this page for the same reason the
 // order-book strategies do: it is a claim under test, and what is shown is how
@@ -123,6 +205,8 @@ function Kronos({ data }) {
         fail. Skill is the share of the naive error it removes; negative means it did worse
         than doing nothing.
       </p>
+      <Account acct={data?.account} />
+
       {!rows.length ? (
         <p className="text-sm text-dim" role="status">
           {latest.length
@@ -201,6 +285,8 @@ export default function Arena() {
       <div className="flex items-center gap-2 mb-1">
         <Swords className="w-5 h-5 text-accent" aria-hidden="true" />
         <h1 className="text-xl font-bold">Arena</h1>
+        {/* Renders only for the dev account; see FleetSwitch. */}
+        <div className="ml-auto"><FleetSwitch /></div>
       </div>
       <p className="text-sm text-dim mb-5 max-w-2xl">
         Live paper trading for strategies that cannot be backtested. The micro-price reads the

@@ -147,8 +147,144 @@ def forecast_one(predictor, candles: list[dict], pred_len: int) -> list[dict]:
     ]
 
 
-def score_due(pending: list[dict]) -> tuple[list[dict], list[dict]]:
-    """Grade every forecast whose horizon has passed.
+# ── The paper account ───────────────────────────────────────────────────────
+# Kronos does not just publish forecasts, it has to LIVE off them, the same way
+# Argus and Cortex do. It starts with a fixed budget and every decision it makes
+# is written into a journal — including the decisions NOT to trade, which are
+# the ones a track record normally loses.
+#
+# Why a budget at all: forecast error alone cannot tell you whether a model is
+# useful. A model can beat a random walk on average and still lose money, because
+# being slightly closer on the quiet days does not pay for being wrong on the
+# violent ones. The account is what makes that visible.
+START_BUDGET = 10_000.0      # USDT, paper
+RISK_PCT = 1.0               # of equity, per trade
+MIN_EDGE_PCT = 1.0           # a forecast under this is noise next to the fees
+STOP_PCT = 1.5               # distance to the stop, in percent of entry
+TAKER_FEE = 0.001            # per leg — a directional 24h trade pays both
+JOURNAL_CAP = 300
+
+
+def new_account() -> dict:
+    return {
+        "budget": START_BUDGET, "equity": START_BUDGET,
+        "closed": [], "journal": [], "startedAt": int(time.time()),
+    }
+
+
+def journal(acct: dict, symbol: str, action: str, detail: str) -> None:
+    acct["journal"].append({
+        "at": int(time.time()), "symbol": symbol, "action": action, "detail": detail,
+    })
+    acct["journal"] = acct["journal"][-JOURNAL_CAP:]
+    print(f"  [{symbol}] {action}: {detail}")
+
+
+def decide_trade(acct: dict, symbol: str, anchor: float, fc: list[dict],
+                 committed: float = 0.0) -> dict | None:
+    """Turn a forecast into a position, or into a written reason for passing.
+
+    `committed` is the notional already tied up in open positions. Risking 1%
+    behind a 1.5% stop needs ~67% of the account as notional, so two symbols
+    firing on the same pass would ask for 133% of a cash account. Sizing each
+    trade against equity ALONE is the standard way a paper account quietly ends
+    up leveraged; the free-cash cap is what stops it.
+    """
+    target = fc[-1]["close"]
+    edge_pct = (target - anchor) / anchor * 100
+    if abs(edge_pct) < MIN_EDGE_PCT:
+        journal(acct, symbol, "no trade",
+                f"forecast {edge_pct:+.2f}% over {PRED_LEN} bars — under the {MIN_EDGE_PCT}% floor, "
+                f"which the {TAKER_FEE * 200:.1f}% round trip would eat")
+        return None
+
+    side = "long" if edge_pct > 0 else "short"
+    stop = anchor * (1 - STOP_PCT / 100) if side == "long" else anchor * (1 + STOP_PCT / 100)
+    risk_amt = acct["equity"] * RISK_PCT / 100
+    stake = risk_amt / (STOP_PCT / 100)          # notional that risks exactly RISK_PCT
+    free = max(0.0, acct["equity"] - committed)
+    if free < stake * 0.25:
+        journal(acct, symbol, "no trade",
+                f"forecast {edge_pct:+.2f}% is tradeable, but {committed:.0f} of "
+                f"{acct['equity']:.0f} USDT is already committed — not enough free cash")
+        return None
+    if stake > free:
+        stake = free
+        risk_amt = stake * STOP_PCT / 100        # the risk shrinks with the size
+        journal(acct, symbol, "sized down",
+                f"only {free:.0f} USDT free — taking a smaller position, risking {risk_amt:.0f}")
+    journal(acct, symbol, f"open {side}",
+            f"forecast {edge_pct:+.2f}% → {side} {stake:.0f} USDT at {anchor:.2f}, "
+            f"stop {stop:.2f} ({STOP_PCT}%), risking {risk_amt:.0f}")
+    return {
+        "side": side, "entry": anchor, "stop": stop, "target": target,
+        "stake": stake, "riskAmt": risk_amt, "openedAt": int(time.time()),
+    }
+
+
+def settle_trade(acct: dict, symbol: str, trade: dict, bars: list[dict]) -> None:
+    """Walk the realised bars in order and close the position the way it would
+    actually have closed: the stop first, because within a single bar we cannot
+    know which came first and assuming the good one is how paper accounts lie."""
+    entry, side, stake = trade["entry"], trade["side"], trade["stake"]
+    exit_px, reason = bars[-1]["close"], "horizon"
+    for b in bars:
+        if side == "long":
+            if b["low"] <= trade["stop"]:
+                exit_px, reason = trade["stop"], "stop"
+                break
+            if b["high"] >= trade["target"]:
+                exit_px, reason = trade["target"], "target"
+                break
+        else:
+            if b["high"] >= trade["stop"]:
+                exit_px, reason = trade["stop"], "stop"
+                break
+            if b["low"] <= trade["target"]:
+                exit_px, reason = trade["target"], "target"
+                break
+
+    direction = 1 if side == "long" else -1
+    gross = stake * direction * (exit_px - entry) / entry
+    pnl = gross - stake * TAKER_FEE * 2
+    acct["equity"] += pnl
+    r = pnl / trade["riskAmt"] if trade["riskAmt"] > 0 else 0.0
+    acct["closed"].append({
+        **trade, "symbol": symbol, "exit": exit_px, "reason": reason,
+        "pnl": pnl, "R": r, "closedAt": int(time.time()),
+    })
+    journal(acct, symbol, f"close {reason}",
+            f"{side} {entry:.2f} → {exit_px:.2f} = {pnl:+.2f} USDT ({r:+.2f}R), "
+            f"equity now {acct['equity']:.2f}")
+
+
+def account_stats(acct: dict) -> dict:
+    closed = acct["closed"]
+    n = len(closed)
+    wins = sum(1 for c in closed if c["pnl"] > 0)
+    rs = [c["R"] for c in closed]
+    avg_r = sum(rs) / n if n else 0.0
+    sd = (sum((r - avg_r) ** 2 for r in rs) / (n - 1)) ** 0.5 if n > 1 else 0.0
+    t_stat = avg_r / (sd / (n ** 0.5)) if n > 1 and sd > 0 else 0.0
+    # Peak-to-trough on the realised equity path, not just the final number.
+    eq, peak, max_dd = acct["budget"], acct["budget"], 0.0
+    for c in closed:
+        eq += c["pnl"]
+        peak = max(peak, eq)
+        if peak > 0:
+            max_dd = max(max_dd, (peak - eq) / peak * 100)
+    return {
+        "budget": acct["budget"], "equity": acct["equity"],
+        "returnPct": (acct["equity"] - acct["budget"]) / acct["budget"] * 100,
+        "n": n, "wins": wins, "winRate": (wins / n * 100) if n else 0.0,
+        "avgR": avg_r, "tStat": t_stat, "maxDrawdownPct": max_dd,
+        "startedAt": acct.get("startedAt", 0),
+    }
+
+
+def score_due(pending: list[dict], acct: dict) -> tuple[list[dict], list[dict]]:
+    """Grade every forecast whose horizon has passed, and settle the position it
+    opened.
 
     Scored two ways, because only the second one means anything:
       - MAE of the forecast against the realised closes;
@@ -168,6 +304,10 @@ def score_due(pending: list[dict]) -> tuple[list[dict], list[dict]]:
             print(f"score fetch failed for {p['symbol']}: {e}", file=sys.stderr)
             still.append(p)
             continue
+        if p.get("trade"):
+            window = [c for c in actual if c["time"] >= p["trade"]["openedAt"] - 3600]
+            if window:
+                settle_trade(acct, p["symbol"], p["trade"], window)
         by_time = {c["time"]: c["close"] for c in actual}
         pairs = [(f["close"], by_time[f["time"]]) for f in p["forecast"] if f["time"] in by_time]
         if len(pairs) < max(3, PRED_LEN // 2):
@@ -223,9 +363,11 @@ def main() -> None:
         with open(state_path(), encoding="utf-8") as fh:
             store = json.load(fh)
     except (OSError, ValueError):
-        store = {"pending": [], "scored": []}
+        store = {"pending": [], "scored": [], "account": new_account()}
 
-    store["pending"], newly = score_due(store.get("pending", []))
+    acct = store.get("account") or new_account()
+    store["account"] = acct
+    store["pending"], newly = score_due(store.get("pending", []), acct)
     store["scored"] = (store.get("scored", []) + newly)[-200:]
     for s in newly:
         verdict = "beat" if s["skill"] > 0 else "LOST to"
@@ -245,10 +387,12 @@ def main() -> None:
                 "at": int(time.time()), "lastClose": last["close"], "lastTime": last["time"],
                 "forecast": fc,
             })
+            committed = sum(x["trade"]["stake"] for x in store["pending"] if x.get("trade"))
+            trade = decide_trade(acct, u["symbol"], last["close"], fc, committed)
             store["pending"].append({
                 "symbol": u["symbol"], "interval": u["interval"], "at": int(time.time()),
                 "lastClose": last["close"], "forecast": fc,
-                "dueAt": fc[-1]["time"] + 3600,
+                "dueAt": fc[-1]["time"] + 3600, "trade": trade,
             })
             print(f"{u['symbol']}: {last['close']:.2f} → {fc[-1]['close']:.2f} in {PRED_LEN} bars")
 
@@ -272,10 +416,25 @@ def main() -> None:
     with open(state_path(), "w", encoding="utf-8") as fh:
         json.dump(store, fh)
 
+    stats = account_stats(acct)
+    print(f"account: {stats['equity']:.2f} of {stats['budget']:.0f} USDT "
+          f"({stats['returnPct']:+.2f}%), {stats['n']} closed trades")
+
     push({
         "forecasts": forecasts,
         "scoreboard": scoreboard,
         "scoredCount": len(store["scored"]),
+        "account": {
+            **stats,
+            # The open positions are part of the picture — an account shown only
+            # by its closed trades hides whatever is currently going wrong.
+            "open": [
+                {"symbol": p["symbol"], **p["trade"]}
+                for p in store["pending"] if p.get("trade")
+            ],
+            "closed": acct["closed"][-60:],
+            "journal": acct["journal"][-80:],
+        },
         "generatedAt": datetime.now(timezone.utc).isoformat(),
     }, args.dry)
 

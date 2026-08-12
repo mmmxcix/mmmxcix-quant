@@ -18,7 +18,7 @@
 // at a time — an overrun is skipped, not stacked.
 
 import { fork, spawn } from "node:child_process";
-import { isPaused, gpuBusy } from "./gaming-mode.mjs";
+import { isPaused, gpuBusy, readState, setPaused, reconcile } from "./gaming-mode.mjs";
 import { openSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -88,6 +88,40 @@ function runPersistent(name, file) {
   child.on("exit", (code) => restart(`exited (${code})`));
   child.on("error", (e) => restart(`error ${e.message}`));
 }
+
+// Sync with the switch on /arena. The site is polled rather than pushed to,
+// because this machine sits behind a router and has no inbound address. Whoever
+// decided LAST wins (see reconcile), so a local double-click is not undone by
+// the next poll, and the site is corrected to show what is actually true here.
+const ARENA_API = process.env.ARENA_API || "https://quant.mmmxcix.com/api/arena";
+const FLEET_TOKEN = process.env.LAB_TOKEN || process.env.DEV_ACCESS_TOKEN || "";
+
+async function syncSwitch() {
+  let remote = null;
+  try {
+    const r = await fetch(`${ARENA_API}?what=control`, { signal: AbortSignal.timeout(10_000) });
+    if (r.ok) remote = (await r.json())?.control ?? null;
+  } catch { return; }            // offline: local state stands, which is correct
+  const local = readState();
+  const d = reconcile(local, remote);
+  if (d.apply) {
+    setPaused(d.paused, "web", remote.at);
+    console.log(`[${stamp()}] switch: ${d.paused ? "PAUSE" : "RESUME"} requested from the website`);
+    return;                       // the pause watcher below acts on it next tick
+  }
+  if (d.push && FLEET_TOKEN) {
+    try {
+      await fetch(ARENA_API, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ token: FLEET_TOKEN, controlState: local }),
+        signal: AbortSignal.timeout(10_000),
+      });
+    } catch { /* the next poll tries again */ }
+  }
+}
+setInterval(syncSwitch, 30_000);
+syncSwitch();
 
 // Poll the pause flag so it takes effect WITHOUT restarting the daemon: a file
 // can be toggled by a shortcut mid-game, an env var cannot.
