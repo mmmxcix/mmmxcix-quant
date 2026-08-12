@@ -96,6 +96,9 @@ function runPersistent(name, file) {
 const ARENA_API = process.env.ARENA_API || "https://quant.mmmxcix.com/api/arena";
 const FLEET_TOKEN = process.env.LAB_TOKEN || process.env.DEV_ACCESS_TOKEN || "";
 
+let lastSwitchPush = 0;
+const SWITCH_HEARTBEAT_MS = 4 * 60_000;
+
 async function syncSwitch() {
   let remote = null;
   try {
@@ -109,7 +112,12 @@ async function syncSwitch() {
     console.log(`[${stamp()}] switch: ${d.paused ? "PAUSE" : "RESUME"} requested from the website`);
     return;                       // the pause watcher below acts on it next tick
   }
-  if (d.push && FLEET_TOKEN) {
+  // Report even when nothing changed, at a slow beat: without it the site can
+  // never tell "running" from "this machine is off", because a fleet that
+  // agrees with the switch has nothing to say and would stay silent forever.
+  const heartbeatDue = Date.now() - lastSwitchPush > SWITCH_HEARTBEAT_MS;
+  if ((d.push || heartbeatDue) && FLEET_TOKEN) {
+    lastSwitchPush = Date.now();
     try {
       await fetch(ARENA_API, {
         method: "POST",
@@ -117,7 +125,7 @@ async function syncSwitch() {
         body: JSON.stringify({ token: FLEET_TOKEN, controlState: local }),
         signal: AbortSignal.timeout(10_000),
       });
-    } catch { /* the next poll tries again */ }
+    } catch { lastSwitchPush = 0; }   // failed — retry on the next poll
   }
 }
 setInterval(syncSwitch, 30_000);
