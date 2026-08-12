@@ -18,6 +18,7 @@
 // at a time — an overrun is skipped, not stacked.
 
 import { fork, spawn } from "node:child_process";
+import { isPaused, gpuBusy } from "./gaming-mode.mjs";
 import { openSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -31,6 +32,10 @@ const running = new Set();
 
 /** Run an agent script as a forked child (no new console → never a window). */
 function runAgent(name, file) {
+  if (isPaused()) {
+    console.log(`[${stamp()}] ${name}: skipped — fleet paused`);
+    return;
+  }
   if (running.has(name)) {
     console.log(`[${stamp()}] ${name}: previous run still going — skipped`);
     return;
@@ -56,12 +61,27 @@ function runAgent(name, file) {
 
 /** Run a PERSISTENT agent (a poller, not a scheduled pass): fork it and re-fork
  *  if it ever exits, with a short backoff. Used for the native backtest executor. */
+const persistent = new Map();   // name -> { file, child }
+
 function runPersistent(name, file) {
+  persistent.set(name, { file, child: null });
+  if (isPaused()) {
+    console.log(`[${stamp()}] ${name}: not started — fleet paused`);
+    return;
+  }
   let fd;
   try { fd = openSync(logFor(name), "a"); } catch { fd = "ignore"; }
   const child = fork(here(file), [], { stdio: ["ignore", fd, fd, "ipc"], windowsHide: true, env: process.env });
+  persistent.set(name, { file, child });
   console.log(`[${stamp()}] ${name}: started (pid ${child.pid}, persistent)`);
   const restart = (why) => {
+    const entry = persistent.get(name);
+    if (entry) entry.child = null;
+    // A pause kills these on purpose — do not fight it by restarting.
+    if (isPaused()) {
+      console.log(`[${stamp()}] ${name}: ${why} — staying down while paused`);
+      return;
+    }
     console.log(`[${stamp()}] ${name}: ${why} — restarting in 10s`);
     setTimeout(() => runPersistent(name, file), 10_000);
   };
@@ -69,10 +89,32 @@ function runPersistent(name, file) {
   child.on("error", (e) => restart(`error ${e.message}`));
 }
 
+// Poll the pause flag so it takes effect WITHOUT restarting the daemon: a file
+// can be toggled by a shortcut mid-game, an env var cannot.
+let wasPaused = isPaused();
+setInterval(() => {
+  const now = isPaused();
+  if (now === wasPaused) return;
+  wasPaused = now;
+  if (now) {
+    console.log(`[${stamp()}] PAUSED — stopping persistent agents`);
+    for (const [name, e] of persistent) {
+      if (e.child) { try { e.child.kill(); } catch { /* already gone */ } console.log(`[${stamp()}] ${name}: stopped`); }
+    }
+  } else {
+    console.log(`[${stamp()}] RESUMED — restarting persistent agents`);
+    for (const [name, e] of [...persistent]) if (!e.child) runPersistent(name, e.file);
+  }
+}, 30_000);
+
 /** Run a PYTHON script on a schedule. fork() only works for node, so this is a
  *  plain spawn — but with windowsHide AND stdio pointed at a log file, so no
  *  console is inherited or created and nothing can flash. */
 function runPython(name, args) {
+  if (isPaused()) {
+    console.log(`[${stamp()}] ${name}: skipped — fleet paused`);
+    return;
+  }
   if (running.has(name)) {
     console.log(`[${stamp()}] ${name}: previous run still going — skipped`);
     return;
@@ -141,7 +183,21 @@ if (process.env.ARENA_AGENT !== "0") runPersistent("arena", "arena-agent.mjs");
 // Kronos: forecasts crypto 24h ahead and grades the PREVIOUS forecasts against
 // a random walk. Python, so it is a scheduled pass rather than a fork — see
 // runPython below for why that still cannot pop a window.
-if (process.env.KRONOS_AGENT !== "0") atHours([1, 13], () => runPython("kronos", ["scripts/kronos/forecast.py"]));
+// If the GPU is busy — a game, a render — take the grading pass only. That half
+// is arithmetic over forecasts already on disk and needs no GPU, so the
+// scoreboard still fills while the card is left alone. The forecast catches up
+// at the next slot.
+if (process.env.KRONOS_AGENT !== "0") {
+  atHours([1, 13], () => {
+    const g = gpuBusy();
+    if (g.busy) {
+      console.log(`[${stamp()}] kronos: forecast skipped — ${g.reason}; grading only`);
+      runPython("kronos", ["scripts/kronos/forecast.py", "--score-only"]);
+    } else {
+      runPython("kronos", ["scripts/kronos/forecast.py"]);
+    }
+  });
+}
 
 console.log(`[${stamp()}] agent-daemon running — lab/15min · research/04:00 · revalidate/08,11,14,17,20 · discover/12:00 · retest/06,18 · mine/07 · executor/persistent · arena/persistent · kronos/01,13`);
 runAgent("lab", "lab-agent.mjs"); // one immediate pass so a restart isn't idle for 15 min
