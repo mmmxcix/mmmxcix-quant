@@ -34,8 +34,18 @@ import json
 import os
 import sys
 import time
+import pathlib
 import urllib.request
 from datetime import datetime, timezone
+
+# Windows consoles default to cp1252, which cannot encode an arrow or an
+# ellipsis — a forecast that worked would die on the line printing it, and the
+# daemon writes this output to a log file where the same applies.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
 
 API = os.environ.get("KRONOS_API", "https://quant.mmmxcix.com/api/kronos")
 # LAB_TOKEN is the fleet-wide name for this secret; DEV_ACCESS_TOKEN is what the
@@ -74,8 +84,27 @@ def fetch_klines(symbol: str, interval: str, limit: int) -> list[dict]:
     ]
 
 
+# The Kronos package (MIT) is a checkout, not a PyPI wheel — its `model` package
+# has to be on the path. Looked up next to this repo by default so a fresh clone
+# needs no configuration; override with KRONOS_HOME.
+def _add_kronos_to_path() -> None:
+    here = pathlib.Path(__file__).resolve()
+    candidates = [os.environ.get("KRONOS_HOME"), str(here.parents[2].parent / "Kronos")]
+    for c in candidates:
+        if c and (pathlib.Path(c) / "model" / "__init__.py").exists():
+            if c not in sys.path:
+                sys.path.insert(0, c)
+            return
+    sys.exit(
+        "Kronos package not found. Clone it next to this repo:\n"
+        "  git clone --depth 1 https://github.com/shiyu-coder/Kronos.git\n"
+        "…or point KRONOS_HOME at an existing checkout."
+    )
+
+
 def load_predictor(size: str):
     """Import lazily so --score-only works on a machine without torch."""
+    _add_kronos_to_path()
     try:
         import pandas as pd  # noqa: F401
         import torch
@@ -165,7 +194,13 @@ def push(payload: dict, dry: bool) -> None:
             print("LAB_TOKEN not set — nothing pushed.", file=sys.stderr)
         return
     body = json.dumps({**payload, "token": TOKEN}).encode()
-    req = urllib.request.Request(API, data=body, headers={"content-type": "application/json"})
+    # An explicit User-Agent is required, not cosmetic: Cloudflare answers
+    # urllib's default "Python-urllib/3.x" with a 403 before the request ever
+    # reaches the function, which looks exactly like an auth failure and is not.
+    req = urllib.request.Request(API, data=body, headers={
+        "content-type": "application/json",
+        "user-agent": "mmmxcix-kronos-agent/1.0 (+https://quant.mmmxcix.com)",
+    })
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
             print("pushed:", r.read().decode()[:200])
