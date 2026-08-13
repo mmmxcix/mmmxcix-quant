@@ -264,10 +264,11 @@ export async function onRequest(context) {
   const jsonHeaders = {
     'content-type': 'application/json',
     'access-control-allow-origin': '*',
-    'cache-control': 'public, max-age=300',
+    'cache-control': 'public, max-age=90',
   };
 
-  // Optional edge cache (5 min).
+  // Optional edge cache (90s — matches News.jsx's live-refresh interval; still
+  // free-tier edge caching, just a shorter window than before).
   let cache = null;
   let cacheKey = null;
   try {
