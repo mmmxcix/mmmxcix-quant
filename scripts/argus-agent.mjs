@@ -431,7 +431,9 @@ function tryOpen(inst, setup, halted) {
   // Volatility-regime gate (the risk system's "Volatility check"): skip when the
   // current regime is too wild to trade cleanly (whipsaw / gap-through-stop risk),
   // and size DOWN in the elevated band just below the ceiling.
-  const vol = volStatus(setup.atrPct, inst.asset);
+  // The timeframe matters: without it a 5-minute ATR was being judged against a
+  // daily ceiling, and the gate never fired once.
+  const vol = volStatus(setup.atrPct, inst.asset, setup.timeframe);
   if (!vol.ok) {
     console.log(`[${new Date().toISOString()}] SKIP ${inst.symbol} ${setup.side} ${setup.kind} — ${vol.reason}`);
     return;

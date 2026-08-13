@@ -67,11 +67,31 @@ export const ASSET_LEV_BIAS = { crypto: 0.85, forex: 1.0, futures: 0.9, stock: 0
 // widens a too-tight stop to at least this before sizing.
 export const MIN_STOP_FRAC = { crypto: 0.004, forex: 0.0006, futures: 0.0015, stock: 0.002, etf: 0.002, index: 0.002 };
 
-// Volatility-regime ceiling: ATR as a fraction of price on the trading timeframe
-// above which conditions are too wild to trade cleanly (whipsaw, gap-through-stop
-// risk). Per asset class. The risk gate skips a setup above the ceiling and sizes
-// DOWN in the elevated band just below it.
+// Volatility-regime ceiling: ATR as a fraction of price above which conditions
+// are too wild to trade cleanly (whipsaw, gap-through-stop risk). Per asset
+// class, quoted for a DAILY bar.
+//
+// These numbers were being compared against a 5-MINUTE ATR, and that made the
+// whole gate dead code: the crypto ceiling of 5%/bar sits 12x above the largest
+// 5m reading ever recorded in the live ledger (0.43%), so it never fired, and
+// the "elevated" band at 0.6x never fired either — meaning the 0.7 size
+// reduction it was supposed to apply had never once been applied.
 export const VOL_CEIL_ATR_PCT = { crypto: 0.05, forex: 0.006, futures: 0.02, stock: 0.03, etf: 0.025, index: 0.02 };
+
+/** Bars per day, used to scale a daily ceiling down to the trading timeframe. */
+const BARS_PER_DAY = { "1m": 1440, "5m": 288, "15m": 96, "30m": 48, "1h": 24, "2h": 12, "4h": 6, "1d": 1, "1w": 1 / 7 };
+
+/**
+ * The daily ceiling scaled to `timeframe` by the square root of time — the
+ * standard way volatility converts across horizons, not a fitted constant. A 5m
+ * crypto ceiling lands at 0.295%/bar, which is roughly the 90th percentile of
+ * what the live ledger actually saw, so the gate finally has something to bite on.
+ */
+export function volCeiling(asset = "crypto", timeframe = "1d") {
+  const daily = VOL_CEIL_ATR_PCT[asset] ?? 0.03;
+  const bars = BARS_PER_DAY[timeframe];
+  return bars > 0 ? daily / Math.sqrt(bars) : daily;
+}
 
 /**
  * The volatility-regime verdict for a setup — the "Volatility check" of the risk
@@ -80,8 +100,8 @@ export const VOL_CEIL_ATR_PCT = { crypto: 0.05, forex: 0.006, futures: 0.02, sto
  * and a human label. Extreme vol → ok:false (the gate skips the trade).
  * @returns {{ ok:boolean, mult:number, label:string, elevated?:boolean, reason?:string }}
  */
-export function volStatus(atrPct, asset = "crypto") {
-  const ceil = VOL_CEIL_ATR_PCT[asset] ?? 0.03;
+export function volStatus(atrPct, asset = "crypto", timeframe = "1d") {
+  const ceil = volCeiling(asset, timeframe);
   if (!Number.isFinite(atrPct) || atrPct <= 0) return { ok: true, mult: 1, label: "n/a" };
   const label = `${(atrPct * 100).toFixed(2)}%/bar`;
   if (atrPct > ceil) return { ok: false, mult: 0, label, reason: `volatility ${label} > ceiling ${(ceil * 100).toFixed(1)}%` };
