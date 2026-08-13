@@ -11,6 +11,7 @@ import { buildBrief, diffBrief, renderBrief, parseFearGreed } from "../src/lib/a
 import { deriveLessons, adjustment, sessionOf } from "../src/lib/argus/learn.js";
 import { marketOpen } from "../src/lib/argus/hours.js";
 import { effectiveHeatCap } from "../src/lib/argus/correlation.js";
+import { currentRegime } from "../src/lib/hmmRegime.js";
 import { buildReflectionMessages, parseReflection, crystallise, skillsFor, unionSkills } from "../src/lib/argus/reflect.js";
 import { wouldHaveHit, invalVerdict, isTerminal, invalPolicy } from "../src/lib/argus/review.js";
 import { callArgusLLM, chatOnce } from "../src/lib/argus/llm.js";
@@ -409,9 +410,15 @@ function tryOpen(inst, setup, halted) {
   // about this kind of setup. Gentle by construction — mult is hard-clamped and
   // only buckets with ≥ LEARN_MIN closed trades count.
   const evented = biasSide && biasSide === setup.side;
+  // The market STATE the trade is being taken in, not just the clock hour. The
+  // hidden-Markov model is fitted on the hourly series (5m bars are too noisy to
+  // label a regime from) and cached per candle array, so this costs one fit per
+  // symbol per reload rather than one per setup.
+  const regime = setup._regime ?? null;
   const adj = adjustment(lessons, {
     kind: setup.kind, symbol: inst.symbol, side: setup.side,
     session: sessionOf(Date.now()), source: evented ? "event" : "technical", bias: setup.bias,
+    regime,
   }, { minSample: LEARN_MIN });
   learnGate.considered++;
   if (adj.skip) {
@@ -496,7 +503,9 @@ function tryOpen(inst, setup, halted) {
     open.map((o) => ({ symbol: o.symbol, side: o.side })),
     { symbol: inst.symbol, side: setup.side }, HEAT_CAP, MAX_HEAT);
   const th = openThesis(
-    { ...setup, symbol: inst.symbol, market: inst.asset, conviction, limitFill: !!setup._fromLimit },
+    // `regime` (not `_regime`) so it lands on the closed thesis and the learning
+    // loop can bucket by it — the underscore fields are scratch and are stripped.
+    { ...setup, symbol: inst.symbol, market: inst.asset, conviction, regime, limitFill: !!setup._fromLimit },
     { equity, openRisk: openRisk(), openMargin: openMargin(), openNotional: openNotional(), asset: inst.asset,
       heatCap, baseRiskPct: riskPct, maxTradeLev: MAX_TRADE_LEV, portfolioLevCap: PORTFOLIO_LEV_CAP, conviction },
   );
@@ -681,6 +690,13 @@ async function cycle(fullScan) {
       // catches a forming setup the moment it triggers ("watch until entry").
       if (!limitPending && tf.c15 && tf.c1h) {
         const { triggered } = scan(tf);
+        // Label the market state ONCE per symbol per reload and stamp it on every
+        // setup. Fitted on the HOURLY series: a hidden-Markov regime read off 5m
+        // bars is mostly labelling noise, and the thing we want to bucket by is
+        // the state the trade lives in, not the state of the trigger bar.
+        let regime = null;
+        try { regime = currentRegime(tf.c1h, { K: 3 }); } catch { /* not enough history */ }
+        for (const s of triggered) s._regime = regime;
         // Trade only the BEST — and "best" means best EXPECTED value, not just the
         // prettiest chart. Base quality = setup strength × reward:risk, then tilted
         // by what the ledger has TAUGHT us about this bucket (learn.js sizing mult,
@@ -691,6 +707,7 @@ async function cycle(fullScan) {
           const a = adjustment(lessons, {
             kind: s.kind, symbol: inst.symbol, side: s.side,
             session: sessionOf(Date.now()), source: "technical", bias: s.bias,
+            regime: s._regime ?? null,
           }, { minSample: LEARN_MIN });
           s._rank = (s.strength ?? 0.5) * (s.rMult ?? 2) * a.mult;
         }

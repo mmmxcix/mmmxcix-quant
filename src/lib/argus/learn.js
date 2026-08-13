@@ -67,6 +67,7 @@ export function sessionOf(ts) {
 }
 
 const SESSION_LABEL = { asia: "Asia", london: "London", ny: "New York", off: "off-hours" };
+const REGIME_LABEL = { Bull: "a bull regime", Bear: "a bear regime", Range: "a ranging regime", Chop: "a choppy regime" };
 
 /** A closed thesis is "event"-sourced iff it carried a catalyst, else technical. */
 function sourceOf(c) {
@@ -101,6 +102,7 @@ export function summarizeLedger(closed) {
     session: group((c) => sessionOf(c.openedAt)),
     source: group((c) => sourceOf(c)),
     bias: group((c) => c.bias ?? null), // empty unless theses carried a bias tag
+    regime: group((c) => c.regime ?? null), // empty for theses taken before regimes were recorded
   };
 }
 
@@ -115,6 +117,13 @@ const VIEWS = [
   (c) => ({ session: sessionOf(c.openedAt) }),
   (c) => ({ source: sourceOf(c) }),
   (c) => (c.bias != null ? { bias: c.bias } : null),
+  // The regime the market was in when the trade was taken. The one durable edge
+  // the live ledger showed was the LONDON SESSION, which is a clock-hour proxy
+  // for a market state the agent could not see. Bucketing by the state itself
+  // lets "mean reversion works in a range and not in a trend" become a question
+  // the ledger can answer, instead of a hypothesis nobody can test.
+  (c) => (c.regime ? { regime: c.regime } : null),
+  (c) => (c.regime ? { kind: c.kind, regime: c.regime } : null),
   (c) => ({ kind: c.kind, side: c.side }),
   (c) => ({ kind: c.kind, symbol: c.symbol }),
   (c) => ({ symbol: c.symbol, side: c.side }),
@@ -145,6 +154,7 @@ function describeDims(d) {
   if (d.session) parts.push(`in the ${SESSION_LABEL[d.session] || d.session} session`);
   if (d.source) parts.push(d.source === "event" ? "(event-driven)" : "(technical)");
   if (d.bias) parts.push(`with ${d.bias}-bias`);
+  if (d.regime) parts.push(`in ${REGIME_LABEL[d.regime] || d.regime}`);
   return parts.join(" ");
 }
 
