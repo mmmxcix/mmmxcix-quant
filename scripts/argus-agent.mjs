@@ -13,6 +13,7 @@ import { marketOpen } from "../src/lib/argus/hours.js";
 import { effectiveHeatCap } from "../src/lib/argus/correlation.js";
 import { canOpen, openedToday, paceStatus, DEFAULT_MAX_CONCURRENT, DEFAULT_MAX_PER_DAY } from "../src/lib/argus/pace.js";
 import { shouldExplore, exploreBudget, exploredToday } from "../src/lib/argus/explore.js";
+import { scoreSetup } from "../src/lib/argus/scorecard.js";
 import { currentRegime } from "../src/lib/hmmRegime.js";
 import { buildReflectionMessages, parseReflection, crystallise, skillsFor, unionSkills } from "../src/lib/argus/reflect.js";
 import { wouldHaveHit, invalVerdict, isTerminal, invalPolicy } from "../src/lib/argus/review.js";
@@ -525,6 +526,14 @@ function tryOpen(inst, setup, halted) {
           symbol: inst.symbol, asset: inst.asset, side: setup.side, kind: setup.kind,
           limit, stop: setup.stop, target: setup.target, bias: setup.bias ?? null,
           evidence: setup.evidence || [], conviction, reason: setup.reason,
+          // The readings taken when the setup was FOUND, carried so a retest fill
+          // is still describable afterwards. They are for the record only — the
+          // gates below deliberately keep using the live `setup` fields, so a
+          // limit fill decides exactly as it does today. Without this a retest
+          // fill reached the ledger with volatility "n/a" and no rvol, which
+          // `metalabel.featuresOf` correctly refuses — every limit-filled trade
+          // was a row no model could ever use.
+          reading: { atrPct: setup.atrPct, rvol: setup.rvol, momAtr: setup.momAtr },
           stopDist: Math.abs(limit - stopAtLimit),   // intended risk at the retest (run-away guard)
           expiresAt: Date.now() + LIMIT_TTL_MS, pending: true,
         });
@@ -575,15 +584,32 @@ function tryOpen(inst, setup, halted) {
     // The risk system's checklist, surfaced on the thesis (Size / Exposure / DD /
     // Volatility / Max-loss → Pass). A trade only reaches here after every gate
     // passed, so this shows WHY it was allowed — auditable, like the reel's slide 5.
+    // Readings for the RECORD. On a direct entry these are the live ones; on a
+    // retest fill they come from when the setup was found (see `reading` above),
+    // because the gates ran against those. Never used to decide anything.
+    const rd = setup._reading || { atrPct: setup.atrPct, rvol: setup.rvol, momAtr: setup.momAtr };
+    const volLabel = vol.label !== "n/a" ? vol.label
+      : (Number.isFinite(rd.atrPct) ? `${(rd.atrPct * 100).toFixed(2)}%/bar` : "n/a");
     th.riskChecks = {
       pass: true,
       size: true,
       exposure: true, heatUsedPct: +((openRisk() / equity) * 100).toFixed(1), heatCapPct: +(heatCap * 100).toFixed(0),
       drawdown: true,
-      volatility: { ok: vol.ok, elevated: !!vol.elevated, label: vol.label },
-      volume: { rvol: Number.isFinite(setup.rvol) ? +setup.rvol.toFixed(2) : null, gated: VOLUME_KINDS.has(setup.kind) },
+      volatility: { ok: vol.ok, elevated: !!vol.elevated, label: volLabel },
+      volume: { rvol: Number.isFinite(rd.rvol) ? +rd.rvol.toFixed(2) : null, gated: VOLUME_KINDS.has(setup.kind) },
       maxLoss: true, // a daily-loss halt returns at the top of tryOpen, so it's clear here
     };
+    // The same read, kept in its PARTS (lib/argus/scorecard.js). `conviction` is
+    // what sized this trade; these five are what it was made of. Recording only —
+    // nothing above reads them, and by the time we get here every gate has already
+    // decided. They exist so the next hundred trades can answer which part of the
+    // read was wrong, which one number never could.
+    th.scores = scoreSetup({
+      side: th.side, bias: setup.bias, momAtr: rd.momAtr, rvol: rd.rvol,
+      evented, opposes: !!opposes, confidence: biasConf,
+      plannedR: th.plannedR, volElevated: !!vol.elevated,
+      heatUsedPct: th.riskChecks.heatUsedPct, heatCapPct: th.riskChecks.heatCapPct,
+    });
     forming = forming.filter((f) => f.symbol !== inst.symbol);
     if (adj.mult !== 1) console.log(`[${new Date().toISOString()}] LESSON ${inst.symbol} size ×${adj.mult.toFixed(2)} — ${adj.reasons[0] || ""}`);
     console.log(`[${new Date().toISOString()}] OPEN ${th.symbol} ${th.side} ${th.kind}${th.catalyst ? " [event]" : ""} @${th.entry.toFixed(4)} stop ${th.stop.toFixed(4)} tgt ${th.target.toFixed(4)} risk ${th.riskAmt.toFixed(0)} — ${th.reason}`);
@@ -622,7 +648,8 @@ function checkLimits(inst, candle, halted) {
   forming.splice(idx, 1);
   tryOpen(inst, {
     symbol: inst.symbol, side: f.side, kind: f.kind, entry: f.limit, stop: f.stop, target: f.target,
-    bias: f.bias, evidence: f.evidence, conviction: f.conviction, reason: `retest fill — ${f.reason}`, _fromLimit: true,
+    bias: f.bias, evidence: f.evidence, conviction: f.conviction, reason: `retest fill — ${f.reason}`,
+    _fromLimit: true, _reading: f.reading,
   }, halted);
   return true;
 }

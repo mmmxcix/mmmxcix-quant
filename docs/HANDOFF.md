@@ -200,22 +200,199 @@ publishes few papers a day and the seen-filter removes repeats.)
 
 ---
 
+## The five videos — watched 13 August, verdicts
+
+All five are done. One idea per video survives; the rest is marketing.
+
+**1 · `Db8cna4MpOu` — Matteo Conti, 25s.** A reply to a commenter who called
+50-year-old research obsolete. His answer: statistical arbitrage has run at hedge
+funds since the 70s, was published in 1990 (he holds up Lehmann, *Fads,
+Martingales, and Market Efficiency*, QJE Feb 1990), is still the most common
+strategy in the industry, "and your ability is in identifying **on which
+instruments** you should apply it to."
+
+That last clause is the whole video. We own the machinery — `src/lib/pairs.js`
+has OLS + Kalman hedge ratios and an OU half-life, and correctly rejects
+non-cointegrating pairs — but it is wired into exactly one place, the
+Correlation page, as a two-symbol widget. **There is no screener that ranks a
+universe by tradeability.** That is the selection layer he says the edge lives
+in, and it is the one thing we have built the parts for and never assembled.
+
+**2 · `Db5b-JJzNgJ` — carry trading, 2:10.** Day 3 of a series (1 mean
+reversion, 2 momentum, 4 will be stat-arb, "mean reversion industrialised").
+Carry = get paid for holding: borrow low-rate currency, buy high-rate; bond term
+premium; the shape of the futures curve; selling options premium. One structure
+in four costumes. It should not work — the high-rate currency ought to fall by
+the rate gap — and it does anyway because you are **underwriting risk, not
+collecting free money**. Insurance pays until the disaster.
+
+The useful part is his closing taxonomy, because it is a portfolio-construction
+rule rather than a strategy:
+
+| Family | Payoff shape |
+|---|---|
+| Mean reversion | wins often, small |
+| Momentum | loses often, wins big |
+| Carry | wins daily until a rare collapse |
+
+Firms hold all three *because* the shapes differ. Our registry ranks strategies
+against each other on one axis (score) and has no notion of which shape a
+strategy is, so it cannot select for complementarity — it can only select for
+whoever is winning. We also have **no carry sleeve at all**; crypto perpetual
+funding is the accessible version and we already have the venues.
+
+Caveat worth writing down: carry is a short-volatility payoff, so it looks
+excellent in-sample and our quality gates (mandatory stop, `MIN_PLANNED_R` 1.5)
+structurally forbid its shape. A carry engine is a separate engine, not a
+strategy to drop into Argus.
+
+**3 · `Db2C1rclLV9` — seb.ai's "24/7 AI market scanner", 8-slide carousel.**
+Same account as the AI-hedge-fund PDF. Architecture, verbatim:
+`SCAN → FILTER → RESEARCH → SCORE → RISK → ALERT`. Scan price/volume/momentum/
+volatility/news; filter on liquidity, volume, trend, volatility, own rules;
+research across news, price action, financials, sentiment, catalysts; score;
+risk gate with pass/reject; push alert. Then a human decides — it never trades.
+
+**Argus is the same pipeline and is further along at every stage:**
+
+| His stage | Ours |
+|---|---|
+| SCAN | `argus/scanners.js` |
+| FILTER | `volStatus`, rvol, liquidity, the vol ceiling |
+| RESEARCH | `argus/llm.js` + the event channel |
+| SCORE | one `conviction` number |
+| RISK | `openThesis` — heat, correlation, leverage, min planned R |
+| ALERT | `argus/notify.js` — and then it actually takes the trade |
+| — | `learn.js`, `walkforward.js`, `metalabel.js`, `explore.js` (he has none) |
+
+One thing is genuinely worth taking, and it is not the pretty card. He stores
+**five component scores** (trend 8.4, momentum 7.9, volume 9.1, catalyst 7.2,
+risk 6.8 → 82/100) where we collapse everything into one conviction plus
+pass/fail `riskChecks`. Component scores are *continuous features recorded per
+trade*. `metalabel.js` has ten features today and none of them describe why we
+liked the setup. Recording five more changes no decision, costs nothing at
+entry, and makes the next hundred trades answer more than they otherwise could.
+It is the only Argus change that gets **worse by waiting**, because every trade
+that closes without them is a row the model can never use.
+
+**4 · `DYqhTtMxfqZ` — OSIRIS, 15s, no narration.** "Open source Palantir",
+dropped on reddit. Real: `github.com/simplifaisoul/osiris`, **MIT**, ~7.6k stars,
+Next.js 16 + MapLibre GL, Docker or Vercel, most feeds keyless. Sixteen layers:
+OpenSky aviation, maritime via **aisstream — the same key we use**, public
+traffic CCTV (TfL/WSDOT/Caltrans/NZTA…), USGS quakes, NASA FIRMS, NASA EONET,
+NOAA SWPC, N2YO satellites, 25+ live news streams, Telegram OSINT via
+`t.me/s/<channel>`, OpenSanctions/OFAC, crypto tracing, GPS jamming — plus a
+recon toolkit (nmap, DNS, WHOIS, certs) that is irrelevant to trading and would
+be a liability if ever exposed publicly.
+
+This is the worldmonitor.app design target again, except **MIT instead of
+AGPL-3.0** — so for the first time we may read the implementation rather than
+only the idea. Our map already has most of these layers; what OSIRIS has and we
+do not is the **Telegram-OSINT ingest**, which the July analysis already
+identified as the single biggest news-speed win. Now there is a readable MIT
+implementation of it.
+
+Caution: many byte-identical clone repos exist, one with a Solana pump-token
+address in its description. Use the canonical repo, read before running, do not
+`docker run` it blind.
+
+**5 · `Dbwck6nt3ax` — Nebula, 7s, music only.** Already reviewed on 23 July:
+orionrfx's no-code MT4/5 strategy engine, £79/£159, runs on the user's PC, "only
+runs what survives OOS". Verdict then and now: narrower than us, nothing
+structurally missing on our side, its pricing validates our paywall range. The
+clip adds only UI — a batch "Mission Control" with live progress and a ranked
+leaderboard of named candidates (each with score, trade count, equity sparkline)
+and a per-strategy "Forward Confidence" panel. We have all of that in substance;
+the leaderboard-with-sparklines presentation is a minor idea for the Registry.
+
+### What came out of it, ranked
+
+1. **Component scores recorded per Argus trade** — recording only, no decision
+   changes, and it is the one item that decays while we wait (video 3).
+2. **A pairs/cointegration screener** over a universe, ranked by half-life and
+   spread stationarity, on top of the existing `pairs.js` (video 1).
+3. **Payoff-family tag in the registry** + selection for complementarity rather
+   than for score alone (video 2). Cheap; no engine surgery.
+4. **Telegram-OSINT ingest** for the news hub, now with an MIT reference
+   implementation to read (video 4).
+5. **Crypto funding-rate carry** as its own engine — real, but it violates the
+   Argus quality gates by construction, so it is a project, not a patch (video 2).
+
+Nothing here overrides the rule below: **1, 2, 3 and 4 do not touch Argus's
+decision path.** Item 5 does, and waits.
+
+---
+
 ## Queued, not yet done
 
-Five videos, with the question asked about each:
+"Richtig grosse Projekte" — announced, not yet described.
 
-| Link | Question |
+`/watch <url>` costs 50–80k tokens of frames per video; two or three per
+conversation is the practical limit. Instagram *carousels* need a detour: yt-dlp
+fails with "no video formats", so run `yt-dlp -J --ignore-no-formats-error <url>`
+and download the last thumbnail of each entry yourself.
+
+---
+
+## Decided: an own model, and one layer over everything
+
+Two things the user has decided to build. Both were assessed honestly first; the
+constraints below are the assessment, not pessimism, and should not be softened.
+
+### What "own AI model" can and cannot mean here
+
+The GPU is an RTX 5080 — 16 GB, ~13 GB free.
+
+| | Feasible? |
 |---|---|
-| `instagram.com/reel/Dbwck6nt3ax` | What is Nebula, is it relevant to us, could it help? |
-| `instagram.com/reel/Db8cna4MpOu` | A real quant — what does he say? |
-| `instagram.com/p/Db2C1rclLV9` (img 6) | How is *that* agent built? Anything to copy for Argus, given its problems? |
-| `instagram.com/reel/DYqhTtMxfqZ` | As a monitor + news upgrade — maybe more than what we have? |
-| `instagram.com/reel/Db5b-JJzNgJ` | Also a real quant — what does he say? |
+| Pretrain an LLM from scratch | **No.** Millions of dollars, thousands of GPUs, months. Nobody should promise this. |
+| Fine-tune an open LLM (Llama 8B / Qwen, QLoRA) | Technically yes. But fine-tuning teaches STYLE and FORMAT reliably and KNOWLEDGE poorly, and there are 98 closed trades — nowhere near enough to teach a model anything about markets. |
+| **Train a market model** | **Yes, comfortably.** Kronos-base is `d_model 832, 12 layers` ≈ 100M params; that trains on this card in hours. |
 
-Then: "richtig grosse Projekte" — not yet described.
+**The asymmetry that decides it: there is almost no text data and effectively
+unlimited market data.** Binance klines are free and go back years. So an own
+*market* model is honest; an own *language* model trained on our data is not.
 
-Use `/watch <url>` for each. They are expensive (50–80k tokens of frames each),
-so two or three per conversation is the practical limit.
+### Where it would help the agents — and where it would not
+
+- **Replacing Cortex's LLM with a small fine-tuned model would make it worse.**
+  Generating working strategy code from a paper is the hardest task an LLM can
+  be given; an 8B model would be far behind the llama-3.3-70b it uses now. And
+  Cortex's actual problem is measured above: it only sees abstracts.
+- **Argus's event channel** (news → directional bias) is narrow classification
+  where a small model could compete — but Argus's problem is entries with no
+  edge, not the LLM. An own model there changes nothing about −0.25R.
+- **Where an own model does belong: as a SIGNAL SOURCE, not as the brain.**
+  Exactly the role Kronos plays now — a forecast that goes through the same
+  gauntlet. Then it competes against Kronos and against a random walk, on
+  machinery that already exists.
+
+### The recommended order
+
+1. **The layer first.** One retrieval surface over the ledger, monitor, prices
+   and news. It needs no own weights, it helps daily and immediately, and the
+   chat option becomes trivial on top of it — with any model. Model training
+   takes weeks before it can say whether it was worth anything.
+2. **Then fine-tune Kronos on our markets.** Shortest honest path to "our own
+   model": the script already ships (`GitHub/Kronos/finetune/train_predictor.py`),
+   data is unlimited, the card is enough, and the comparison is already built —
+   ours vs Kronos-base vs random walk on the same scoreboard. Our weights, our
+   data. That is legitimately an own model.
+3. **Then, if wanted, tokenizer + predictor from scratch** (`train_tokenizer.py`
+   is there too) with our own architecture choices. Then it is entirely ours.
+
+### For the CV — the honest framing
+
+"I fine-tuned an LLM" is what everyone writes; as a signal it is near zero.
+**"I trained a time-series model on my own data and evaluated it against a random
+walk with purged cross-validation — and it lost"** is far stronger, because
+honestly reported negative results are rare.
+
+And the strongest item is already built and merely unlabelled: **the evaluation
+discipline.** A meta-label gate that refuses to ship a model the sample cannot
+justify. A walk-forward that breaks the circularity. An arena that concluded the
+micro-price does not pay for itself. That is what separates someone who
+understands quant from someone who followed a tutorial.
 
 ---
 

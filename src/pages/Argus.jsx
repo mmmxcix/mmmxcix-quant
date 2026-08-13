@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Radio, TrendingUp, TrendingDown, Trophy, AlertTriangle, Zap, Newspaper, GraduationCap, LineChart, X, Ban, RotateCcw, History } from "lucide-react";
 import { cn, fmtNum } from "@/lib/utils";
@@ -39,6 +39,47 @@ function SideTag({ side }) {
       long ? "bg-up/10 text-up" : "bg-down/10 text-down")}>
       {long ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}{side}
     </span>
+  );
+}
+
+// The five components the entry was made of (lib/argus/scorecard.js). Conviction
+// is what sized the trade; this is what that conviction was built from, kept in
+// its parts so the record can later say which part of the read was wrong.
+// It decides nothing — the label says so, because a number on a card looks like
+// a verdict whether or not it is one.
+const SCORE_ROWS = [
+  ["Trend", "trend"], ["Momentum", "momentum"], ["Volume", "volume"],
+  ["Catalyst", "catalyst"], ["Risk", "risk"],
+];
+
+function Scorecard({ scores }) {
+  if (!scores || !Number.isFinite(scores.total)) return null;
+  return (
+    <div className="mt-2 rounded-lg border border-line/60 px-2.5 py-2">
+      <div className="flex items-center justify-between mb-1.5">
+        <span className="text-[10px] uppercase tracking-wide text-dim">Setup scorecard</span>
+        <span className="font-mono text-[11px] text-text">{scores.total}<span className="text-dim">/100</span></span>
+      </div>
+      <div className="grid grid-cols-[auto_1fr_auto] gap-x-2 gap-y-1 items-center">
+        {SCORE_ROWS.map(([label, key]) => {
+          const v = scores[key];
+          if (!Number.isFinite(v)) return null;
+          return (
+            <Fragment key={key}>
+              <span className="text-[10px] text-dim">{label}</span>
+              <span className="h-1 rounded-full bg-line/70 overflow-hidden">
+                <span className={cn("block h-full rounded-full", v >= 6.5 ? "bg-up/70" : v <= 3.5 ? "bg-down/70" : "bg-dim/60")}
+                  style={{ width: `${Math.max(2, v * 10)}%` }} />
+              </span>
+              <span className="font-mono text-[10px] text-text tabular-nums">{v.toFixed(1)}</span>
+            </Fragment>
+          );
+        })}
+      </div>
+      <p className="text-[9px] text-dim/70 mt-1.5 leading-snug">
+        Recorded, not applied — the gates above decided this trade. 5 = neutral.
+      </p>
+    </div>
   );
 }
 
@@ -315,6 +356,7 @@ export default function Argus() {
                     {Number.isFinite(t.riskChecks.heatUsedPct) && <span className="text-dim/80 font-mono">heat {t.riskChecks.heatUsedPct}%/{t.riskChecks.heatCapPct}%</span>}
                   </div>
                 )}
+                <Scorecard scores={t.scores} />
                 <p className="text-[11px] text-dim mt-1.5 leading-snug">{t.reason}</p>
                 <div className="flex items-center gap-2 mt-3">
                   <Link to={chartHref(t, "open")} className="btn-ghost text-xs flex items-center gap-1.5">

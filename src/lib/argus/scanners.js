@@ -321,6 +321,9 @@ const REVERSAL_KINDS = new Set(["mean-reversion", "liquidity-sweep", "ifvg", "vw
 // (reversal fades do not need a volume surge, so they're exempt).
 export const VOLUME_KINDS = new Set(["breakout", "orb", "momentum", "pullback"]);
 
+// Bars of 5m that make up the momentum window the scorecard records (one hour).
+const MOM_BARS = 12;
+
 /**
  * Run all scanners on the 5m timeframe, gated by the 15m structure + 1h bias.
  * A trend setup must align with the higher-TF bias; mean-reversion may fade it.
@@ -333,6 +336,11 @@ export function scan({ c5, c15, c1h }) {
   const A5 = atr(c5, 14), lastClose = c5[c5.length - 1]?.close;
   const atrPct = A5 > 0 && lastClose > 0 ? A5 / lastClose : null;
   const rvol = relVolume(c5, 20); // participation vs the last 20 bars, for the volume gate
+  // Last hour's move in ATR units (12 × 5m), signed in MARKET direction — the
+  // scorecard signs it into the trade's direction. Recorded only: no gate reads
+  // it, so a setup that triggers is unaffected by what this says.
+  const back = c5[c5.length - 1 - MOM_BARS]?.close;
+  const momAtr = A5 > 0 && lastClose > 0 && back > 0 ? (lastClose - back) / A5 : null;
   const triggered = [], forming = [];
   for (const fn of SCANNERS) {
     const r = fn(c5);
@@ -343,7 +351,7 @@ export function scan({ c5, c15, c1h }) {
     // tag whether it aligns with the 1h bias; the agent folds that into conviction
     // (lower leverage against the trend) and its learning can veto losing buckets.
     const aligned = isRev || (r.side === "long" && bias !== "down") || (r.side === "short" && bias !== "up");
-    const setup = { ...r, timeframe: "5m", bias, aligned, atrPct, rvol };
+    const setup = { ...r, timeframe: "5m", bias, aligned, atrPct, rvol, momAtr };
     if (r.state === "triggered") triggered.push(setup);
     else forming.push(setup);
   }

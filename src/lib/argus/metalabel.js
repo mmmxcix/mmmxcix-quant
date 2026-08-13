@@ -34,6 +34,14 @@ export const FEATURES = [
   "sessionAsia", "sessionLondon", "sessionNy",
 ];
 
+// The scorecard components (lib/argus/scorecard.js), recorded on every trade
+// opened from 13 Aug 2026 onwards. They describe WHY the setup was liked, which
+// nothing in FEATURES does — but five more features raise the sample this model
+// needs by half again, so they are only used once the ledger can carry them.
+// `chooseFeatures` decides; until then they are recorded and unused.
+export const SCORE_FEATURES = ["scoreTrend", "scoreMomentum", "scoreVolume", "scoreCatalyst", "scoreRisk"];
+export const FEATURES_EXT = [...FEATURES, ...SCORE_FEATURES];
+
 const SESSION_OF = (ts) => {
   if (!Number.isFinite(ts)) return "off";
   const h = new Date(ts).getUTCHours();
@@ -50,7 +58,7 @@ const num = (v, fallback = 0) => (Number.isFinite(v) ? v : fallback);
  * Returns null when the trade is too incomplete to describe honestly, because
  * quietly substituting zeros teaches the model that missing means small.
  */
-export function featuresOf(t) {
+export function featuresOf(t, names = FEATURES) {
   if (!t || !(t.entry > 0) || !(t.stop > 0)) return null;
   const rc = t.riskChecks || {};
   const label = rc.volatility?.label || "";
@@ -59,18 +67,33 @@ export function featuresOf(t) {
   if (atrPct == null || !Number.isFinite(rvol)) return null;
 
   const session = SESSION_OF(t.openedAt);
-  return [
-    num(t.plannedR),
-    Math.abs(t.entry - t.stop) / t.entry,
+  const sc = t.scores || null;
+  const by = {
+    plannedR: num(t.plannedR),
+    stopFrac: Math.abs(t.entry - t.stop) / t.entry,
     atrPct,
     rvol,
-    num(t.leverage, 1),
-    num(rc.heatUsedPct) / 100,
-    t.side === "long" ? 1 : 0,
-    session === "asia" ? 1 : 0,
-    session === "london" ? 1 : 0,
-    session === "ny" ? 1 : 0,
-  ];
+    leverage: num(t.leverage, 1),
+    heatUsedPct: num(rc.heatUsedPct) / 100,
+    isLong: t.side === "long" ? 1 : 0,
+    sessionAsia: session === "asia" ? 1 : 0,
+    sessionLondon: session === "london" ? 1 : 0,
+    sessionNy: session === "ny" ? 1 : 0,
+    // null (not 0) when the trade predates the scorecard — a missing score is
+    // unknown, and substituting a number would teach the model that it was 0.
+    scoreTrend: Number.isFinite(sc?.trend) ? sc.trend : null,
+    scoreMomentum: Number.isFinite(sc?.momentum) ? sc.momentum : null,
+    scoreVolume: Number.isFinite(sc?.volume) ? sc.volume : null,
+    scoreCatalyst: Number.isFinite(sc?.catalyst) ? sc.catalyst : null,
+    scoreRisk: Number.isFinite(sc?.risk) ? sc.risk : null,
+  };
+  const row = [];
+  for (const n of names) {
+    const v = by[n];
+    if (!Number.isFinite(v)) return null;
+    row.push(v);
+  }
+  return row;
 }
 
 /** 1 when the trade reached its target, 0 otherwise. Stops, invalidations and
@@ -81,11 +104,11 @@ export const labelOf = (t) => (t?.outcome === "target" ? 1 : 0);
  * Build the design matrix, dropping trades we cannot describe.
  * @returns {{ X:number[][], y:number[], rows:object[] }}
  */
-export function buildDataset(closed) {
+export function buildDataset(closed, names = FEATURES) {
   const X = [], y = [], rows = [];
   for (const t of closed || []) {
     if (t.state !== "closed") continue;
-    const f = featuresOf(t);
+    const f = featuresOf(t, names);
     if (!f) continue;
     X.push(f); y.push(labelOf(t)); rows.push(t);
   }
@@ -185,24 +208,42 @@ export const EVENTS_PER_FEATURE = 10;
  * `ready:false` is the expected answer for a long time yet, and `needPositives`
  * says how much further the ledger has to run before this is worth revisiting.
  */
+/**
+ * Which feature set the ledger can currently carry.
+ *
+ * The scorecard components are recorded from the start, but using them costs
+ * five more features — and the sample rule is not negotiable just because the
+ * extra columns are interesting. So they join the model only once the trades
+ * that HAVE them are numerous enough to support the wider set on their own.
+ */
+export function chooseFeatures(closed, eventsPerFeature = EVENTS_PER_FEATURE) {
+  const { y } = buildDataset(closed, FEATURES_EXT);
+  const pos = y.filter((v) => v === 1).length;
+  const rarer = Math.min(pos, y.length - pos);
+  return rarer >= FEATURES_EXT.length * eventsPerFeature ? FEATURES_EXT : FEATURES;
+}
+
 export function metaLabelStudy(closed, opts = {}) {
-  const { X, y, rows } = buildDataset(closed);
+  const eventsPerFeature = opts.eventsPerFeature ?? EVENTS_PER_FEATURE;
+  const names = opts.features || chooseFeatures(closed, eventsPerFeature);
+  const { X, y, rows } = buildDataset(closed, names);
   const positives = y.filter((v) => v === 1).length;
   const negatives = y.length - positives;
   const rarer = Math.min(positives, negatives);
-  const need = FEATURES.length * (opts.eventsPerFeature ?? EVENTS_PER_FEATURE);
+  const need = names.length * eventsPerFeature;
+  const featureSet = names === FEATURES_EXT ? "extended" : "base";
 
   if (rarer < need) {
     return {
       ready: false,
-      reason: `${rarer} outcomes of the rarer class; ${need} needed for ${FEATURES.length} features`,
-      n: y.length, positives, negatives, needPositives: need - rarer,
+      reason: `${rarer} outcomes of the rarer class; ${need} needed for ${names.length} features`,
+      n: y.length, positives, negatives, needPositives: need - rarer, features: names, featureSet,
     };
   }
 
   const folds = purgedFolds(rows, opts);
   if (!folds.length) {
-    return { ready: false, reason: "not enough history for a purged split", n: y.length, positives, negatives };
+    return { ready: false, reason: "not enough history for a purged split", n: y.length, positives, negatives, features: names, featureSet };
   }
 
   const scores = [], truth = [];
@@ -215,6 +256,7 @@ export function metaLabelStudy(closed, opts = {}) {
     ready: true,
     reason: a == null ? "one class in the test folds" : `out-of-sample AUC ${a.toFixed(3)} over ${folds.length} purged folds`,
     n: y.length, positives, negatives, folds: folds.length, auc: a,
+    features: names, featureSet,
     model: fitLogistic(X, y, opts),
   };
 }
