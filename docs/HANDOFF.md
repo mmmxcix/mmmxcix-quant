@@ -426,10 +426,12 @@ unlimited market data.** Binance klines are free and go back years. So an own
 
 ### The recommended order
 
-1. **The layer first.** One retrieval surface over the ledger, monitor, prices
-   and news. It needs no own weights, it helps daily and immediately, and the
-   chat option becomes trivial on top of it — with any model. Model training
-   takes weeks before it can say whether it was worth anything.
+1. **The layer first.** ✅ **Wave 1 built, 13 Aug — see `docs/BOARD.md`.**
+   `/board` on the site, `/api/board` as the endpoint, `src/lib/board/` as the pure,
+   tested half. Twelve resources over Argus, Kronos, the arena, the monitor, the
+   charts, the news and the bias; 270 KB of raw endpoints answered in 6.4 KB of
+   digest. Read-only by design. Wave 2 (Cortex, registry, vol, Telegram,
+   portfolio) is a listed to-do in that file, not new machinery.
 2. **Then fine-tune Kronos on our markets.** Shortest honest path to "our own
    model": the script already ships (`GitHub/Kronos/finetune/train_predictor.py`),
    data is unlimited, the card is enough, and the comparison is already built —

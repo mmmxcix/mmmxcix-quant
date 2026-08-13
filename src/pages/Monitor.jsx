@@ -4,77 +4,13 @@ import { RefreshCw } from "lucide-react";
 import { fetchQuotes } from "@/lib/quotes";
 import { ibkrActive, subscribeIbkr } from "@/lib/ibkr";
 import { cn, fmtPrice, fmtPct } from "@/lib/utils";
+// The instrument list lives in src/lib/universe.js so the monitor and the board
+// (/api/board market.quotes) read ONE list instead of two that drift apart.
+import { PANELS, ALL_ENTRIES } from "@/lib/universe";
 
-// Bloomberg-terminal-style market overview: static panel config here, data
-// via src/lib/quotes.js (one Binance call + throttled Yahoo chart calls).
-const PANELS = [
-  {
-    title: "Indices",
-    entries: [
-      { market: "stock", symbol: "^GSPC", name: "S&P 500" },
-      { market: "stock", symbol: "^NDX", name: "Nasdaq 100" },
-      { market: "stock", symbol: "^DJI", name: "Dow Jones" },
-      { market: "stock", symbol: "^GDAXI", name: "DAX" },
-      { market: "stock", symbol: "^SSMI", name: "SMI" },
-      { market: "stock", symbol: "^N225", name: "Nikkei 225" },
-      { market: "stock", symbol: "^FTSE", name: "FTSE 100" },
-    ],
-  },
-  {
-    title: "Crypto",
-    entries: [
-      { market: "crypto", symbol: "BTCUSDT", name: "Bitcoin" },
-      { market: "crypto", symbol: "ETHUSDT", name: "Ethereum" },
-      { market: "crypto", symbol: "SOLUSDT", name: "Solana" },
-      { market: "crypto", symbol: "BNBUSDT", name: "BNB" },
-      { market: "crypto", symbol: "XRPUSDT", name: "XRP" },
-      { market: "crypto", symbol: "DOGEUSDT", name: "Dogecoin" },
-    ],
-  },
-  {
-    title: "Commodities",
-    entries: [
-      { market: "stock", symbol: "GC=F", name: "Gold" },
-      { market: "stock", symbol: "SI=F", name: "Silver" },
-      { market: "stock", symbol: "CL=F", name: "WTI Oil" },
-      { market: "stock", symbol: "BZ=F", name: "Brent" },
-      { market: "stock", symbol: "NG=F", name: "Natural Gas" },
-      { market: "stock", symbol: "HG=F", name: "Copper" },
-    ],
-  },
-  {
-    title: "Forex",
-    entries: [
-      { market: "stock", symbol: "EURUSD=X", name: "EUR/USD" },
-      { market: "stock", symbol: "GBPUSD=X", name: "GBP/USD" },
-      { market: "stock", symbol: "USDJPY=X", name: "USD/JPY" },
-      { market: "stock", symbol: "USDCHF=X", name: "USD/CHF" },
-      { market: "stock", symbol: "EURCHF=X", name: "EUR/CHF" },
-    ],
-  },
-  {
-    title: "Mega Caps",
-    entries: [
-      { market: "stock", symbol: "AAPL", name: "Apple" },
-      { market: "stock", symbol: "MSFT", name: "Microsoft" },
-      { market: "stock", symbol: "NVDA", name: "NVIDIA" },
-      { market: "stock", symbol: "GOOGL", name: "Alphabet" },
-      { market: "stock", symbol: "AMZN", name: "Amazon" },
-      { market: "stock", symbol: "META", name: "Meta" },
-      { market: "stock", symbol: "TSLA", name: "Tesla" },
-    ],
-  },
-  {
-    title: "Bonds / Vol",
-    entries: [
-      { market: "stock", symbol: "^TNX", name: "US 10Y Yield" },
-      { market: "stock", symbol: "^FVX", name: "US 5Y Yield" },
-      { market: "stock", symbol: "^VIX", name: "VIX Volatility" },
-    ],
-  },
-];
-
-const ALL_ENTRIES = PANELS.flatMap((p) => p.entries);
+// Bloomberg-terminal-style market overview: the instrument list comes from
+// src/lib/universe.js (shared with the board); data via src/lib/quotes.js
+// (one Binance call + throttled Yahoo chart calls).
 
 function SkeletonRow() {
   return (

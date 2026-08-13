@@ -16,6 +16,7 @@ const NewsHub = lazy(() => import("@/pages/NewsHub"));
 const Tools = lazy(() => import("@/pages/Tools"));
 const Regimes = lazy(() => import("@/pages/Regimes"));
 const Arena = lazy(() => import("@/pages/Arena"));
+const Board = lazy(() => import("@/pages/Board"));
 const Coach = lazy(() => import("@/pages/Coach"));
 const Cortex = lazy(() => import("@/pages/Cortex"));
 const Argus = lazy(() => import("@/pages/Argus"));
@@ -101,6 +102,7 @@ export default function App() {
                 <Route path="/tools" element={<Tools />} />
                 <Route path="/regimes" element={<Regimes />} />
                 <Route path="/arena" element={<Arena />} />
+                <Route path="/board" element={<Board />} />
                 <Route path="/coach" element={<Coach />} />
                 <Route path="/argus" element={<Argus />} />
                 <Route path="/account" element={<Account />} />
