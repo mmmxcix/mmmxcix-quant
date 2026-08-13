@@ -441,10 +441,14 @@ function tryOpen(inst, setup, halted) {
     // A refusal removes the only evidence that could overturn it, so a slice of
     // the daily budget goes to probing the refusals that are least settled. See
     // lib/argus/explore.js — without this the agent talks itself into silence.
-    const probe = shouldExplore(adj, {
-      used: exploredToday(ledger, open),
-      budget: exploreBudget(MAX_PER_DAY),
-    });
+    // Ask the pace gate FIRST. Deciding to probe a setup that cannot be opened
+    // anyway spends nothing real, but it logs a probe that never happens and
+    // makes the counter read 8 attempts against a budget of 3 — which is exactly
+    // what the live page showed.
+    const room = canOpen(open.length, openedToday(ledger, open), { maxConcurrent: MAX_CONCURRENT, maxPerDay: MAX_PER_DAY });
+    const probe = room.ok
+      ? shouldExplore(adj, { used: exploredToday(ledger, open), budget: exploreBudget(MAX_PER_DAY) })
+      : { explore: false, reason: `no room to probe — ${room.reason}` };
     learnGate.refused++;   // the LOOP refused it — recorded whether or not we override
     if (!probe.explore) {
       console.log(`[${new Date().toISOString()}] SKIP ${inst.symbol} ${setup.side} ${setup.kind} — lesson: ${adj.reasons[0] || "losing bucket"}${probe.reason ? ` (${probe.reason})` : ""}`);
