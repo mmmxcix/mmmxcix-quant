@@ -192,7 +192,7 @@ function buildSections(prefs, allItems, briefing) {
     const mySymbols = [...new Set((p.symbols || []).map((s) => String(s.symbol || '').toUpperCase()).filter(Boolean))];
     const holdings = mySymbols
       .map((sym) => (briefing?.symbols?.[sym] ? { symbol: sym, ...briefing.symbols[sym] } : null))
-      .filter((h) => h && (h.relevantHeadlines?.length > 0 || h.why))
+      .filter((h) => h && (h.relevantHeadlines?.length > 0 || h.why || h.keyFacts?.length > 0))
       .slice(0, MAX_ITEMS_PER_TOPIC);
     if (holdings.length) sections.push({ kind: 'holdings', label, holdings });
   }

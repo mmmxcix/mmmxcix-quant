@@ -61,7 +61,7 @@ function SkeletonCard() {
 }
 
 function HoldingCard({ symbol, data }) {
-  const hasStory = data.enriched && (data.why || data.expectation);
+  const hasStory = data.enriched && (data.why || data.expectation || data.keyFacts?.length > 0);
   return (
     <div className="rounded-xl border border-line lg-glass p-4">
       <div className="flex flex-wrap items-center gap-2 mb-2">
