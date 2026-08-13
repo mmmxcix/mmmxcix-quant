@@ -97,10 +97,38 @@ const FEEDS = [
     access: 'free',
     tier: 2,
   },
+  // ── Tier 1 (official/primary): company press-release wires. Straight from
+  // the company, not third-party paraphrase — the best source for exact,
+  // material facts (earnings, deals, regulatory filings), especially for
+  // small caps that mainstream desks rarely cover. Scoped to business-
+  // relevant categories (PR Newswire's site-wide "all releases" feed also
+  // carries politics/sports/religion — deliberately excluded). ──
+  {
+    source: 'PR Newswire (Financial)',
+    url: 'https://www.prnewswire.com/rss/financial-services-latest-news/financial-services-latest-news-list.rss',
+    category: 'business',
+    access: 'free',
+    tier: 1,
+  },
+  {
+    source: 'PR Newswire (Tech)',
+    url: 'https://www.prnewswire.com/rss/technology-latest-news/technology-latest-news-list.rss',
+    category: 'business',
+    access: 'free',
+    tier: 1,
+  },
+  {
+    source: 'PR Newswire (Health)',
+    url: 'https://www.prnewswire.com/rss/health-latest-news/health-latest-news-list.rss',
+    category: 'business',
+    access: 'free',
+    tier: 1,
+  },
 ];
 
 const FEED_TIMEOUT_MS = 10000;
-const MAX_ITEMS = 120;
+const MAX_ITEMS = 150;
+const MAX_ITEMS_PER_FEED = 20; // stops a high-volume wire (PR Newswire) from crowding out everything else
 const DESC_MAX = 240;
 
 function stripCdata(str) {
@@ -150,7 +178,7 @@ function cleanText(raw) {
 
 function parseFeed(xml, feed) {
   const items = [];
-  const itemBlocks = xml.match(/<item[\s>][\s\S]*?<\/item>/gi) || [];
+  const itemBlocks = (xml.match(/<item[\s>][\s\S]*?<\/item>/gi) || []).slice(0, MAX_ITEMS_PER_FEED);
 
   for (const block of itemBlocks) {
     const title = cleanText(extractTag(block, 'title'));

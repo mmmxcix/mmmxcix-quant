@@ -155,6 +155,51 @@ Setup that is easy to get wrong again:
 
 ---
 
+## Cortex — why it finds nothing (measured 13 Aug)
+
+**It does read real research.** arXiv, SSRN, OpenAlex, Crossref, Zenodo — genuine
+academic venues, plus blogs, HN and YouTube. Not just people posting where they
+are.
+
+**But it only ever sees the abstracts.** `fullTextOf()` in `scripts/sources.mjs`
+can only upgrade two things: an arXiv HTML rendering, and a YouTube transcript.
+For SSRN, OpenAlex, Crossref and Zenodo — which is where the finance papers
+actually are — it returns `""` and the caller falls back to the abstract.
+Verified empirically: all five paper sources return no body text. The dashboard
+agrees: **full text on 0%**.
+
+The file's own comment already says why this matters: *"the abstract says an
+effect exists, the body says how it was measured — lookback, rebalance,
+universe, thresholds."* Cortex is being asked to build a testable strategy from
+a paragraph that says momentum predicts returns, and has to invent every
+parameter. That is the most likely reason nothing survives the gauntlet.
+
+("arXiv 0" in the harvest line is NOT a bug — the API returns 8 fine. q-fin
+publishes few papers a day and the seen-filter removes repeats.)
+
+### The four levers, in order
+
+1. **Get the body text.** OpenAlex already returns `best_oa_location.pdf_url`
+   for open-access work; SSRN and Zenodo have predictable PDF URLs. Needs a PDF
+   text extractor. This is the single biggest quality lever in the pipeline and
+   the code says so itself.
+2. **Check the structural mismatch first.** Most academic equity strategies are
+   CROSS-SECTIONAL — rank a universe, long the top decile, short the bottom.
+   `runBacktest({ candles, signalFn })` is single-instrument time-series. A
+   momentum paper's result *cannot* be reproduced on one symbol, so faithfully
+   implementing it and then failing the gauntlet is the expected outcome, not a
+   discovery. Worth confirming before building anything else.
+3. **Refuse rather than guess.** Same discipline as the meta-label gate: extract
+   a reproduction checklist from the paper (universe, period, rebalance,
+   lookback, cost assumption) and if it cannot be filled, do not generate a
+   strategy at all.
+4. **Search for mechanisms, not for the phrase.** The queries are
+   `"trading strategy"`, which is what every paper writes. Named effects
+   ("post-earnings announcement drift", "time-series momentum", "variance risk
+   premium", "betting against beta") retrieve far better.
+
+---
+
 ## Queued, not yet done
 
 Five videos, with the question asked about each:

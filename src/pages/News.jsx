@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ExternalLink, Mail, RefreshCw, Search, Radio } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { distinctSymbols } from '@/lib/portfolio';
@@ -14,6 +14,9 @@ const DIGEST_SOURCES = [
   { name: 'BBC Business', access: 'free' },
   { name: 'The Guardian', access: 'free' },
   { name: 'NPR Business', access: 'free' },
+  { name: 'PR Newswire (Financial)', access: 'free' },
+  { name: 'PR Newswire (Tech)', access: 'free' },
+  { name: 'PR Newswire (Health)', access: 'free' },
   // Tier 2 — fast media
   { name: 'CNBC', access: 'free' },
   { name: 'Yahoo Finance', access: 'free' },
@@ -411,27 +414,40 @@ export default function News() {
   const [accessFilter, setAccessFilter] = useState('Alle');
   const [sortBy, setSortBy] = useState('newest');
   const [query, setQuery] = useState('');
+  const [newLinks, setNewLinks] = useState(() => new Set()); // items that just arrived via a live refresh
+  const seenLinks = useRef(null); // null = first load, nothing is "new" yet
 
-  async function load() {
-    setLoading(true);
-    setError(false);
+  // `silent` = a background live-refresh: no skeleton/spinner, and newly-arrived
+  // items (not seen since this tab opened) get a brief "NEW" tag.
+  async function load(silent = false) {
+    if (!silent) { setLoading(true); setError(false); }
     try {
       const res = await fetch('/api/news');
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setMeta(data.meta || null);
       if (data.error || !Array.isArray(data.items)) throw new Error('feeds_unavailable');
+      if (silent && seenLinks.current) {
+        const fresh = new Set(data.items.filter((it) => it.link && !seenLinks.current.has(it.link)).map((it) => it.link));
+        if (fresh.size) setNewLinks(fresh);
+      }
+      seenLinks.current = new Set(data.items.map((it) => it.link).filter(Boolean));
       setItems(data.items);
+      if (silent) setError(false);
     } catch {
-      setError(true);
-      setItems([]);
+      if (!silent) { setError(true); setItems([]); }
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }
 
   useEffect(() => {
     load();
+    // Live-ish refresh: matches the server's shortened edge-cache window
+    // (see functions/api/news.js) so a background tab picks up new items
+    // without a manual click — same pattern as OsintFeed's Telegram polling.
+    const id = setInterval(() => { if (!document.hidden) load(true); }, 90000);
+    return () => clearInterval(id);
   }, []);
 
   const sources = useMemo(() => {
@@ -472,15 +488,24 @@ export default function News() {
           <div className="text-xs font-medium text-dim">Markets</div>
           <h1 className="text-2xl font-semibold text-text mt-1">News</h1>
         </div>
-        <button
-          onClick={load}
-          disabled={loading}
-          className="inline-flex items-center gap-2 rounded-xl border border-line lg-glass px-3 py-2 text-sm text-dim hover:border-accent/40 hover:text-text transition-colors disabled:opacity-60"
-          title="Refresh"
-        >
-          <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
-          Refresh
-        </button>
+        <div className="flex items-center gap-3">
+          <span className="hidden sm:inline-flex items-center gap-1.5 text-xs text-dim" title="Refreshes automatically every ~90s">
+            <span className="relative flex h-1.5 w-1.5">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-up opacity-75" />
+              <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-up" />
+            </span>
+            Live
+          </span>
+          <button
+            onClick={() => load()}
+            disabled={loading}
+            className="inline-flex items-center gap-2 rounded-xl border border-line lg-glass px-3 py-2 text-sm text-dim hover:border-accent/40 hover:text-text transition-colors disabled:opacity-60"
+            title="Refresh"
+          >
+            <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+            Refresh
+          </button>
+        </div>
       </div>
 
       <FreshnessMonitor meta={meta} />
@@ -618,6 +643,11 @@ export default function News() {
                 <span className="rounded-full border border-accent/40 px-2 py-0.5 text-[11px] text-accent">
                   {it.source}
                 </span>
+                {newLinks.has(it.link) && (
+                  <span className="rounded-full bg-up/15 px-2 py-0.5 text-[11px] font-medium text-up">
+                    NEW
+                  </span>
+                )}
                 {it.access === 'partial-paywall' && (
                   <span className="rounded-full border border-line px-2 py-0.5 text-[11px] text-dim">
                     Possible paywall

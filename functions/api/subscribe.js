@@ -19,6 +19,7 @@ const VALID_CATEGORIES = new Set(['general', 'watchlist', 'portfolio']);
 const VALID_SOURCES = new Set([
   'Federal Reserve', 'SEC', 'BLS', 'BBC Business', 'The Guardian', 'NPR Business',
   'CNBC', 'Yahoo Finance', 'CoinDesk', 'MarketWatch', 'Investing.com', 'Cointelegraph',
+  'PR Newswire (Financial)', 'PR Newswire (Tech)', 'PR Newswire (Health)',
 ]);
 const MAX_SYMBOLS = 100;
 
