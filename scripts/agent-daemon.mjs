@@ -222,6 +222,24 @@ if (process.env.LAB_EXECUTOR !== "0") runPersistent("executor", "executor-agent.
 // Opt out with ARENA_AGENT=0.
 if (process.env.ARENA_AGENT !== "0") runPersistent("arena", "arena-agent.mjs");
 
+// Telegram OSINT (MTProto): a persistent 60s poller of the fast market-ticker
+// channels. /api/telegram already serves the keyless t.me/s/ scrape on its own,
+// so this is a strict upgrade rather than a dependency — MTProto also reads the
+// image-caption squawk channels the preview page cannot show, and its push wins
+// on the endpoint while it is fresh.
+//
+// Started ONLY when a session exists (scripts/telegram-auth.mjs writes one).
+// Without the credentials the poller exits immediately, and a persistent agent
+// that exits immediately is a restart loop every 10 seconds — so it stays down
+// and says why.
+if (process.env.TELEGRAM_AGENT !== "0") {
+  if (process.env.TG_API_ID && process.env.TG_API_HASH && process.env.TG_SESSION) {
+    runPersistent("telegram", "telegram-mtproto.mjs");
+  } else {
+    console.log(`[${stamp()}] telegram: not started — no TG_SESSION (run scripts/telegram-auth.mjs once). The t.me/s/ scrape keeps serving /api/telegram meanwhile.`);
+  }
+}
+
 // Kronos: forecasts crypto 24h ahead and grades the PREVIOUS forecasts against
 // a random walk. Python, so it is a scheduled pass rather than a fork — see
 // runPython below for why that still cannot pop a window.
@@ -241,5 +259,5 @@ if (process.env.KRONOS_AGENT !== "0") {
   });
 }
 
-console.log(`[${stamp()}] agent-daemon running — lab/15min · research/04:00 · revalidate/08,11,14,17,20 · discover/12:00 · retest/06,18 · mine/07 · executor/persistent · arena/persistent · kronos/01,13`);
+console.log(`[${stamp()}] agent-daemon running — lab/15min · research/04:00 · revalidate/08,11,14,17,20 · discover/12:00 · retest/06,18 · mine/07 · executor/persistent · arena/persistent · telegram/persistent · kronos/01,13`);
 runAgent("lab", "lab-agent.mjs"); // one immediate pass so a restart isn't idle for 15 min

@@ -15,6 +15,7 @@ import { runPythonSignals, signalsToFn } from "@/lib/pyRunner";
 import { strategyToCode } from "@/lib/strategyCode";
 import { hasPineSource } from "@/lib/pinescript";
 import { findComplementaryPairs } from "@/lib/combine";
+import { familyMix, selectComplementary, FAMILY_META, payoffProfile } from "@/lib/payoff";
 import CopyButton from "@/components/CopyButton";
 
 const PROFILE_LABEL = Object.fromEntries(Object.entries(PROFILES).map(([id, p]) => [id, p.label]));
@@ -379,6 +380,32 @@ function Card({ e, rich = false }) {
         </div>
       )}
 
+      {/* The payoff SHAPE and the ratio it has to clear. A strategy that wins 40%
+          of the time must make 1.5× its loss to stand still — the arithmetic that
+          quietly bankrupted the day-trading agent, shown before it does it here. */}
+      {m && (() => {
+        const p = payoffProfile(m);
+        if (p.payoffRatio == null) return null;
+        const ratio = Number.isFinite(p.payoffRatio) ? p.payoffRatio.toFixed(2) : "∞";
+        const meta = FAMILY_META[p.family];
+        return (
+          <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-mono">
+            <span title={`${meta.shape}. ${meta.risk}`}
+              className={cn("rounded px-1.5 py-0.5 cursor-help",
+                p.family === "unknown" ? "bg-dim/10 text-dim" : "bg-accent/10 text-accent")}>
+              {meta.label}
+            </span>
+            <span className="text-dim" title="Average win ÷ average loss, derived from win rate and profit factor">
+              win/loss {ratio}
+            </span>
+            <span className={cn(p.edge != null && p.edge < 0 ? "text-down" : "text-dim/80")}
+              title={`At ${(p.winRate * 100).toFixed(0)}% wins it must clear ${Number.isFinite(p.breakEvenRatio) ? p.breakEvenRatio.toFixed(2) : "∞"} just to break even`}>
+              needs {Number.isFinite(p.breakEvenRatio) ? p.breakEvenRatio.toFixed(2) : "∞"}
+            </span>
+          </div>
+        );
+      })()}
+
       {/* Markets it was validated on (Cortex) — each opens in the Backtester. */}
       {rich && (r?.markets || []).length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5">
@@ -550,6 +577,67 @@ function StageColumn({ col, list, query }) {
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+// Payoff SHAPES — the second diversification check, and the one the correlation
+// matrix cannot make. Two strategies can be uncorrelated day to day and still be
+// the same bet: both win small and often, and both hand it all back in the same
+// week. See lib/payoff.js.
+function PayoffShapes({ entries }) {
+  const live = useMemo(() => entries.filter((e) => e.status !== "graveyard"), [entries]);
+  const mix = useMemo(() => familyMix(live), [live]);
+  const suggestion = useMemo(() => selectComplementary(live, { max: 5 }), [live]);
+  if (!live.length) return null;
+
+  const order = ["reversion", "momentum", "carry", "mixed", "unknown"];
+  return (
+    <div className="rounded-xl border border-line lg-glass p-4">
+      <div className="flex items-center gap-2 mb-1">
+        <Scale className="w-4 h-4 text-accent" />
+        <p className="text-sm font-semibold">Payoff shapes — what kind of bets the library holds</p>
+      </div>
+      <p className="text-[11px] text-dim mb-3 leading-relaxed">
+        Read from each strategy's own record (win rate + profit factor), never declared. Firms hold
+        several shapes because the shapes fail at different times — a book of one shape has one bad
+        day, and has it all at once.
+      </p>
+
+      <div className="flex flex-wrap gap-2 mb-3">
+        {order.filter((f) => mix.counts[f] > 0).map((f) => (
+          <span key={f} title={`${FAMILY_META[f].shape}. ${FAMILY_META[f].risk}`}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-line px-2 py-1 text-[11px] cursor-help">
+            <span className="font-medium">{FAMILY_META[f].label}</span>
+            <span className="font-mono text-dim">{mix.counts[f]}</span>
+          </span>
+        ))}
+      </div>
+      {mix.warning && (
+        <p className="flex items-start gap-1.5 text-[11px] text-warn/90 mb-3">
+          <Info className="w-3 h-3 mt-0.5 shrink-0" />{mix.warning}
+        </p>
+      )}
+
+      {suggestion.picked.length > 1 && (
+        <>
+          <p className="text-xs font-medium mb-1.5">A complementary set, in the order it would be built</p>
+          <ol className="space-y-1.5">
+            {suggestion.picked.map((p, i) => (
+              <li key={p.entry.id} className="flex items-baseline gap-2 text-[11px]">
+                <span className="font-mono text-dim w-4 shrink-0">{i + 1}.</span>
+                <span className="font-medium truncate max-w-[40%]" title={p.entry.name}>{p.entry.name}</span>
+                <span className="text-dim shrink-0">{FAMILY_META[p.family].label.toLowerCase()}</span>
+                <span className="text-dim/80 truncate">— {p.reason}</span>
+              </li>
+            ))}
+          </ol>
+          <p className="text-[10px] text-dim/70 mt-2 leading-snug">
+            Ordering only, no weights: fitting portfolio weights to backtested correlations is the
+            most overfittable thing in the tool. Sizing stays yours.
+          </p>
+        </>
+      )}
     </div>
   );
 }
@@ -888,6 +976,8 @@ export default function Registry() {
             </div>
             <CorrMatrix entries={corrSet} />
           </div>
+
+          <PayoffShapes entries={entries} />
         </>
       )}
     </div>

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Grid3x3, Plus, X, RefreshCw, Loader2, Shuffle } from "lucide-react";
+import { Grid3x3, Plus, X, RefreshCw, Loader2, Shuffle, ListFilter } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   DEFAULT_BASKET, detectMarket, fetchBasketReturns, correlationMatrix,
@@ -7,6 +7,7 @@ import {
 } from "@/lib/correlation";
 import { fetchCandles } from "@/lib/data";
 import { analyzePair } from "@/lib/pairs";
+import { screenPairs } from "@/lib/pairsScreen";
 import Skeleton from "@/components/Skeleton";
 
 // Cross-asset correlation matrix — stocks, ETFs, crypto and FX in one grid.
@@ -38,6 +39,9 @@ const cellStyle = (r) => {
   const pct = Math.round(Math.min(1, Math.abs(r)) * 78);
   return { backgroundColor: `color-mix(in srgb, ${tone} ${pct}%, transparent)` };
 };
+
+/** How many unordered pairs a basket of n symbols makes — the number of tests. */
+const pairCount = (n) => (n * (n - 1)) / 2;
 
 // Spread sparkline with the OU mean (μ) and ±2σ entry bands.
 function SpreadSpark({ spread, mu, sigma, label }) {
@@ -87,6 +91,36 @@ export default function Correlation() {
     const order = clustered ? seriationOrder(m) : m.symbols.map((_, i) => i);
     return { ...m, order, insights: matrixInsights(m) };
   }, [data, clustered]);
+
+  // ── Pairs SCREENER (the whole basket at once) ─────────────────────────────
+  // The single-pair panel below answers "does this pair revert". This answers
+  // the question the hedge-fund people actually get paid for: WHICH pairs, out
+  // of everything available — which is a multiple-testing problem, and is
+  // treated as one in lib/pairsScreen.js.
+  const [screen, setScreen] = useState(null);
+  const [screenBusy, setScreenBusy] = useState(false);
+  const runScreen = async () => {
+    const symbols = computed?.symbols || [];
+    if (screenBusy || symbols.length < 2) return;
+    setScreenBusy(true); setScreen(null);
+    try {
+      const settled = await Promise.allSettled(symbols.map((s) =>
+        fetchCandles({ market: detectMarket(s), symbol: s, interval: "1d", range: "5y" })));
+      const closes = {};
+      settled.forEach((r, i) => {
+        if (r.status !== "fulfilled") return;
+        const m = new Map();
+        for (const c of r.value) if (c.close > 0) m.set(new Date(c.time * 1000).toISOString().slice(0, 10), c.close);
+        if (m.size >= 120) closes[symbols[i]] = m;
+      });
+      if (Object.keys(closes).length < 2) { setScreen({ error: "Not enough history loaded to screen." }); return; }
+      setScreen(screenPairs(closes));
+    } catch (e) {
+      setScreen({ error: String(e.message || e).slice(0, 120) });
+    } finally {
+      setScreenBusy(false);
+    }
+  };
 
   // ── Pairs mean-reversion (OU / Kalman) ────────────────────────────────────
   const [pairA, setPairA] = useState("");
@@ -312,6 +346,79 @@ export default function Correlation() {
                 </div>
                 <SpreadSpark spread={pair.spread} mu={pair.mu} sigma={pair.sigmaEq} label={`${pair.a} − ${pair.beta.toFixed(2)}·${pair.b}`} />
               </div>
+            )}
+          </div>
+
+          {/* Pairs SCREENER — every pair in the basket at once, corrected for
+              having looked at all of them. */}
+          <div className="rounded-xl border border-line lg-glass p-4 mt-4">
+            <div className="flex flex-wrap items-center gap-2 mb-1">
+              <p className="text-xs text-dim font-medium mr-auto">Pairs screener · which instruments, not which formula</p>
+              <button onClick={runScreen} disabled={screenBusy || computed.symbols.length < 3}
+                className="chip chip-idle flex items-center gap-1.5 !text-[11px] disabled:opacity-50">
+                {screenBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <ListFilter className="w-3 h-3" />}
+                {screenBusy ? "Screening…" : `Screen all ${pairCount(computed.symbols.length)} pairs`}
+              </button>
+            </div>
+            <p className="text-[11px] text-dim mb-3 leading-relaxed">
+              Ranks every pair in the basket the way the selection actually matters: an
+              Engle–Granger test (which knows the hedge ratio was <em>estimated</em>), doubled for
+              trying both directions, then a Benjamini–Hochberg correction across all pairs — because
+              the best half-life out of {pairCount(computed.symbols.length)} draws is usually luck.
+              A pair is called tradeable only if it also reverts fast enough to be worth the capital
+              and pays for its round-trip cost. 5y daily. Educational, not advice.
+            </p>
+            {screen?.error && <p className="text-xs text-down">{screen.error}</p>}
+            {screen && !screen.error && (
+              <>
+                <p className="text-[11px] text-dim mb-2">
+                  {screen.tested} pairs tested · <span className="text-text font-mono">{screen.survivors}</span> survive
+                  the correction · <span className="text-text font-mono">{screen.tradeable}</span> also clear the
+                  half-life and cost bars.{" "}
+                  {screen.survivors > 0
+                    ? <>At a {(screen.alpha * 100).toFixed(0)}% false-discovery rate, ~{screen.expectedFalse} of the survivors is expected to be noise.</>
+                    : <>Nothing here beats chance — which is the usual and correct answer.</>}
+                </p>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs font-mono">
+                    <thead className="text-dim">
+                      <tr className="text-left">
+                        <th className="py-1 pr-3 font-medium">Pair</th>
+                        <th className="py-1 pr-3 font-medium text-right" title="Ornstein-Uhlenbeck half-life: trading days to close half the gap">Half-life</th>
+                        <th className="py-1 pr-3 font-medium text-right" title="Engle–Granger ADF t-statistic — more negative is stronger">ADF t</th>
+                        <th className="py-1 pr-3 font-medium text-right" title="p-value after the Benjamini–Hochberg correction across every pair tested">q</th>
+                        <th className="py-1 pr-3 font-medium text-right" title="How many times the 2σ spread swing covers the round-trip cost">Edge/cost</th>
+                        <th className="py-1 pr-3 font-medium text-right" title="Current spread distance from its mean">z</th>
+                        <th className="py-1 font-medium">Verdict</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {screen.rows.slice(0, 12).map((r) => (
+                        <tr key={`${r.a}/${r.b}`} className="border-t border-line/60">
+                          <td className="py-1 pr-3 whitespace-nowrap">{r.a} <span className="text-dim">/</span> {r.b}</td>
+                          <td className="py-1 pr-3 text-right">{Number.isFinite(r.halfLife) ? `${r.halfLife.toFixed(1)}d` : "∞"}</td>
+                          <td className="py-1 pr-3 text-right">{r.adfT.toFixed(2)}</td>
+                          <td className="py-1 pr-3 text-right">{r.q < 0.001 ? "<0.001" : r.q.toFixed(3)}</td>
+                          <td className="py-1 pr-3 text-right">{r.edgeRatio.toFixed(1)}×</td>
+                          <td className={cn("py-1 pr-3 text-right", Math.abs(r.z) >= 2 ? "text-accent font-semibold" : "")}>
+                            {r.z >= 0 ? "+" : ""}{r.z.toFixed(2)}
+                          </td>
+                          <td className={cn("py-1", r.tradeable ? "text-up" : r.stationary ? "text-warn/90" : "text-dim")}>
+                            {r.tradeable ? (r.signal === "flat" ? "tradeable · wait for 2σ" : r.signal)
+                              : r.stationary ? (!r.bandOk ? "reverts, but not at a usable speed" : "reverts, but cannot pay its costs")
+                                : "no better than chance"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {screen.skipped.length > 0 && (
+                  <p className="text-[11px] text-dim mt-2">
+                    {screen.skipped.length} pair{screen.skipped.length > 1 ? "s" : ""} skipped for too little shared history.
+                  </p>
+                )}
+              </>
             )}
           </div>
 

@@ -85,7 +85,9 @@ function normalizeSignal(raw) {
  * @param {Array}    options.candles        Ascending candle array ({time /* unix seconds *\/, open, high, low, close, volume}).
  * @param {Function} options.signalFn       (ctx) => "long"|"short"|"flat" | { signal, stop, target }.
  *                                          ctx = { candles, index, time, open, high, low, close,
- *                                                  position, session, indicators }.
+ *                                                  position, session, indicators, funding }.
+ *                  `ctx.funding` is null unless fundingRates were supplied; it
+ *                  exposes only stamps already printed: { rate, count, avg(n) }.
  * @param {number}  [options.initialCapital=10000]
  * @param {number}  [options.feeBps=10]     Fee per side in basis points.
  * @param {number}  [options.positionPct=100]  Percent of current equity deployed
@@ -363,6 +365,23 @@ export function runBacktest({ candles, signalFn, initialCapital = 10000, feeBps 
         position,
         session,
         indicators: ind,
+        // Carry strategies trade the funding rate itself, so they have to be
+        // able to READ it. Only stamps at or before this bar are reachable
+        // (fIdx has already advanced past them above) — a strategy cannot see a
+        // rate that has not printed yet, which is the whole risk of handing it
+        // the array. `avg(n)` averages the last n stamps.
+        funding: funding && fIdx > 0
+          ? {
+            rate: funding[fIdx - 1].rate,
+            count: fIdx,
+            avg: (k = 3) => {
+              const from = Math.max(0, fIdx - Math.max(1, k | 0));
+              let s = 0;
+              for (let j = from; j < fIdx; j++) s += funding[j].rate;
+              return s / (fIdx - from);
+            },
+          }
+          : null,
       });
       pending = normalizeSignal(raw);
     } catch (err) {

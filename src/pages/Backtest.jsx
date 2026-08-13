@@ -96,6 +96,8 @@ export default function Backtest() {
   const [execution, setExecution] = useState(handoff?.execution ?? "auto");
   const [slippageBps, setSlippageBps] = useState(handoff?.slippageBps ?? 0);
   const [applyFunding, setApplyFunding] = useState(false); // perp funding (crypto)
+  // A carry strategy reads the funding rate as its SIGNAL, not just as a cost.
+  const needsFunding = strategyId === "perp-funding-carry" && mode === "builder";
   const [running, setRunning] = useState(false);
   const [error, setError] = useState(null);
   const [result, setResult] = useState(null);
@@ -686,6 +688,14 @@ export default function Backtest() {
                 <input type="checkbox" checked={applyFunding} onChange={(e) => setApplyFunding(e.target.checked)} className="accent-current" />
                 <span className="text-text">Apply perp funding</span> — models the ~8h funding longs pay / shorts earn
               </label>
+            )}
+            {/* The carry strategy IS the funding rate — without the data it has no
+                signal at all and would silently return a flat, empty run. */}
+            {needsFunding && !applyFunding && (
+              <p className="text-[11px] text-warn/90">
+                This strategy trades the funding rate itself — tick “Apply perp funding” (crypto perp
+                symbol, e.g. BTCUSDT) or it has nothing to read and will stay flat.
+              </p>
             )}
           </div>
 

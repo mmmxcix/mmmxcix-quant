@@ -25,6 +25,31 @@ const P = (params, key, dflt) => {
 // ── per-built-in standalone source templates ────────────────────────────────
 // Each returns a complete `strategy(ctx)` matching src/lib/strategies.js.
 const BUILTIN_SOURCE = {
+  "perp-funding-carry": (p) => {
+    const stamps = P(p, "stamps", 3), minRateBps = P(p, "minRateBps", 1), stopPct = P(p, "stopPct", 4), trendSma = P(p, "trendSma", 200);
+    return `// Perpetual Funding Carry — take the side that is PAID the funding and hold it.
+// Needs perp funding history (backtester: "Apply perp funding"); without it
+// ctx.funding is null and this stays flat, which is the honest output.
+// Short-volatility by construction: many small wins, then one large loss — the
+// stop is not a refinement here, it is the strategy.
+const STAMPS = ${stamps}, MIN_RATE = ${minRateBps} / 10000, STOP_PCT = ${stopPct}, TREND_SMA = ${trendSma};
+let _c = null, _ma = null;
+function strategy(ctx) {
+  if (!ctx.funding || ctx.funding.count < STAMPS) return "flat";
+  const carry = ctx.funding.avg(STAMPS);
+  const side = carry > MIN_RATE ? "short" : carry < -MIN_RATE ? "long" : "flat";
+  if (side === "flat") return "flat";
+  if (TREND_SMA > 0) {
+    if (_c !== ctx.candles) { _c = ctx.candles; _ma = ctx.indicators.sma(ctx.indicators.closes(ctx.candles), TREND_SMA); }
+    const ma = _ma[ctx.index];
+    if (ma == null) return "flat";
+    if (side === "short" && ctx.close > ma) return "flat";   // never short into the standing uptrend
+    if (side === "long" && ctx.close < ma) return "flat";
+  }
+  const d = ctx.close * (STOP_PCT / 100);
+  return side === "short" ? { signal: "short", stop: ctx.close + d } : { signal: "long", stop: ctx.close - d };
+}`;
+  },
   "sma-crossover": (p) => {
     const fast = P(p, "fast", 20), slow = P(p, "slow", 50);
     return `// SMA Crossover — long while the fast SMA is above the slow SMA.

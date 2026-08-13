@@ -305,21 +305,78 @@ leaderboard of named candidates (each with score, trade count, equity sparkline)
 and a per-strategy "Forward Confidence" panel. We have all of that in substance;
 the leaderboard-with-sparklines presentation is a minor idea for the Registry.
 
-### What came out of it, ranked
+### What came out of it — all five built, 13 August
 
-1. **Component scores recorded per Argus trade** — recording only, no decision
-   changes, and it is the one item that decays while we wait (video 3).
-2. **A pairs/cointegration screener** over a universe, ranked by half-life and
-   spread stationarity, on top of the existing `pairs.js` (video 1).
-3. **Payoff-family tag in the registry** + selection for complementarity rather
-   than for score alone (video 2). Cheap; no engine surgery.
-4. **Telegram-OSINT ingest** for the news hub, now with an MIT reference
-   implementation to read (video 4).
-5. **Crypto funding-rate carry** as its own engine — real, but it violates the
-   Argus quality gates by construction, so it is a project, not a patch (video 2).
+**1 · The Argus setup scorecard** (video 3) — `src/lib/argus/scorecard.js`. Five
+components recorded at entry (trend, momentum, volume, catalyst, risk; 0–10 each,
+5 = neutral, unknown scores 5 and never 0), written onto the thesis by
+`argus-agent.mjs` and shown on `/argus` labelled *recorded, not applied*.
 
-Nothing here overrides the rule below: **1, 2, 3 and 4 do not touch Argus's
-decision path.** Item 5 does, and waits.
+**No decision changed.** Every gate still decides exactly as it did; the
+scorecard is computed after they have all said yes. Two supporting changes:
+
+- `scan()` now also measures the last hour's move in ATR units (`momAtr`).
+  Nothing gates on it.
+- **A retest fill used to reach the ledger undescribable.** The parked-limit path
+  rebuilt the setup without `atrPct`/`rvol`, so `riskChecks.volatility` read
+  "n/a" — and `metalabel.featuresOf` correctly refuses such a row. Every
+  limit-filled trade was a row no model could ever use. The readings taken when
+  the setup was found are now carried through for the record; the gates still
+  read the live fields, so the decision is untouched.
+
+`metalabel.js` gained `FEATURES_EXT` (the ten old features plus the five scores)
+and `chooseFeatures()`, which uses the wider set **only** once the trades that
+carry scores can support it on their own — 150 of the rarer class instead of 100.
+Until then the scores are recorded and unused. The sample rule is not negotiated
+down because the new columns are interesting.
+
+**2 · The pairs screener** (video 1) — `src/lib/pairsScreen.js`, on
+`/tools/correlation` under the single-pair panel. Ranks every pair in the basket,
+and refuses to be a data-mining machine while doing it: an Engle–Granger ADF
+statistic (β was *estimated*, so plain ADF values are far too generous), the
+p-value doubled because both directions were tried, then Benjamini–Hochberg
+across all pairs — plus the footnote saying how many survivors the null alone
+would produce. A pair is only "tradeable" if it also reverts inside a usable
+half-life band and its 2σ swing covers the round-trip cost. On a universe of pure
+random walks it returns nothing, which is the test that matters.
+
+**3 · Payoff shapes** (video 2) — `src/lib/payoff.js`, on `/cortex/registry`.
+The family is **inferred, never declared**: profit factor and win rate already
+contain the average win/loss ratio (`PF·(1−w)/w`), so every card now shows its
+shape, its win/loss ratio and the ratio it must clear to break even — the
+arithmetic that quietly bankrupted Argus, shown before it does it again. Below
+20 trades the shape is withheld as unreadable. A library that is all one shape
+gets told so, and `selectComplementary()` orders a set by what each pick *adds*
+(own Sharpe − correlation to the set + credit for a missing shape). Ordering
+only: fitting weights to backtested correlations is the most overfittable object
+in the tool.
+
+**4 · Telegram OSINT** (video 4) — **was already built**, and is better than
+OSIRIS's: `/api/telegram` serves the keyless `t.me/s/` scrape, `telegram-mtproto.mjs`
+pushes the richer MTProto read on top, Argus's event brief consumes it, and
+`geoNews.js` already pins OSINT items on the world map. Verified live. The one
+real gap is closed: the MTProto poller is now started by `agent-daemon.mjs` —
+but only when `TG_API_ID`/`TG_API_HASH`/`TG_SESSION` exist, because a persistent
+agent that exits immediately is a restart loop. **Open for you:** run
+`scripts/telegram-auth.mjs` once to create the session. The scrape keeps serving
+until then.
+
+**5 · The carry engine** (video 2) — `perp-funding-carry` in `strategies.js`, and
+`ctx.funding` in the backtest engine. The engine already *charged* funding; a
+carry strategy has to *read* it, so `ctx.funding` now exposes `{rate, count,
+avg(n)}` over the stamps that have already printed — and a test pins that it can
+never see one that has not. The strategy takes the paid side (short when funding
+is positive), needs a protective stop by construction, and has a trend filter
+because the disaster for a funding short is a violent rally. Without funding data
+it stays flat instead of falling back to a price rule wearing the carry name.
+
+This is the library's **third payoff shape** — until now it held mean reversion
+and momentum only. Honest health warning, the same one the video gives: carry is
+short volatility, it will backtest beautifully, and its tail is by definition
+under-sampled. It also cannot ever be an Argus setup: `MIN_PLANNED_R` 1.5 forbids
+its payoff shape outright.
+
+396 tests pass, build and 32-route smoke clean.
 
 ---
 

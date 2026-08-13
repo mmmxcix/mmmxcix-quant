@@ -919,4 +919,47 @@ export const BUILT_IN_STRATEGIES = [
       };
     },
   },
+
+  {
+    id: "perp-funding-carry",
+    name: "Perpetual Funding Carry (Crypto)",
+    description:
+      "The third payoff family, and the one this library was missing: carry. You are not predicting direction — you take the side that GETS PAID the funding on a perpetual and hold it. When funding is persistently positive, longs are paying shorts, so the short side collects every stamp; when it is negative, the long side does. " +
+      "It works because it is not free money: you are underwriting the risk of holding the crowded side, and being paid a premium for it. That makes the payoff shape a short-volatility one — many small wins, then one large loss — so a protective stop is not optional here, it is the strategy. " +
+      "Needs perp funding history (Binance USDⓈ-M): tick 'Include funding' in the backtester, on a symbol like BTCUSDT. Without it there is no signal and it stays flat. The trend filter exists because the disaster for a funding short is a violent rally.",
+    params: [
+      { key: "stamps", label: "Funding stamps averaged", default: 3, min: 1, max: 30, step: 1 },
+      { key: "minRateBps", label: "Min |funding| to act (bps per stamp)", default: 1, min: 0, max: 20, step: 0.5 },
+      { key: "stopPct", label: "Protective stop (%)", default: 4, min: 0.5, max: 25, step: 0.5 },
+      { key: "trendSma", label: "Trend filter SMA (0 = off)", default: 200, min: 0, max: 400, step: 10 },
+    ],
+    build({ stamps = 3, minRateBps = 1, stopPct = 4, trendSma = 200 } = {}) {
+      const min = minRateBps / 10000; // bps of notional per stamp → fraction
+      return (ctx) => {
+        // No funding data → no carry signal. Silence is the honest output; a
+        // price-only fallback would be a different strategy wearing this name.
+        if (!ctx.funding || ctx.funding.count < stamps) return "flat";
+        const carry = ctx.funding.avg(stamps);
+        // Hold what we have; the bracket stop does the exiting. Re-asserting the
+        // same side each bar keeps the stop live without re-entering.
+        const side = carry > min ? "short" : carry < -min ? "long" : "flat";
+        if (side === "flat") return "flat";
+
+        // Trend filter: never stand in front of the move that kills this trade.
+        // A funding short dies in a violent rally, a funding long in a collapse —
+        // so skip the side that is fighting the long trend.
+        if (trendSma > 0) {
+          const s = cached(ctx.candles, `sma:${trendSma}`, () => ind.sma(cachedCloses(ctx.candles), trendSma));
+          const ma = s[ctx.index];
+          if (ma == null) return "flat";
+          if (side === "short" && ctx.close > ma) return "flat";
+          if (side === "long" && ctx.close < ma) return "flat";
+        }
+        const stopDist = ctx.close * (stopPct / 100);
+        return side === "short"
+          ? { signal: "short", stop: ctx.close + stopDist }
+          : { signal: "long", stop: ctx.close - stopDist };
+      };
+    },
+  },
 ];
