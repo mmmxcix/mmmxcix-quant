@@ -12,6 +12,7 @@ import { deriveLessons, adjustment, sessionOf } from "../src/lib/argus/learn.js"
 import { marketOpen } from "../src/lib/argus/hours.js";
 import { effectiveHeatCap } from "../src/lib/argus/correlation.js";
 import { canOpen, openedToday, paceStatus, DEFAULT_MAX_CONCURRENT, DEFAULT_MAX_PER_DAY } from "../src/lib/argus/pace.js";
+import { shouldExplore, exploreBudget, exploredToday } from "../src/lib/argus/explore.js";
 import { currentRegime } from "../src/lib/hmmRegime.js";
 import { buildReflectionMessages, parseReflection, crystallise, skillsFor, unionSkills } from "../src/lib/argus/reflect.js";
 import { wouldHaveHit, invalVerdict, isTerminal, invalPolicy } from "../src/lib/argus/review.js";
@@ -435,10 +436,22 @@ function tryOpen(inst, setup, halted) {
     regime,
   }, { minSample: LEARN_MIN });
   learnGate.considered++;
+  let exploring = null;
   if (adj.skip) {
-    learnGate.refused++;
-    console.log(`[${new Date().toISOString()}] SKIP ${inst.symbol} ${setup.side} ${setup.kind} — lesson: ${adj.reasons[0] || "losing bucket"}`);
-    return;
+    // A refusal removes the only evidence that could overturn it, so a slice of
+    // the daily budget goes to probing the refusals that are least settled. See
+    // lib/argus/explore.js — without this the agent talks itself into silence.
+    const probe = shouldExplore(adj, {
+      used: exploredToday(ledger, open),
+      budget: exploreBudget(MAX_PER_DAY),
+    });
+    if (!probe.explore) {
+      learnGate.refused++;
+      console.log(`[${new Date().toISOString()}] SKIP ${inst.symbol} ${setup.side} ${setup.kind} — lesson: ${adj.reasons[0] || "losing bucket"}${probe.reason ? ` (${probe.reason})` : ""}`);
+      return;
+    }
+    exploring = probe;
+    console.log(`[${new Date().toISOString()}] PROBE ${inst.symbol} ${setup.side} ${setup.kind} — ${probe.reason}`);
   }
   // REUSE — the last Hermes step. A rule the agent wrote down repeatedly for
   // exactly this situation ("avoid") vetoes the trade; a "prefer" one is noted
@@ -473,7 +486,7 @@ function tryOpen(inst, setup, halted) {
     console.log(`[${new Date().toISOString()}] SKIP ${inst.symbol} ${setup.side} ${setup.kind} — pace: ${pace.reason}`);
     return;
   }
-  const riskPct = BASE_RISK * adj.mult * vol.mult;
+  const riskPct = BASE_RISK * adj.mult * vol.mult * (exploring ? exploring.sizeMult : 1);
 
   // Conviction = technical setup quality, tilted by an ALIGNED bias (its parts, not
   // a binary; real signals dominate at 0.7 weight), plus a GENTLE nudge from the
@@ -526,7 +539,9 @@ function tryOpen(inst, setup, halted) {
   const th = openThesis(
     // `regime` (not `_regime`) so it lands on the closed thesis and the learning
     // loop can bucket by it — the underscore fields are scratch and are stripped.
-    { ...setup, symbol: inst.symbol, market: inst.asset, conviction, regime, limitFill: !!setup._fromLimit },
+    // `explore` rides along onto the closed thesis, so the track record can always
+    // separate a bet we chose from a probe we were running.
+    { ...setup, symbol: inst.symbol, market: inst.asset, conviction, regime, explore: !!exploring, limitFill: !!setup._fromLimit },
     { equity, openRisk: openRisk(), openMargin: openMargin(), openNotional: openNotional(), asset: inst.asset,
       heatCap, baseRiskPct: riskPct, maxTradeLev: MAX_TRADE_LEV, portfolioLevCap: PORTFOLIO_LEV_CAP, conviction },
   );
@@ -776,6 +791,7 @@ async function persist(ledgerAdd, extra) {
         portfolioLevCap: PORTFOLIO_LEV_CAP,
         marginUsed: openMargin(), marginPct: openMargin() / equity,
         pace: paceStatus(ledger, open, { maxConcurrent: MAX_CONCURRENT, maxPerDay: MAX_PER_DAY }),
+        probes: { used: exploredToday(ledger, open), budget: exploreBudget(MAX_PER_DAY) },
         learnRefusedPct: learnGate.considered ? learnGate.refused / learnGate.considered * 100 : 0,
         learnConsidered: learnGate.considered,
         dayPnl: extra.dailyPnl,                 // realized today

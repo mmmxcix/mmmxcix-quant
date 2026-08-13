@@ -252,6 +252,9 @@ export function adjustment(lessons, setup, opts = {}) {
   } = opts;
   let mult = 1, skip = false;
   const reasons = [];
+  // The refusal that is EASIEST to overturn — tracked so an exploration policy
+  // can spend its budget where the evidence is thinnest rather than at random.
+  let weakestSkip = null;
   // SIZING and SKIPPING ask different questions and therefore need different
   // sample sizes. "How much smaller should this be?" is a fine-grained judgement
   // that deserves a solid sample; "is this thing broken at all?" is answerable
@@ -266,6 +269,7 @@ export function adjustment(lessons, setup, opts = {}) {
       const provenLoserThin = (l.tStat ?? 0) <= skipTStat && l.n >= skipEvidenceMinN;
       if (provenLoserThin && (l.bookShare ?? 0) <= skipMaxBookShare) {
         skip = true;
+        if (!weakestSkip || Math.abs(l.tStat) < Math.abs(weakestSkip.tStat)) weakestSkip = l;
         reasons.push(`${describeDims(l.dims)}: ${l.n} trades at ${l.expectancy.toFixed(2)}R (t=${(l.tStat ?? 0).toFixed(1)}) — switched off`);
       }
       continue;
@@ -295,9 +299,12 @@ export function adjustment(lessons, setup, opts = {}) {
       //     anti-freeze guard: a bucket covering most of the book never skips.
       const provenLoser = (l.tStat ?? 0) <= skipTStat && l.n >= skipEvidenceMinN;
       const tooBroad = (l.bookShare ?? 0) > skipMaxBookShare;
-      if (provenLoser && !tooBroad) skip = true;
+      if (provenLoser && !tooBroad) {
+        skip = true;
+        if (!weakestSkip || Math.abs(l.tStat) < Math.abs(weakestSkip.tStat)) weakestSkip = l;
+      }
     }
   }
   mult = Math.max(floor, Math.min(ceil, mult));
-  return { mult, skip, reasons };
+  return { mult, skip, reasons, weakestSkip };
 }

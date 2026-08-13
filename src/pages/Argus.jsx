@@ -211,7 +211,9 @@ export default function Argus() {
             high number here means the entries have no edge to allocate — which is
             not something learning can fix. */}
         <Stat label="Pace" value={state?.pace ? `${state.pace.open}/${state.pace.maxConcurrent} open` : "–"}
-          sub={state?.pace ? `${state.pace.openedToday}/${state.pace.maxPerDay} trades today` : "concurrency + daily budget"}
+          sub={state?.pace
+            ? `${state.pace.openedToday}/${state.pace.maxPerDay} today${state?.probes ? ` · ${state.probes.used}/${state.probes.budget} probes` : ""}`
+            : "concurrency + daily budget"}
           tone={state?.pace?.blocked ? "text-warn" : "text-text"} />
         <Stat label="Learning gate" value={state?.learnConsidered ? `${(state.learnRefusedPct ?? 0).toFixed(0)}% refused` : "–"}
           sub={state?.learnConsidered ? `of ${state.learnConsidered} setups considered` : "no setups considered yet"}
