@@ -205,6 +205,14 @@ export default function Argus() {
         <Stat label="Today's P/L" value={state ? money(state.dayPnlTotal ?? state.dayPnl ?? 0) : "–"}
           sub={state && state.unrealized ? `${money(state.dayPnl || 0)} real · ${money(state.unrealized)} float` : "realized + floating"}
           tone={state && (state.dayPnlTotal ?? state.dayPnl) < 0 ? "text-down" : "text-up"} />
+        {/* How much of its own candidate flow the learning loop is refusing. The
+            anti-freeze guard is per-bucket, so a dozen separately-reasonable skips
+            can add up to "trade nothing" without any one of them tripping it. A
+            high number here means the entries have no edge to allocate — which is
+            not something learning can fix. */}
+        <Stat label="Learning gate" value={state?.learnConsidered ? `${(state.learnRefusedPct ?? 0).toFixed(0)}% refused` : "–"}
+          sub={state?.learnConsidered ? `of ${state.learnConsidered} setups considered` : "no setups considered yet"}
+          tone={(state?.learnRefusedPct ?? 0) > 60 ? "text-down" : (state?.learnRefusedPct ?? 0) > 35 ? "text-warn" : "text-text"} />
         <Stat label="Track record" value={stats.n ? `${(stats.winRate * 100).toFixed(0)}% · ${stats.avgR >= 0 ? "+" : ""}${stats.avgR.toFixed(2)}R avg` : "–"}
           sub={stats.n ? `${stats.n} closed · ${money(stats.pnl)} · ${stats.sumR >= 0 ? "+" : ""}${stats.sumR.toFixed(2)}R total` : "no closed trades yet"}
           tone={stats.expectancy > 0 ? "text-up" : stats.expectancy < 0 ? "text-down" : "text-text"} />

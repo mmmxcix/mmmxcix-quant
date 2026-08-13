@@ -48,6 +48,14 @@ const EVENT_TTL = +(process.env.LAB_ARGUS_EVENT_TTL_MIN || 240) * 60_000; // bia
 // Hermes-style learning: buckets need at least this many closed trades before any
 // lesson is allowed to touch sizing (small samples lie). Tunable, conservative.
 const LEARN_MIN = +(process.env.LAB_ARGUS_LEARN_MIN || 20);
+
+// How much of its own candidate flow the learning loop is currently REFUSING.
+// This is the instrument that says whether learning is tuning the book or
+// quietly shutting it down: the anti-freeze guard is per-bucket, so a dozen
+// separately-reasonable skips can still add up to "trade nothing" without any
+// single one tripping it. When this number is high the problem is not the
+// allocation, it is that the entries have no edge to allocate.
+const learnGate = { considered: 0, refused: 0, since: Date.now() };
 const RVOL_MIN = +(process.env.LAB_ARGUS_RVOL_MIN || 1.1); // breakouts need above-average volume
 const PYRAMID = process.env.LAB_ARGUS_PYRAMID !== "0";     // scale into winners (Turtle-style MM)
 const PYRAMID_MAX_UNITS = +(process.env.LAB_ARGUS_PYRAMID_UNITS || 4);
@@ -392,7 +400,9 @@ function tryOpen(inst, setup, halted) {
     kind: setup.kind, symbol: inst.symbol, side: setup.side,
     session: sessionOf(Date.now()), source: evented ? "event" : "technical", bias: setup.bias,
   }, { minSample: LEARN_MIN });
+  learnGate.considered++;
   if (adj.skip) {
+    learnGate.refused++;
     console.log(`[${new Date().toISOString()}] SKIP ${inst.symbol} ${setup.side} ${setup.kind} — lesson: ${adj.reasons[0] || "losing bucket"}`);
     return;
   }
@@ -708,6 +718,8 @@ async function persist(ledgerAdd, extra) {
         portfolioLev: openNotional() / equity,  // Σ notional / equity (Bug 1 — true portfolio leverage)
         portfolioLevCap: PORTFOLIO_LEV_CAP,
         marginUsed: openMargin(), marginPct: openMargin() / equity,
+        learnRefusedPct: learnGate.considered ? learnGate.refused / learnGate.considered * 100 : 0,
+        learnConsidered: learnGate.considered,
         dayPnl: extra.dailyPnl,                 // realized today
         dayPnlTotal: extra.dailyPnl + unrealized, // realized + floating (what the top-bar shows)
         halted: extra.halted, universe: activeUniverse().length, events, fng: eventFng,
