@@ -212,7 +212,7 @@ export default function Argus() {
             not something learning can fix. */}
         <Stat label="Pace" value={state?.pace ? `${state.pace.open}/${state.pace.maxConcurrent} open` : "–"}
           sub={state?.pace
-            ? `${state.pace.openedToday}/${state.pace.maxPerDay} today${state?.probes ? ` · ${state.probes.used}/${state.probes.budget} probes` : ""}`
+            ? `${state.pace.openedToday}/${state.pace.maxPerDay} today${state?.probes ? ` · ${state.probes.used}/${state.probes.budget} probes` + (state.probes.attempted > state.probes.used ? ` (${state.probes.attempted} tried)` : "") : ""}`
             : "concurrency + daily budget"}
           tone={state?.pace?.blocked ? "text-warn" : "text-text"} />
         <Stat label="Learning gate" value={state?.learnConsidered ? `${(state.learnRefusedPct ?? 0).toFixed(0)}% refused` : "–"}

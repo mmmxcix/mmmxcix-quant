@@ -71,7 +71,7 @@ const HALF_LIFE_MS = +(process.env.LAB_ARGUS_HALFLIFE_H || 0) * 3600_000;
 // separately-reasonable skips can still add up to "trade nothing" without any
 // single one tripping it. When this number is high the problem is not the
 // allocation, it is that the entries have no edge to allocate.
-const learnGate = { considered: 0, refused: 0, since: Date.now() };
+const learnGate = { considered: 0, refused: 0, probed: 0, since: Date.now() };
 const RVOL_MIN = +(process.env.LAB_ARGUS_RVOL_MIN || 1.1); // breakouts need above-average volume
 const PYRAMID = process.env.LAB_ARGUS_PYRAMID !== "0";     // scale into winners (Turtle-style MM)
 const PYRAMID_MAX_UNITS = +(process.env.LAB_ARGUS_PYRAMID_UNITS || 4);
@@ -445,12 +445,13 @@ function tryOpen(inst, setup, halted) {
       used: exploredToday(ledger, open),
       budget: exploreBudget(MAX_PER_DAY),
     });
+    learnGate.refused++;   // the LOOP refused it — recorded whether or not we override
     if (!probe.explore) {
-      learnGate.refused++;
       console.log(`[${new Date().toISOString()}] SKIP ${inst.symbol} ${setup.side} ${setup.kind} — lesson: ${adj.reasons[0] || "losing bucket"}${probe.reason ? ` (${probe.reason})` : ""}`);
       return;
     }
     exploring = probe;
+    learnGate.probed++;
     console.log(`[${new Date().toISOString()}] PROBE ${inst.symbol} ${setup.side} ${setup.kind} — ${probe.reason}`);
   }
   // REUSE — the last Hermes step. A rule the agent wrote down repeatedly for
@@ -791,7 +792,11 @@ async function persist(ledgerAdd, extra) {
         portfolioLevCap: PORTFOLIO_LEV_CAP,
         marginUsed: openMargin(), marginPct: openMargin() / equity,
         pace: paceStatus(ledger, open, { maxConcurrent: MAX_CONCURRENT, maxPerDay: MAX_PER_DAY }),
-        probes: { used: exploredToday(ledger, open), budget: exploreBudget(MAX_PER_DAY) },
+        probes: {
+          used: exploredToday(ledger, open),        // probes that became trades
+          attempted: learnGate.probed,              // …and those a later gate then blocked
+          budget: exploreBudget(MAX_PER_DAY),
+        },
         learnRefusedPct: learnGate.considered ? learnGate.refused / learnGate.considered * 100 : 0,
         learnConsidered: learnGate.considered,
         dayPnl: extra.dailyPnl,                 // realized today
