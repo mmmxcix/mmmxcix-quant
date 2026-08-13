@@ -72,7 +72,10 @@ function Scoreboard({ scores }) {
       <p className="text-sm text-dim mb-3">
         The evidence that does not depend on anyone's fee tier: out of sample, how far each
         estimate sits from where the mid price actually was five seconds later. Lower is better;
-        the figures are in ticks.
+        the figures are in ticks. All three are measured over the <em>same</em> samples — comparing
+        the micro-price only from the moment its model existed against a mid averaged since
+        start-up would compare two different stretches of market, which flattered it by 35% on
+        the first live read.
       </p>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">

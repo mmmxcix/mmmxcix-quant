@@ -206,7 +206,17 @@ function scoreStep(symbol) {
     s.score.n++;
     s.score.mid += (mid - p.mid) ** 2;
     s.score.wm += (mid - p.wm) ** 2;
-    if (Number.isFinite(p.mp)) { s.score.mp += (mid - p.mp) ** 2; s.score.mpN++; }
+    // The headline comparison accumulates ONLY where all three estimates exist.
+    // Averaging mid over every sample since start-up while averaging the
+    // micro-price over the shorter window since the model was fitted compares
+    // two different stretches of market: it made the micro-price look 35% better
+    // on the first live read, which was the calm of that window and not skill.
+    if (Number.isFinite(p.mp)) {
+      s.cmp.n++;
+      s.cmp.mid += (mid - p.mid) ** 2;
+      s.cmp.wm += (mid - p.wm) ** 2;
+      s.cmp.mp += (mid - p.mp) ** 2;
+    }
   }
   if (s.pending.length < 500) {
     s.pending.push({
@@ -263,17 +273,19 @@ async function push() {
   // depend on anyone's fee tier.
   const scores = [...state.entries()].map(([sym, st]) => {
     const rmse = (sse, n) => (n > 0 ? Math.sqrt(sse / n) / st.tick : null);
+    // Like-for-like once a model exists; the all-sample figures until then.
+    const c = st.cmp.n > 0;
     return {
-      symbol: sym, n: st.score.n, horizonMs: HORIZON_MS,
-      midTicks: rmse(st.score.mid, st.score.n),
-      weightedTicks: rmse(st.score.wm, st.score.n),
-      microTicks: rmse(st.score.mp, st.score.mpN),
+      symbol: sym, n: c ? st.cmp.n : st.score.n, horizonMs: HORIZON_MS,
+      midTicks: c ? rmse(st.cmp.mid, st.cmp.n) : rmse(st.score.mid, st.score.n),
+      weightedTicks: c ? rmse(st.cmp.wm, st.cmp.n) : rmse(st.score.wm, st.score.n),
+      microTicks: c ? rmse(st.cmp.mp, st.cmp.n) : null,
       modelCoverage: st.model?.coverage ?? 0,
     };
   });
   for (const sc of scores) {
     if (sc.n > 200) {
-      console.log(`[${sc.symbol}] forecast RMSE over ${(HORIZON_MS / 1000)}s (${sc.n} samples): `
+      console.log(`[${sc.symbol}] forecast RMSE over ${(HORIZON_MS / 1000)}s (${sc.n} common samples): `
         + `mid ${sc.midTicks?.toFixed(3)} | weighted ${sc.weightedTicks?.toFixed(3)} `
         + `| micro ${sc.microTicks == null ? "n/a" : sc.microTicks.toFixed(3)} ticks`);
     }
@@ -306,7 +318,7 @@ async function main() {
     const tick = await tickSize(sym);
     if (!tick) { console.error(`[${sym}] no tick size — skipping`); continue; }
     state.set(sym, { book: null, obs: [], model: null, tick, sinceFit: 0,
-      pending: [], score: { n: 0, mid: 0, wm: 0, mp: 0, mpN: 0 } });
+      pending: [], score: { n: 0, mid: 0, wm: 0 }, cmp: { n: 0, mid: 0, wm: 0, mp: 0 } });
     connect(sym);
     console.log(`[${sym}] tick ${tick} — connected`);
   }
