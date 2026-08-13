@@ -15,7 +15,7 @@
 // cannot tell us about an order-book signal.
 
 import {
-  collectTransitions, fitMicroprice, microprice, weightedMid, imbalance,
+  collectTransitions, fitMicroprice, microprice, weightedMid, imbalance, suggestGrid,
 } from "../src/lib/microprice.js";
 import {
   openPosition, closePosition, bracketExit, judgeArena, ARENA_RULES,
@@ -225,15 +225,20 @@ function sample(symbol) {
   s.sinceFit++;
   if (s.obs.length >= MIN_SAMPLES && s.sinceFit >= REFIT_EVERY) {
     s.sinceFit = 0;
-    const counts = collectTransitions(s.obs, s.tick, { imbBuckets: 8, maxSpreadTicks: 3 });
+    // The grid is read from the market rather than fixed. A fixed 8x3 grid ran
+    // for hours declining every refit: BTCUSDT quotes a one-tick spread 99% of
+    // the time, so two thirds of the states could never fill and coverage never
+    // reached the bar. The estimator was not wrong, it was never built.
+    const grid = suggestGrid(s.obs, s.tick);
+    const counts = collectTransitions(s.obs, s.tick, grid);
     const m = fitMicroprice(counts);
     if (m) {
       s.model = m;
       s.fittedAt = Date.now();
-      console.log(`[${symbol}] refit: coverage ${(m.coverage * 100).toFixed(0)}%, `
+      console.log(`[${symbol}] refit: grid ${grid.imbBuckets}x${grid.maxSpreadTicks}, coverage ${(m.coverage * 100).toFixed(0)}%, `
         + `adj ${m.adj.map((a) => (a / s.tick).toFixed(1)).join("/")} ticks`);
     } else {
-      console.log(`[${symbol}] refit declined (not enough coverage) — still on the weighted mid`);
+      console.log(`[${symbol}] refit declined at grid ${grid.imbBuckets}x${grid.maxSpreadTicks} (spread shares ${grid.spreadShares.map((x) => (x * 100).toFixed(0) + "%").join("/")}) — still on the weighted mid`);
     }
   }
 }

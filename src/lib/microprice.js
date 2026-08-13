@@ -245,3 +245,52 @@ export function microprice(book, model) {
   }
   return { price: mid + adj, source: "microprice", adj, state: s };
 }
+
+/**
+ * Pick a state grid that the market can actually fill.
+ *
+ * This exists because a fixed grid silently disabled the estimator in
+ * production. The arena ran with 8 imbalance buckets × 3 spread levels = 24
+ * states, on a market where **99% of observations have a one-tick spread**: two
+ * thirds of the grid could never be populated, coverage sat at 33%, and the fit
+ * was declined on every single refit for hours. The model was never wrong — it
+ * was never built.
+ *
+ * The spread depth is therefore read from the data: keep only the levels that
+ * actually occur often enough to estimate, and if the market quotes a constant
+ * one-tick spread, the spread dimension carries no information and the grid is
+ * one deep. The imbalance resolution is then chosen so each state has a
+ * reasonable expected share of the sample.
+ *
+ * @returns {{ imbBuckets, maxSpreadTicks, spreadShares }}
+ */
+export function suggestGrid(obs, tick, { minShare = 0.05, maxImb = 10, minPerState = 20 } = {}) {
+  const counts = new Map();
+  let usable = 0;
+  for (const o of obs || []) {
+    if (!(o?.ask > o?.bid) || !(tick > 0)) continue;
+    const s = Math.round((o.ask - o.bid) / tick);
+    if (s < 1) continue;
+    counts.set(s, (counts.get(s) || 0) + 1);
+    usable++;
+  }
+  if (!usable) return { imbBuckets: 4, maxSpreadTicks: 1, spreadShares: [] };
+
+  // Contiguous from 1 — the model indexes spread levels 1..N, so a gap in the
+  // middle would reintroduce exactly the dead states this is meant to avoid.
+  let maxSpreadTicks = 0;
+  for (let s = 1; s <= 8; s++) {
+    if ((counts.get(s) || 0) / usable >= minShare) maxSpreadTicks = s;
+    else break;
+  }
+  maxSpreadTicks = Math.max(1, maxSpreadTicks);
+
+  // Enough imbalance resolution to be useful, few enough that each state has a
+  // hope of clearing the per-state minimum.
+  const affordable = Math.floor(usable / (minPerState * 4 * maxSpreadTicks));
+  const imbBuckets = Math.max(3, Math.min(maxImb, affordable));
+
+  const spreadShares = [];
+  for (let s = 1; s <= maxSpreadTicks; s++) spreadShares.push((counts.get(s) || 0) / usable);
+  return { imbBuckets, maxSpreadTicks, spreadShares };
+}
