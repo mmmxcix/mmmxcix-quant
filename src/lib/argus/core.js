@@ -515,3 +515,67 @@ export function breakEvenStudy(closed, { trigger = 0.5 } = {}) {
     sumBefore, sumAfter, delta: sumAfter - sumBefore,
   };
 }
+
+// ── recency-weighted statistics ─────────────────────────────────────────────
+// The learning loop weights the whole past equally, which the walk-forward
+// harness caught immediately: a setup that wins sixty trades and then loses
+// sixty straight full-stops still reads +0.1R and is never switched off.
+// Markets change; a lesson from months ago should not carry the weight of
+// yesterday's.
+//
+// Exponential decay with a HALF-LIFE — the age at which a trade counts half as
+// much. The sample-size gates then have to be re-expressed, because a thousand
+// heavily-discounted trades are not a thousand trades: `n` becomes Kish's
+// EFFECTIVE sample size, (Σw)² / Σw², which is the standard correction and is
+// what stops a long, stale history from looking like strong evidence.
+
+/** Decay weight of a trade at `now`, given a half-life in ms. 0 or Infinity
+ *  half-life means no decay at all — the old behaviour, exactly. */
+export function decayWeight(trade, now, halfLifeMs) {
+  if (!(halfLifeMs > 0) || !Number.isFinite(halfLifeMs)) return 1;
+  const at = trade?.exitAt ?? trade?.openedAt;
+  if (!Number.isFinite(at)) return 1;
+  const age = Math.max(0, now - at);
+  return Math.pow(0.5, age / halfLifeMs);
+}
+
+/**
+ * `ledgerStats`, with each trade weighted by how recent it is.
+ * Returns the same shape, so every caller keeps working; with no half-life it
+ * returns the unweighted numbers to the last decimal.
+ */
+export function weightedLedgerStats(closed, { halfLifeMs = 0, now = Date.now() } = {}) {
+  const n = closed.length;
+  if (!n) return ledgerStats(closed);
+  if (!(halfLifeMs > 0)) return ledgerStats(closed);
+
+  const w = closed.map((c) => decayWeight(c, now, halfLifeMs));
+  const sumW = w.reduce((a, b) => a + b, 0);
+  if (!(sumW > 0)) return ledgerStats(closed);
+  const sumW2 = w.reduce((a, b) => a + b * b, 0);
+  // Kish's effective sample size. Equal weights give back exactly n.
+  const nEff = (sumW * sumW) / sumW2;
+
+  const rs = closed.map((c) => tradeR(c));
+  const avgR = rs.reduce((a, r, i) => a + r * w[i], 0) / sumW;
+  const wins = closed.reduce((a, c, i) => a + (c.pnl > 0 ? w[i] : 0), 0);
+  const pnl = closed.reduce((a, c) => a + c.pnl, 0);   // money is money — never discounted
+  const varR = nEff > 1
+    ? rs.reduce((a, r, i) => a + w[i] * (r - avgR) ** 2, 0) / sumW * (nEff / (nEff - 1))
+    : 0;
+  const sdR = Math.sqrt(varR);
+  const SD_FLOOR = 0.6;
+  const se = nEff > 1 ? Math.max(sdR, SD_FLOOR) / Math.sqrt(nEff) : 0;
+  return {
+    n: nEff,
+    rawN: n,
+    wins: wins,
+    winRate: wins / sumW,
+    pnl,
+    sumR: avgR * nEff,
+    avgR,
+    expectancy: avgR,
+    sdR,
+    tStat: se > 0 ? avgR / se : 0,
+  };
+}

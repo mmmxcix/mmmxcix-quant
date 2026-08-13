@@ -41,7 +41,7 @@ export function contextOf(t) {
  *                 deriving is the expensive part and the lessons barely move
  *                 between adjacent trades.
  */
-export function walkForward(closed, { warmup = 20, minSample = 20, step = 1 } = {}) {
+export function walkForward(closed, { warmup = 20, minSample = 20, step = 1, halfLifeMs = 0 } = {}) {
   const led = (closed || [])
     .filter((t) => t && t.state === "closed" && Number.isFinite(t.openedAt))
     .sort((a, b) => a.openedAt - b.openedAt);
@@ -58,7 +58,9 @@ export function walkForward(closed, { warmup = 20, minSample = 20, step = 1 } = 
     // not knowable yet.
     if (i === warmup || i % step === 0) {
       const past = led.slice(0, i).filter((p) => (p.exitAt ?? p.openedAt) <= t.openedAt);
-      lessons = deriveLessons(past);
+      // `now` is the judged trade's open, so decay is measured from the moment
+      // the decision was made rather than from today.
+      lessons = deriveLessons(past, { halfLifeMs, now: t.openedAt });
     }
     const a = adjustment(lessons, contextOf(t), { minSample });
     (a.skip ? refused : kept).push(t);

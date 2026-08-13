@@ -56,6 +56,13 @@ const LEARN_MIN = +(process.env.LAB_ARGUS_LEARN_MIN || 20);
 // 0 on either disables it.
 const MAX_CONCURRENT = +(process.env.LAB_ARGUS_MAX_CONCURRENT ?? DEFAULT_MAX_CONCURRENT);
 const MAX_PER_DAY = +(process.env.LAB_ARGUS_MAX_PER_DAY ?? DEFAULT_MAX_PER_DAY);
+// Recency weighting for the learning loop, in hours. OFF by default and that is
+// a measured choice, not an oversight: swept against the live ledger, every
+// half-life of 2 days or more produced an identical result because the whole
+// book spans 1.6 days, and the only ones that changed anything were SHORTER
+// than the data and did worse (12h → 0.022R edge vs 0.070R with no decay).
+// Re-run scripts/argus-halflife.mjs once the ledger spans several weeks.
+const HALF_LIFE_MS = +(process.env.LAB_ARGUS_HALFLIFE_H || 0) * 3600_000;
 
 // How much of its own candidate flow the learning loop is currently REFUSING.
 // This is the instrument that says whether learning is tuning the book or
@@ -681,7 +688,7 @@ async function cycle(fullScan) {
       await runReflections();
       const reviewed = await processInvalReviews(); // judge due invalidated exits (12h/24h) → learn
       for (const rec of reviewed) ledgerAdd.push(rec); // re-persist the annotated ledger records
-      lessons = deriveLessons(closedAll, { minSample: LEARN_MIN });
+      lessons = deriveLessons(closedAll, { minSample: LEARN_MIN, halfLifeMs: HALF_LIFE_MS });
     }
 
     // On the fast loop, only touch instruments with an open thesis or a forming
@@ -804,7 +811,7 @@ async function hydrate() {
     if (Array.isArray(j.theses)) open = j.theses;
     if (Array.isArray(j.ledger)) { // learn from the full closed ledger on startup
       closedAll = j.ledger.slice(-600);
-      lessons = deriveLessons(closedAll, { minSample: LEARN_MIN });
+      lessons = deriveLessons(closedAll, { minSample: LEARN_MIN, halfLifeMs: HALF_LIFE_MS });
     }
     if (Array.isArray(j.journal)) journal = j.journal.slice(0, 300);
     if (Array.isArray(j.skills)) skills = j.skills;
@@ -843,7 +850,7 @@ async function doReset(source) {
   open = []; forming = []; closedAll = []; closedToday = []; reflectQueue = [];
   invalReviews = []; // pending retrospections reference the wiped book — drop them (invalStats KEPT: learned)
   forceClose = new Set(); forceCloseReason = new Map();
-  lessons = deriveLessons(closedAll, { minSample: LEARN_MIN });
+  lessons = deriveLessons(closedAll, { minSample: LEARN_MIN, halfLifeMs: HALF_LIFE_MS });
   eventBias = new Map();
   console.log(`[${new Date().toISOString()}] RESET (${source}) → ${EQUITY0}: cleared ${b.j} journal + book + ledger, kept ${retainedSkills.length} skills`);
   await persist([], { dailyPnl: 0, halted: false }); // reset state + theses:[] + empty journal + retained skills

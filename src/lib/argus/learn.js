@@ -10,7 +10,7 @@
 //     lever; learning must never destabilise the agent.
 //   • Skip (drop a setup entirely) is reserved for egregiously negative, well-
 //     sampled buckets — rare by construction.
-import { ledgerStats } from "./core.js";
+import { ledgerStats, weightedLedgerStats } from "./core.js";
 
 // ── tunables (all conservative) ─────────────────────────────────────────────
 const STRONG_EXPECTANCY = 0.20;    // ≥ this R/trade over the bucket → strong-positive
@@ -158,8 +158,8 @@ function describeDims(d) {
   return parts.join(" ");
 }
 
-function makeLesson(dims, items) {
-  const s = ledgerStats(items);
+function makeLesson(dims, items, wopts) {
+  const s = wopts?.halfLifeMs > 0 ? weightedLedgerStats(items, wopts) : ledgerStats(items);
   // Count only invalidations the retrospective review did NOT rule premature — a
   // cut that would have reached target is a fault of the (old) invalidation, not
   // evidence the setup is bad. Unreviewed invalidations still count (innocent until
@@ -188,7 +188,13 @@ function makeLesson(dims, items) {
  * neutral / losing, sorted strongest-and-most-evidenced first (neutrals last).
  * @returns {Array<{dims,verdict,action,n,wins,winRate,avgR,expectancy,pnl,text}>}
  */
-export function deriveLessons(closed, { minSample = SKIP_EVIDENCE_MIN_N, max = 50 } = {}) {
+export function deriveLessons(closed, { minSample = SKIP_EVIDENCE_MIN_N, max = 50, halfLifeMs = 0, now } = {}) {
+  // `now` defaults to the newest trade rather than the wall clock, so replaying a
+  // historical ledger decays relative to when it happened instead of discounting
+  // the whole thing to nothing.
+  const at = Number.isFinite(now) ? now
+    : (closed || []).reduce((a, c) => Math.max(a, c?.exitAt ?? c?.openedAt ?? 0), 0) || Date.now();
+  const wopts = { halfLifeMs, now: at };
   const list = Array.isArray(closed) ? closed : [];
   const lessons = [];
   for (const view of VIEWS) {
@@ -205,7 +211,7 @@ export function deriveLessons(closed, { minSample = SKIP_EVIDENCE_MIN_N, max = 5
       // bookShare feeds the anti-freeze guard in `adjustment`: a bucket that
       // covers most of the closed book must never be allowed to skip, however
       // convincing its numbers, or the agent learns to stop trading entirely.
-      const lesson = makeLesson(dims, items);
+      const lesson = makeLesson(dims, items, wopts);
       lesson.bookShare = list.length ? items.length / list.length : 0;
       lessons.push(lesson);
     }
