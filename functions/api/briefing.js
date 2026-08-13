@@ -28,14 +28,14 @@ const TTL_MS = 2 * 60 * 60 * 1000; // 2h — matches bias.js; news/fundamentals 
 // while the key still read as "present"). Order = best first.
 const GROQ_MODELS = ["openai/gpt-oss-120b", "openai/gpt-oss-20b"];
 const GEMINI_MODELS = ["gemini-flash-latest", "gemini-2.5-flash", "gemini-flash-lite-latest"];
-const MAX_TOKENS = 2200;
+const MAX_TOKENS = 4000; // denser per-symbol writeups (see SYSTEM) need more room, esp. with 12 symbols in one call
 
 const MAX_SYMBOLS_REQUEST = 40;   // defensive cap on the incoming list (candidate matching is cheap)
 const MAX_SYMBOLS_ENRICHED = 12;  // only this many get an LLM/fundamentals pass per call (cost control)
 const MAX_CANDIDATES_PER_SYMBOL = 6;
 const MAX_GENERAL_POOL = 30;
 const MAX_STORIES = 8;
-const DESC_TRIM = 120;
+const DESC_TRIM = 200;
 
 function json(body, status = 200, maxAge = 0) {
   return new Response(JSON.stringify(body), {
@@ -52,7 +52,9 @@ Two tasks, STRICT JSON ONLY, no prose outside the JSON:
 
 1. MARKET PULSE + TOP STORIES (only if a general headline pool is given below): write one short paragraph (2-3 sentences) on what's actually moving markets right now. Then pick up to ${MAX_STORIES} of the most significant general items by their given index and write a 2-3 sentence synthesis of each — what happened, why it matters, what to watch next. Quality over quantity; skip items that aren't actually significant.
 
-2. PER-SYMBOL READ (for EVERY symbol listed below, whether or not it has candidate headlines): first, of that symbol's own candidates (if any), return the indices of ones genuinely ABOUT that specific company/asset — drop anything where the match looks incidental (e.g. a "top picks" roundup that merely mentions the ticker isn't about it). Then ALWAYS give a one-sentence grounded "why" for the symbol: if genuine confirmed headlines exist, ground it there (the real drivers — sector dynamics, an earnings result, a specific event, never generic filler like "strong fundamentals"); if none were confirmed, DO NOT go silent — instead ground it in the fundamentals given (sector, analyst rating/target, next earnings) framed honestly as a quiet-day status, e.g. "No major headlines today; trades in the semiconductor sector with a Buy rating and a mean target above the current price." Set "newsBased" true only when the why comes from a confirmed headline, false when it's fundamentals-only. Also give a directional "stance" lean if the evidence actually supports one (default "neutral" otherwise), and one short forward-looking "expectation" (an upcoming earnings date or analyst target IF given, otherwise a realistic near-term thing to watch). Never invent a specific date, price, or number you were not given. Only use why:null and newsBased:false if you were given NEITHER candidates NOR fundamentals for that symbol — there is truly nothing to say.
+2. PER-SYMBOL READ (for EVERY symbol listed below, whether or not it has candidate headlines): first, of that symbol's own candidates (if any), return the indices of ones genuinely ABOUT that specific company/asset — drop anything where the match looks incidental (e.g. a "top picks" roundup that merely mentions the ticker isn't about it). Then ALWAYS give a DENSE "why" for the symbol — aim for 3-5 sentences, not one, and pack in EVERY concrete fact actually present in the confirmed headlines or fundamentals: dollar amounts, percentages, named executives or counterparties, deal structure, and any specific date or timeline a headline genuinely states (an expected closing quarter, a shareholder-vote date, an earnings date, what a funding round is for). If none were confirmed, DO NOT go silent — instead ground it in the fundamentals given (sector, analyst rating/target, next earnings) framed honestly as a quiet-day status. Set "newsBased" true only when the why is grounded in confirmed headlines, false when it's fundamentals-only. Also give a directional "stance" lean if the evidence actually supports one (default "neutral" otherwise), and a forward-looking "expectation" — an upcoming earnings date or analyst target IF given, or a specific near-term catalyst/timeline IF a headline states one, otherwise a realistic general thing to watch.
+
+CRITICAL — the extra detail must come ONLY from facts actually present in the evidence given. Never invent a date, price, percentage, executive name, or any other specific you were not given, even to fill a natural-sounding gap (e.g. when will an acquisition close, what a target price "should" be). When the evidence doesn't specify something like that, SAY SO explicitly ("no confirmed closing date yet") — a stated gap is honest, a plausible-sounding guess is not, especially on a tool that is NOT investment advice.
 
 Ground everything in the SPECIFIC evidence provided — no hallucinated facts, no generic platitudes.
 
@@ -361,9 +363,9 @@ export async function onRequest({ request, env }) {
         const stance = ["long", "short", "neutral"].includes(sym.stance) ? sym.stance : "neutral";
         const symRow = {
           name: b.name, relevantHeadlines, stance,
-          why: sym.why ? trim(sym.why, 300) : null,
+          why: sym.why ? trim(sym.why, 700) : null,
           newsBased: !!sym.newsBased,
-          expectation: sym.expectation ? trim(sym.expectation, 200) : null,
+          expectation: sym.expectation ? trim(sym.expectation, 280) : null,
           enriched: true, at: now,
         };
         try { await write(`briefing:sym:${b.ticker}`, symRow); } catch { /* best-effort */ }
