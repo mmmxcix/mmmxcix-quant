@@ -313,6 +313,59 @@ export function updatePosition(id, patch) {
 /** True when the position is closed (has a realized sale). */
 export const isClosed = (p) => p?.sellPrice != null && p.sellPrice > 0;
 
+/**
+ * Sell PART of a position (or all of it).
+ *
+ * Implemented by SPLITTING the lot rather than by storing a list of sales on the
+ * position: the sold shares become their own closed lot at the sale price,
+ * carrying the original cost basis and buy date, and the open position keeps the
+ * remainder. That choice is what keeps everything else correct for free —
+ * `cashUSD` already sums `shares × sellPrice` over closed lots, the equity graph
+ * already freezes closed lots at their proceeds, and the history reads the way a
+ * broker statement does, one realised lot per sale. A `sells[]` array on the
+ * position would have needed all three of those reworked and a migration.
+ *
+ * Selling the whole quantity closes the position in place instead of splitting,
+ * so the existing full-close path and its ids are untouched.
+ *
+ * @returns the new portfolio array; unchanged if the sale is not valid.
+ */
+export function sellShares(id, { shares, price, date } = {}) {
+  const list = getPortfolio();
+  const pos = list.find((p) => p.id === id);
+  if (!pos || isClosed(pos)) return list;
+
+  const qty = toNum(shares);
+  const px = toNum(price);
+  const held = toNum(pos.shares);
+  if (!(qty > 0) || !(px > 0) || !(held > 0)) return list;
+  // Guard against floating-point dust: 0.1 + 0.2 held, 0.3 sold must count as
+  // "all of it" rather than leaving a 5e-17 share position behind forever.
+  const EPS = 1e-9;
+  if (qty > held + EPS) return list;
+
+  const when = toDateMs(date) ?? Date.now();
+  if (qty >= held - EPS) {
+    return updatePosition(id, { sellPrice: px, sellDate: when });
+  }
+
+  const soldLot = {
+    ...pos,
+    id: genId(),
+    shares: qty,
+    sellPrice: px,
+    sellDate: when,
+    // The cost basis and buy date travel with the shares, so the realised P/L
+    // and the holding period of this lot stay true.
+    avgPrice: toNum(pos.avgPrice),
+    buyDate: pos.buyDate ?? pos.addedAt,
+  };
+  const next = list.map((p) => (p.id === id ? { ...p, shares: held - qty } : p));
+  next.push(soldLot);
+  writeArray(PORTFOLIO_KEY, next);
+  return next;
+}
+
 export function removePosition(id) {
   const next = getPortfolio().filter((p) => p.id !== id);
   writeArray(PORTFOLIO_KEY, next);

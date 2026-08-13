@@ -9,6 +9,7 @@ import {
   getPortfolio,
   addPosition,
   updatePosition,
+  sellShares,
   removePosition,
   subscribe,
   isClosed,
@@ -107,6 +108,7 @@ export default function Portfolio() {
   const [sellId, setSellId] = useState(null);
   const [sellPrice, setSellPrice] = useState("");
   const [sellDate, setSellDate] = useState(todayStr);
+  const [sellQty, setSellQty] = useState("");
 
   // IBKR import (read-only; only shown when the gateway feature is enabled)
   const [canIbkr] = useState(ibkrActive);
@@ -312,12 +314,19 @@ export default function Portfolio() {
     setSellId(r.id);
     setSellPrice(r.price != null ? String(r.price) : "");
     setSellDate(todayStr());
+    setSellQty(String(r.shares));   // default to the whole lot — the old behaviour
   };
 
-  const confirmSell = (id) => {
-    const sp = Number(String(sellPrice).replace(",", "."));
+  const num = (v) => Number(String(v).replace(",", "."));
+
+  const confirmSell = (id, held) => {
+    const sp = num(sellPrice);
+    const qty = num(sellQty);
     if (!Number.isFinite(sp) || sp <= 0) return;
-    updatePosition(id, { sellPrice: sp, sellDate });
+    if (!Number.isFinite(qty) || qty <= 0 || qty > held + 1e-9) return;
+    // sellShares splits the lot for a partial sale and closes it outright for a
+    // full one, so the existing full-close path is unchanged.
+    sellShares(id, { shares: qty, price: sp, date: sellDate });
     setSellId(null);
   };
 
@@ -831,8 +840,30 @@ export default function Portfolio() {
                         <td colSpan={8} className="px-4 py-3">
                           <div className="flex flex-wrap items-end gap-3">
                             <span className="text-xs text-dim self-center">
-                              Sell <span className="font-mono font-semibold text-text">{r.symbol}</span> — realized P/L is locked in and the position leaves the live book:
+                              Sell <span className="font-mono font-semibold text-text">{r.symbol}</span> — realized P/L is locked in on the shares you sell:
                             </span>
+                            <label className="text-xs text-dim">
+                              Shares
+                              <span className="text-dim"> of {fmtNum(r.shares, 4)}</span>
+                              <input
+                                type="number"
+                                min={0}
+                                max={r.shares}
+                                step="any"
+                                value={sellQty}
+                                onChange={(e) => setSellQty(e.target.value)}
+                                className="input-base w-28 mt-1 font-mono block"
+                              />
+                            </label>
+                            <div className="flex gap-1 self-end pb-1">
+                              {[0.25, 0.5, 1].map((f) => (
+                                <button key={f} type="button"
+                                  onClick={() => setSellQty(String(+(r.shares * f).toFixed(8)))}
+                                  className="chip chip-idle text-[11px]">
+                                  {f === 1 ? "All" : `${f * 100}%`}
+                                </button>
+                              ))}
+                            </div>
                             <label className="text-xs text-dim">
                               Sell price
                               <input
@@ -857,20 +888,29 @@ export default function Portfolio() {
                               />
                             </label>
                             <button
-                              onClick={() => confirmSell(r.id)}
-                              disabled={!(Number(String(sellPrice).replace(",", ".")) > 0)}
+                              onClick={() => confirmSell(r.id, r.shares)}
+                              disabled={!(num(sellPrice) > 0) || !(num(sellQty) > 0) || num(sellQty) > r.shares + 1e-9}
                               className="btn-accent flex items-center gap-1.5 disabled:opacity-40"
                             >
-                              <Check className="w-4 h-4" /> Confirm sale
+                              <Check className="w-4 h-4" />
+                              {num(sellQty) > 0 && num(sellQty) < r.shares ? "Sell part" : "Confirm sale"}
                             </button>
                             <button onClick={() => setSellId(null)} className="chip chip-idle">
                               Cancel
                             </button>
-                            {Number(String(sellPrice).replace(",", ".")) > 0 && (
-                              <span className={cn("text-xs font-mono self-center", upDown(r.shares * (Number(String(sellPrice).replace(",", ".")) - r.avgPrice)))}>
-                                realized: {(() => { const v = r.shares * (Number(String(sellPrice).replace(",", ".")) - r.avgPrice); return (v >= 0 ? "+" : "") + fmtNum(v, 2); })()}
-                              </span>
-                            )}
+                            {num(sellPrice) > 0 && num(sellQty) > 0 && (() => {
+                              const qty = Math.min(num(sellQty), r.shares);
+                              const v = qty * (num(sellPrice) - r.avgPrice);
+                              const left = r.shares - qty;
+                              return (
+                                <span className="text-xs font-mono self-center">
+                                  <span className={upDown(v)}>realized: {(v >= 0 ? "+" : "") + fmtNum(v, 2)}</span>
+                                  {left > 1e-9 && (
+                                    <span className="text-dim"> · {fmtNum(left, 4)} shares stay open</span>
+                                  )}
+                                </span>
+                              );
+                            })()}
                           </div>
                         </td>
                       </tr>
