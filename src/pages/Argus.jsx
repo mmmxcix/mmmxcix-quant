@@ -210,6 +210,9 @@ export default function Argus() {
             can add up to "trade nothing" without any one of them tripping it. A
             high number here means the entries have no edge to allocate — which is
             not something learning can fix. */}
+        <Stat label="Pace" value={state?.pace ? `${state.pace.open}/${state.pace.maxConcurrent} open` : "–"}
+          sub={state?.pace ? `${state.pace.openedToday}/${state.pace.maxPerDay} trades today` : "concurrency + daily budget"}
+          tone={state?.pace?.blocked ? "text-warn" : "text-text"} />
         <Stat label="Learning gate" value={state?.learnConsidered ? `${(state.learnRefusedPct ?? 0).toFixed(0)}% refused` : "–"}
           sub={state?.learnConsidered ? `of ${state.learnConsidered} setups considered` : "no setups considered yet"}
           tone={(state?.learnRefusedPct ?? 0) > 60 ? "text-down" : (state?.learnRefusedPct ?? 0) > 35 ? "text-warn" : "text-text"} />

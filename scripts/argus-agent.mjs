@@ -11,6 +11,7 @@ import { buildBrief, diffBrief, renderBrief, parseFearGreed } from "../src/lib/a
 import { deriveLessons, adjustment, sessionOf } from "../src/lib/argus/learn.js";
 import { marketOpen } from "../src/lib/argus/hours.js";
 import { effectiveHeatCap } from "../src/lib/argus/correlation.js";
+import { canOpen, openedToday, paceStatus, DEFAULT_MAX_CONCURRENT, DEFAULT_MAX_PER_DAY } from "../src/lib/argus/pace.js";
 import { currentRegime } from "../src/lib/hmmRegime.js";
 import { buildReflectionMessages, parseReflection, crystallise, skillsFor, unionSkills } from "../src/lib/argus/reflect.js";
 import { wouldHaveHit, invalVerdict, isTerminal, invalPolicy } from "../src/lib/argus/review.js";
@@ -49,6 +50,12 @@ const EVENT_TTL = +(process.env.LAB_ARGUS_EVENT_TTL_MIN || 240) * 60_000; // bia
 // Hermes-style learning: buckets need at least this many closed trades before any
 // lesson is allowed to touch sizing (small samples lie). Tunable, conservative.
 const LEARN_MIN = +(process.env.LAB_ARGUS_LEARN_MIN || 20);
+// Pace. Risk sizing caps what is AT STAKE, not how often we act — a run of
+// tight-stop trades opens many small positions without ever touching the heat
+// cap, which is exactly what produced 95 trades in 1.6 days with 9 open at once.
+// 0 on either disables it.
+const MAX_CONCURRENT = +(process.env.LAB_ARGUS_MAX_CONCURRENT ?? DEFAULT_MAX_CONCURRENT);
+const MAX_PER_DAY = +(process.env.LAB_ARGUS_MAX_PER_DAY ?? DEFAULT_MAX_PER_DAY);
 
 // How much of its own candidate flow the learning loop is currently REFUSING.
 // This is the instrument that says whether learning is tuning the book or
@@ -452,6 +459,13 @@ function tryOpen(inst, setup, halted) {
     console.log(`[${new Date().toISOString()}] SKIP ${inst.symbol} ${setup.side} ${setup.kind} — thin volume (rvol ${setup.rvol.toFixed(2)} < ${RVOL_MIN})`);
     return;
   }
+  // Pace gate: checked LAST of the skip conditions, so the log still shows which
+  // setups were otherwise acceptable on a day the budget ran out.
+  const pace = canOpen(open.length, openedToday(ledger, open), { maxConcurrent: MAX_CONCURRENT, maxPerDay: MAX_PER_DAY });
+  if (!pace.ok) {
+    console.log(`[${new Date().toISOString()}] SKIP ${inst.symbol} ${setup.side} ${setup.kind} — pace: ${pace.reason}`);
+    return;
+  }
   const riskPct = BASE_RISK * adj.mult * vol.mult;
 
   // Conviction = technical setup quality, tilted by an ALIGNED bias (its parts, not
@@ -754,6 +768,7 @@ async function persist(ledgerAdd, extra) {
         portfolioLev: openNotional() / equity,  // Σ notional / equity (Bug 1 — true portfolio leverage)
         portfolioLevCap: PORTFOLIO_LEV_CAP,
         marginUsed: openMargin(), marginPct: openMargin() / equity,
+        pace: paceStatus(ledger, open, { maxConcurrent: MAX_CONCURRENT, maxPerDay: MAX_PER_DAY }),
         learnRefusedPct: learnGate.considered ? learnGate.refused / learnGate.considered * 100 : 0,
         learnConsidered: learnGate.considered,
         dayPnl: extra.dailyPnl,                 // realized today
