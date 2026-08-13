@@ -27,7 +27,17 @@ const SKIP_EXPECTANCY = -0.8, SKIP_WINRATE = 0.28; // only truly broken buckets 
 // large. So a bucket may also skip when its mean R is negative with real
 // statistical confidence (t ≤ −2, ~95% one-sided) over a decent sample.
 const SKIP_T_STAT = -2.0;      // one-sided ~95% confidence that expectancy < 0
-const SKIP_EVIDENCE_MIN_N = 25; // …over at least this many trades
+// …over at least this many trades. Was 25, and that number was set for the
+// breakout case — a setup that bled slowly over dozens of trades. It is blind to
+// the opposite shape, which the live ledger then produced: `orb` lost 9 out of 9
+// and `vwap-band` 4 out of 4, both at −0.96R, together 67% of the account's
+// entire loss out of 13 trades, and neither could ever be switched off because
+// neither would reach 25. A run of straight full-stop losses is not a small
+// sample that "might" be bad, it is the strongest evidence this system produces.
+// 8 is where the false-positive risk becomes acceptable: a genuinely break-even
+// setup (35% wins at 1.86:1) loses 8 in a row about 3% of the time, and that is
+// the price of not letting a broken one run indefinitely.
+const SKIP_EVIDENCE_MIN_N = 8;
 // The guard the 2-dimension rule was really reaching for: never disable so much
 // of the book that the agent stops trading. A skip is refused if the bucket
 // covers more than this share of all closed trades.
@@ -168,7 +178,7 @@ function makeLesson(dims, items) {
  * neutral / losing, sorted strongest-and-most-evidenced first (neutrals last).
  * @returns {Array<{dims,verdict,action,n,wins,winRate,avgR,expectancy,pnl,text}>}
  */
-export function deriveLessons(closed, { minSample = 20, max = 50 } = {}) {
+export function deriveLessons(closed, { minSample = SKIP_EVIDENCE_MIN_N, max = 50 } = {}) {
   const list = Array.isArray(closed) ? closed : [];
   const lessons = [];
   for (const view of VIEWS) {
@@ -226,9 +236,24 @@ export function adjustment(lessons, setup, opts = {}) {
   } = opts;
   let mult = 1, skip = false;
   const reasons = [];
+  // SIZING and SKIPPING ask different questions and therefore need different
+  // sample sizes. "How much smaller should this be?" is a fine-grained judgement
+  // that deserves a solid sample; "is this thing broken at all?" is answerable
+  // far sooner, and waiting for the sizing sample is what let a setup that had
+  // lost every single trade keep being taken.
   for (const l of lessons || []) {
-    if (!l || !l.dims || l.n < minSample) continue;
+    if (!l || !l.dims) continue;
     if (!matches(l.dims, setup)) continue;
+    if (l.n < Math.min(minSample, skipEvidenceMinN)) continue;
+    if (l.n < minSample) {
+      // Too thin to resize, but still eligible for the evidence-based skip below.
+      const provenLoserThin = (l.tStat ?? 0) <= skipTStat && l.n >= skipEvidenceMinN;
+      if (provenLoserThin && (l.bookShare ?? 0) <= skipMaxBookShare) {
+        skip = true;
+        reasons.push(`${describeDims(l.dims)}: ${l.n} trades at ${l.expectancy.toFixed(2)}R (t=${(l.tStat ?? 0).toFixed(1)}) — switched off`);
+      }
+      continue;
+    }
     if (l.action === "boost") {
       mult *= boost;
       reasons.push(l.text);

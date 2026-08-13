@@ -217,7 +217,22 @@ export function newId() {
  * Open a thesis from a validated setup: fills the entry, sizes it, computes the
  * cash risk. Returns null if there's no heat room (caller keeps it forming).
  */
-export function openThesis(setup, { equity, openRisk, openMargin = 0, openNotional = 0, asset, heatCap, baseRiskPct, maxTradeLev, portfolioLevCap, maxLeverage, conviction, minPlannedR = 0.8, now = Date.now() }) {
+// Minimum planned reward:risk for a trade to be taken at all.
+//
+// This was 0.8, and that is not a tuning choice — it is arithmetic that cannot
+// work. Risking 1 to make 0.8 needs a 55.6% win rate merely to break even, and
+// no discretionary intraday system reaches that; the live ledger ran at 28.7%
+// over 94 trades, with 13 trades taken at a planned RR below 1.0. At 1.5 the
+// break-even win rate is 40%, which is at least in reach of this style.
+//
+// The live ledger also says the loss would have fallen from −1,970 to −131 with
+// this gate. That number is NOT the reason for the change and should not be
+// trusted: it is 94 trades from 1.6 days, and the same sweep says 1.8 and 2.0
+// would have been WORSE than 1.5, which is how noise looks. The reason is the
+// arithmetic above; the backtest merely fails to contradict it.
+export const MIN_PLANNED_R = 1.5;
+
+export function openThesis(setup, { equity, openRisk, openMargin = 0, openNotional = 0, asset, heatCap, baseRiskPct, maxTradeLev, portfolioLevCap, maxLeverage, conviction, minPlannedR = MIN_PLANNED_R, now = Date.now() }) {
   // A LIMIT (retest) fill gets its price OR BETTER — never adverse slippage. Only a
   // MARKET entry pays the spread. (Applying slippage to a limit recorded a short
   // BELOW its own level — an entry "where the market wasn't".)
@@ -391,7 +406,15 @@ export function ledgerStats(closed) {
   // other way round.
   const varR = n > 1 ? rs.reduce((a, r) => a + (r - avgR) ** 2, 0) / (n - 1) : 0;
   const sdR = Math.sqrt(varR);
-  const se = n > 1 && sdR > 0 ? sdR / Math.sqrt(n) : 0;
+  // The standard error is FLOORED, and that is not a detail. R in a stop/target
+  // system clusters hard: a bucket where every trade stopped out has an observed
+  // spread of literally zero, so the raw t-statistic divides by floating-point
+  // dust. The live ledger showed XRPUSDT at t = −8.6e13 on four trades — a number
+  // that would let any two-trade bucket clear any confidence bar we set.
+  // Shrinking toward the dispersion such a system actually has (~0.6R) makes t
+  // mean what it claims at small samples instead of exploding.
+  const SD_FLOOR = 0.6;
+  const se = n > 1 ? Math.max(sdR, SD_FLOOR) / Math.sqrt(n) : 0;
   return {
     n, wins, winRate: wins / n, pnl, sumR,
     avgR,

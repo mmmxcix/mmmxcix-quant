@@ -40,19 +40,46 @@ test("the profitable setup is untouched", () => {
   assert.equal(a.skip, false);
 });
 
-test("a small sample yields no verdict at all", () => {
-  // 8 trades, every one a loser — uglier than the bleeder on the surface, but
-  // far too few to judge. Below minSample no lesson is even created, so the
-  // setup is neither skipped nor resized. This is what stops the agent from
-  // reacting to a bad afternoon.
-  const tiny = Array.from({ length: 8 }, (_, i) => trade("orb", -1, i));
-  const lessons = deriveLessons([...tiny, ...winner]); // default minSample = 20
-  assert.equal(lessons.some((l) => l.dims?.kind === "orb"), false, "no lesson below minSample");
+test("a run of straight losses IS enough to switch a setup off", () => {
+  // This test used to assert the opposite — that 8 losing trades were too few to
+  // judge — and the live ledger showed what that cost: `orb` lost 9 out of 9 and
+  // `vwap-band` 4 out of 4, together 67% of the account's entire loss out of 13
+  // trades, and neither could ever be stopped because neither would reach the old
+  // 25-trade bar. Sizing still needs a big sample; deciding a thing is broken
+  // does not.
+  const straight = Array.from({ length: 9 }, (_, i) => trade("orb", -1, i));
+  const lessons = deriveLessons([...straight, ...winner]);
+  const les = lessons.find((l) => JSON.stringify(l.dims) === '{"kind":"orb"}');
+  assert.ok(les, "a 9-trade bucket must now produce a lesson");
+  assert.ok(les.tStat <= -2, `t=${les.tStat?.toFixed(2)} should be decisive, and finite`);
+  assert.ok(Number.isFinite(les.tStat), "…not the infinity a zero-variance bucket used to give");
   const a = adjustment(lessons, { kind: "orb", symbol: "BTCUSDT", side: "long" });
-  assert.equal(a.skip, false, "8 trades must not be enough to kill a setup");
-  // NOTE: a.mult may still move — broad lessons on {symbol} / {side} legitimately
-  // apply to this setup. What must never happen is the SETUP ITSELF being judged
-  // on 8 trades.
+  assert.equal(a.skip, true, "9 straight full-stop losses must switch the setup off");
+});
+
+test("a handful of trades still cannot switch anything off", () => {
+  // The other side of the same bar: 4 trades is genuinely too few, however ugly.
+  const few = Array.from({ length: 4 }, (_, i) => trade("vwap-band", -1, i));
+  const lessons = deriveLessons([...few, ...winner]);
+  const a = adjustment(lessons, { kind: "vwap-band", symbol: "BTCUSDT", side: "long" });
+  assert.equal(a.skip, false, "4 trades must not be enough to kill a setup");
+});
+
+test("a thin losing bucket does not move SIZE, only the skip decision", () => {
+  // Sizing asks "how much smaller", which deserves a solid sample; skip asks "is
+  // this broken at all", which is answerable sooner. A 9-trade bucket that is not
+  // decisive enough to skip must leave the multiplier alone rather than nudging it
+  // on nine trades' worth of noise.
+  const mild = Array.from({ length: 9 }, (_, i) => trade("ifvg", i % 3 === 0 ? 1.0 : -0.5, i));
+  const lessons = deriveLessons([...mild, ...winner]);
+  const a = adjustment(lessons, { kind: "ifvg", symbol: "BTCUSDT", side: "long" });
+  assert.equal(a.skip, false);
+  const own = lessons.find((l) => JSON.stringify(l.dims) === '{"kind":"ifvg"}');
+  assert.ok(own && own.n < 20, "the bucket is below the sizing sample");
+  // Broad lessons on {symbol}/{side} may still move mult — what must not happen is
+  // this 9-trade bucket doing it.
+  const withoutThin = adjustment(lessons.filter((l) => l !== own), { kind: "ifvg", symbol: "BTCUSDT", side: "long" });
+  assert.equal(a.mult, withoutThin.mult, "the thin bucket contributed nothing to sizing");
 });
 
 test("ANTI-FREEZE: a bucket covering most of the book can never skip", () => {

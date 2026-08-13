@@ -2,7 +2,7 @@
 // logic, run with `npm test`.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { sizePosition, fillPrice, openThesis, evaluateExit, ledgerStats, tradeR, closeThesisAt, chooseLeverage, liquidationPrice, plannedRR, enforceMinStop } from "../src/lib/argus/core.js";
+import { sizePosition, fillPrice, openThesis, evaluateExit, ledgerStats, tradeR, closeThesisAt, chooseLeverage, liquidationPrice, plannedRR, enforceMinStop , MIN_PLANNED_R } from "../src/lib/argus/core.js";
 import { breakout, meanReversion, scan, fvg, inverseFvg, openingRange, liquiditySweep, SCANNERS } from "../src/lib/argus/scanners.js";
 
 const bar = (o, h, l, c, v = 1000, t = 0) => ({ time: t, open: o, high: h, low: l, close: c, volume: v });
@@ -103,12 +103,39 @@ test("fill price moves against the trader on entry and exit", () => {
 test("a LIMIT (retest) fill takes the limit price, not adverse slippage", () => {
   // Market short: entry slips BELOW the level (sells lower). A limit short must fill
   // AT the level — otherwise the entry is drawn where the market never traded.
-  const mkt = openThesis({ symbol: "BNBUSDT", market: "crypto", side: "short", kind: "breakout", timeframe: "15m", entry: 588.02, stop: 590.5, target: 583.85, reason: "x" },
-    { equity: 10000, openRisk: 0, asset: "crypto", heatCap: 0.10, baseRiskPct: 0.02 });
-  const lim = openThesis({ symbol: "BNBUSDT", market: "crypto", side: "short", kind: "breakout", timeframe: "15m", entry: 588.02, stop: 590.5, target: 583.85, reason: "x", limitFill: true },
-    { equity: 10000, openRisk: 0, asset: "crypto", heatCap: 0.10, baseRiskPct: 0.02 });
+  // The target is deliberately generous: this test is about the FILL PRICE, and a
+  // fixture sitting near the reward:risk floor would fail for the other reason (see
+  // the next test) and hide whatever this one was meant to catch.
+  const setup = { symbol: "BNBUSDT", market: "crypto", side: "short", kind: "breakout", timeframe: "15m", entry: 588.02, stop: 590.5, target: 578.0, reason: "x" };
+  const ctx = { equity: 10000, openRisk: 0, asset: "crypto", heatCap: 0.10, baseRiskPct: 0.02 };
+  const mkt = openThesis(setup, ctx);
+  const lim = openThesis({ ...setup, limitFill: true }, ctx);
   assert.ok(mkt.entry < 588.02, "market short slips below the level");
   assert.equal(lim.entry, 588.02, "limit short fills exactly at the level — no phantom entry");
+});
+
+test("the reward:risk floor is applied AFTER the fill, so slippage cannot sneak past it", () => {
+  // The interaction that broke the fixture above, and it is the correct behaviour:
+  // this trade is planned at 1.68 R:R, but a market short fills lower, which widens
+  // the stop and narrows the target to about 1.37 — below the 1.5 floor. Checking
+  // the PLANNED number would let a trade in that no longer exists once it is filled.
+  const setup = { symbol: "BNBUSDT", market: "crypto", side: "short", kind: "breakout", timeframe: "15m", entry: 588.02, stop: 590.5, target: 583.85, reason: "x" };
+  const ctx = { equity: 10000, openRisk: 0, asset: "crypto", heatCap: 0.10, baseRiskPct: 0.02 };
+  const planned = Math.abs(583.85 - 588.02) / Math.abs(588.02 - 590.5);
+  assert.ok(planned > MIN_PLANNED_R, `the plan itself clears the floor (${planned.toFixed(2)})`);
+  assert.equal(openThesis(setup, ctx), null, "…but the filled trade does not, so it is refused");
+  // A limit fill keeps the planned prices, so the same setup IS taken.
+  assert.ok(openThesis({ ...setup, limitFill: true }, ctx), "a limit fill preserves the plan");
+});
+
+test("a trade that risks more than it can win is never taken", () => {
+  // Risking 1 to make 0.8 needs a 55.6% win rate to break even. The live ledger ran
+  // at 28.7%, and 13 of its 94 trades had a planned reward:risk below 1.0.
+  const ctx = { equity: 10000, openRisk: 0, asset: "crypto", heatCap: 0.10, baseRiskPct: 0.02 };
+  const poor = openThesis({ symbol: "BTCUSDT", market: "crypto", side: "long", kind: "breakout", timeframe: "5m", entry: 100, stop: 98, target: 101.6, reason: "x" }, ctx);
+  assert.equal(poor, null, "0.8:1 must be refused");
+  const good = openThesis({ symbol: "BTCUSDT", market: "crypto", side: "long", kind: "breakout", timeframe: "5m", entry: 100, stop: 98, target: 105, reason: "x" }, ctx);
+  assert.ok(good, "2.5:1 is taken");
 });
 
 test("thesis: open, hit target → positive R; hit stop → −1R", () => {

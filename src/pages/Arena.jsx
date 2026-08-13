@@ -3,6 +3,9 @@ import { Swords, Activity, TrendingDown, Info, CircleDot } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ARENA_RULES } from "@/lib/arena";
 import FleetSwitch from "@/components/FleetSwitch";
+import { Link } from "react-router-dom";
+import { chartHref, chartLogHref } from "@/lib/chartLink";
+import { LineChart } from "lucide-react";
 
 // The arena: live paper trading for strategies that CANNOT be backtested.
 // See src/lib/arena.js for why (no historical order-book depth) and
@@ -113,6 +116,38 @@ function Scoreboard({ scores }) {
 // can beat a random walk on average and still lose money, because being closer
 // on the quiet days does not pay for being wrong on the violent ones. The
 // account is what makes that visible.
+// Kronos timestamps come from Python and are in SECONDS; chartHref takes `atMs`.
+const kronosHref = (t, outcome) => chartHref({
+  symbol: t.symbol, asset: "crypto", timeframe: "1h",
+  entry: t.entry, stop: t.stop, target: t.target, side: t.side,
+  atMs: (t.openedAt || 0) * 1000,
+  reason: `Kronos ${t.side} · stake ${Math.round(t.stake)} USDT`,
+  label: "Kronos",
+}, outcome);
+
+function TradeRow({ t, open }) {
+  return (
+    <li className="text-sm flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
+      <Link to={kronosHref(t, open ? "open" : (t.reason || "horizon"))}
+        className="font-medium hover:text-accent inline-flex items-center gap-1">
+        <LineChart className="w-3 h-3" aria-hidden="true" />{t.symbol}
+      </Link>
+      <span className={cn("font-mono", t.side === "long" ? "text-up" : "text-down")}>{t.side}</span>
+      <span className="font-mono">{fmt(t.stake, 0)} USDT @ {fmt(t.entry, 2)}</span>
+      {open ? (
+        <span className="font-mono text-dim">stop {fmt(t.stop, 2)} · target {fmt(t.target, 2)}</span>
+      ) : (
+        <>
+          <span className="font-mono text-dim">→ {fmt(t.exit, 2)} ({t.reason})</span>
+          <span className={cn("font-mono font-semibold", t.pnl >= 0 ? "text-up" : "text-down")}>
+            {t.pnl >= 0 ? "+" : ""}{fmt(t.pnl, 2)} ({t.R >= 0 ? "+" : ""}{fmt(t.R, 2)}R)
+          </span>
+        </>
+      )}
+    </li>
+  );
+}
+
 function Account({ acct }) {
   if (!acct) return null;
   const up = acct.returnPct >= 0;
@@ -147,16 +182,34 @@ function Account({ acct }) {
         <div className="rounded-lg border border-line bg-surface/40 p-3 mb-3">
           <p className="text-[11px] uppercase tracking-wide text-dim mb-1.5">Open right now</p>
           <ul className="space-y-1">
-            {acct.open.map((t, i) => (
-              <li key={i} className="text-sm font-mono flex flex-wrap gap-x-3">
-                <span className="font-sans font-medium">{t.symbol}</span>
-                <span className={t.side === "long" ? "text-up" : "text-down"}>{t.side}</span>
-                <span>{fmt(t.stake, 0)} USDT @ {fmt(t.entry, 2)}</span>
-                <span className="text-dim">stop {fmt(t.stop, 2)} · target {fmt(t.target, 2)}</span>
-              </li>
-            ))}
+            {acct.open.map((t, i) => <TradeRow key={i} t={t} open />)}
           </ul>
         </div>
+      )}
+
+      {acct.closed?.length > 0 && (
+        <details className="rounded-lg border border-line bg-surface/40 p-3 mb-3">
+          <summary className="cursor-pointer text-[11px] uppercase tracking-wide text-dim">
+            Closed trades ({acct.closed.length})
+          </summary>
+          <p className="text-xs text-dim mt-2 mb-2">
+            Every symbol links to the chart with the entry, stop and target drawn on it — the same
+            handover Argus uses, so a trade can be checked against what the market actually did.
+          </p>
+          <ul className="space-y-1 max-h-72 overflow-y-auto mb-2">
+            {[...acct.closed].reverse().map((t, i) => <TradeRow key={i} t={t} />)}
+          </ul>
+          {[...new Set(acct.closed.map((t) => t.symbol))].map((sym) => {
+            const href = chartLogHref(sym, acct.closed.map((t) => ({
+              ...t, openedAtMs: (t.openedAt || 0) * 1000, closedAtMs: (t.closedAt || 0) * 1000,
+            })), { name: `Kronos ${sym}` });
+            return href ? (
+              <Link key={sym} to={href} className="text-xs text-accent hover:underline mr-3">
+                All {sym} trades on one chart →
+              </Link>
+            ) : null;
+          })}
+        </details>
       )}
 
       {acct.journal?.length > 0 && (

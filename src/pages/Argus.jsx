@@ -11,24 +11,19 @@ import Skeleton from "@/components/Skeleton";
 // Reads the agent's KV state from /api/argus. Public: everyone can watch what
 // the agent does. Dev-only controls (close/cancel a trade) are gated inline.
 
+import { chartHref as href } from "@/lib/chartLink";
+
 const money = (n) => (n >= 0 ? "+" : "−") + fmtNum(Math.abs(n), 2);
 
-// Map an Argus instrument to Charts market + a sane interval, then hand the
-// trade over as namespaced params so Charts draws entry/stop/target + reason.
-const CRYPTO = /USDT$|USD$|BTC$|ETH$/;
-const TF_TO_INTERVAL = { "1m": "1m", "5m": "5m", "15m": "15m", "30m": "30m", "1h": "1h", "2h": "2h", "4h": "4h", "1d": "1d" };
+// Argus trades carry MILLISECOND timestamps; chartHref takes `atMs` and does the
+// conversion in one place (see lib/chartLink.js for why that matters).
 function chartHref(t, outcome = "open") {
-  const market = t.asset === "crypto" || (t.asset == null && CRYPTO.test(t.symbol)) ? "crypto" : "stock";
-  const p = new URLSearchParams({ market, symbol: t.symbol, interval: TF_TO_INTERVAL[t.timeframe] || "15m" });
-  if (Number.isFinite(t.entry)) p.set("tEntry", String(t.entry));
-  if (Number.isFinite(t.stop)) p.set("tStop", String(t.stop));
-  if (Number.isFinite(t.target)) p.set("tTarget", String(t.target));
-  if (t.side) p.set("tSide", t.side);
-  const at = t.openedAt ?? t.exitAt ?? t.at;
-  if (at) p.set("tAt", String(Math.round(at / 1000))); // ms → unix seconds
-  if (t.reason || t.catalyst) p.set("tReason", (t.reason || t.catalyst).slice(0, 180));
-  p.set("tOutcome", outcome);
-  return `/charts?${p.toString()}`;
+  return href({
+    symbol: t.symbol, asset: t.asset, timeframe: t.timeframe,
+    entry: t.entry, stop: t.stop, target: t.target, side: t.side,
+    atMs: t.openedAt ?? t.exitAt ?? t.at,
+    reason: t.reason || t.catalyst,
+  }, outcome);
 }
 const ago = (ts) => {
   const s = Math.max(0, (Date.now() - ts) / 1000);
