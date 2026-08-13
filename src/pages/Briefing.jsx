@@ -75,6 +75,9 @@ function HoldingCard({ symbol, data }) {
 
       {hasStory && (
         <div className="rounded-lg border border-accent/30 bg-accent/5 p-3 mb-2 space-y-2">
+          {data.why && !data.newsBased && (
+            <p className="text-[9px] uppercase tracking-wide text-dim">No fresh headlines · fundamentals view</p>
+          )}
           {data.why && <p className="text-[13px] text-text/90 leading-relaxed">{data.why}</p>}
           {data.expectation && (
             <p className="flex items-start gap-1.5 text-[12px] text-accent">
@@ -89,9 +92,9 @@ function HoldingCard({ symbol, data }) {
         <div className="divide-y divide-line/60">
           {data.relevantHeadlines.map((it, i) => <HeadlineLink key={i} it={it} />)}
         </div>
-      ) : (
+      ) : !data.why ? (
         <p className="text-xs text-dim">No headlines specifically about {data.name} today.</p>
-      )}
+      ) : null}
     </div>
   );
 }

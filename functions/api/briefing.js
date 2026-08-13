@@ -52,14 +52,14 @@ Two tasks, STRICT JSON ONLY, no prose outside the JSON:
 
 1. MARKET PULSE + TOP STORIES (only if a general headline pool is given below): write one short paragraph (2-3 sentences) on what's actually moving markets right now. Then pick up to ${MAX_STORIES} of the most significant general items by their given index and write a 2-3 sentence synthesis of each — what happened, why it matters, what to watch next. Quality over quantity; skip items that aren't actually significant.
 
-2. PER-SYMBOL READ (only for symbols with a candidate pool given below): look at ONLY that symbol's own candidates. Return the indices of candidates genuinely ABOUT that specific company/asset — drop anything where the match looks incidental. Then write a one-sentence grounded "why" citing the REAL drivers from the confirmed headlines and any fundamentals given (sector dynamics, an earnings result, a specific event — never generic filler like "strong fundamentals"), a directional "stance" lean if the evidence actually supports one, and one short forward-looking "expectation" (an upcoming earnings date or analyst target IF given in the evidence, otherwise a realistic near-term thing to watch). Never invent a specific date, price, or number you were not given. If every candidate for a symbol is a false positive, return an empty confirmedIdx and a null why/expectation rather than forcing a story.
+2. PER-SYMBOL READ (for EVERY symbol listed below, whether or not it has candidate headlines): first, of that symbol's own candidates (if any), return the indices of ones genuinely ABOUT that specific company/asset — drop anything where the match looks incidental (e.g. a "top picks" roundup that merely mentions the ticker isn't about it). Then ALWAYS give a one-sentence grounded "why" for the symbol: if genuine confirmed headlines exist, ground it there (the real drivers — sector dynamics, an earnings result, a specific event, never generic filler like "strong fundamentals"); if none were confirmed, DO NOT go silent — instead ground it in the fundamentals given (sector, analyst rating/target, next earnings) framed honestly as a quiet-day status, e.g. "No major headlines today; trades in the semiconductor sector with a Buy rating and a mean target above the current price." Set "newsBased" true only when the why comes from a confirmed headline, false when it's fundamentals-only. Also give a directional "stance" lean if the evidence actually supports one (default "neutral" otherwise), and one short forward-looking "expectation" (an upcoming earnings date or analyst target IF given, otherwise a realistic near-term thing to watch). Never invent a specific date, price, or number you were not given. Only use why:null and newsBased:false if you were given NEITHER candidates NOR fundamentals for that symbol — there is truly nothing to say.
 
 Ground everything in the SPECIFIC evidence provided — no hallucinated facts, no generic platitudes.
 
-Reply with STRICT JSON ONLY, exactly this shape (omit pulse/stories as null/[] if no general pool was given; omit a symbol entirely if no candidate pool was given for it):
+Reply with STRICT JSON ONLY, exactly this shape (omit pulse/stories as null/[] if no general pool was given; include every symbol listed below, even with empty candidates):
 {"pulse":{"summary":"...","tone":"up"|"down"|"mixed"}|null,
  "stories":[{"idx":0,"synthesis":"..."}],
- "symbols":{"TICKER":{"confirmedIdx":[0],"why":"..."|null,"stance":"long"|"short"|"neutral","expectation":"..."|null}}}`;
+ "symbols":{"TICKER":{"confirmedIdx":[0],"why":"..."|null,"newsBased":true|false,"stance":"long"|"short"|"neutral","expectation":"..."|null}}}`;
 
 function cleanSymbol(s) {
   return String(s || "").toUpperCase().replace(/[^A-Z0-9.\-]/g, "").slice(0, 16);
@@ -362,6 +362,7 @@ export async function onRequest({ request, env }) {
         const symRow = {
           name: b.name, relevantHeadlines, stance,
           why: sym.why ? trim(sym.why, 300) : null,
+          newsBased: !!sym.newsBased,
           expectation: sym.expectation ? trim(sym.expectation, 200) : null,
           enriched: true, at: now,
         };
@@ -391,8 +392,8 @@ function assemble(marketRow, symCache, symbols, newsPool, hasLLM, rateLimited) {
   for (const s of symbols) {
     const cached = symCache.get(s.symbol);
     out.symbols[s.symbol] = cached
-      ? { name: cached.name || s.name, relevantHeadlines: cached.relevantHeadlines, stance: cached.stance, why: cached.why, expectation: cached.expectation, enriched: !!cached.enriched }
-      : { name: s.name, relevantHeadlines: deterministicRelevant(newsPool, s.name), stance: "neutral", why: null, expectation: null, enriched: false };
+      ? { name: cached.name || s.name, relevantHeadlines: cached.relevantHeadlines, stance: cached.stance, why: cached.why, newsBased: !!cached.newsBased, expectation: cached.expectation, enriched: !!cached.enriched }
+      : { name: s.name, relevantHeadlines: deterministicRelevant(newsPool, s.name), stance: "neutral", why: null, newsBased: false, expectation: null, enriched: false };
   }
   return out;
 }

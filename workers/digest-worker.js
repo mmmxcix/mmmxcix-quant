@@ -287,8 +287,13 @@ function buildEmail(sections, snapshot, date, email, unsubToken) {
         .map((h) => {
           const stanceColor = h.stance === 'long' ? C.up : h.stance === 'short' ? C.down : C.dim;
           const stanceLabel = h.stance === 'long' ? '▲ LONG LEAN' : h.stance === 'short' ? '▼ SHORT LEAN' : '● NEUTRAL';
+          // newsBased:false = fundamentals-only status (no fresh headline confirmed
+          // today) — labelled honestly so it never reads as breaking news.
+          const noNewsTag = h.why && !h.newsBased
+            ? `<div style="font-size:9px;color:${C.faint};text-transform:uppercase;letter-spacing:0.5px;margin-top:6px;">No fresh headlines · fundamentals view</div>`
+            : '';
           const why = h.why
-            ? `<div style="font-size:12px;color:${C.ink};line-height:1.5;margin-top:6px;">${escapeHtml(h.why)}</div>`
+            ? `${noNewsTag}<div style="font-size:12px;color:${C.ink};line-height:1.5;margin-top:2px;">${escapeHtml(h.why)}</div>`
             : '';
           const expectation = h.expectation
             ? `<div style="font-size:11px;color:${C.accent};line-height:1.5;margin-top:4px;">→ ${escapeHtml(h.expectation)}</div>`
