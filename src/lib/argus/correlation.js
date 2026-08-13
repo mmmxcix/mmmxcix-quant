@@ -45,14 +45,54 @@ export function avgPairwiseCorr(symbols) {
 }
 
 /**
+ * Correlation with DIRECTION taken into account.
+ *
+ * Two positions in correlated assets are only one bet when they point the same
+ * way. Long BTC + long ETH compound; long BTC + SHORT ETH largely cancel, and
+ * treating those two books as equally risky — which the unsigned version above
+ * does — is the gap this closes. The live ledger ran with roughly half of each
+ * trade's concurrent siblings pointing the opposite way, so the distinction is
+ * not hypothetical.
+ *
+ * Same side → +ρ (risks add). Opposite side → −ρ (risks offset). Positions on
+ * the SAME symbol are the pure case: +1 doubling down, −1 flat.
+ *
+ * @param positions [{ symbol, side }] — side "long" | "short"
+ */
+export function signedAvgCorr(positions) {
+  const list = (positions || []).filter((p) => p && p.symbol);
+  if (list.length < 2) return 0;
+  let sum = 0, n = 0;
+  for (let i = 0; i < list.length; i++) {
+    for (let j = i + 1; j < list.length; j++) {
+      const rho = pairCorr(list[i].symbol, list[j].symbol);
+      const same = (list[i].side || "long") === (list[j].side || "long");
+      sum += same ? rho : -rho;
+      n++;
+    }
+  }
+  return n ? sum / n : 0;
+}
+
+/**
  * The effective heat cap for a portfolio: `base` when everything is correlated,
  * rising toward `max` as the open positions (plus the candidate) become
  * uncorrelated. Negative correlations count as maximum diversification.
  * @param {string[]} openSymbols  currently open instrument symbols
  * @param {string} newSymbol      the candidate being considered
  */
-export function effectiveHeatCap(openSymbols, newSymbol, base = 0.10, max = 0.20) {
-  const corr = avgPairwiseCorr([...(openSymbols || []), newSymbol]);
-  const diversification = 1 - Math.max(0, Math.min(1, corr)); // 0 (all correlated) → 1 (uncorrelated)
+export function effectiveHeatCap(openPositions, candidate, base = 0.10, max = 0.20) {
+  // Accepts plain symbols (the original signature) or { symbol, side } objects.
+  // Strings fall back to the unsigned model, which is the conservative reading:
+  // an unknown direction is assumed to compound rather than to hedge.
+  const norm = (x) => (typeof x === "string" ? { symbol: x, side: null } : x);
+  const all = [...(openPositions || []).map(norm), norm(candidate)].filter((p) => p && p.symbol);
+  const anyDirected = all.some((p) => p.side);
+  const corr = anyDirected
+    ? signedAvgCorr(all.map((p) => ({ ...p, side: p.side || "long" })))
+    : avgPairwiseCorr(all.map((p) => p.symbol));
+  // A NEGATIVE average (a genuinely hedged book) counts as full diversification,
+  // not as something better than that — the cap still stops at `max`.
+  const diversification = 1 - Math.max(0, Math.min(1, corr)); // 0 (all one way) → 1 (uncorrelated or hedged)
   return Math.max(base, Math.min(max, base + (max - base) * diversification));
 }

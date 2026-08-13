@@ -425,3 +425,73 @@ export function ledgerStats(closed) {
     tStat: se > 0 ? avgR / se : 0,
   };
 }
+
+// ── excursion forensics ──────────────────────────────────────────────────────
+// The agent records how far a trade ran in its favour and against it, AND when
+// each happened (maxFavAt / maxAdvAt). The timestamps are what make these
+// numbers answerable instead of merely suggestive: a trade that ran to +0.8R
+// and reversed stores the same pair of magnitudes as one that dipped to −0.8R
+// and recovered.
+
+/** Which extreme came first. "unknown" when the trade predates the timestamps. */
+export function excursionOrder(t) {
+  const f = t?.maxFavAt, a = t?.maxAdvAt;
+  if (!Number.isFinite(f) && !Number.isFinite(a)) return "unknown";
+  if (!Number.isFinite(a)) return "ran-first";
+  if (!Number.isFinite(f)) return "dipped-first";
+  if (f === a) return "same-bar";     // one bar held both extremes — undecidable
+  return f < a ? "ran-first" : "dipped-first";
+}
+
+/**
+ * Counterfactual: would moving the stop to break-even after `trigger` R have
+ * changed this trade's result?
+ *
+ * Returns { applies, before, after, delta, why }. `applies:false` means the rule
+ * would never have armed on this trade, so it is neither helped nor harmed —
+ * counting those as "no change" is what keeps the summary honest.
+ *
+ * The rule can only be judged where the ORDER is known. A trade whose extremes
+ * fall on the same bar is excluded rather than guessed: intrabar we cannot tell
+ * whether the high or the low came first, and assuming the favourable one is
+ * exactly how a backtest flatters a stop rule.
+ */
+export function breakEvenOutcome(t, { trigger = 0.5 } = {}) {
+  const R = tradeR(t);
+  const fav = t?.maxFavR ?? 0;
+  if (!(fav >= trigger)) {
+    return { applies: false, before: R, after: R, delta: 0, why: "never reached the trigger" };
+  }
+  const order = excursionOrder(t);
+  if (order === "unknown" || order === "same-bar") {
+    return { applies: false, before: R, after: R, delta: 0, why: `excursion order ${order}` };
+  }
+  if (order === "dipped-first") {
+    // The worst point came BEFORE the run, so the stop was still at its original
+    // level when the damage was done — the rule cannot have changed anything.
+    return { applies: false, before: R, after: R, delta: 0, why: "worst point preceded the run" };
+  }
+  // Ran first, then reversed. The stop was at break-even by then, so the trade
+  // ends flat instead of wherever it actually ended — but only if it actually
+  // came back through entry, which a LOSS by definition did.
+  if (R >= 0) {
+    return { applies: false, before: R, after: R, delta: 0, why: "won anyway" };
+  }
+  return { applies: true, before: R, after: 0, delta: -R, why: "ran, then reversed through entry" };
+}
+
+/** Apply breakEvenOutcome across a ledger and total the effect. */
+export function breakEvenStudy(closed, { trigger = 0.5 } = {}) {
+  const rows = (closed || []).map((t) => ({ t, o: breakEvenOutcome(t, { trigger }) }));
+  const applied = rows.filter((r) => r.o.applies);
+  const undecidable = rows.filter((r) => !r.o.applies && /order (unknown|same-bar)/.test(r.o.why));
+  const sumBefore = rows.reduce((a, r) => a + r.o.before, 0);
+  const sumAfter = rows.reduce((a, r) => a + r.o.after, 0);
+  return {
+    trigger,
+    n: rows.length,
+    applied: applied.length,
+    undecidable: undecidable.length,
+    sumBefore, sumAfter, delta: sumAfter - sumBefore,
+  };
+}

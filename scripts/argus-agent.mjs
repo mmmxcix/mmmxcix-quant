@@ -204,11 +204,24 @@ function manageExits(inst, last5, ledgerAdd) {
     // have trailed; barely tested before winning → stop wider than needed; ran far
     // past the target → target too tight. Updated before the exit check so the
     // closing bar's excursion counts, and carried onto the closed record via ...th.
+    // The TIME of each extreme is recorded alongside it, and that is the whole
+    // point of this block rather than a detail. Without it, a trade that ran to
+    // +0.8R and then reversed is indistinguishable from one that dipped to −0.8R
+    // and then recovered — the pair of magnitudes is identical. The live ledger
+    // showed 22 of 68 losers reaching +0.5R before dying at a full stop, and the
+    // obvious question (would a break-even stop have saved them, or would it
+    // have cost the winners more?) was unanswerable from what was stored.
     const favMove = th.side === "long" ? last5.high - th.entry : th.entry - last5.low;
     const advMove = th.side === "long" ? th.entry - last5.low : last5.high - th.entry;
     if (th.riskAmt > 0) {
-      th.maxFavR = Math.max(th.maxFavR || 0, (Math.max(0, favMove) * th.size) / th.riskAmt);
-      th.maxAdvR = Math.max(th.maxAdvR || 0, (Math.max(0, advMove) * th.size) / th.riskAmt);
+      const favR = (Math.max(0, favMove) * th.size) / th.riskAmt;
+      const advR = (Math.max(0, advMove) * th.size) / th.riskAmt;
+      const at = Number.isFinite(last5.time) ? last5.time * 1000 : Date.now();
+      if (favR > (th.maxFavR || 0)) { th.maxFavR = favR; th.maxFavAt = at; }
+      if (advR > (th.maxAdvR || 0)) { th.maxAdvR = advR; th.maxAdvAt = at; }
+      // Bars seen, so an excursion can be read as "early in the trade" vs "late"
+      // without needing the timeframe to reconstruct it.
+      th.barsSeen = (th.barsSeen || 0) + 1;
     }
     // Dev "close now" takes priority over the normal stop/target check.
     const devClosed = forceClose.has(th.id);
@@ -475,7 +488,11 @@ function tryOpen(inst, setup, halted) {
 
   // Diversification-aware heat: more total risk allowed when this trade is
   // uncorrelated with what's already open.
-  const heatCap = effectiveHeatCap(open.map((o) => o.symbol), inst.symbol, HEAT_CAP, MAX_HEAT);
+  // Direction matters: long BTC + short ETH is not the same bet as long + long,
+  // and passing bare symbols would have the risk model treat them identically.
+  const heatCap = effectiveHeatCap(
+    open.map((o) => ({ symbol: o.symbol, side: o.side })),
+    { symbol: inst.symbol, side: setup.side }, HEAT_CAP, MAX_HEAT);
   const th = openThesis(
     { ...setup, symbol: inst.symbol, market: inst.asset, conviction, limitFill: !!setup._fromLimit },
     { equity, openRisk: openRisk(), openMargin: openMargin(), openNotional: openNotional(), asset: inst.asset,
@@ -713,7 +730,7 @@ async function persist(ledgerAdd, extra) {
         unrealized,                             // total floating P&L right now
         open: open.length, forming: forming.length,
         heatPct: openRisk() / equity,           // Σ stop-risk / equity (Bug 2 — the real number)
-        heatCapPct: effectiveHeatCap(open.map((o) => o.symbol), null, HEAT_CAP, MAX_HEAT),
+        heatCapPct: effectiveHeatCap(open.map((o) => ({ symbol: o.symbol, side: o.side })), null, HEAT_CAP, MAX_HEAT),
         heatBasePct: HEAT_CAP, heatMaxPct: MAX_HEAT,
         portfolioLev: openNotional() / equity,  // Σ notional / equity (Bug 1 — true portfolio leverage)
         portfolioLevCap: PORTFOLIO_LEV_CAP,
