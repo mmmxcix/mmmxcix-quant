@@ -293,7 +293,10 @@ function buildEmail(sections, snapshot, date, email, unsubToken) {
             ? `<div style="font-size:9px;color:${C.faint};text-transform:uppercase;letter-spacing:0.5px;margin-top:6px;">No fresh headlines · fundamentals view</div>`
             : '';
           const why = h.why
-            ? `${noNewsTag}<div style="font-size:12px;color:${C.ink};line-height:1.5;margin-top:2px;">${escapeHtml(h.why)}</div>`
+            ? `${noNewsTag}<div style="font-size:12px;font-weight:600;color:${C.ink};line-height:1.5;margin-top:2px;">${escapeHtml(h.why)}</div>`
+            : '';
+          const factsList = (h.keyFacts || []).length
+            ? `<ul style="margin:4px 0 0 0;padding-left:16px;">${h.keyFacts.map((f) => `<li style="font-size:12px;color:${C.dim};line-height:1.6;">${escapeHtml(f)}</li>`).join('')}</ul>`
             : '';
           const expectation = h.expectation
             ? `<div style="font-size:11px;color:${C.accent};line-height:1.5;margin-top:4px;">→ ${escapeHtml(h.expectation)}</div>`
@@ -315,7 +318,7 @@ function buildEmail(sections, snapshot, date, email, unsubToken) {
                 <span style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;font-weight:700;color:${C.ink};">${escapeHtml(h.symbol)}</span>
                 <span style="font-size:11px;color:${C.dim};margin-left:8px;">${escapeHtml(h.name || '')}</span>
                 <div style="font-size:10px;font-weight:700;letter-spacing:0.5px;color:${stanceColor};margin-top:4px;">${stanceLabel}</div>
-                ${why}${expectation}
+                ${why}${factsList}${expectation}
                 ${links}
               </div>
             </td>
@@ -399,6 +402,7 @@ function buildEmail(sections, snapshot, date, email, unsubToken) {
       for (const h of section.holdings) {
         text += `- ${h.symbol} (${h.name || h.symbol}) — ${h.stance}\n`;
         if (h.why) text += `  ${h.why}\n`;
+        for (const f of h.keyFacts || []) text += `  * ${f}\n`;
         if (h.expectation) text += `  → ${h.expectation}\n`;
         for (const it of (h.relevantHeadlines || []).slice(0, 3)) text += `  · ${it.title}\n    ${it.link}\n`;
       }

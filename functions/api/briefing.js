@@ -52,16 +52,16 @@ Two tasks, STRICT JSON ONLY, no prose outside the JSON:
 
 1. MARKET PULSE + TOP STORIES (only if a general headline pool is given below): write one short paragraph (2-3 sentences) on what's actually moving markets right now. Then pick up to ${MAX_STORIES} of the most significant general items by their given index and write a 2-3 sentence synthesis of each — what happened, why it matters, what to watch next. Quality over quantity; skip items that aren't actually significant.
 
-2. PER-SYMBOL READ (for EVERY symbol listed below, whether or not it has candidate headlines): first, of that symbol's own candidates (if any), return the indices of ones genuinely ABOUT that specific company/asset — drop anything where the match looks incidental (e.g. a "top picks" roundup that merely mentions the ticker isn't about it). Then ALWAYS give a DENSE "why" for the symbol — aim for 3-5 sentences, not one, and pack in EVERY concrete fact actually present in the confirmed headlines or fundamentals: dollar amounts, percentages, named executives or counterparties, deal structure, and any specific date or timeline a headline genuinely states (an expected closing quarter, a shareholder-vote date, an earnings date, what a funding round is for). If none were confirmed, DO NOT go silent — instead ground it in the fundamentals given (sector, analyst rating/target, next earnings) framed honestly as a quiet-day status. Set "newsBased" true only when the why is grounded in confirmed headlines, false when it's fundamentals-only. Also give a directional "stance" lean if the evidence actually supports one (default "neutral" otherwise), and a forward-looking "expectation" — an upcoming earnings date or analyst target IF given, or a specific near-term catalyst/timeline IF a headline states one, otherwise a realistic general thing to watch.
+2. PER-SYMBOL READ (for EVERY symbol listed below, whether or not it has candidate headlines): first, of that symbol's own candidates (if any), return the indices of ones genuinely ABOUT that specific company/asset — drop anything where the match looks incidental (e.g. a "top picks" roundup that merely mentions the ticker isn't about it). Then give a SHORT one-sentence "why" (a headline-style summary) AND a "keyFacts" array of 3-5 DISTINCT, concrete facts drawn from the confirmed headlines or fundamentals — each its own array item, each genuinely specific (a dollar amount, a percentage, a named executive or counterparty, a deal term, an earnings result, a real stated date or timeline). Never repeat or paraphrase the same fact twice across the array. If fewer than 3 genuinely distinct facts exist in the evidence, return fewer — never pad with a restatement or generic filler just to hit a count. If no headlines were confirmed, DO NOT go silent — ground why/keyFacts in the fundamentals given (sector, analyst rating/target, next earnings) framed honestly as a quiet-day status; keyFacts may be just 1-2 items in that case. Set "newsBased" true only when grounded in confirmed headlines, false when fundamentals-only. Also give a directional "stance" lean if the evidence actually supports one (default "neutral" otherwise), and a forward-looking "expectation" — an upcoming earnings date or analyst target IF given, or a specific near-term catalyst/timeline IF a headline states one, otherwise a realistic general thing to watch.
 
-CRITICAL — the extra detail must come ONLY from facts actually present in the evidence given. Never invent a date, price, percentage, executive name, or any other specific you were not given, even to fill a natural-sounding gap (e.g. when will an acquisition close, what a target price "should" be). When the evidence doesn't specify something like that, SAY SO explicitly ("no confirmed closing date yet") — a stated gap is honest, a plausible-sounding guess is not, especially on a tool that is NOT investment advice.
+CRITICAL — every fact must come ONLY from the evidence given. Never invent a date, price, percentage, executive name, or any other specific you were not given, even to fill a natural-sounding gap (e.g. when will an acquisition close, what a target price "should" be). When the evidence doesn't specify something like that, SAY SO explicitly as a keyFacts item ("no confirmed closing date yet") — a stated gap is honest, a plausible-sounding guess is not, especially on a tool that is NOT investment advice.
 
 Ground everything in the SPECIFIC evidence provided — no hallucinated facts, no generic platitudes.
 
 Reply with STRICT JSON ONLY, exactly this shape (omit pulse/stories as null/[] if no general pool was given; include every symbol listed below, even with empty candidates):
 {"pulse":{"summary":"...","tone":"up"|"down"|"mixed"}|null,
  "stories":[{"idx":0,"synthesis":"..."}],
- "symbols":{"TICKER":{"confirmedIdx":[0],"why":"..."|null,"newsBased":true|false,"stance":"long"|"short"|"neutral","expectation":"..."|null}}}`;
+ "symbols":{"TICKER":{"confirmedIdx":[0],"why":"..."|null,"keyFacts":["...","..."],"newsBased":true|false,"stance":"long"|"short"|"neutral","expectation":"..."|null}}}`;
 
 function cleanSymbol(s) {
   return String(s || "").toUpperCase().replace(/[^A-Z0-9.\-]/g, "").slice(0, 16);
@@ -361,9 +361,14 @@ export async function onRequest({ request, env }) {
           .filter((i) => Number.isInteger(i) && b.candidates[i])
           .map((i) => { const it = b.candidates[i]; return { title: it.title, link: it.link, source: it.source, pubDate: it.pubDate }; });
         const stance = ["long", "short", "neutral"].includes(sym.stance) ? sym.stance : "neutral";
+        const keyFacts = (Array.isArray(sym.keyFacts) ? sym.keyFacts : [])
+          .filter((f) => typeof f === "string" && f.trim())
+          .map((f) => trim(f, 200))
+          .slice(0, 5);
         const symRow = {
           name: b.name, relevantHeadlines, stance,
-          why: sym.why ? trim(sym.why, 700) : null,
+          why: sym.why ? trim(sym.why, 200) : null,
+          keyFacts,
           newsBased: !!sym.newsBased,
           expectation: sym.expectation ? trim(sym.expectation, 280) : null,
           enriched: true, at: now,
@@ -394,8 +399,8 @@ function assemble(marketRow, symCache, symbols, newsPool, hasLLM, rateLimited) {
   for (const s of symbols) {
     const cached = symCache.get(s.symbol);
     out.symbols[s.symbol] = cached
-      ? { name: cached.name || s.name, relevantHeadlines: cached.relevantHeadlines, stance: cached.stance, why: cached.why, newsBased: !!cached.newsBased, expectation: cached.expectation, enriched: !!cached.enriched }
-      : { name: s.name, relevantHeadlines: deterministicRelevant(newsPool, s.name), stance: "neutral", why: null, newsBased: false, expectation: null, enriched: false };
+      ? { name: cached.name || s.name, relevantHeadlines: cached.relevantHeadlines, stance: cached.stance, why: cached.why, keyFacts: cached.keyFacts || [], newsBased: !!cached.newsBased, expectation: cached.expectation, enriched: !!cached.enriched }
+      : { name: s.name, relevantHeadlines: deterministicRelevant(newsPool, s.name), stance: "neutral", why: null, keyFacts: [], newsBased: false, expectation: null, enriched: false };
   }
   return out;
 }

@@ -78,7 +78,12 @@ function HoldingCard({ symbol, data }) {
           {data.why && !data.newsBased && (
             <p className="text-[9px] uppercase tracking-wide text-dim">No fresh headlines · fundamentals view</p>
           )}
-          {data.why && <p className="text-[13px] text-text/90 leading-relaxed">{data.why}</p>}
+          {data.why && <p className="text-[13px] font-medium text-text leading-relaxed">{data.why}</p>}
+          {data.keyFacts?.length > 0 && (
+            <ul className="list-disc pl-4 space-y-1">
+              {data.keyFacts.map((f, i) => <li key={i} className="text-[12px] text-text/80 leading-relaxed">{f}</li>)}
+            </ul>
+          )}
           {data.expectation && (
             <p className="flex items-start gap-1.5 text-[12px] text-accent">
               <Target className="w-3.5 h-3.5 shrink-0 mt-0.5" />
