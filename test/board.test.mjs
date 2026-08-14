@@ -127,9 +127,22 @@ test("D1 sources read a fixed allowlist of keys", () => {
 
 test("listResources hides admin resources from a public caller", () => {
   const pub = listResources({ visibility: "public" });
+  const adm = listResources({ visibility: "admin" });
   assert.ok(pub.every((r) => r.visibility === "public"));
-  assert.ok(listResources({ visibility: "admin" }).length >= pub.length);
+  assert.ok(adm.length > pub.length, "there ARE admin resources, so the two lists must differ");
+  const adminOnly = adm.filter((r) => r.visibility === "admin").map((r) => r.id);
+  assert.ok(adminOnly.length > 0);
+  for (const id of adminOnly) assert.ok(!pub.some((r) => r.id === id), `${id} must not appear publicly`);
   assert.ok(pub[0].args !== undefined, "the listing carries the argument schema — it is the chat's tool list too");
+});
+
+test("the private sources are exactly the ones marked admin", () => {
+  // A public resource reading an authenticated source would fetch the dev's
+  // private data with the dev's own cookie and then show it to anyone.
+  for (const id of RESOURCE_IDS) {
+    const r = RESOURCES[id];
+    if (SOURCES[r.source].auth) assert.equal(r.visibility, "admin", `${id} reads an authenticated source`);
+  }
 });
 
 // ── 2. argument coercion ────────────────────────────────────────────────────
@@ -309,6 +322,182 @@ test("news.headlines filters by tier, text and window, and names the dead feeds"
 
   const q = resolve("news.headlines", { q: "fomc", window: "24h" }, newsRaw, { now: NOW });
   assert.equal(q.data.matched, 1, "the match reads the description, not only the title");
+});
+
+// ── 6b. wave 2 ──────────────────────────────────────────────────────────────
+
+test("registry.strategies infers the payoff shape and the ratio each entry must beat", () => {
+  const raw = {
+    entries: [
+      // 60% wins with PF 1.5 → ratio 1.0, break-even 0.67: a reversion shape that clears.
+      { id: "a", name: "Range fade", symbol: "BTCUSDT", status: "paper", updatedAt: NOW - H,
+        metrics: { tradeCount: 40, winRatePct: 60, profitFactor: 1.5, returnPct: 12 } },
+      // 8 trades: too few for a shape, and the board must say "unknown" not guess.
+      { id: "b", name: "Fresh idea", symbol: "ETHUSDT", status: "factory", updatedAt: NOW - 2 * H,
+        metrics: { tradeCount: 8, winRatePct: 50, profitFactor: 1.1, returnPct: 3 } },
+    ],
+  };
+  const r = resolve("registry.strategies", {}, raw, { now: NOW });
+  assert.equal(r.data.total, 2);
+  assert.deepEqual(r.data.byStatus, { paper: 1, factory: 1 });
+  assert.equal(r.data.entries[0].payoff.family, "reversion");
+  assert.equal(r.data.entries[1].payoff.family, "unknown");
+  assert.match(r.digest, /must beat/);
+
+  const filtered = resolve("registry.strategies", { status: "paper" }, raw, { now: NOW });
+  assert.equal(filtered.data.matched, 1);
+});
+
+test("cortex.state says the agent is off rather than showing an empty book", () => {
+  const off = resolve("cortex.state", {}, { ok: true, state: null }, { now: NOW });
+  assert.match(off.digest, /has not reported/);
+
+  const on = resolve("cortex.state", {}, {
+    state: {
+      at: NOW - 60_000, combined: { equity: 10450, returnPct: 4.5 },
+      strategies: [{ id: "s1" }, { id: "s2", error: "boom" }],
+      riskgate: { armed: true, activeLimits: { openPositions: 2, combinedDrawdownPct: 3.4 }, rules: { maxSimultaneousPositions: 5 } },
+    },
+  }, { now: NOW });
+  assert.equal(on.data.strategies, 2);
+  assert.equal(on.data.failing, 1);
+  assert.match(on.digest, /ARMED \(fails closed\) · 2\/5 positions/);
+});
+
+test("portfolio.holdings derives cash instead of trusting a stored number", () => {
+  const raw = {
+    deposits: [{ usd: 10000 }, { usd: 5000 }],
+    portfolio: [
+      { symbol: "AAPL", shares: 10, avgPrice: 200, addedAt: NOW },              // −2000
+      { symbol: "MSFT", shares: 5, avgPrice: 300, sellPrice: 400, addedAt: NOW }, // −1500 +2000
+    ],
+  };
+  const r = resolve("portfolio.holdings", {}, raw, { now: NOW });
+  assert.equal(r.data.deposited, 15000);
+  assert.equal(r.data.cashUSD, 15000 - 3500 + 2000);
+  assert.equal(r.data.realisedPnl, 500);
+  assert.equal(r.data.openCount, 1);
+  assert.equal(r.data.positions.length, 1, "closed positions stay out unless asked for");
+  assert.equal(resolve("portfolio.holdings", { includeClosed: true }, raw, { now: NOW }).data.positions.length, 2);
+});
+
+test("vol.iv reports a symbol missing from the snapshot as missing", () => {
+  const none = resolve("vol.iv", { symbol: "BTCUSDT" }, { ok: true, date: "2026-08-07", universe: 1533, iv: 0 }, { now: NOW });
+  assert.match(none.digest, /No options data for BTCUSDT/);
+
+  const found = resolve("vol.iv", { symbol: "AAPL" }, {
+    date: "2026-08-07", syncedAt: NOW - 3600_000, universe: 1533,
+    iv: 0.2377, hv: 0.3604, ivPremium: 0.6595, ivRank: 41.9, crossPercentile: 62.3,
+    yearHigh: 0.3246, yearHighDate: "2026-03-30", yearLow: 0.1748, yearLowDate: "2025-12-24", ivWeekAgo: 0.2651,
+  }, { now: NOW });
+  assert.match(found.digest, /IV 23\.8% vs realised 36\.0%/);
+  assert.equal(found.stale, false);
+});
+
+test("news.telegram windows, and labels itself unverified", () => {
+  const raw = {
+    items: [
+      { channel: "financialjuice", tag: "finance", text: "Fed speaker", url: "#", time: NOW - 2 * H },
+      { channel: "WatcherGuru", tag: "crypto", text: "old post", url: "#", time: NOW - 40 * H },
+    ],
+  };
+  const r = resolve("news.telegram", { window: "6h" }, raw, { now: NOW });
+  assert.equal(r.data.matched, 1);
+  assert.match(r.digest, /UNVERIFIED OSINT/);
+  assert.equal(resolve("news.telegram", { tag: "crypto", window: "all" }, raw, { now: NOW }).data.matched, 1);
+});
+
+// ── 6c. wave 3 ──────────────────────────────────────────────────────────────
+
+test("world.layers treats an empty layer as a broken ingest, not as a quiet world", () => {
+  const r = resolve("world.layers", {}, {
+    at: NOW - 5 * 60_000, planes: [["a", 1, 2], ["b", 3, 4]], ships: [], jamming: [["j"]],
+  }, { now: NOW });
+  assert.deepEqual(r.data.empty, ["ships"]);
+  assert.match(r.digest, /Not reporting: ships/);
+  assert.match(r.digest, /aisstream key/);
+});
+
+test("world.hazards ranks conflict countries by fatalities and dates itself honestly", () => {
+  const r = resolve("world.hazards", { top: 2 }, {
+    fires: { at: NOW - H, count: 12000, fires: [[1, 2, 986.8], [3, 4, 100]] },
+    conflicts: {
+      at: NOW - 2 * H, count: 9000, conflicts: [
+        [32, 68, 3, 1, "2026-06-30", "Afghanistan", "x", "y"],
+        [13, -3, 5, 1, "2026-06-30", "Burkina Faso", "x", "y"],
+        [12, 0, 2, 1, "2026-06-30", "Burkina Faso", "x", "y"],
+      ],
+    },
+  }, { now: NOW });
+  assert.equal(r.data.fatalities, 10);
+  assert.equal(r.data.topCountries[0].country, "Burkina Faso");
+  assert.equal(r.data.topCountries[0].events, 2);
+  assert.equal(r.data.hottestFrp, 986.8);
+  assert.match(r.digest, /reporting lag/);
+});
+
+test("world.hazards survives one half of its source being down", () => {
+  const r = resolve("world.hazards", {}, { fires: null, conflicts: { at: NOW, count: 5, conflicts: [] } }, { now: NOW });
+  assert.equal(r.ok, true);
+  assert.equal(r.data.fireCount, 0);
+  assert.equal(r.data.conflictCount, 5);
+});
+
+test("macro.yields builds a curve and the 2s10s a desk actually asks for", () => {
+  const row = (date, maturity, days, close) => ({ date, maturity, maturity_days: days, close });
+  const r = resolve("macro.yields", { country: "US", lookbackDays: 30 }, {
+    data: [
+      row("2026-06-24", "2Y", 730, 3.9), row("2026-06-24", "10Y", 3650, 4.1),
+      row("2026-07-24", "2Y", 730, 4.0), row("2026-07-24", "10Y", 3650, 4.5),
+    ],
+  }, { now: NOW });
+  assert.equal(r.data.asOfDate, "2026-07-24");
+  assert.equal(r.data.curve.length, 2);
+  assert.equal(Math.round(r.data.spread2s10s), 50);
+  assert.equal(Math.round(r.data.curve[1].changeBp), 40, "the 10Y moved 40bp over the lookback");
+  assert.match(r.digest, /2s10s 50 bp/);
+
+  const inverted = resolve("macro.yields", {}, {
+    data: [row("2026-07-24", "2Y", 730, 4.6), row("2026-07-24", "10Y", 3650, 4.1)],
+  }, { now: NOW });
+  assert.match(inverted.digest, /inverted/);
+});
+
+test("macro.yields never subtracts an inflation-linked yield from a nominal one", () => {
+  // The live US archive has 10Y TIPS but no nominal 10Y on its last day. Letting
+  // TIPS stand in printed "2s10s −192 bp — inverted", which is two different
+  // instruments differenced, not a curve.
+  const row = (date, maturity, days, close) => ({ date, maturity, maturity_days: days, close });
+  const r = resolve("macro.yields", { country: "US" }, {
+    data: [
+      row("2026-07-24", "2Y", 730, 4.352),
+      row("2026-07-24", "10Y TIPS", 3650, 2.432),
+      row("2026-07-20", "10Y", 3650, 4.512), // nominal, but a few days behind
+    ],
+  }, { now: NOW });
+  assert.deepEqual(r.data.curve.map((c) => c.tenor), ["2Y", "10Y"]);
+  assert.deepEqual(r.data.real.map((c) => c.tenor), ["10Y TIPS"]);
+  assert.equal(Math.round(r.data.spread2s10s), 16, "nominal minus nominal, not TIPS");
+  assert.match(r.digest, /10Y as of 2026-07-20/);
+  assert.match(r.digest, /Inflation-linked, kept separate/);
+  assert.doesNotMatch(r.digest, /inverted/);
+});
+
+test("macro.yields says the archive is missing rather than drawing an empty curve", () => {
+  const r = resolve("macro.yields", { country: "CH" }, { data: [] }, { now: NOW });
+  assert.match(r.digest, /LSE_API_KEY/);
+});
+
+test("ml.track refuses to call a thin hit rate evidence", () => {
+  const preds = [
+    { type: "forecast", symbol: "AAPL", model: "ridge", resolved: true, hit: true, predRet: 0.01, actualRet: 0.02, madeAt: NOW - 2 * H },
+    { type: "forecast", symbol: "MSFT", model: "ridge", resolved: true, hit: false, predRet: 0.01, actualRet: -0.01, madeAt: NOW - 3 * H },
+    { type: "forecast", symbol: "NVDA", model: "ridge", resolved: false, predRet: 0.02, madeAt: NOW - H },
+  ];
+  const r = resolve("ml.track", {}, { preds, runs: [{ ts: NOW, label: "x" }] }, { now: NOW });
+  assert.equal(r.data.forecastN, 2);
+  assert.equal(r.data.pending, 1);
+  assert.match(r.digest, /too few to mean anything yet/);
 });
 
 // ── 7. the size budget ──────────────────────────────────────────────────────

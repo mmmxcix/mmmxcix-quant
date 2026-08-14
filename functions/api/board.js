@@ -154,8 +154,22 @@ async function fetchCandles(origin, a) {
 
 // ── source fetching, memoised per request ───────────────────────────────────
 
-function makeLoader({ env, origin }) {
+function makeLoader({ env, origin, request }) {
   const cache = new Map();
+  // Admin sources are fetched with the CALLER's cookie, so the gate stays where
+  // it already is — /api/lab, /api/library and /api/prefs each decide for
+  // themselves. The board refuses an admin resource to a public caller before it
+  // ever gets here; this is the second lock, and it is the authoritative one.
+  const authHeaders = () => {
+    const cookie = request.headers.get("cookie");
+    return cookie ? { cookie } : {};
+  };
+  const getJson = async (path, auth) => {
+    const res = await fetch(`${origin}${path}`, { headers: auth ? authHeaders() : {} });
+    if (!res.ok) throw new Error(`${path} ${res.status}`);
+    return res.json();
+  };
+
   return async function load(sourceName, args) {
     const src = SOURCES[sourceName];
     // Args only reach a source through the resource's own coerced schema, and
@@ -164,7 +178,9 @@ function makeLoader({ env, origin }) {
       ? `candles:${args.symbol}:${args.market}:${args.interval}:${args.range}`
       : src.kind === "quotes"
         ? `quotes:${args.symbols ? args.symbols.join(",") : args.panel}`
-        : sourceName === "bias" ? `bias:${args.symbol}:${args.market}` : sourceName;
+        : sourceName === "bias" ? `bias:${args.symbol}:${args.market}`
+          : sourceName === "vol" ? `vol:${args.symbol}`
+            : sourceName === "yields" ? `yields:${args.country}` : sourceName;
     if (cache.has(cacheKey)) return cache.get(cacheKey);
 
     const p = (async () => {
@@ -174,10 +190,26 @@ function makeLoader({ env, origin }) {
           const row = await env.DB.prepare("SELECT data FROM argus_kv WHERE key = ?").bind(src.key).first();
           return row ? JSON.parse(row.data) : null;
         }
-        case "http": {
-          const res = await fetch(`${origin}${src.path(args)}`);
-          if (!res.ok) throw new Error(`${sourceName} ${res.status}`);
-          return res.json();
+        case "http":
+          return getJson(src.path(args), src.auth);
+        case "hazards": {
+          // Both are public snapshot endpoints and either may be missing (the
+          // disasters agent, for one, has never pushed). A failed half becomes
+          // null, not an exception that hides the half that worked.
+          const [fires, conflicts] = await Promise.all([
+            getJson("/api/fires", false).catch(() => null),
+            getJson("/api/conflicts", false).catch(() => null),
+          ]);
+          return { fires, conflicts };
+        }
+        case "holdings": {
+          // Two constant paths, one payload: cash is derived from deposits, so
+          // positions alone would make the board quietly disagree with /portfolio.
+          const [portfolio, deposits] = await Promise.all([
+            getJson("/api/prefs?key=portfolio", true),
+            getJson("/api/prefs?key=deposits", true),
+          ]);
+          return { portfolio: portfolio?.data || [], deposits: deposits?.data || [] };
         }
         case "quotes": {
           const entries = args.symbols
@@ -233,7 +265,7 @@ export async function onRequest(context) {
   }
 
   const visibility = (await isAdminRequest(env, request).catch(() => false)) ? "admin" : "public";
-  const load = makeLoader({ env, origin });
+  const load = makeLoader({ env, origin, request });
 
   if (request.method === "GET") {
     const resource = url.searchParams.get("resource");

@@ -22,6 +22,28 @@ const OVERVIEW = [
   { resource: "arena.state" },
   { resource: "market.quotes", args: { panel: "crypto" } },
   { resource: "news.headlines", args: { window: "24h", limit: 10 } },
+  { resource: "news.telegram", args: { window: "6h", limit: 8 } },
+];
+
+// Loaded after the first paint, in its own batch: the London archive is a slow
+// upstream and the hazards source fans out to two endpoints. Neither should
+// hold up the answer to "what is going on right now".
+const WIDER = [
+  { resource: "world.layers" },
+  { resource: "world.hazards", args: { top: 5 } },
+  { resource: "macro.yields", args: { country: "US", lookbackDays: 90 } },
+];
+
+// Loaded only for the admin session — these read the dev's private endpoints
+// (/api/lab, /api/library, /api/prefs) and the server refuses them to anyone
+// else, so a second batch keeps the public path from carrying refusals it can
+// do nothing about.
+const PRIVATE = [
+  { resource: "cortex.state" },
+  { resource: "registry.strategies", args: { limit: 12 } },
+  { resource: "portfolio.holdings" },
+  { resource: "portfolio.watchlist" },
+  { resource: "ml.track", args: { limit: 8 } },
 ];
 
 const REFRESH_MS = 60_000;
@@ -246,6 +268,7 @@ export default function Board() {
   const [catalog, setCatalog] = useState([]);
   const [err, setErr] = useState(null);
   const [at, setAt] = useState(0);
+  const [admin, setAdmin] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -253,6 +276,16 @@ export default function Board() {
       setReads(out.reads);
       setAt(out.at);
       setErr(null);
+      // Both follow-ups are fire-and-forget: a slow or failing London archive
+      // must not blank the part of the page that already answered.
+      readBoard(WIDER)
+        .then((w) => setReads((prev) => [...(prev || []), ...w.reads]))
+        .catch(() => { /* the panels stay in their loading state */ });
+      if (out.visibility === "admin") {
+        const priv = await readBoard(PRIVATE);
+        setReads((prev) => [...(prev || []), ...priv.reads]);
+        setAdmin(true);
+      }
     } catch (e) {
       setErr(String(e.message || e));
     }
@@ -313,8 +346,27 @@ export default function Board() {
         <Panel read={get("kronos.state")} title="Kronos" />
         <Panel read={get("arena.state")} title="Arena" />
         <Panel read={get("market.quotes")} title="Market" />
-        <Panel read={get("news.headlines")} title="Headlines" className="lg:col-span-2" />
+        <Panel read={get("news.headlines")} title="Headlines" />
+        <Panel read={get("news.telegram")} title="Telegram OSINT" />
+        <Panel read={get("macro.yields")} title="US yield curve" />
+        <Panel read={get("world.layers")} title="World layers" />
+        <Panel read={get("world.hazards")} title="Hazards" className="lg:col-span-2" />
       </div>
+
+      {admin && (
+        <>
+          <h2 className="mt-6 mb-2 text-sm font-semibold">
+            Private <span className="font-normal text-dim">— visible to the dev account only</span>
+          </h2>
+          <div className="grid gap-3 lg:grid-cols-2">
+            <Panel read={get("cortex.state")} title="Cortex lab" />
+            <Panel read={get("registry.strategies")} title="Registry" />
+            <Panel read={get("portfolio.holdings")} title="Portfolio" />
+            <Panel read={get("portfolio.watchlist")} title="Watchlist" />
+            <Panel read={get("ml.track")} title="ML track record" className="lg:col-span-2" />
+          </div>
+        </>
+      )}
 
       <div className="mt-6">
         {catalog.length > 0 && <Inspector catalog={catalog} />}

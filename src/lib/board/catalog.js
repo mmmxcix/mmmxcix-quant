@@ -30,7 +30,8 @@
 
 import { ledgerStats, tradeR } from "../argus/core.js";
 import { summarizeLedger, sessionOf } from "../argus/learn.js";
-import { PANELS, panelEntries } from "../universe.js";
+import { familyMix, payoffProfile } from "../payoff.js";
+import { PANELS } from "../universe.js";
 import { ArgError, coerceArgs, describeArgs } from "./args.js";
 import { ago, block, clip, money, nf, pct, signedR, table, toMs } from "./format.js";
 
@@ -89,6 +90,91 @@ export const SOURCES = {
     label: "Bias",
     staleAfterMs: 6 * 3_600_000,
     asOf: (raw) => toMs(raw?.at || raw?.cachedAt),
+  },
+
+  // ── wave 2 ────────────────────────────────────────────────────────────────
+  // `auth: true` means the subrequest carries the caller's admin cookie, so the
+  // gate stays where it already is (the source endpoint decides) instead of
+  // being re-implemented here. The board still refuses an admin resource to a
+  // public caller BEFORE fetching — two locks, and the inner one is the real one.
+  // Note there is no single `lab` or `prefs` source taking a channel argument.
+  // That would put a caller's string into the upstream query — the shape of the
+  // bug this whole layer is built to avoid — so each channel is its own source
+  // with a constant path, and `key`/`what` never appear as arguments at all.
+  labState: {
+    kind: "http", auth: true, path: () => "/api/lab",
+    label: "Cortex lab", staleAfterMs: 2 * 3_600_000,
+    asOf: (raw) => toMs(raw?.state?.at || raw?.state?.updatedAt),
+  },
+  labCandidates: {
+    kind: "http", auth: true, path: () => "/api/lab?what=candidates",
+    label: "Cortex candidates", staleAfterMs: 3 * 86_400_000,
+    asOf: (raw) => Math.max(0, ...(raw?.candidates?.items || []).map((c) => toMs(c.at || c.foundAt))),
+  },
+  library: {
+    kind: "http", auth: true, path: () => "/api/library",
+    label: "Registry",
+    staleAfterMs: 7 * 86_400_000, // a library is not a live feed; only a week of silence is odd
+    asOf: (raw) => Math.max(0, ...(raw?.entries || []).map((e) => toMs(e.updatedAt || e.savedAt || e.createdAt))),
+  },
+  watchlist: {
+    kind: "http", auth: true, path: () => "/api/prefs?key=watchlist",
+    label: "Watchlist",
+    staleAfterMs: 365 * 86_400_000, // kept by hand; it is never "stale"
+    asOf: () => Date.now(),
+  },
+  // The cash model needs deposits as well as positions, so this source fetches
+  // both constant paths and hands the pair over as one payload.
+  holdings: {
+    kind: "holdings", auth: true,
+    label: "Portfolio", staleAfterMs: 365 * 86_400_000,
+    asOf: () => Date.now(),
+  },
+  vol: {
+    kind: "http",
+    path: (a) => `/api/vol?symbol=${encodeURIComponent(a.symbol)}`,
+    label: "Volatility",
+    // The DoltHub snapshot syncs nightly; two days of silence means the job died.
+    staleAfterMs: 2 * 86_400_000,
+    asOf: (raw) => toMs(raw?.syncedAt),
+  },
+  telegram: {
+    kind: "http",
+    path: () => "/api/telegram",
+    label: "Telegram OSINT",
+    staleAfterMs: 3 * 3_600_000,
+    asOf: (raw) => Math.max(0, ...(raw?.items || []).map((i) => toMs(i.time))),
+  },
+
+  // ── wave 3 ────────────────────────────────────────────────────────────────
+  world: {
+    kind: "http", path: () => "/api/world",
+    label: "World layers",
+    // The fleet agent bundles ships/planes/jamming into one ~3-minute write.
+    staleAfterMs: 45 * 60_000,
+    asOf: (raw) => toMs(raw?.at),
+  },
+  hazards: {
+    kind: "hazards", // fires + conflicts: two constant paths, one payload
+    label: "Hazards", staleAfterMs: 2 * 86_400_000,
+    asOf: (raw) => Math.max(toMs(raw?.fires?.at), toMs(raw?.conflicts?.at)),
+  },
+  yields: {
+    kind: "http",
+    path: (a) => `/api/lse/bond-yields?country=${encodeURIComponent(a.country)}&format=json`,
+    label: "London bond yields",
+    staleAfterMs: 30 * 86_400_000, // an archive that lands in batches, not a feed
+    asOf: (raw) => {
+      const rows = raw?.data || raw?.rows || [];
+      const last = rows[rows.length - 1];
+      return last?.date ? toMs(Date.parse(last.date)) : 0;
+    },
+  },
+  mlmemory: {
+    kind: "http", auth: true, path: () => "/api/mlmemory",
+    label: "ML track record",
+    staleAfterMs: 30 * 86_400_000,
+    asOf: (raw) => Math.max(0, ...(raw?.preds || []).map((p) => toMs(p.madeAt))),
   },
 };
 
@@ -594,6 +680,486 @@ export const RESOURCES = {
         `${d.matched} headlines · ${d.feedsLive}/${d.feedsTotal} feeds live` +
           (d.feedsDown.length ? ` · down: ${d.feedsDown.join(", ")}` : ""),
         d.items.map((i) => `· [${i.source}] ${clip(i.title, 120)} (${ago(i.at, now)})`).join("\n"),
+      );
+    },
+  },
+
+  "news.telegram": {
+    summary: "Public Telegram OSINT channels — faster than the wires, and unverified, which is the trade.",
+    visibility: "public",
+    source: "telegram",
+    args: {
+      tag: { type: "enum", values: ["crypto", "finance", "breaking", "geo"], default: null },
+      window: { type: "duration", default: "6h" },
+      limit: { type: "int", default: 20, min: 1, max: 60 },
+    },
+    select(raw, a, { now = Date.now() } = {}) {
+      let items = (raw?.items || []).map((i) => ({ ...i, at: toMs(i.time) }));
+      if (a.tag) items = items.filter((i) => i.tag === a.tag);
+      const inWindow = a.window == null ? items : items.filter((i) => i.at >= now - a.window);
+      const sorted = inWindow.sort((x, y) => y.at - x.at);
+      return {
+        matched: sorted.length,
+        channels: [...new Set((raw?.items || []).map((i) => i.channel))],
+        items: sorted.slice(0, a.limit).map((i) => ({
+          channel: i.channel, tag: i.tag, at: i.at, url: i.url, text: clip(i.text, 240),
+        })),
+      };
+    },
+    digest(d, { now } = {}) {
+      if (!d.matched) return "No Telegram post in this window.";
+      return block(
+        `${d.matched} posts from ${d.channels.length} channels — UNVERIFIED OSINT, fast but not authoritative`,
+        d.items.map((i) => `· [${i.channel}] ${i.text} (${ago(i.at, now)})`).join("\n"),
+      );
+    },
+  },
+
+  // ── volatility ───────────────────────────────────────────────────────────
+  "vol.iv": {
+    summary: "Implied vs realised volatility for one symbol: IV rank, percentile, the premium and the 52-week extremes.",
+    visibility: "public",
+    source: "vol",
+    args: { symbol: { type: "symbol", required: true } },
+    select(raw, a) {
+      return {
+        symbol: a.symbol,
+        found: Number.isFinite(raw?.iv) && raw.iv > 0,
+        date: raw?.date || null,
+        syncedAt: toMs(raw?.syncedAt),
+        universe: raw?.universe ?? null,
+        iv: raw?.iv ?? null, hv: raw?.hv ?? null,
+        ivPremium: raw?.ivPremium ?? null,
+        ivRank: raw?.ivRank ?? null,
+        crossPercentile: raw?.crossPercentile ?? null,
+        yearHigh: raw?.yearHigh ?? null, yearHighDate: raw?.yearHighDate || null,
+        yearLow: raw?.yearLow ?? null, yearLowDate: raw?.yearLowDate || null,
+        ivWeekAgo: raw?.ivWeekAgo ?? null, ivMonthAgo: raw?.ivMonthAgo ?? null,
+      };
+    },
+    digest(d) {
+      if (!d.found) return `No options data for ${d.symbol} in the snapshot of ${d.date || "—"} (${d.universe ?? 0} symbols).`;
+      return block(
+        `${d.symbol} volatility · snapshot ${d.date}`,
+        `IV ${pct(d.iv)} vs realised ${pct(d.hv)} · premium ${nf(d.ivPremium, 2)}×`,
+        `IV rank ${nf(d.ivRank, 0)} of 100 · cross-sectional percentile ${nf(d.crossPercentile, 0)}`,
+        `52w range ${pct(d.yearLow)} (${d.yearLowDate}) … ${pct(d.yearHigh)} (${d.yearHighDate})`,
+        Number.isFinite(d.ivWeekAgo) && d.ivWeekAgo > 0 ? `A week ago IV was ${pct(d.ivWeekAgo)}.` : null,
+      );
+    },
+  },
+
+  // ── Cortex (admin) ───────────────────────────────────────────────────────
+  "cortex.state": {
+    summary: "The Cortex lab agent: its paper book, how many strategies it runs, and whether the RiskGate is armed.",
+    visibility: "admin",
+    source: "labState",
+    args: {},
+    select(raw) {
+      const s = raw?.state || null;
+      const rg = s?.riskgate || null;
+      const strategies = Array.isArray(s?.strategies) ? s.strategies : [];
+      return {
+        reporting: !!s,
+        at: toMs(s?.at || s?.updatedAt),
+        combined: s?.combined || null,
+        strategies: strategies.length,
+        failing: strategies.filter((x) => x.error).length,
+        riskgate: rg && {
+          armed: !!rg.armed,
+          openPositions: rg.activeLimits?.openPositions ?? null,
+          maxPositions: rg.rules?.maxSimultaneousPositions ?? null,
+          drawdownPct: rg.activeLimits?.combinedDrawdownPct ?? null,
+          profiles: rg.byProfile ? Object.keys(rg.byProfile) : null,
+        },
+      };
+    },
+    digest(d, { now } = {}) {
+      if (!d.reporting) return "The lab agent has not reported — it runs on the PC, so this usually means the fleet is off.";
+      const c = d.combined, rg = d.riskgate;
+      return block(
+        `Cortex lab${d.at ? ` · ${ago(d.at, now)}` : ""}`,
+        c ? `Combined ${money(c.equity, "USD")} (${nf(c.returnPct, 2)}%)` : "No combined book reported.",
+        `${d.strategies} strategies in the virtual book${d.failing ? ` · ${d.failing} erroring` : ""}`,
+        rg
+          ? `RiskGate ${rg.armed ? "ARMED (fails closed)" : "idle"} · ${rg.openPositions ?? "—"}/${rg.maxPositions ?? "—"} positions · drawdown ${nf(rg.drawdownPct, 1)}%`
+          : "No RiskGate report.",
+      );
+    },
+  },
+
+  "cortex.candidates": {
+    summary: "Research survivors the lab agent pushed up — what Cortex found and thought worth keeping.",
+    visibility: "admin",
+    source: "labCandidates",
+    args: { limit: { type: "int", default: 15, min: 1, max: 60 } },
+    select(raw, a) {
+      const items = raw?.candidates?.items || raw?.candidates || [];
+      const list = (Array.isArray(items) ? items : []).slice(0, a.limit);
+      return {
+        total: Array.isArray(items) ? items.length : 0,
+        items: list.map((c) => ({
+          id: c.id, name: c.name || c.title || c.id,
+          symbol: c.symbol, market: c.market, interval: c.interval,
+          at: toMs(c.at || c.foundAt),
+          source: c.research?.source || c.source || null,
+          metrics: c.metrics
+            ? { trades: c.metrics.tradeCount, winRatePct: c.metrics.winRatePct, sharpe: c.metrics.sharpe, returnPct: c.metrics.returnPct }
+            : null,
+        })),
+      };
+    },
+    digest(d, { now } = {}) {
+      if (!d.total) return "No research candidate stored. Cortex is measured as only ever seeing paper abstracts — see docs/HANDOFF.md.";
+      return block(
+        `${d.total} candidates`,
+        table(["name", "symbol", "trades", "win", "return", "found"],
+          d.items.map((c) => [
+            clip(c.name, 30), c.symbol || "—",
+            c.metrics?.trades ?? "—",
+            c.metrics?.winRatePct != null ? `${nf(c.metrics.winRatePct, 0)}%` : "—",
+            c.metrics?.returnPct != null ? `${nf(c.metrics.returnPct, 1)}%` : "—",
+            ago(c.at, now),
+          ])),
+      );
+    },
+  },
+
+  // ── registry (admin) ─────────────────────────────────────────────────────
+  "registry.strategies": {
+    summary: "The strategy library by lifecycle status, each entry with its inferred payoff shape and the win/loss ratio it must beat.",
+    visibility: "admin",
+    source: "library",
+    args: {
+      status: { type: "enum", values: ["factory", "validated", "paper", "improve", "graveyard"], default: null },
+      family: { type: "enum", values: ["reversion", "momentum", "carry", "mixed", "unknown"], default: null },
+      limit: { type: "int", default: 20, min: 1, max: 100 },
+    },
+    select(raw, a) {
+      const all = (raw?.entries || []).map((e) => ({
+        id: e.id, name: e.name, symbol: e.symbol, market: e.market,
+        interval: e.interval, status: e.status || "factory",
+        crowned: !!e.crowned,
+        updatedAt: toMs(e.updatedAt || e.savedAt || e.createdAt),
+        metrics: e.metrics
+          ? { trades: e.metrics.tradeCount, winRatePct: e.metrics.winRatePct, profitFactor: e.metrics.profitFactor, returnPct: e.metrics.returnPct, sharpe: e.metrics.sharpe }
+          : null,
+        payoff: payoffProfile(e.metrics),
+      }));
+      let rows = all;
+      if (a.status) rows = rows.filter((e) => e.status === a.status);
+      if (a.family) rows = rows.filter((e) => e.payoff.family === a.family);
+      rows = rows.sort((x, y) => y.updatedAt - x.updatedAt);
+      const byStatus = all.reduce((acc, e) => ({ ...acc, [e.status]: (acc[e.status] || 0) + 1 }), {});
+      return {
+        total: all.length,
+        matched: rows.length,
+        byStatus,
+        mix: familyMix(all),
+        entries: rows.slice(0, a.limit),
+      };
+    },
+    digest(d) {
+      if (!d.total) return "The library is empty.";
+      const statuses = Object.entries(d.byStatus).map(([k, v]) => `${v} ${k}`).join(" · ");
+      const mix = d.mix?.counts
+        ? Object.entries(d.mix.counts).filter(([, v]) => v > 0).map(([k, v]) => `${k} ${v}`).join(", ")
+        : null;
+      return block(
+        `${d.total} strategies · ${statuses}`,
+        mix ? `Payoff shapes: ${mix}` : null,
+        // familyMix says so when a whole library is one bet in several costumes;
+        // that warning is the reason the shapes are recorded at all.
+        d.mix?.warning || null,
+        d.matched
+          ? table(["name", "status", "shape", "n", "ratio", "must beat"],
+              d.entries.slice(0, DIGEST_ROWS).map((e) => [
+                clip(e.name, 28), e.status, e.payoff.family,
+                e.payoff.trades,
+                e.payoff.payoffRatio ?? "—",
+                e.payoff.breakEvenRatio ?? "—",
+              ]))
+          : "No entry matches that filter.",
+      );
+    },
+  },
+
+  // ── portfolio (admin) ────────────────────────────────────────────────────
+  "portfolio.watchlist": {
+    summary: "The symbols you actually follow — the same list the news digest and the briefing read.",
+    visibility: "admin",
+    source: "watchlist",
+    args: {},
+    select(raw) {
+      const list = Array.isArray(raw?.data) ? raw.data : [];
+      return { count: list.length, entries: list.map((e) => ({ market: e.market, symbol: e.symbol, name: e.name })) };
+    },
+    digest(d) {
+      if (!d.count) return "The watchlist is empty.";
+      return block(
+        `${d.count} symbols`,
+        d.entries.map((e) => `· ${e.symbol} — ${e.name || ""} (${e.market})`).join("\n"),
+      );
+    },
+  },
+
+  "portfolio.holdings": {
+    summary: "The simulated portfolio: open and closed positions, cost basis, and cash derived from deposits rather than stored.",
+    visibility: "admin",
+    source: "holdings",
+    args: { includeClosed: { type: "bool", default: false } },
+    select(raw, a) {
+      const positions = Array.isArray(raw?.portfolio) ? raw.portfolio : [];
+      const deposits = Array.isArray(raw?.deposits) ? raw.deposits : [];
+      const open = positions.filter((p) => p.sellPrice == null);
+      const closed = positions.filter((p) => p.sellPrice != null);
+      // Cash is DERIVED, never stored (see src/lib/portfolio.js): deposits minus
+      // buys plus realised sells. Recomputing it here keeps the board consistent
+      // with the page under edits and deletes, exactly as that module intends.
+      const depositUSD = deposits.reduce((a2, d) => a2 + (Number(d.usd) || 0), 0);
+      const bought = positions.reduce((a2, p) => a2 + (Number(p.shares) || 0) * (Number(p.avgPrice) || 0), 0);
+      const sold = closed.reduce((a2, p) => a2 + (Number(p.shares) || 0) * (Number(p.sellPrice) || 0), 0);
+      const realised = closed.reduce((a2, p) => a2 + (Number(p.shares) || 0) * ((Number(p.sellPrice) || 0) - (Number(p.avgPrice) || 0)), 0);
+      return {
+        deposited: depositUSD,
+        cashUSD: depositUSD - bought + sold,
+        costBasisOpen: open.reduce((a2, p) => a2 + (Number(p.shares) || 0) * (Number(p.avgPrice) || 0), 0),
+        realisedPnl: realised,
+        openCount: open.length,
+        closedCount: closed.length,
+        positions: (a.includeClosed ? positions : open).map((p) => ({
+          symbol: p.symbol, name: p.name, market: p.market,
+          shares: p.shares, avgPrice: p.avgPrice,
+          sellPrice: p.sellPrice ?? null,
+          addedAt: toMs(p.addedAt), buyDate: toMs(p.buyDate),
+        })),
+      };
+    },
+    digest(d) {
+      if (!d.openCount && !d.closedCount) return "No position recorded. Deposits and positions live under /portfolio.";
+      return block(
+        `Portfolio · ${d.openCount} open, ${d.closedCount} closed`,
+        `Deposited ${money(d.deposited, "USD")} · cash ${money(d.cashUSD, "USD")} · cost basis ${money(d.costBasisOpen, "USD")} · realised ${money(d.realisedPnl, "USD")}`,
+        d.positions.length
+          ? table(["symbol", "shares", "avg", "sold at"],
+              d.positions.slice(0, DIGEST_ROWS).map((p) => [
+                p.symbol, nf(p.shares, 4), nf(p.avgPrice, 2), p.sellPrice != null ? nf(p.sellPrice, 2) : "—",
+              ]))
+          : null,
+        // Marks are deliberately absent: quoting them here would mean a second
+        // price path next to market.quotes, and two of those disagree eventually.
+        "Market value is not shown — ask market.quotes for the marks.",
+      );
+    },
+  },
+
+  // ── the world (wave 3) ───────────────────────────────────────────────────
+  "world.layers": {
+    summary: "The live map layers — aircraft, ships and GPS jamming — as counts, plus which layer is not reporting.",
+    visibility: "public",
+    source: "world",
+    args: {},
+    select(raw) {
+      // The agent ships these as positional arrays to keep the KV write small;
+      // the board counts them rather than re-encoding thousands of rows.
+      const planes = raw?.planes || [];
+      const ships = raw?.ships || [];
+      const jamming = raw?.jamming || [];
+      return {
+        at: toMs(raw?.at),
+        planes: planes.length,
+        ships: ships.length,
+        jamming: jamming.length,
+        // A layer at exactly zero is the interesting case: it means an ingest is
+        // broken or a key is missing, and counting it as "quiet" would hide that.
+        empty: [
+          planes.length ? null : "planes",
+          ships.length ? null : "ships",
+          jamming.length ? null : "jamming",
+        ].filter(Boolean),
+      };
+    },
+    digest(d, { now } = {}) {
+      if (!d.at) return "The world agent has not reported.";
+      return block(
+        `World · ${ago(d.at, now)}`,
+        `${d.planes} aircraft · ${d.ships} ships · ${d.jamming} jamming reports`,
+        d.empty.length
+          ? `Not reporting: ${d.empty.join(", ")}. An empty layer is an ingest that stopped, not a quiet world — ships need the aisstream key.`
+          : null,
+      );
+    },
+  },
+
+  "world.hazards": {
+    summary: "Fires and armed-conflict events worldwide: totals, the worst readings and which countries dominate them.",
+    visibility: "public",
+    source: "hazards",
+    args: { top: { type: "int", default: 6, min: 1, max: 20 } },
+    select(raw, a) {
+      // fires:     [lat, lon, frp]                         (frp = radiative power, MW)
+      // conflicts: [lat, lon, fatalities, events, date, country, actor1, actor2]
+      const fires = raw?.fires?.fires || [];
+      const conflicts = raw?.conflicts?.conflicts || [];
+      const byCountry = new Map();
+      let fatalities = 0;
+      for (const c of conflicts) {
+        const country = c[5] || "unknown";
+        const dead = Number(c[2]) || 0;
+        fatalities += dead;
+        const e = byCountry.get(country) || { country, events: 0, fatalities: 0 };
+        e.events += 1; e.fatalities += dead;
+        byCountry.set(country, e);
+      }
+      const frps = fires.map((f) => Number(f[2]) || 0);
+      return {
+        firesAt: toMs(raw?.fires?.at),
+        conflictsAt: toMs(raw?.conflicts?.at),
+        fireCount: raw?.fires?.count ?? fires.length,
+        fireShown: fires.length,
+        hottestFrp: frps.length ? Math.max(...frps) : null,
+        conflictCount: raw?.conflicts?.count ?? conflicts.length,
+        conflictShown: conflicts.length,
+        fatalities,
+        topCountries: [...byCountry.values()].sort((x, y) => y.fatalities - x.fatalities).slice(0, a.top),
+      };
+    },
+    digest(d, { now } = {}) {
+      if (!d.fireCount && !d.conflictCount) return "No hazard data — neither agent has pushed a snapshot.";
+      return block(
+        `Fires ${d.fireCount} detections${d.hottestFrp ? ` · hottest ${nf(d.hottestFrp, 0)} MW` : ""} (${ago(d.firesAt, now)})`,
+        `Conflict events ${d.conflictCount} · ${d.fatalities} fatalities in the ${d.conflictShown} shown (${ago(d.conflictsAt, now)})`,
+        d.topCountries.length
+          ? table(["country", "events", "fatalities"], d.topCountries.map((c) => [c.country, c.events, c.fatalities]))
+          : null,
+        // Said once, so nobody reads a lagging archive as today's news.
+        "ACLED events are an archive with a reporting lag; the date column is the event date, not the filing date.",
+      );
+    },
+  },
+
+  // ── macro (wave 3) ───────────────────────────────────────────────────────
+  "macro.yields": {
+    summary: "Government bond yields for one country from the London archive — the latest curve and how it moved.",
+    visibility: "public",
+    source: "yields",
+    args: {
+      country: { type: "enum", values: ["US", "DE", "GB", "CH", "JP", "FR", "IT", "AU", "CA"], default: "US" },
+      lookbackDays: { type: "int", default: 90, min: 5, max: 730 },
+    },
+    select(raw, a) {
+      const rows = (raw?.data || raw?.rows || []).map((r) => ({
+        date: r.date, tenor: String(r.maturity || r.tenor || ""), days: Number(r.maturity_days ?? r.days) || 0,
+        close: Number(r.close),
+      })).filter((r) => Number.isFinite(r.close) && r.date && r.tenor);
+      if (!rows.length) return { country: a.country, found: false, curve: [], real: [], asOfDate: null };
+
+      // TIPS are INFLATION-LINKED: a real yield, not a nominal one. The first
+      // version of this let "10Y TIPS" stand in for the missing nominal 10Y and
+      // printed "2s10s −192 bp — inverted", which is not a curve inversion but
+      // two different instruments subtracted from each other. They are kept, and
+      // kept apart.
+      const isReal = (t) => /TIPS|INDEX|LINK|REAL/i.test(t);
+      const asOfDate = rows.reduce((m, r) => (r.date > m ? r.date : m), rows[0].date);
+      const cutoff = new Date(new Date(asOfDate).getTime() - a.lookbackDays * 86_400_000)
+        .toISOString().slice(0, 10);
+
+      // Latest observation PER TENOR, not "everything printed on the last day":
+      // bond series skip tenors on individual days, and a curve that silently
+      // drops the 10Y is how the wrong spread got computed in the first place.
+      const latest = new Map(), past = new Map();
+      for (const r of rows) {
+        const l = latest.get(r.tenor);
+        if (!l || r.date > l.date) latest.set(r.tenor, r);
+        if (r.date <= cutoff) {
+          const p = past.get(r.tenor);
+          if (!p || r.date > p.date) past.set(r.tenor, r);
+        }
+      }
+      const shape = (r) => ({
+        tenor: r.tenor, days: r.days, close: r.close, date: r.date,
+        lagging: r.date !== asOfDate, // this tenor did not print on the latest day
+        changeBp: past.has(r.tenor) ? (r.close - past.get(r.tenor).close) * 100 : null,
+      });
+      const all = [...latest.values()].sort((x, y) => x.days - y.days);
+      const curve = all.filter((r) => !isReal(r.tenor)).map(shape);
+      const real = all.filter((r) => isReal(r.tenor)).map(shape);
+
+      const pick = (d) => curve.find((c) => Math.abs(c.days - d) <= 40) || null;
+      const two = pick(730), ten = pick(3650);
+      const bothFresh = two && ten && !two.lagging && !ten.lagging;
+      return {
+        country: a.country, found: true, asOfDate, observations: rows.length,
+        curve, real,
+        spread2s10s: two && ten ? (ten.close - two.close) * 100 : null,
+        // Why the number may be absent or soft — stated, not implied.
+        spreadNote: !two || !ten
+          ? `no nominal ${!two ? "2Y" : "10Y"} in this archive`
+          : bothFresh ? null : `2Y as of ${two.date}, 10Y as of ${ten.date}`,
+      };
+    },
+    digest(d) {
+      if (!d.found) return `No yield data for ${d.country} (the London archive may not be configured — LSE_API_KEY).`;
+      return block(
+        `${d.country} government yields · latest ${d.asOfDate}`,
+        table(["tenor", "yield %", "Δ bp", "as of"],
+          d.curve.map((c) => [c.tenor, nf(c.close, 3), c.changeBp == null ? "—" : nf(c.changeBp, 0), c.lagging ? c.date : ""])),
+        d.spread2s10s != null
+          ? `2s10s ${nf(d.spread2s10s, 0)} bp${d.spread2s10s < 0 ? " — inverted" : ""}${d.spreadNote ? ` (${d.spreadNote})` : ""}`
+          : `2s10s not computable — ${d.spreadNote}.`,
+        d.real.length
+          ? `Inflation-linked, kept separate (a real yield is not comparable to a nominal one): ${d.real.map((r) => `${r.tenor} ${nf(r.close, 3)}`).join(" · ")}`
+          : null,
+      );
+    },
+  },
+
+  // ── ML track record (admin, wave 3) ──────────────────────────────────────
+  "ml.track": {
+    summary: "The ML Studio's prediction ledger — the only evidence of real out-of-sample skill, pending entries included.",
+    visibility: "admin",
+    source: "mlmemory",
+    args: { limit: { type: "int", default: 10, min: 1, max: 50 } },
+    select(raw, a) {
+      const preds = raw?.preds || [];
+      const runs = raw?.runs || [];
+      const forecasts = preds.filter((p) => p.type === "forecast");
+      const resolved = forecasts.filter((p) => p.resolved);
+      const rankings = preds.filter((p) => p.type === "ranking" && p.resolved);
+      return {
+        runs: runs.length,
+        forecastN: resolved.length,
+        forecastHitRate: resolved.length ? resolved.filter((p) => p.hit).length / resolved.length : null,
+        rankingN: rankings.length,
+        rankingAvgSpread: rankings.length ? rankings.reduce((s, p) => s + (p.spread || 0), 0) / rankings.length : null,
+        pending: preds.filter((p) => !p.resolved).length,
+        latest: preds.slice(0, a.limit).map((p) => ({
+          type: p.type, symbol: p.symbol || null, model: p.model || null, month: p.month || null,
+          madeAt: toMs(p.madeAt), resolved: !!p.resolved,
+          predRet: p.predRet ?? null, actualRet: p.actualRet ?? null, hit: p.hit ?? null,
+          spread: p.spread ?? null,
+        })),
+      };
+    },
+    digest(d, { now } = {}) {
+      if (!d.forecastN && !d.pending && !d.runs) return "The ML ledger is empty.";
+      return block(
+        `${d.runs} runs logged · ${d.pending} predictions still open`,
+        // A hit rate under ~30 resolved forecasts is not evidence, and saying so
+        // costs one line — the same discipline the meta-label gate enforces.
+        d.forecastN
+          ? `Forecasts: ${d.forecastN} resolved, ${pct(d.forecastHitRate, 0)} directional hits${d.forecastN < 30 ? " — too few to mean anything yet" : ""}`
+          : "No forecast has resolved yet.",
+        d.rankingN ? `Rankings: ${d.rankingN} resolved, average spread vs benchmark ${nf(d.rankingAvgSpread * 100, 2)}%` : null,
+        d.latest.length
+          ? table(["type", "symbol", "made", "pred", "actual", "hit"],
+              d.latest.map((p) => [
+                p.type, p.symbol || p.month || "—", ago(p.madeAt, now),
+                p.predRet != null ? `${nf(p.predRet * 100, 2)}%` : "—",
+                p.actualRet != null ? `${nf(p.actualRet * 100, 2)}%` : "—",
+                p.resolved ? (p.hit ? "yes" : "no") : "open",
+              ]))
+          : null,
       );
     },
   },
