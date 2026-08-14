@@ -26,7 +26,7 @@ const P = (params, key, dflt) => {
 // Each returns a complete `strategy(ctx)` matching src/lib/strategies.js.
 const BUILTIN_SOURCE = {
   "perp-funding-carry": (p) => {
-    const stamps = P(p, "stamps", 3), minRateBps = P(p, "minRateBps", 1), stopPct = P(p, "stopPct", 4), trendSma = P(p, "trendSma", 200);
+    const stamps = P(p, "stamps", 3), minRateBps = P(p, "minRateBps", 0.3), stopPct = P(p, "stopPct", 4), trendSma = P(p, "trendSma", 200);
     return `// Perpetual Funding Carry — take the side that is PAID the funding and hold it.
 // Needs perp funding history (backtester: "Apply perp funding"); without it
 // ctx.funding is null and this stays flat, which is the honest output.

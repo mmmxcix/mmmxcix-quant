@@ -46,6 +46,21 @@ test("negative funding flips the side", () => {
   assert.ok(r.metrics.totalReturnPct > 0);
 });
 
+test("the DEFAULT threshold still trades in a realistic funding regime", () => {
+  // Measured on Binance 8h stamps, Sep 2025 → Aug 2026: BTC averaged 0.27 bps
+  // per stamp and ETH 0.19 — well under the 0.01% (1 bp) baseline the exchange
+  // clamps toward. The first default here was 1 bp and fired 0–2 times in a
+  // YEAR, which is a broken default rather than a careful one. This pins that
+  // the shipped default acts on funding of the size the market actually pays.
+  const params = Object.fromEntries(carry.params.map((p) => [p.key, p.default]));
+  const realistic = stamps(120, 0.00005); // 0.5 bps — an ordinary stamp in that regime, half the old floor
+  const now = runBacktest({ candles: flat(120), signalFn: carry.build({ ...params, trendSma: 0 }), feeBps: 0, fundingRates: realistic });
+  assert.ok(now.metrics.tradeCount > 0, "the shipped default must act on a realistic carry");
+  assert.ok(now.metrics.fundingPaidPct < 0, "and collect it");
+  const old = runBacktest({ candles: flat(120), signalFn: carry.build({ ...params, minRateBps: 1, trendSma: 0 }), feeBps: 0, fundingRates: realistic });
+  assert.equal(old.metrics.tradeCount, 0, "…which the old 1 bp floor did not");
+});
+
 test("funding below the threshold is not worth trading", () => {
   const r = runBacktest({
     candles: flat(), signalFn: carry.build({ stamps: 3, minRateBps: 5, trendSma: 0 }),

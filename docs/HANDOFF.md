@@ -399,7 +399,22 @@ short volatility, it will backtest beautifully, and its tail is by definition
 under-sampled. It also cannot ever be an Argus setup: `MIN_PLANNED_R` 1.5 forbids
 its payoff shape outright.
 
-396 tests pass, build and 32-route smoke clean.
+**Then it was run on real data, and the unit tests turned out to have been too
+kind.** BTCUSDT and ETHUSDT, 1000 8h bars, Sep 2025 → Aug 2026:
+
+- **The shipped default never traded.** Binance clamps funding toward 0.01% =
+  1 bp per stamp, so 1 bp looked like the natural floor. Measured, BTC averaged
+  **0.27 bps** and ETH **0.19** — the floor fired 0 times on BTC and twice on ETH
+  in a year. Default is now 0.3 bps (49–123 trades/yr on the same data), with a
+  test pinning that it acts where the old one did not. A default that cannot
+  trade is broken, not conservative.
+- **The return was not the carry.** It collected 1–4% of funding while showing
+  +19% to +67% total — the rest was being short a market that fell 45–58%. A
+  one-legged perp carry holds a delta, and here the delta dominated. Judge it by
+  the *Funding paid* metric, not the equity curve. The delta-neutral version is
+  short perp + long spot, which a single-symbol engine cannot run.
+
+465 tests pass, build and 33-route smoke clean.
 
 ---
 

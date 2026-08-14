@@ -926,10 +926,15 @@ export const BUILT_IN_STRATEGIES = [
     description:
       "The third payoff family, and the one this library was missing: carry. You are not predicting direction — you take the side that GETS PAID the funding on a perpetual and hold it. When funding is persistently positive, longs are paying shorts, so the short side collects every stamp; when it is negative, the long side does. " +
       "It works because it is not free money: you are underwriting the risk of holding the crowded side, and being paid a premium for it. That makes the payoff shape a short-volatility one — many small wins, then one large loss — so a protective stop is not optional here, it is the strategy. " +
-      "Needs perp funding history (Binance USDⓈ-M): tick 'Include funding' in the backtester, on a symbol like BTCUSDT. Without it there is no signal and it stays flat. The trend filter exists because the disaster for a funding short is a violent rally.",
+      "READ THE FUNDING COLUMN, NOT THE RETURN. This is a one-legged carry, so it holds a direction: on 2025–26 BTC it collected ~2–4% of funding while the total return was dominated by being short a falling market. The delta-neutral version (short perp + long spot) needs two instruments, which this single-symbol engine cannot run — so judge the carry by 'Funding paid', and treat the rest as the directional bet you are also making. " +
+      "Needs perp funding history (Binance USDⓈ-M): tick 'Apply perp funding' in the backtester, on a symbol like BTCUSDT. Without it there is no signal and it stays flat. The trend filter exists because the disaster for a funding short is a violent rally.",
     params: [
       { key: "stamps", label: "Funding stamps averaged", default: 3, min: 1, max: 30, step: 1 },
-      { key: "minRateBps", label: "Min |funding| to act (bps per stamp)", default: 1, min: 0, max: 20, step: 0.5 },
+      // 0.3 bps, not 1. Binance's baseline clamp is 0.01% = 1 bp per stamp, which
+      // reads like the natural floor — but measured over the last 1000 stamps BTC
+      // averaged 0.27 bps and ETH 0.19, so a 1 bp floor fired 0–2 times in a YEAR.
+      // A default that never trades is a broken default, not a conservative one.
+      { key: "minRateBps", label: "Min |funding| to act (bps per stamp)", default: 0.3, min: 0, max: 20, step: 0.1 },
       { key: "stopPct", label: "Protective stop (%)", default: 4, min: 0.5, max: 25, step: 0.5 },
       { key: "trendSma", label: "Trend filter SMA (0 = off)", default: 200, min: 0, max: 400, step: 10 },
     ],
