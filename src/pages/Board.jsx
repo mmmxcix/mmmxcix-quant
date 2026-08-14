@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { LayoutList, RefreshCw, Terminal, TriangleAlert } from "lucide-react";
+import { LayoutList, MessageSquare, RefreshCw, Terminal, TriangleAlert } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { cliEnabled, cliModel, cliUrl, omniComplete, omniEnabled, omniModel, omniUrl } from "@/lib/omniroute";
 
 // The board — one screen over the three agents, the market, the charts and the
 // news, all of it served by /api/board from the catalog in src/lib/board.
@@ -110,6 +111,138 @@ function Panel({ read, title, className }) {
         </p>
       ) : (
         <Digest text={read.digest} />
+      )}
+    </section>
+  );
+}
+
+// ── ask ─────────────────────────────────────────────────────────────────────
+// The chat is deliberately thin: the server plans, reads and answers. What this
+// component adds is (a) the LOCAL path — when OmniRoute or the CLI shim is
+// configured, the two model turns run on the user's own machine and the server
+// only executes the reads — and (b) showing the evidence next to the answer,
+// because an answer whose digests you cannot see is a claim, not a result.
+
+function Ask() {
+  const [q, setQ] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [out, setOut] = useState(null);
+  const [showEvidence, setShowEvidence] = useState(false);
+
+  const local = cliEnabled() || omniEnabled();
+  const endpoint = cliEnabled() ? { url: cliUrl(), model: cliModel() } : { url: omniUrl(), model: omniModel() };
+
+  const run = useCallback(async () => {
+    const question = q.trim();
+    if (!question) return;
+    setBusy(true);
+    setOut(null);
+    try {
+      let res;
+      if (local) {
+        // 1) the server hands back the planner prompt (no provider key spent)
+        const p = await fetch("/api/ask", {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ question, promptOnly: true }),
+        }).then((r) => r.json());
+        // 2) the local model plans
+        const planText = await omniComplete({ system: p.system, user: p.user, ...endpoint });
+        if (!planText) throw new Error("the local model did not answer — is OmniRoute running?");
+        // 3) the server executes the reads and returns the answer prompt
+        const ex = await fetch("/api/ask", {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ question, plan: planText }),
+        }).then((r) => r.json());
+        if (!ex.ok) throw new Error(ex.error || "the plan was rejected");
+        // 4) the local model answers from the digests
+        const answer = await omniComplete({ system: ex.answer.system, user: ex.answer.user, ...endpoint });
+        res = { ...ex, answer: answer || "The reads succeeded; the local model did not summarise them.", model: endpoint.model };
+      } else {
+        res = await fetch("/api/ask", {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ question }),
+        }).then((r) => r.json());
+        if (!res.ok) throw new Error(res.hint || res.error || "no answer");
+      }
+      setOut(res);
+    } catch (e) {
+      setOut({ error: String(e.message || e) });
+    } finally {
+      setBusy(false);
+    }
+  }, [q, local, endpoint]);
+
+  return (
+    <section className="rounded-xl border border-line bg-surface/40 p-4">
+      <div className="flex items-center gap-2">
+        <MessageSquare className="h-4 w-4 text-accent" aria-hidden="true" />
+        <h2 className="text-sm font-semibold">Ask</h2>
+        <span className="text-[11px] text-dim">
+          {local ? `local model · ${endpoint.model}` : "free provider chain"}
+        </span>
+      </div>
+
+      <div className="mt-3 flex gap-2">
+        <label htmlFor="ask-q" className="sr-only">Question</label>
+        <input
+          id="ask-q"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" && !busy) run(); }}
+          placeholder="Which Argus setups actually lose money, and in which session?"
+          className="min-w-0 flex-1 rounded-lg border border-line bg-bg px-3 py-1.5 text-sm"
+        />
+        <button
+          type="button"
+          onClick={run}
+          disabled={busy || !q.trim()}
+          className="rounded-lg border border-line px-3 py-1.5 text-xs font-medium transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
+        >
+          {busy ? "Reading…" : "Ask"}
+        </button>
+      </div>
+
+      {out?.error && <p className="mt-3 text-sm text-down" role="status">{out.error}</p>}
+
+      {out && !out.error && (
+        <div className="mt-3">
+          <p className="whitespace-pre-wrap text-sm">{out.answer}</p>
+          <p className="mt-2 text-[11px] text-dim">
+            {out.model ? `${out.model} · ` : ""}
+            read {out.reads?.length || 0} resource{(out.reads?.length || 0) === 1 ? "" : "s"}
+            {out.reads?.length ? `: ${out.reads.map((r) => r.resource).join(", ")}` : ""}
+            {out.dropped?.length ? ` · asked for ${out.dropped.join(", ")}, which does not exist` : ""}
+          </p>
+          {!!out.reads?.length && (
+            <>
+              <button
+                type="button"
+                onClick={() => setShowEvidence((s) => !s)}
+                className="mt-1 text-[11px] text-dim underline decoration-dotted hover:text-accent"
+              >
+                {showEvidence ? "hide" : "show"} the evidence it read
+              </button>
+              {showEvidence && (
+                <div className="mt-2 space-y-2">
+                  {out.reads.map((r, i) => (
+                    // Keyed by index: one plan often reads the same resource
+                    // twice with different arguments.
+                    <div key={`${r.resource}-${i}`} className="rounded-lg border border-line bg-bg p-2">
+                      <p className="text-[10px] uppercase tracking-wide text-dim">
+                        {r.resource}
+                        {r.args && Object.keys(r.args).length
+                          ? ` (${Object.entries(r.args).filter(([, v]) => v != null && v !== "").map(([k, v]) => `${k}=${v}`).join(", ")})`
+                          : ""}
+                        {r.stale ? " · stale" : ""}
+                      </p>
+                      <Digest text={r.ok ? r.digest : `failed: ${r.error}`} />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
       )}
     </section>
   );
@@ -338,6 +471,8 @@ export default function Board() {
           The board is not answering ({err}).
         </p>
       )}
+
+      <div className="mb-3"><Ask /></div>
 
       <div className="grid gap-3 lg:grid-cols-2">
         <Panel read={get("argus.status")} title="Argus" />

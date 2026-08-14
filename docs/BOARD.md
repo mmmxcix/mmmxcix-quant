@@ -61,28 +61,67 @@ round, so:
 | `src/lib/universe.js` | the monitor's instrument list, now shared with the board |
 | `functions/api/board.js` | the only part that needs the network: fetch, gate, memoise per request |
 | `src/pages/Board.jsx` | the overview plus the inspector |
-| `test/board.test.mjs` | 27 tests: the invariants, the coercion, every resource against a fixture |
+| `src/lib/board/ask.js` | the chat as pure functions: catalog prompt, plan parsing, answer prompt |
+| `functions/_lib/board.mjs` | the network half — fetching and gating — shared by `/api/board` and `/api/ask` |
+| `functions/api/ask.js` | the two-turn chat endpoint |
+| `test/board.test.mjs` · `test/ask.test.mjs` | 51 tests: the invariants, the coercion, every resource against a fixture, and the plan parsing |
 
 Adding a resource is one object in `RESOURCES`: `summary`, `visibility`,
 `source`, `args`, `select`, `digest`. It then appears in the listing, the
 inspector and (later) the chat's tools without another line anywhere.
 
-## Wave 1 — built
+## The resources — all three waves built
 
-`argus.status` · `argus.positions` · `argus.performance` · `argus.trades` ·
-`argus.lessons` · `argus.journal` · `kronos.state` · `arena.state` ·
-`market.quotes` · `market.candles` · `market.bias` · `news.headlines`
+**Public (17)** · `argus.status` `argus.positions` `argus.performance`
+`argus.trades` `argus.lessons` `argus.journal` · `kronos.state` ·
+`arena.state` · `market.quotes` `market.candles` `market.bias` ·
+`news.headlines` `news.telegram` · `vol.iv` · `world.layers` `world.hazards` ·
+`macro.yields`
 
-## Wave 2 — the same two functions each, not new machinery
+**Admin (5)** · `cortex.state` `cortex.candidates` · `registry.strategies` ·
+`portfolio.holdings` `portfolio.watchlist` · `ml.track`
 
-Cortex/lab state and candidates · the strategy registry (`library`) · the
-volatility snapshot (`vol`) · Telegram OSINT · portfolio and watchlist
-(**admin-only** — the first resources that will exercise the visibility gate).
+The admin ones are the reason the visibility gate exists, and it is two locks:
+the board refuses the resource to a public caller *before* fetching, and the
+fetch carries the CALLER's cookie so `/api/lab`, `/api/library` and `/api/prefs`
+still decide for themselves. A test asserts the implication — every resource
+whose source is authenticated must be declared admin, because a public one would
+fetch the dev's private data with the dev's own cookie and show it to anyone.
 
-## Wave 3
+No source takes a channel argument. `lab?what=` and `prefs?key=` would put a
+caller's string into an upstream query, so each channel is its own source with a
+constant path and `key` / `what` do not exist as arguments at all. Two sources
+fan out to several constant paths instead: `holdings` (positions + deposits,
+because cash is derived and never stored) and `hazards` (fires + conflicts,
+either half may fail without taking down the other).
 
-The world layers (ships, planes, fires, conflicts, jamming), macro, the London
-hub, ML memory.
+## Ask — the chat, `/api/ask`
+
+Not a tool-calling loop, on purpose. The app's LLM path is a fallback chain
+across four providers whose free tiers are what keep a public endpoint free, and
+each speaks a different tool protocol — so a tool loop would either bind the chat
+to one provider or carry four implementations, and it could not run on the local
+OmniRoute / CLI shim at all.
+
+Instead, two strict-JSON turns, the same shape `/api/bias` and `/api/briefing`
+already use:
+
+1. **Plan** — the model sees the catalog (ids, summaries, argument types, ~3 KB)
+   and returns which reads answer the question.
+2. **Answer** — the board executes those reads and the model answers from the
+   digests alone.
+
+Three request shapes, so a LOCAL model can drive the same flow with no provider
+key on the server: `{question}` runs it all server-side; `{question,
+promptOnly:true}` hands back the planner prompt; `{question, plan}` executes a
+plan and hands back the answer prompt. The page uses the local path whenever
+OmniRoute or the CLI shim is configured.
+
+Guardrails that are code, not prompt text: at most 6 reads per question, one
+round, invented resource ids dropped before they cost a round trip, the planner
+shown only what the caller may read (a public chat cannot learn the private
+resources exist), and the reads travel back WITH the answer so the evidence is
+inspectable next to the claim.
 
 ---
 
@@ -133,6 +172,14 @@ What *would* need changing, in the order it will bite:
   which should return the actual market movers, currently returns press releases
   about a music-education award. Changing it moves the News page too, so it is
   reported rather than silently reassigned.
+- **The US yield archive has no nominal 10Y on its latest day**, only 10Y TIPS.
+  The first version of `macro.yields` matched tenors by maturity days and so
+  printed "2s10s −192 bp — inverted", which was an inflation-linked real yield
+  subtracted from a nominal one. Now real and nominal are kept apart, the curve
+  takes the latest observation per tenor, and any lagging tenor is dated in the
+  output: "2s10s 11 bp (2Y as of 2026-07-24, 10Y as of 2026-07-01)".
+- **`world.layers` reports ships at 0** — an empty layer is a stopped ingest, not
+  a quiet world. The aisstream key is still missing.
 - **The learning loop currently has 8 lessons and none of them positive**, even
   though London (+3.66R over 23 trades) and off-hours (+2.36R over 6) are the
   two profitable session buckets. Worth knowing why the winning side never

@@ -56,6 +56,25 @@ export async function omniModels(url = omniUrl()) {
   } catch { return []; }
 }
 
+/** One completion on the chosen local endpoint. Returns "" on any failure, so
+ *  every caller can fall back to the server chain without special-casing. */
+export async function omniComplete({ system, user, url = omniUrl(), model = omniModel(), timeout = 180000 }) {
+  try {
+    const res = await fetch(`${url}/chat/completions`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: "system", content: system }, { role: "user", content: user }],
+        temperature: 0.2, stream: false,
+      }),
+      signal: AbortSignal.timeout(timeout),
+    });
+    if (!res.ok) return "";
+    const j = await res.json();
+    return j?.choices?.[0]?.message?.content || "";
+  } catch { return ""; } // unreachable / CORS / timeout
+}
+
 /**
  * Run one generation through OmniRoute. Returns the SAME shape as /api/generate
  * ({ code, language } | { review } | { critique }) or null on any failure (so the
