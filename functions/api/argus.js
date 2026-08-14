@@ -6,6 +6,7 @@
 // GET is public (paper-trading display, educational). POST is token/admin-gated.
 
 import { isAdminRequest } from "../_lib/auth.mjs";
+import { archiveTrades, appendHistory } from "../_lib/archive.mjs";
 
 function json(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -134,6 +135,23 @@ export async function onRequest({ request, env }) {
     } catch (e) {
       return json({ error: "db_write_failed" }, 503);
     }
+
+    // The durable record underneath the blob (functions/_lib/archive.mjs): the
+    // snapshot is capped at 500 trades and is OVERWRITTEN every cycle, so
+    // without this there is no way to keep more history than fits in one JSON
+    // value, and no way to answer "what did equity do last week" at all.
+    //
+    // Deliberately AFTER the response-critical write and outside its try: an
+    // archive that fails must never stop a 24/7 agent from saving its state.
+    // Nothing here is ever read back by this endpoint, so the two stores cannot
+    // disagree on screen.
+    try {
+      const closed = Array.isArray(body.ledgerReplace) ? body.ledgerReplace
+        : Array.isArray(body.ledgerAdd) ? body.ledgerAdd : [];
+      if (closed.length) await archiveTrades(db, closed);
+      if (body.state) await appendHistory(db, body.state);
+    } catch { /* the archive is best-effort by design */ }
+
     return json({ ok: true });
   }
 

@@ -170,6 +170,15 @@ export const SOURCES = {
       return last?.date ? toMs(Date.parse(last.date)) : 0;
     },
   },
+  // The one source that is a real TABLE rather than a JSON blob — because a
+  // blob that is overwritten every two minutes cannot have a history at all.
+  // See db/board-tables.sql and functions/_lib/archive.mjs.
+  history: {
+    kind: "history",
+    label: "Argus history",
+    staleAfterMs: 60 * 60_000,
+    asOf: (raw) => toMs(raw?.rows?.[raw.rows.length - 1]?.at),
+  },
   mlmemory: {
     kind: "http", auth: true, path: () => "/api/mlmemory",
     label: "ML track record",
@@ -437,6 +446,68 @@ export const RESOURCES = {
       return d.entries
         .map((j) => `${ago(j.at, now)} · ${j.symbol} ${j.side} ${j.kind} → ${j.outcome} ${signedR(j.R)} [${j.verdict}]\n  ${j.cause}`)
         .join("\n");
+    },
+  },
+
+  "argus.equity": {
+    summary: "How the agent's equity, heat and exposure actually moved over a window — the one question the overwritten snapshot could never answer.",
+    visibility: "public",
+    source: "history",
+    args: {
+      window: { type: "duration", default: "7d" },
+      points: { type: "int", default: 60, min: 5, max: 400, note: "downsampled evenly" },
+    },
+    select(raw, a) {
+      const rows = (raw?.rows || []).map((r) => ({
+        at: toMs(r.at),
+        equity: r.mark_equity ?? r.equity,
+        realised: r.equity,
+        unrealized: r.unrealized,
+        open: r.open_count,
+        // Stored as the agent writes it (a fraction); converted here, once.
+        heatPct: Number.isFinite(r.heat) ? r.heat * 100 : null,
+        heatCapPct: Number.isFinite(r.heat_cap) ? r.heat_cap * 100 : null,
+        lev: r.portfolio_lev,
+        halted: !!r.halted,
+      })).filter((r) => r.at);
+      if (!rows.length) return { missing: !!raw?.missing, samples: 0, points: [] };
+
+      const first = rows[0], last = rows[rows.length - 1];
+      // Peak-to-trough on the recorded curve. Argus's own page rebuilds equity
+      // from the closed ledger, which cannot see an open position's excursion —
+      // this is the marked curve, so it can.
+      let peak = -Infinity, maxDd = 0;
+      for (const r of rows) {
+        if (!Number.isFinite(r.equity)) continue;
+        peak = Math.max(peak, r.equity);
+        if (peak > 0) maxDd = Math.max(maxDd, (peak - r.equity) / peak);
+      }
+      const step = Math.max(1, Math.floor(rows.length / a.points));
+      const points = rows.filter((_, i) => i % step === 0 || i === rows.length - 1);
+      const heats = rows.map((r) => r.heatPct).filter(Number.isFinite);
+      return {
+        missing: false,
+        samples: rows.length,
+        from: first.at, to: last.at,
+        startEquity: first.equity, endEquity: last.equity,
+        changePct: first.equity > 0 ? ((last.equity - first.equity) / first.equity) * 100 : null,
+        maxDrawdownPct: maxDd * 100,
+        peakHeatPct: heats.length ? Math.max(...heats) : null,
+        haltedSamples: rows.filter((r) => r.halted).length,
+        points,
+      };
+    },
+    digest(d, { now } = {}) {
+      if (d.missing) {
+        return "No history recorded yet — the archive table is created by the agent's next persist (see db/board-tables.sql).";
+      }
+      if (!d.samples) return "No history in this window.";
+      return block(
+        `Argus equity · ${d.samples} samples · ${ago(d.from, now)} → ${ago(d.to, now)}`,
+        `${money(d.startEquity)} → ${money(d.endEquity)} (${nf(d.changePct, 2)}%)`,
+        `Max drawdown ${nf(d.maxDrawdownPct, 2)}% on the marked curve · peak heat ${nf(d.peakHeatPct, 1)}%`,
+        d.haltedSamples ? `Halted in ${d.haltedSamples} of ${d.samples} samples.` : null,
+      );
     },
   },
 

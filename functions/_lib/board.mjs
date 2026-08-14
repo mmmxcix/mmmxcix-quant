@@ -153,7 +153,8 @@ export function makeLoader({ env, origin, request }) {
         ? `quotes:${args.symbols ? args.symbols.join(",") : args.panel}`
         : sourceName === "bias" ? `bias:${args.symbol}:${args.market}`
           : sourceName === "vol" ? `vol:${args.symbol}`
-            : sourceName === "yields" ? `yields:${args.country}` : sourceName;
+            : sourceName === "yields" ? `yields:${args.country}`
+              : sourceName === "history" ? `history:${args.window}` : sourceName;
     if (cache.has(cacheKey)) return cache.get(cacheKey);
 
     const p = (async () => {
@@ -165,6 +166,23 @@ export function makeLoader({ env, origin, request }) {
         }
         case "http":
           return getJson(src.path(args), src.auth);
+        case "history": {
+          if (!env.DB) throw new Error("db_not_bound");
+          const from = args.window == null ? 0 : Date.now() - args.window;
+          try {
+            const { results } = await env.DB.prepare(
+              `SELECT at, equity, mark_equity, unrealized, day_pnl, open_count, forming_count,
+                      heat, heat_cap, portfolio_lev, halted
+                 FROM argus_history WHERE at >= ? ORDER BY at ASC LIMIT 5000`,
+            ).bind(from).all();
+            return { rows: results || [] };
+          } catch (e) {
+            // The table is created by the first agent persist after deploy. Until
+            // then "no history yet" is the honest answer, not a 503.
+            if (/no such table/i.test(String(e?.message || e))) return { rows: [], missing: true };
+            throw e;
+          }
+        }
         case "hazards": {
           // Both are public snapshot endpoints and either may be missing (the
           // disasters agent, for one, has never pushed). A failed half becomes

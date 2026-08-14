@@ -324,6 +324,29 @@ test("news.headlines filters by tier, text and window, and names the dead feeds"
   assert.equal(q.data.matched, 1, "the match reads the description, not only the title");
 });
 
+test("argus.equity answers the question the overwritten snapshot never could", () => {
+  const row = (mins, equity, heat, halted = 0) => ({
+    at: NOW - mins * 60_000, equity, mark_equity: equity, unrealized: 0, day_pnl: 0,
+    open_count: 1, forming_count: 0, heat: heat, heat_cap: 0.2, portfolio_lev: 2, halted,
+  });
+  const r = resolve("argus.equity", { window: "7d", points: 10 }, {
+    rows: [row(300, 10000, 0.04), row(200, 11000, 0.06), row(100, 8800, 0.09, 1), row(10, 9500, 0.05)],
+  }, { now: NOW });
+  assert.equal(r.data.samples, 4);
+  assert.equal(r.data.startEquity, 10000);
+  assert.equal(r.data.endEquity, 9500);
+  assert.equal(Math.round(r.data.maxDrawdownPct), 20, "11000 → 8800 is a 20% peak-to-trough");
+  assert.equal(Math.round(r.data.peakHeatPct), 9, "heat is stored as a fraction and converted once");
+  assert.equal(r.data.haltedSamples, 1);
+  assert.match(r.digest, /Max drawdown 20\.00%/);
+});
+
+test("argus.equity says the archive has not started rather than showing a flat line", () => {
+  const r = resolve("argus.equity", {}, { rows: [], missing: true }, { now: NOW });
+  assert.match(r.digest, /archive table is created by the agent's next persist/);
+  assert.equal(r.stale, true);
+});
+
 // ── 6b. wave 2 ──────────────────────────────────────────────────────────────
 
 test("registry.strategies infers the payoff shape and the ratio each entry must beat", () => {
