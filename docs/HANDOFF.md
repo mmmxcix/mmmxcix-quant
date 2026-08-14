@@ -357,9 +357,18 @@ pushes the richer MTProto read on top, Argus's event brief consumes it, and
 `geoNews.js` already pins OSINT items on the world map. Verified live. The one
 real gap is closed: the MTProto poller is now started by `agent-daemon.mjs` —
 but only when `TG_API_ID`/`TG_API_HASH`/`TG_SESSION` exist, because a persistent
-agent that exits immediately is a restart loop. **Open for you:** run
-`scripts/telegram-auth.mjs` once to create the session. The scrape keeps serving
-until then.
+agent that exits immediately is a restart loop. The scrape keeps serving until
+then.
+
+**Open for you — one command, `npm run telegram:setup`.** Everything around it is
+automated: `scripts/telegram-setup.mjs` takes the api_id/api_hash from
+[my.telegram.org](https://my.telegram.org) → *API development tools*, logs in,
+stores all three values as Windows **user** environment variables, restarts the
+daemon with them passed in explicitly (a spawned process inherits the parent's
+environment, not the registry's — that gotcha has cost us a session before), and
+then polls `/api/telegram` until it reports `source: "mtproto"`. The one part
+that cannot be automated is the login code Telegram sends to your phone, so the
+script refuses to run without a real terminal instead of hanging on a pipe.
 
 **5 · The carry engine** (video 2) — `perp-funding-carry` in `strategies.js`, and
 `ctx.funding` in the backtest engine. The engine already *charged* funding; a

@@ -15,7 +15,8 @@
     "a11y": "vite build && node scripts/a11y.mjs",
     "gaming:on": "node scripts/gaming-mode.mjs on",
     "gaming:off": "node scripts/gaming-mode.mjs off",
-    "gaming:status": "node scripts/gaming-mode.mjs status"
+    "gaming:status": "node scripts/gaming-mode.mjs status",
+    "telegram:setup": "node scripts/telegram-setup.mjs"
   },
   "dependencies": {
     "@fontsource-variable/bricolage-grotesque": "^5.3.0",
