@@ -20,6 +20,8 @@ const YAHOO_CHART = "/api/yahoo/v8/finance/chart";
 const YAHOO_SUMMARY = "/api/yahoo/v10/finance/quoteSummary";
 const YAHOO_TIMESERIES = "/api/yahoo/ws/fundamentals-timeseries/v1/finance/timeseries";
 
+import { RANKERS, runCrossSectional } from "./crossSection.js";
+
 export const BENCHMARK = "SPY";
 
 // Single names only (no ETFs — factor sorts need stocks). Mirrors the
@@ -190,45 +192,30 @@ export async function runBAB({ range = "5y", window = 252, rebalance = 21, bucke
 
   if (nT <= window + rebalance) throw new Error("Not enough history for the beta window — use a longer range.");
 
-  const babR = [], mktR = [], lowR = [], highR = [];
-  const outTimes = [];
-  let lastWeights = { wLong: 1, wShort: 1 };
-  let latestRanks = [];
-
-  for (let t = window; t < nT; t += rebalance) {
-    // Rank by trailing beta over [t−window, t).
-    const ranked = [];
-    for (const s of names) {
-      const b = betaOver(rets[s], market, t - window, t);
-      if (b !== null) ranked.push({ symbol: s, beta: b });
-    }
-    if (ranked.length < 10) continue;
-    ranked.sort((a, b) => a.beta - b.beta);
-    const k = Math.max(3, Math.round(ranked.length * bucketPct));
-    const low = ranked.slice(0, k);
-    const high = ranked.slice(-k);
-    const betaL = low.reduce((a, x) => a + x.beta, 0) / k;
-    const betaH = high.reduce((a, x) => a + x.beta, 0) / k;
-    // Scale both legs to beta ≈ 1 (the paper's self-financing construction),
-    // with sane clamps so a near-zero leg beta can't explode leverage.
-    const wLong = Math.min(3, 1 / Math.max(betaL, 0.33));
-    const wShort = Math.min(3, 1 / Math.max(betaH, 0.33));
-    lastWeights = { wLong, wShort };
-    latestRanks = ranked;
-
-    const end = Math.min(t + rebalance, nT);
-    for (let i = t; i < end; i++) {
-      let rl = 0, rh = 0;
-      for (const x of low) rl += rets[x.symbol][i];
-      for (const x of high) rh += rets[x.symbol][i];
-      rl /= k; rh /= k;
-      babR.push(wLong * rl - wShort * rh);
-      lowR.push(rl);
-      highR.push(rh);
-      mktR.push(market[i]);
-      outTimes.push(times[i + 1]);
-    }
-  }
+  // The loop that used to live here is now src/lib/crossSection.js — the SAME
+  // arithmetic with the ranking passed in, so every other cross-sectional factor
+  // (momentum, low-volatility, reversal, whatever a paper describes) reaches it
+  // without another copy of the rebalancing code. Behaviour here is unchanged
+  // and test/crosssection.test.mjs pins the properties that matter.
+  const xs = runCrossSectional({
+    times, returns: rets, market, symbols: names,
+    rankFn: RANKERS.beta,
+    // The paper's self-financing construction: scale both legs to beta ≈ 1, with
+    // sane clamps so a near-zero leg beta cannot explode leverage.
+    weightFn: ({ low, high }) => {
+      const mean = (xs2) => xs2.reduce((a, x) => a + x.score, 0) / xs2.length;
+      return {
+        wLong: Math.min(3, 1 / Math.max(mean(low), 0.33)),
+        wShort: Math.min(3, 1 / Math.max(mean(high), 0.33)),
+      };
+    },
+    window, rebalance, bucketPct,
+  });
+  const babR = xs.returns.strategy, mktR = xs.returns.market;
+  const lowR = xs.returns.longLeg, highR = xs.returns.shortLeg;
+  const lastWeights = xs.weights;
+  const latestRanks = xs.ranked.map((r) => ({ symbol: r.symbol, beta: r.score }));
+  const outTimes = xs.curves.strategy.map((p) => p.x);
 
   const toCurve = (rs) => {
     let v = 100;

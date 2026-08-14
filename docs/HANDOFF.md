@@ -183,12 +183,26 @@ publishes few papers a day and the seen-filter removes repeats.)
    for open-access work; SSRN and Zenodo have predictable PDF URLs. Needs a PDF
    text extractor. This is the single biggest quality lever in the pipeline and
    the code says so itself.
-2. **Check the structural mismatch first.** Most academic equity strategies are
-   CROSS-SECTIONAL — rank a universe, long the top decile, short the bottom.
-   `runBacktest({ candles, signalFn })` is single-instrument time-series. A
-   momentum paper's result *cannot* be reproduced on one symbol, so faithfully
-   implementing it and then failing the gauntlet is the expected outcome, not a
-   discovery. Worth confirming before building anything else.
+2. ~~**Check the structural mismatch first.**~~ **Checked, 14 Aug — and the
+   worrying half was wrong.** `runBacktest({ candles, signalFn })` is indeed
+   single-instrument time-series. But `src/lib/factors.js` **already contained a
+   working cross-sectional backtest**: `runBAB` aligns multi-symbol history,
+   ranks on a trailing window, holds buckets at both ends, rebalances every N
+   days and compares against a benchmark. It was written for one factor with the
+   ranking hard-wired into the loop, so nothing else could reach it.
+
+   That loop is now `src/lib/crossSection.js` with the ranking passed in
+   (`runCrossSectional({ rankFn, weightFn, window, rebalance, bucketPct })`),
+   plus `RANKERS` for beta, momentum, volatility and reversal. `runBAB` calls it
+   and is **bit-identical** on the same data (parity checked against the old
+   inline loop; max per-period difference 0.00e+0). Tests pin the three things
+   that matter: no look-ahead, a planted signal is found, and a universe of
+   random walks yields no edge.
+
+   So a momentum paper CAN be reproduced here. What is still missing is the
+   generator side: Cortex emits `strategy(ctx)` for the single-instrument engine
+   and has no way to emit a `rankFn`. That is a prompt and a code-shape, not
+   engine surgery.
 3. **Refuse rather than guess.** Same discipline as the meta-label gate: extract
    a reproduction checklist from the paper (universe, period, rebalance,
    lookback, cost assumption) and if it cannot be filled, do not generate a
