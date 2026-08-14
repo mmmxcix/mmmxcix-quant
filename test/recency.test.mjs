@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { decayWeight, weightedLedgerStats, ledgerStats } from "../src/lib/argus/core.js";
-import { deriveLessons } from "../src/lib/argus/learn.js";
+import { deriveLessons, displayLessons } from "../src/lib/argus/learn.js";
 
 // Recency weighting exists because the walk-forward harness caught the loop
 // never forgetting: a setup that wins sixty trades and then loses sixty straight
@@ -81,4 +81,27 @@ test("WHY IT SHIPS OFF: the half-life cannot be chosen from a 1.6-day ledger", (
   const shortestUsefulHalfLife = 2;
   assert.ok(spanDays < shortestUsefulHalfLife,
     "once the ledger spans several half-lives, re-run the sweep and set LAB_ARGUS_HALFLIFE_H");
+});
+
+// ── which lessons get SHOWN ──────────────────────────────────────────────────
+// Measured 14 Aug: the live ledger produced 30 lessons, 28 of them losing and
+// exactly one strong-positive. The stored slice took the first eight of a list
+// sorted by |expectancy| — so on a losing book the site showed eight losses and
+// hid the single bucket the agent had learned to favour, while the sizing loop
+// went on using it. A display that only ever shows losses on a book that found
+// one winner is survivorship bias pointed the other way.
+test("displayLessons keeps the favoured buckets that the magnitude sort buries", () => {
+  const l = (action, expectancy, text) => ({ action, expectancy, text, verdict: action === "boost" ? "strong-positive" : "losing" });
+  const lessons = [
+    l("suppress", -0.96, "orb"), l("suppress", -0.9, "vwap-band"), l("suppress", -0.8, "a"),
+    l("suppress", -0.7, "b"), l("suppress", -0.6, "c"), l("suppress", -0.5, "d"),
+    l("suppress", -0.4, "e"), l("suppress", -0.3, "f"), l("suppress", -0.25, "g"),
+    l("suppress", -0.2, "h"), l("boost", 0.24, "liquidity-sweep shorts"),
+  ];
+  const shown = displayLessons(lessons, 10);
+  assert.equal(shown.length, 10);
+  assert.equal(shown[0].text, "liquidity-sweep shorts", "the one thing it learned to favour comes first");
+  assert.ok(shown.some((x) => x.text === "orb"), "the worst losers are still there");
+  // The plain slice is what it replaced, and it drops the winner entirely.
+  assert.ok(!lessons.slice(0, 10).some((x) => x.action === "boost"));
 });

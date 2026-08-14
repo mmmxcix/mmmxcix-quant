@@ -1,4 +1,4 @@
-# Stand & To-do — 14. August 2026
+# Stand & To-do — 14. August 2026 (aktualisiert nach dem Durchgang)
 
 Was fertig ist, was offen ist, in der Reihenfolge, in der es Sinn ergibt.
 Ergänzt `docs/HANDOFF.md` (Zustand der Agents) und `docs/BOARD.md` (die
@@ -50,45 +50,32 @@ nicht mehr.
 
 ## Offen
 
-### 1 · Board Welle 2 — dieselben zwei Funktionen je Ressource
+### 1–5 · ✅ am 14. Aug abgearbeitet
 
-- [ ] `cortex.state` / `cortex.candidates` (Lab)
-- [ ] `registry.strategies` (library) — **admin**
-- [ ] `vol.snapshot` (DoltHub-IV)
-- [ ] `news.telegram` (OSINT)
-- [ ] `portfolio.holdings` / `portfolio.watchlist` — **admin**, die ersten
-      Ressourcen, die das Sichtbarkeits-Gate wirklich benutzen
+- [x] **Board Welle 2** — `cortex.state`, `cortex.candidates`,
+      `registry.strategies`, `vol.iv`, `news.telegram`, `portfolio.holdings`,
+      `portfolio.watchlist` (die vier admin-gated benutzen erstmals das
+      Sichtbarkeits-Gate, zwei Schlösser statt einem)
+- [x] **Board Welle 3** — `world.layers`, `world.hazards`, `macro.yields`,
+      `ml.track`. 22 Ressourcen insgesamt (17 öffentlich, 5 admin)
+- [x] **Der Chat** — `/api/ask`, zwei Strict-JSON-Runden statt Tool-Loop
+      (provider-unabhängig, läuft auch auf lokaler OmniRoute), Katalog =
+      Tool-Liste, ≤6 Reads pro Frage, Belege reisen mit der Antwort
+- [x] **Speicher** — `argus_trades` + `argus_history`, additiv geschrieben,
+      selbstheilendes DDL, kann den Persist des Agenten nie fehlschlagen lassen.
+      Neue Ressource `argus.equity` beantwortet erstmals eine Frage über die
+      Vergangenheit
+- [x] **Cortex-Strukturfrage** — beantwortet, und die beunruhigende Hälfte war
+      falsch: `factors.js` enthielt bereits eine funktionierende
+      Querschnitts-Maschine (`runBAB`), nur mit fest verdrahtetem Ranking. Jetzt
+      `src/lib/crossSection.js` mit `rankFn` als Parameter; `runBAB` ruft sie auf
+      und ist bit-identisch
 
-### 2 · Board Welle 3
+### 5b · Cortex — was jetzt wirklich offen ist
 
-- [ ] Weltkarten-Layer (ships, planes, fires, conflicts, jamming), Macro,
-      London-Hub, ML-Memory
-
-### 3 · Der Chat — `/api/ask`
-
-- [ ] Katalog als Tool-Liste (kein Aufwand pro Tool), begrenzte Schleife (≤5 Aufrufe)
-- [ ] Provider-Kette aus `/api/generate` wiederverwenden
-- [ ] Umschaltbar auf lokale OmniRoute / CLI-Shim wie in `Backtest.jsx`
-- [ ] Optional: `scripts/board.mjs` als CLI mit demselben Katalog
-
-### 4 · Speicher — bevor es weh tut
-
-- [ ] **Ledger normalisieren**: eigene D1-Tabelle, denormalisierte Spalten +
-      `data`-JSON (Muster: `functions/api/library.js`). Grund: ein D1-Wert ist
-      auf ~2 MB begrenzt, ein Jahr à 12 Trades/Tag wären ~5,5 MB — und
-      Meta-Labelling will jeden Trade für immer
-- [ ] **Historie**: Append-Tabelle für Equity/Heat/Zustand. Heute wird der
-      Snapshot überschrieben, „was war letzte Woche" ist unbeantwortbar.
-      ~720 Zeilen/Tag = unter 1 % des Write-Budgets
-- [ ] Nicht nötig: Vektor-DB. Falls Volltextsuche über News gewünscht: FTS5 in D1
-
-### 5 · Cortex — der grösste Qualitätshebel im Research-Teil
-
-- [ ] **Zuerst die Strukturfrage klären**: die meisten akademischen
-      Aktienstrategien sind QUERSCHNITTLICH (Universum ranken, oberstes Dezil
-      long). `runBacktest({candles, signalFn})` ist Einzelinstrument-Zeitreihe.
-      Wenn die Engine das nicht abbilden kann, ist Scheitern am Gauntlet der
-      erwartete Ausgang und kein Befund — das gehört **vor** allem anderen geprüft
+- [ ] **Cortex kann keine `rankFn` erzeugen.** Er emittiert `strategy(ctx)` für
+      die Einzelinstrument-Engine. Das ist ein Prompt und eine Code-Form, keine
+      Engine-Operation — und der ehrliche nächste Schritt
 - [ ] Volltext holen: PDF-Extractor für OpenAlex (`best_oa_location.pdf_url`),
       SSRN, Zenodo
 - [ ] Absagen statt raten: Reproduktions-Checkliste (Universum, Zeitraum,
@@ -113,16 +100,29 @@ nicht mehr.
       braucht die neuen Excursion-Zeitstempel, also neue Trades
 - [ ] `node scripts/argus-halflife.mjs`, sobald der Ledger Wochen statt Tage umspannt
 - [ ] Meta-Labelling: ~272 weitere Trades, bis es ein Modell liefert
-- [ ] **Offene Frage:** 8 Lessons, keine einzige positive — obwohl London
-      (+3,66R / 23 Trades) und Off-Hours (+2,36R / 6) die profitablen Buckets
-      sind. Warum wird die Gewinnerseite nie zur Lesson?
+- [x] **Offene Frage beantwortet (14. Aug):** Es war ein Anzeige-Artefakt, kein
+      Lernfehler. `deriveLessons` liefert auf dem Live-Ledger **30 Lessons — 28
+      losing, EINE strong-positive** („liquidity-sweep shorts: 50% win, +0,24R
+      über 14 Trades → favor") und eine neutrale. Gespeichert wurden aber nur
+      `slice(0, 8)` einer nach |Expectancy| sortierten Liste, und auf einem
+      verlierenden Buch sind die acht grössten Beträge alle Verluste. Die
+      Sizing-Schleife hat die positive Lesson die ganze Zeit benutzt — nur die
+      Seite hat sie nie gezeigt. Jetzt `displayLessons()`: geboostete Buckets
+      zuerst, Cap 10.
+- [ ] Nebenbefund: London ist mit inzwischen 25 Trades nur noch **+0,07R** (t
+      0,23), Off-Hours +0,23R über 7 Trades — unter der Stichprobenschwelle von
+      8, also gar keine Lesson. Der London-Effekt ist kleiner, als er im
+      Handoff aussieht.
 
 ### 8 · Kleinfunde aus dem Bau der Schicht
 
-- [ ] `tier: 1` in der News-Konfiguration heisst „offiziell/Wire" und umfasst
-      drei PR-Newswire-Feeds. Ein `tier:1`-Filter liefert damit
-      Pressemitteilungen statt Fed/SEC/BLS. Entscheidung nötig, weil es die
-      News-Seite mitverändert
+- [x] **`tier: 1` — mein Befund war falsch.** Der Kommentar in `news.js` sagt
+      es selbst: eine Firmenmitteilung IST eine Primärquelle („straight from the
+      company, not third-party paraphrase"), und ein Per-Feed-Cap verhindert
+      schon, dass ein Vielschreiber die Liste flutet. Was wirklich fehlte, war
+      eine **zweite Achse**: Tier sagt, wie autoritativ — nichts sagte, *was* die
+      Quelle ist. Jetzt `kind: official | press | media`, additiv, die
+      Tier-Semantik der News-Seite bleibt unverändert.
 - [ ] Namensdopplung prüfen: „the desk" heisst in der Landing-Copy die ganze
       App, die neue Seite heisst deshalb `/board` — passt das so?
 

@@ -224,6 +224,29 @@ export function deriveLessons(closed, { minSample = SKIP_EVIDENCE_MIN_N, max = 5
   return lessons.slice(0, max);
 }
 
+/**
+ * The slice that gets PERSISTED for display. The decision path uses every
+ * lesson; the snapshot keeps a handful, and which handful turned out to matter.
+ *
+ * Measured 14 Aug on the live ledger: `deriveLessons` produced 30 lessons — 28
+ * losing, ONE strong-positive ("liquidity-sweep shorts: 50% win, +0.24R over 14
+ * trades → favor") and one neutral. The stored slice was a plain `.slice(0, 8)`
+ * of a list sorted by |expectancy|, and on a losing book the eight largest
+ * magnitudes are all losses. So the site showed eight lessons, none positive,
+ * and the one thing the agent had actually learned to FAVOUR was invisible —
+ * while still being used, because `adjustment()` reads the full list.
+ *
+ * A display that only ever shows losses on a book that has found one winner is
+ * not a small cosmetic problem: it is the same failure mode as a track record
+ * that lists only survivors, pointed the other way.
+ */
+export function displayLessons(lessons, max = 10) {
+  const list = Array.isArray(lessons) ? lessons : [];
+  const positive = list.filter((l) => l.action === "boost");
+  const rest = list.filter((l) => l.action !== "boost");
+  return [...positive, ...rest].slice(0, max);
+}
+
 // ── 3. adjustment — fold the lessons into a gentle sizing prior ──────────────
 function matches(dims, setup) {
   for (const k of Object.keys(dims)) {

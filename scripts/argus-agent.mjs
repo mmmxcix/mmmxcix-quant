@@ -8,7 +8,7 @@ import { loadMarket } from "./marketdata.mjs";
 import { openThesis, evaluateExit, closeThesisAt, plannedRR, fillPrice, enforceMinStop, MIN_STOP_FRAC, volStatus, pyramidAdd } from "../src/lib/argus/core.js";
 import { scan, VOLUME_KINDS } from "../src/lib/argus/scanners.js";
 import { buildBrief, diffBrief, renderBrief, parseFearGreed } from "../src/lib/argus/brief.js";
-import { deriveLessons, adjustment, sessionOf } from "../src/lib/argus/learn.js";
+import { deriveLessons, adjustment, displayLessons, sessionOf } from "../src/lib/argus/learn.js";
 import { marketOpen } from "../src/lib/argus/hours.js";
 import { effectiveHeatCap } from "../src/lib/argus/correlation.js";
 import { canOpen, openedToday, paceStatus, DEFAULT_MAX_CONCURRENT, DEFAULT_MAX_PER_DAY } from "../src/lib/argus/pace.js";
@@ -834,7 +834,11 @@ async function persist(ledgerAdd, extra) {
         dayPnlTotal: extra.dailyPnl + unrealized, // realized + floating (what the top-bar shows)
         halted: extra.halted, universe: activeUniverse().length, events, fng: eventFng,
         skills: skills.slice(0, 8),
-        lessons: lessons.slice(0, 8).map((l) => ({ text: l.text, verdict: l.verdict, n: l.n })),
+        // displayLessons, not slice(0,8): the sort ranks by |expectancy|, so on a
+        // losing book the top eight are all losses and the one bucket the agent
+        // learned to FAVOUR never appeared on the site. The sizing loop below
+        // always used the full list — this only fixes what is shown.
+        lessons: displayLessons(lessons).map((l) => ({ text: l.text, verdict: l.verdict, n: l.n })),
         // Retrospective-review learning, surfaced for the Argus page: how many
         // invalidated exits each verdict, which kinds now cut later / not at all.
         invalReview: invalReviewSummary(),

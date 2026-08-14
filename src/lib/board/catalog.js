@@ -408,7 +408,11 @@ export const RESOURCES = {
     digest(d) {
       if (!d.total) return "The learning loop has no lesson yet.";
       const c = d.counts;
-      const head = `${d.total} lessons · ${c.losing || 0} losing, ${c.winning || 0} winning, ${c.neutral || 0} neutral` +
+      // Said explicitly, because the number is small and looks complete: this is
+      // the agent's DISPLAY slice, not everything it learned. The live ledger
+      // derives ~30 lessons and the sizing loop uses all of them.
+      const head = `${d.total} lessons shown (the agent's display slice; sizing uses all of them) · ` +
+        `${c.losing || 0} losing, ${c["strong-positive"] || c.winning || 0} favoured, ${c.neutral || 0} neutral` +
         (d.refusedPct != null ? ` · refuses ${nf(d.refusedPct, 0)}% of considered setups` : "");
       return block(
         head,
@@ -716,7 +720,12 @@ export const RESOURCES = {
     source: "news",
     args: {
       category: { type: "enum", values: ["markets", "crypto", "business"], default: null },
-      tier: { type: "int", default: null, min: 1, max: 2, note: "1 = official/wire, 2 = mainstream desks" },
+      tier: { type: "int", default: null, min: 1, max: 2, note: "1 = primary sources, 2 = mainstream desks" },
+      // Tier 1 deliberately holds government releases AND company press-release
+      // wires — both are primary. This is the axis that separates them, which
+      // "tier 1" alone cannot: asking for the market movers should not return a
+      // corporate award announcement.
+      kind: { type: "enum", values: ["official", "press", "media"], default: null },
       q: { type: "string", default: null, max: 60, note: "case-insensitive substring of title or description" },
       window: { type: "duration", default: "24h" },
       limit: { type: "int", default: 20, min: 1, max: 100 },
@@ -725,6 +734,7 @@ export const RESOURCES = {
       let items = raw?.items || [];
       if (a.category) items = items.filter((i) => i.category === a.category);
       if (a.tier) items = items.filter((i) => i.tier === a.tier);
+      if (a.kind) items = items.filter((i) => (i.kind || (i.tier === 1 ? "official" : "media")) === a.kind);
       if (a.q) {
         const q = a.q.toLowerCase();
         items = items.filter((i) => `${i.title} ${i.description || ""}`.toLowerCase().includes(q));
@@ -738,6 +748,7 @@ export const RESOURCES = {
         matched: dated.length,
         items: dated.slice(0, a.limit).map((i) => ({
           title: i.title, source: i.source, category: i.category, tier: i.tier,
+          kind: i.kind || (i.tier === 1 ? "official" : "media"),
           at: i.at, link: i.link, description: clip(i.description, 220),
         })),
         feedsLive: feeds.filter((f) => f.ok).length,

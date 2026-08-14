@@ -167,11 +167,16 @@ What *would* need changing, in the order it will bite:
 
 ## Found while building, not fixed
 
-- **`tier: 1` in the news feed list means "official / wire-grade"** — the Fed,
-  the SEC, the BLS — **and also the three PR Newswire feeds.** A `tier:1` filter,
-  which should return the actual market movers, currently returns press releases
-  about a music-education award. Changing it moves the News page too, so it is
-  reported rather than silently reassigned.
+- **The `tier: 1` reading was mine and it was wrong.** I reported the three PR
+  Newswire feeds sitting in tier 1 as a mis-tiering. Reading the file's own
+  comment: it is deliberate and correct — a company's press release IS a primary
+  source, "straight from the company, not third-party paraphrase", and there is
+  already a per-feed cap so a high-volume wire cannot crowd the list. What is
+  genuinely missing is a second axis: tier says how authoritative, nothing said
+  what a source IS, so "give me tier 1" returned a Fed statement and a corporate
+  award announcement side by side with no way to separate them. Fixed by adding
+  `kind: official | press | media` to the feeds and to `news.headlines` —
+  additive, and the News page's tier semantics do not move.
 - **The US yield archive has no nominal 10Y on its latest day**, only 10Y TIPS.
   The first version of `macro.yields` matched tenors by maturity days and so
   printed "2s10s −192 bp — inverted", which was an inflation-linked real yield

@@ -75,7 +75,7 @@ const newsRaw = {
     ],
   },
   items: [
-    { title: "Fed holds rates", description: "The FOMC left rates unchanged", source: "Federal Reserve", category: "business", tier: 1, pubDate: new Date(NOW - 3 * H).toUTCString(), link: "#" },
+    { title: "Fed holds rates", description: "The FOMC left rates unchanged", source: "Federal Reserve", category: "business", tier: 1, kind: "official", pubDate: new Date(NOW - 3 * H).toUTCString(), link: "#" },
     { title: "Bitcoin rallies", description: "BTC up 4%", source: "CNBC", category: "crypto", tier: 2, pubDate: new Date(NOW - 8 * H).toUTCString(), link: "#" },
     { title: "Ancient news", description: "old", source: "CNBC", category: "markets", tier: 2, pubDate: new Date(NOW - 80 * H).toUTCString(), link: "#" },
   ],
@@ -322,6 +322,24 @@ test("news.headlines filters by tier, text and window, and names the dead feeds"
 
   const q = resolve("news.headlines", { q: "fomc", window: "24h" }, newsRaw, { now: NOW });
   assert.equal(q.data.matched, 1, "the match reads the description, not only the title");
+});
+
+test("news.headlines separates official releases from press-release wires", () => {
+  // Tier 1 deliberately holds both — a company's own filing IS a primary source
+  // — so "tier 1" alone cannot answer "show me the market movers". The kind axis
+  // can, and an untagged feed falls back to its tier rather than disappearing.
+  const raw = {
+    meta: { fetchedAt: NOW, feeds: [] },
+    items: [
+      { title: "Fed holds rates", source: "Federal Reserve", category: "business", tier: 1, kind: "official", pubDate: new Date(NOW - H).toUTCString() },
+      { title: "Company wins award", source: "PR Newswire (Tech)", category: "business", tier: 1, kind: "press", pubDate: new Date(NOW - H).toUTCString() },
+      { title: "Legacy untagged", source: "BBC", category: "business", tier: 2, pubDate: new Date(NOW - H).toUTCString() },
+    ],
+  };
+  assert.equal(resolve("news.headlines", { tier: 1, window: "24h" }, raw, { now: NOW }).data.matched, 2);
+  assert.equal(resolve("news.headlines", { kind: "official", window: "24h" }, raw, { now: NOW }).data.matched, 1);
+  assert.equal(resolve("news.headlines", { kind: "press", window: "24h" }, raw, { now: NOW }).data.matched, 1);
+  assert.equal(resolve("news.headlines", { kind: "media", window: "24h" }, raw, { now: NOW }).data.matched, 1, "an untagged tier-2 feed falls back to media");
 });
 
 test("argus.equity answers the question the overwritten snapshot never could", () => {

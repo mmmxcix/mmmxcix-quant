@@ -109,6 +109,7 @@ const FEEDS = [
     category: 'business',
     access: 'free',
     tier: 1,
+    kind: 'press',
   },
   {
     source: 'PR Newswire (Tech)',
@@ -116,6 +117,7 @@ const FEEDS = [
     category: 'business',
     access: 'free',
     tier: 1,
+    kind: 'press',
   },
   {
     source: 'PR Newswire (Health)',
@@ -123,6 +125,7 @@ const FEEDS = [
     category: 'business',
     access: 'free',
     tier: 1,
+    kind: 'press',
   },
 ];
 
@@ -212,6 +215,13 @@ function parseFeed(xml, feed) {
       category: feed.category,
       access: feed.access,
       tier: feed.tier || 2,
+      // Tier says how authoritative; KIND says what it actually is. Tier 1 holds
+      // two different animals — government/statistical releases and company
+      // press-release wires — and both belong there (a company's own filing IS a
+      // primary source). But "show me tier 1" then returns a Fed statement and a
+      // corporate award announcement side by side, and a caller cannot separate
+      // them. This is the missing axis, not a re-tiering.
+      kind: feed.kind || (feed.tier === 1 ? 'official' : 'media'),
       pubDate,
       description,
     });
