@@ -85,9 +85,17 @@ nicht mehr.
 
 ### 6 · Eigenes Modell — Phase 2
 
-- [ ] Kronos auf unseren Märkten feintunen
-      (`GitHub/Kronos/finetune/train_predictor.py`, RTX 5080, ~13 GB frei,
-      Binance-Kerzen unbegrenzt)
+- [x] **Datenpipeline gebaut und verifiziert:**
+      `scripts/kronos/prepare_binance.py` holt Binance-Kerzen und schreibt genau
+      die drei Pickles, die `finetune/dataset.py` lädt (`{symbol: DataFrame}`,
+      DatetimeIndex `datetime`, Spalten open/high/low/close/vol/amt). Der
+      Vertrag ist aus dem Kronos-Repo abgelesen, nicht geraten. Splits sind
+      chronologisch, Val/Test greifen genau um `lookback_window` zurück — Kontext,
+      nie Label. Trockenlauf gegen die echte Binance-API erfolgreich.
+- [ ] **Training selbst** — Stunden GPU, absichtlich nicht nebenbei gestartet:
+      `--out ../Kronos/finetune/data/mmmxcix`, dann `dataset_path` in
+      `finetune/config.py` setzen, `use_comet = False`, dann
+      `python finetune/train_predictor.py`
 - [ ] Durch dasselbe Gauntlet: **unser Modell vs Kronos-base vs Random Walk**,
       auf der bestehenden Bewertungstafel
 - [ ] Danach eventuell Tokenizer + Predictor von Grund auf
