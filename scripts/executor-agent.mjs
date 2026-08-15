@@ -11,11 +11,17 @@
 import os from "node:os";
 import { nativeBacktest, detectTools } from "./nativeRun.mjs";
 import { loadMarket } from "./marketdata.mjs";
+import { nextDelay, PACE_DEFAULTS } from "../src/lib/pollPace.js";
 
 const SITE = process.env.LAB_SITE || "https://quant.mmmxcix.com";
 const TOKEN = process.env.LAB_TOKEN;
 if (!TOKEN) { console.error("LAB_TOKEN is not set."); process.exit(1); }
-const POLL_MS = +(process.env.LAB_EXECUTOR_POLL_MS || 4000);
+// Adaptive pace — see lib/pollPace.js. A fixed 4s cost ~21,600 requests a day
+// to be told the queue was empty. Set POLL_MAX equal to POLL to get the old
+// fixed interval back.
+const POLL_MS = +(process.env.LAB_EXECUTOR_POLL_MS || PACE_DEFAULTS.minMs);
+const POLL_MAX_MS = +(process.env.LAB_EXECUTOR_POLL_MAX_MS || PACE_DEFAULTS.maxMs);
+const WARM_MS = +(process.env.LAB_EXECUTOR_WARM_MS || PACE_DEFAULTS.warmMs);
 const HB_MS = 60_000;
 
 const post = (body) => fetch(`${SITE}/api/backtest-jobs`, {
@@ -61,22 +67,35 @@ async function runJob(job) {
   return { id: job.id, ...res };
 }
 
-console.log(`[${new Date().toISOString()}] executor up — tools ${JSON.stringify(detectTools())} · ${SITE} · poll ${POLL_MS / 1000}s`);
+console.log(`[${new Date().toISOString()}] executor up — tools ${JSON.stringify(detectTools())} · ${SITE} · poll ${POLL_MS / 1000}s→${POLL_MAX_MS / 1000}s (warm ${WARM_MS / 1000}s)`);
 await heartbeat();
 let lastHb = Date.now();
+let idleRounds = 0;
+let lastJobAt = Date.now();   // start warm: a restart often follows a submitted job
 
-// Main loop: claim → run → push, else idle. Heartbeat every minute.
+// Main loop: claim → run → push, else wait — quickly while the queue is warm,
+// slower once it has been empty for a while. Heartbeat every minute regardless,
+// because that is what tells the site this machine is alive.
 for (;;) {
   const job = await claim();
   if (job) {
+    idleRounds = 0;
+    lastJobAt = Date.now();
     console.log(`[${new Date().toISOString()}] job ${job.id}: ${job.spec?.language} ${job.spec?.symbol || ""} ${job.spec?.interval || ""}`);
     let result;
     try { result = await runJob(job); }
     catch (e) { result = { id: job.id, ok: false, error: String(e?.message || e).slice(0, 250) }; }
     try { await post({ result }); } catch { /* will be retried by the browser resubmitting */ }
     console.log(`  → ${result.ok ? `done (ret ${result.metrics?.totalReturnPct?.toFixed?.(1)}%)` : `fail: ${result.error || "install " + result.toolMissing}`}`);
+    // A finished job leaves the queue warm — people submit these in bursts.
+    lastJobAt = Date.now();
   } else {
-    await new Promise((r) => setTimeout(r, POLL_MS));
+    const delay = nextDelay({
+      idleRounds, sinceJobMs: Date.now() - lastJobAt,
+      minMs: POLL_MS, maxMs: POLL_MAX_MS, warmMs: WARM_MS,
+    });
+    idleRounds++;
+    await new Promise((r) => setTimeout(r, delay));
   }
   if (Date.now() - lastHb > HB_MS) { await heartbeat(); lastHb = Date.now(); }
 }
