@@ -39,6 +39,33 @@ nicht mehr.
       Payoff-Formen in der Registry (2) · Telegram-OSINT-Ingest (4) ·
       Carry-Engine über Perp-Funding (5)
 
+### Projekt 3 · Insider-Trades — 15. Aug
+
+- [x] **Form-4-Ingest** aus dem SEC-Tagesindex in D1 (`insider_filings`,
+      `insider_clusters`, `/api/insider`, `scripts/insider-agent.mjs`, täglich
+      05:00 über den Daemon). Live-Lauf verifiziert: 506/506 Einreichungen
+      geparst, 0 unlesbar
+- [x] **Clusterkäufe** (`src/lib/insider/cluster.js`) — datiert nach der
+      LETZTEN Meldung, nicht nach dem Handelstag; eine Sammelmeldung mehrerer
+      verbundener Einheiten ist KEIN Cluster
+- [x] **Historischer Panel** aus den SEC-Quartalsdatensätzen: 21 Quartale,
+      962'524 Form 4, davon 73'596 mit Offenmarktkauf (`scripts/insider-backfill.mjs`)
+- [x] **Durch die eigene Validierung geschickt → dokumentierter FEHLSCHLAG.**
+      Details in `docs/INSIDER_FINDINGS.md`. Kurz: bestes Gitter-Setting Sharpe
+      0,24, deflated Sharpe **4,9 %** nach 72 Trials, Walk-Forward 1 von 3
+      Fenstern positiv. Cluster schlagen Einzelkäufe (0,24 vs −0,14) und der
+      Placebo-Test ist signifikant (p = 0,010) — aber das Niveau trägt nicht.
+      Ereignisstudie wird mit dem Horizont **schlechter**, nicht besser
+- [x] Zwei eigene Bugs auf dem Weg gefunden und gefixt (Look-ahead über
+      Zeitstempel-vs-Kalendertag, fehlender Liquiditätsfilter). Zusammen ergaben
+      sie Sharpe 3,67 und +1'199'985 % out-of-sample — beides war der Bug
+- [ ] **Bewusst NICHT gebaut:** Oberfläche, Alerting, Conviction-Ranking. Eine
+      Seite, die ein Signal behauptet, das die Messung nicht stützt, ist genau
+      das, was die Doktrin verbietet
+- [ ] **Kongress-Daten:** zurückgestellt, mit Begründung. 45 Tage Meldefrist
+      gegen 3 Tage bei Form 4 — und Form 4 ist bei 3 Tagen schon negativ.
+      Wenn, dann als Aggregat-Exposure und durch dasselbe Skript
+
 ### Diagnosen
 
 - [x] Cortex: sieht **nur Abstracts**, Volltext auf 0 % — empirisch bestätigt

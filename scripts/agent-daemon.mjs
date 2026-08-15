@@ -208,6 +208,14 @@ atHours([6, 18], () => runAgent("retest", "retest-library.mjs"));
 // and file genuinely-better variants. Once daily, after the morning re-test.
 atHours([7], () => runAgent("mine", "mine-library.mjs"));
 
+// SEC Form 4 ingest (see docs/INSIDER.md): the daily index → the new insider
+// filings → a cluster pass over a trailing window. 05:00, after the SEC's
+// overnight dissemination and before the US open. It runs here rather than in a
+// Worker because it is ~1,000 requests paced at 8/s against SEC's courtesy limit,
+// and because SEC serves a 403 to anything without a real User-Agent.
+// Opt out with INSIDER_AGENT=0.
+if (process.env.INSIDER_AGENT !== "0") atHours([5], () => runAgent("insider", "insider-agent.mjs"));
+
 // Native backtest executor: a persistent poller that runs C++/q/native-Python/JS
 // backtests the browser submits, and pushes results back. Opt out with
 // LAB_EXECUTOR=0 (e.g. on a machine without the toolchains).
@@ -259,5 +267,5 @@ if (process.env.KRONOS_AGENT !== "0") {
   });
 }
 
-console.log(`[${stamp()}] agent-daemon running — lab/15min · research/04:00 · revalidate/08,11,14,17,20 · discover/12:00 · retest/06,18 · mine/07 · executor/persistent · arena/persistent · telegram/persistent · kronos/01,13`);
+console.log(`[${stamp()}] agent-daemon running — lab/15min · research/04:00 · revalidate/08,11,14,17,20 · discover/12:00 · retest/06,18 · mine/07 · insider/05 · executor/persistent · arena/persistent · telegram/persistent · kronos/01,13`);
 runAgent("lab", "lab-agent.mjs"); // one immediate pass so a restart isn't idle for 15 min

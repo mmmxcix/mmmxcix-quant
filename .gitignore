@@ -12,3 +12,7 @@ graphify-out/
 # Strix AI-pentest run artifacts (local)
 strix_run.log
 strix_runs/
+
+# Local research caches (SEC quarterly ZIPs, the Form 4 panel, price history).
+# Hundreds of MB, rebuildable with scripts/insider-backfill.mjs — never commit.
+data/
