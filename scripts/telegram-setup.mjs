@@ -28,6 +28,17 @@ import { join } from "node:path";
 import { openSync } from "node:fs";
 
 const SITE = process.env.LAB_SITE || "https://quant.mmmxcix.com";
+
+// GramJS keeps an update loop running after `disconnect()` and lets it reject
+// with a bare TIMEOUT once the socket is gone. It printed a red stack trace in
+// the middle of a run that had actually succeeded, which is the worst possible
+// place for a scary-looking error. Teardown noise is swallowed; anything else
+// still gets reported.
+process.on("unhandledRejection", (e) => {
+  const msg = String(e?.message || e);
+  if (/TIMEOUT|connection closed|not connected/i.test(msg)) return;
+  console.error("unexpected error:", msg);
+});
 const here = (f) => fileURLToPath(new URL(`./${f}`, import.meta.url));
 const isWin = process.platform === "win32";
 const rl = readline.createInterface({ input, output });
@@ -126,7 +137,11 @@ try {
     onError: (e) => console.error("auth error:", e?.message || e),
   });
   session = client.session.save();
-  await client.disconnect();
+  // disconnect() leaves the update loop and its socket half-alive; destroy()
+  // takes them down, which is what stops libuv from asserting on a closing
+  // handle when we exit at the end.
+  await client.disconnect().catch(() => {});
+  await client.destroy?.().catch(() => {});
 } catch (e) {
   console.error("\nLogin failed:", e?.message || e);
   console.error("Nothing was stored. Re-run when you are ready.");
@@ -158,4 +173,8 @@ rl.close();
 say("\nWaiting for the first MTProto push (the poller runs every 60s):");
 await verify();
 say("\nDone. The session string is secret — it is your Telegram login.");
-process.exit(0);
+// One turn of the event loop before exiting, so any handle GramJS is still
+// closing is gone by then. Exiting into a closing handle is what produced
+// "Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)" — harmless, since
+// the work was already finished and printed, but it reads like a crash.
+setTimeout(() => process.exit(0), 250).unref();

@@ -17,8 +17,16 @@ const TOKEN = process.env.LAB_TOKEN;
 const POLL_MS = +(process.env.TG_POLL_MS || 60_000);
 
 // channel:tag pairs — the fast market tickers first, then breaking + geopolitics.
+//
+// Every handle here was checked against its public preview page on 15 Aug 2026.
+// The first list shipped with three that do not exist on Telegram at all —
+// FirstSquawk, DeItaone and sentdefender are X/Twitter handles, and MTProto
+// answered USERNAME_INVALID for each on the first live run. They are replaced by
+// the channels that actually carry that content: Walter Bloomberg posts the same
+// headline tape here that DeItaone posts on X, and Tree News is the crypto-side
+// squawk. Override the whole list with TG_CHANNELS if you want your own.
 const CHANNELS = (process.env.TG_CHANNELS ||
-  "FirstSquawk:finance,DeItaone:finance,financialjuice:finance,WatcherGuru:crypto,cointelegraph:crypto,disclosetv:breaking,insiderpaper:breaking,clashreport:geopolitics,WarMonitors:geopolitics,sentdefender:osint"
+  "WalterBloomberg:finance,financialjuice:finance,Investingcom:finance,TreeNewsFeed:crypto,BWEnews:crypto,WatcherGuru:crypto,cointelegraph:crypto,WuBlockchainEnglish:crypto,disclosetv:breaking,insiderpaper:breaking,clashreport:geopolitics,WarMonitors:geopolitics,spectatorindex:geopolitics"
 ).split(",").map((s) => { const [user, tag] = s.split(":"); return { user: user.trim(), tag: (tag || "osint").trim() }; }).filter((c) => c.user);
 
 if (!apiId || !apiHash || !session) { console.error("Set TG_API_ID, TG_API_HASH and TG_SESSION (run telegram-auth.mjs first)."); process.exit(1); }
