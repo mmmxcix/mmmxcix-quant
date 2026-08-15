@@ -96,9 +96,15 @@ nicht mehr.
       „der Präsident erwähnte Öl", sondern „ein konkretes Instrument wurde
       angekündigt, mit benanntem Profiteur und Datum". Kleinere Stichprobe,
       stärkerer Mechanismus; die Messmaschine steht
-- [ ] `financialjuice`-Backfill läuft noch (Harvester ist fortsetzbar) — die
-      Studie lief bewusst nur auf WalterBloomberg, weil ein halb geernteter
-      Kanal die Stichprobe in die Gegenwart kippt
+- [ ] `financialjuice`-Backfill ist **unvollständig abgebrochen**: 59'998
+      Nachrichten, aber nur zurück bis **2025-07-06** (WalterBloomberg reicht bis
+      2023-04). `node scripts/statements-harvest.mjs --channel financialjuice`
+      setzt fort — der Harvester läuft ab der ältesten Id weiter, die schon auf
+      der Platte liegt.
+      **Bis dahin `--channels WalterBloomberg` benutzen.** Ohne das Flag mischt
+      die Studie einen halb geernteten Kanal dazu und kippt die Stichprobe in die
+      Gegenwart; die Korpus-Zeile des Skripts zeigt deshalb pro Kanal die
+      Abdeckung an
 
 ### Diagnosen
 
