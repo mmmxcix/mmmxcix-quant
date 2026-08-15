@@ -31,7 +31,7 @@ const GEMINI_MODELS = ["gemini-flash-latest", "gemini-2.5-flash", "gemini-flash-
 const MAX_TOKENS = 4000; // denser per-symbol writeups (see SYSTEM) need more room, esp. with 12 symbols in one call
 
 const MAX_SYMBOLS_REQUEST = 40;   // defensive cap on the incoming list (candidate matching is cheap)
-const MAX_SYMBOLS_ENRICHED = 12;  // only this many get an LLM/fundamentals pass per call (cost control)
+const MAX_SYMBOLS_ENRICHED = 24;  // only this many get an LLM/fundamentals pass per call (cost control) — was 12, too tight for a watchlist+portfolio combined (a real 14-symbol list silently dropped its last 2)
 const MAX_CANDIDATES_PER_SYMBOL = 6;
 const MAX_GENERAL_POOL = 30;
 const MAX_STORIES = 8;
