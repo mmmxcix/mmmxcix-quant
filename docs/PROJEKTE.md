@@ -169,3 +169,58 @@ zeigt, wie ein Cron-getriebener Agent bei uns aussieht.
 Was für alle fünf gilt und in jedem der Chats als erstes auf den Tisch gehört:
 **zuerst messen, ob es überhaupt etwas zu holen gibt, dann bauen.** Argus hat
 uns hundert Trades gekostet, um genau das zu lernen.
+
+---
+
+## Start-Prompt für den nächsten Chat (Projekt 3)
+
+Zum Kopieren in einen frischen Chat im Ordner `mmmxcix-quant`. Für ein anderes
+Projekt denselben Text nehmen und den Abschnittsverweis austauschen.
+
+```text
+Projekt 3 von 5: Insider- und Politiker-Trades. Briefing steht in
+docs/PROJEKTE.md, Abschnitt "3 · Insider- und Politiker-Trades".
+
+Lies zuerst, in dieser Reihenfolge, und fang erst danach an:
+  docs/PROJEKTE.md   Abschnitt 3 — Auftrag, geprüfte Datenwege, die Falle
+  docs/HANDOFF.md    Zustand der drei Agents und was an Argus schiefging
+  docs/TODO.md       was sonst offen ist
+  docs/BOARD.md      die Zugriffsschicht, über die neue Ressourcen laufen
+  CLAUDE.md          Stack, Architektur, Konventionen
+
+DOKTRIN, die über allem steht: erst messen, ob es etwas zu holen gibt, dann
+bauen. Argus hat uns hundert Trades gekostet, um das zu lernen — ein Buch, das
+verliert, wird durch Slicen nicht besser. Kein Feature, das eine Behauptung
+aufstellt, die wir nicht geprüft haben.
+
+ERSTE LIEFERUNG, in dieser Reihenfolge:
+ 1. Form-4-Ingest von SEC EDGAR in D1 (Käufe/Verkäufe von Officers, Directors,
+    >10%-Haltern). Tagesindex + Volltextsuche, strukturiertes XML, zwei
+    Werktage Meldefrist.
+ 2. Clusterkäufe sichtbar machen: mehrere Insider derselben Firma innerhalb
+    weniger Tage — das ist die Form des Signals, die in der Literatur trägt.
+ 3. SOFORT durch unsere eigene Validierung schicken: taugt das als Faktor?
+    DSR, Walk-Forward, purged CV und der Registry-Pfad stehen bereits. Ergebnis
+    ist eine geprüfte Strategie ODER ein dokumentierter Fehlschlag — beides ist
+    eine Lieferung.
+ 4. Erst danach Oberfläche, Alerting, Kongress-Daten.
+
+GEPRÜFTE DATENWEGE (15. Aug 2026, nicht neu herleiten):
+  sec.gov/Archives/edgar/daily-index/…            HTTP 200
+  efts.sec.gov/LATEST/search-index?q=…&forms=4    HTTP 200
+  disclosures-clerk.house.gov                     HTTP 200
+  SEC verlangt einen echten User-Agent mit Kontakt, sonst 403.
+  Kongress-Meldefrist: 45 Tage. Wer Einzeltrades nachkauft, kauft eine
+  Nachricht, die der Markt längst hat — der Effekt sitzt im Aggregat.
+
+NICHT TUN:
+  · Argus anfassen. Das Messfenster für die nächsten hundert Trades läuft; die
+    Scorecard ist Instrumentierung, keine Justierung.
+  · `git add -A`. In diesem Repo committen parallele Sessions — vor jedem
+    Commit `git status` lesen und nur die eigenen Dateien stagen.
+  · Etwas als "profitabel" bezeichnen, das nur im Backtest profitabel ist.
+
+STACK: React+Vite auf Cloudflare Pages, Functions unter functions/api/, D1 als
+Datenbank, lokale Agents unter scripts/ (gestartet von agent-daemon.mjs),
+Tests `node --test`, vollständige Prüfung `npm run check`.
+```
