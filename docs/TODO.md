@@ -66,6 +66,40 @@ nicht mehr.
       gegen 3 Tage bei Form 4 — und Form 4 ist bei 3 Tagen schon negativ.
       Wenn, dann als Aggregat-Exposure und durch dasselbe Skript
 
+### Projekt 4 · Aussagen → Profiteure — 15./16. Aug
+
+- [x] **Aussagen-Ingest**: historisch über `t.me/s/?before=` rückwärts geblättert
+      (`scripts/statements-harvest.mjs`) — **34'342 Nachrichten, 2023-04 bis
+      2026-08**; live über `/api/telegram` + `/api/news`
+      (`scripts/statements-agent.mjs`, alle 30 min im Daemon)
+- [x] **Thema-Extraktion doppelt**: fixes Lexikon (22 Themen, je ein genannter
+      Mechanismus) + OmniRoute in zwei erzwungenen JSON-Runden. **Das Modell
+      wird AUFGEZEICHNET, nicht angewendet** — ein Klassifikator, der nie
+      gemessen wurde, würde jede Zahl still ungültig machen. Erfundene Themen-Ids
+      werden verworfen, nicht auf die nächstbeste gemappt
+- [x] **Thema → Korb**: 22 US-Körbe, gegen IBKRs Themen-Endpoint gegengeprüft,
+      dann handfest verdrahtet (eine API, deren Mitgliedschaft sich ändert, ist
+      nicht reproduzierbar)
+- [x] **Ereignisstudie → dokumentierter FEHLSCHLAG.** `docs/STATEMENTS_FINDINGS.md`.
+      8'676 Aussagen, 1'901 mit Thema, 2'101 bepreiste Ereignisse. Gepoolt 5d:
+      **Median −0,14 %, mittlere Hälfte −2,23 % … +2,01 %** — die Streuung ist
+      eine Grössenordnung breiter als die Mitte. Placebo mit verschobenen Daten
+      **p = 0,781**. 7 Themen über der 30-Ereignis-Schwelle, **keines** überlebt
+      (knappstes: crypto p = 0,065, Median −4,98 %)
+- [x] **Die Falle war NICHT die Falle.** Erwartet war „in Sekunden eingepreist".
+      Gemessen: die Reaktions-Session — die, die die Nachricht aufnimmt, bevor
+      jemand handeln kann — bewegt sich im Median **+0,05 %** gegen den Index.
+      Es gab kaum eine Bewegung, für die man zu spät sein konnte
+- [ ] **Bewusst NICHT gebaut:** Oberfläche, Alerting. Schritt 5 war „erst wenn 4
+      etwas zeigt" — 4 zeigt nichts
+- [ ] Nächste Hypothese (nicht gestartet): engere Definition einer Aussage — nicht
+      „der Präsident erwähnte Öl", sondern „ein konkretes Instrument wurde
+      angekündigt, mit benanntem Profiteur und Datum". Kleinere Stichprobe,
+      stärkerer Mechanismus; die Messmaschine steht
+- [ ] `financialjuice`-Backfill läuft noch (Harvester ist fortsetzbar) — die
+      Studie lief bewusst nur auf WalterBloomberg, weil ein halb geernteter
+      Kanal die Stichprobe in die Gegenwart kippt
+
 ### Diagnosen
 
 - [x] Cortex: sieht **nur Abstracts**, Volltext auf 0 % — empirisch bestätigt

@@ -216,6 +216,14 @@ atHours([7], () => runAgent("mine", "mine-library.mjs"));
 // Opt out with INSIDER_AGENT=0.
 if (process.env.INSIDER_AGENT !== "0") atHours([5], () => runAgent("insider", "insider-agent.mjs"));
 
+// Statements by important people (see docs/STATEMENTS.md): the OSINT squawk and
+// the RSS pool → who said what → which basket the mechanism points at. Every 30
+// minutes, because `t.me/s/` only pages back as far as a channel's own history
+// and a statement that scrolls off unstored is not recoverable later.
+// It runs here rather than in a Worker because the second classifier is the
+// LOCAL OmniRoute router. Opt out with STATEMENTS_AGENT=0.
+if (process.env.STATEMENTS_AGENT !== "0") everyMinutes(30, () => runAgent("statements", "statements-agent.mjs"));
+
 // Native backtest executor: a persistent poller that runs C++/q/native-Python/JS
 // backtests the browser submits, and pushes results back. Opt out with
 // LAB_EXECUTOR=0 (e.g. on a machine without the toolchains).
@@ -267,5 +275,5 @@ if (process.env.KRONOS_AGENT !== "0") {
   });
 }
 
-console.log(`[${stamp()}] agent-daemon running — lab/15min · research/04:00 · revalidate/08,11,14,17,20 · discover/12:00 · retest/06,18 · mine/07 · insider/05 · executor/persistent · arena/persistent · telegram/persistent · kronos/01,13`);
+console.log(`[${stamp()}] agent-daemon running — lab/15min · statements/30min · research/04:00 · revalidate/08,11,14,17,20 · discover/12:00 · retest/06,18 · mine/07 · insider/05 · executor/persistent · arena/persistent · telegram/persistent · kronos/01,13`);
 runAgent("lab", "lab-agent.mjs"); // one immediate pass so a restart isn't idle for 15 min
