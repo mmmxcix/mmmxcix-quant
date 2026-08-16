@@ -106,7 +106,7 @@ nicht mehr.
       Gegenwart; die Korpus-Zeile des Skripts zeigt deshalb pro Kanal die
       Abdeckung an
 
-### Projekt 1 · Polymarket — Frage 1 gemessen, NICHT als Edge belegt (16. Aug)
+### Projekt 1 · Polymarket — Frage 1 gemessen, Rest überlebt, noch kein Edge (16. Aug)
 
 - [x] **Datenweg gefunden — keiner der beiden aus dem Briefing.** Polymarkets
       eigene Domains sind weiterhin tot (polymarket.com, gamma-api, clob,
@@ -153,10 +153,30 @@ nicht mehr.
         zu schliessen BESCHLIESST. Wer Gewinner realisiert und auf Verlierern
         sitzt, gewinnt per Konstruktion — und weil die Gewohnheit stabil ist,
         reproduziert sie sich out of sample und sieht aus wie ein Edge
-- [ ] **Was es entscheiden würde:** die offenen Positionen bewerten. Dafür
-      braucht es Markt-Auflösungen; der orderbook-Subgraph hat sie nicht, die
-      Geschwister-Subgraphs (`positions`, `pnl`) liefern 404. Das ist der
-      nächste Schritt, und er kommt VOR jeder Fill-Modellierung
+- [x] **Beide Nachträge aus `f14454e` eingebaut — und sie ändern das Bild:**
+      · **Liquidation an der Schnittkante** (offene Positionen zum letzten
+        gehandelten Preis, `markedPnl` + `priceBook`, aus Daten die schon da
+        waren): **halbiert den Effekt, entfernt ihn aber nicht.**
+        rho 0,438 → **0,263**, Top-20 +15,07 % → **+7,16 %**, Rest +0,30 %.
+        Der Dispositionseffekt erklärte also rund die Hälfte
+      · **Vier rollende Schnittdaten** statt einem (alle ≥ Ende des
+        Sampling-Fensters, sonst leakt die Selektion): der Rest überlebt
+        **jeden** Schnitt — rho 0,263 / 0,245 / 0,313 / 0,229, Top-20
+        +7,16 / +5,12 / +3,52 / +2,72 %, Rest immer nahe null oder negativ.
+        Also keine Eigenschaft des Oktobers
+      · `unmarkable` = 0,0 % — jede offene Position war bewertbar
+- [ ] **Trotzdem noch kein Edge.** Drei bekannte Verzerrungen zeigen alle in
+      dieselbe Richtung: es ist die **obere Schranke** (eigene Fills des
+      Leaders) · **Attrition bleibt** (209–267 Wallets ohne OOS-Wert; wer ganz
+      aufhört, hat auch keinen markierten Wert) · der Mark ist der **letzte
+      gehandelte Preis, nicht die Auflösung** · die p-Werte behandeln
+      korrelierte Trades als unabhängig, was die 48 BH-Überlebenden aufbläst
+- [ ] **Nächster Schritt: die On-chain-Auflösung.** CTF-Contract
+      `0x4D97DCd97eC945f40cF65F87097ACe5EA0476045`, `ConditionResolution` =
+      Topic `0xb44d84d3…5894`, `payoutNumerators` im Datenteil, über
+      `eth_getLogs` an `polygon-bor-rpc.publicnode.com` (alles in `f14454e`
+      verifiziert). Beide Bewertungen nebeneinander; wo sie auseinanderlaufen,
+      ist das selbst ein Befund. **Erst danach** lohnt das Fill-Modell
 - [ ] **NOCH NICHT GEBAUT: die zweite Harvest-Phase** — pro OOS-Trade eines
       gerankten Wallets die Tape des Tokens ab `t+delay` (aliasierte
       GraphQL-Batches, geschätzt ~500 Requests). Ohne sie kann `replayCopy`

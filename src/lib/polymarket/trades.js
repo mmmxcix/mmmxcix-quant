@@ -133,6 +133,115 @@ export function fifoPnl(trades) {
 }
 
 /**
+ * The same FIFO walk, but everything still open is LIQUIDATED at the edge of the
+ * window at the last price the tape printed.
+ *
+ * This exists because closed-round-trip P&L alone is not a measure of skill — it
+ * is a measure of what somebody chose to close. Banking winners and sitting on
+ * losers produces a beautiful record by construction, and because that is a
+ * stable habit rather than an ability, it reproduces out of sample and looks
+ * exactly like a persistent edge. Measured on this data the top of the ranking
+ * left 0.653 of its capital unclosed against 0.338 for everyone else, so the
+ * habit was not hypothetical.
+ *
+ * Marking everything to the last traded price is the ordinary convention in
+ * trader-ranking studies and it removes the advantage immediately. It is not the
+ * TRUE terminal value — that needs the market's on-chain resolution — but it
+ * costs nothing and it is unbiased with respect to the habit, which is the point.
+ *
+ * @param {(tokenId: string) => number|null} markFor  last price at the edge
+ * @returns {{realized, unrealized, closedCost, openCost, markedCost, unmarkableCost, ...}}
+ */
+export function markedPnl(trades, markFor) {
+  const lots = new Map();
+  let realized = 0, closedCost = 0, roundTrips = 0;
+
+  for (const t of trades) {
+    if (t.side === "buy") {
+      if (!lots.has(t.tokenId)) lots.set(t.tokenId, []);
+      lots.get(t.tokenId).push({ tokens: t.tokens, price: t.price });
+      continue;
+    }
+    let left = t.tokens;
+    const queue = lots.get(t.tokenId) || [];
+    while (left > 1e-9 && queue.length) {
+      const lot = queue[0];
+      const take = Math.min(left, lot.tokens);
+      realized += take * (t.price - lot.price);
+      closedCost += take * lot.price;
+      lot.tokens -= take;
+      left -= take;
+      if (lot.tokens <= 1e-9) queue.shift();
+      roundTrips++;
+    }
+  }
+
+  let unrealized = 0, markedCost = 0, unmarkableCost = 0, openCost = 0;
+  for (const [tokenId, queue] of lots) {
+    const mark = markFor(tokenId);
+    for (const lot of queue) {
+      const cost = lot.tokens * lot.price;
+      openCost += cost;
+      // A token the tape never printed at or before the edge cannot be marked.
+      // Its cost is reported separately rather than assumed worthless or
+      // assumed whole — either assumption would be a thumb on the scale.
+      if (mark == null) { unmarkableCost += cost; continue; }
+      markedCost += cost;
+      unrealized += lot.tokens * (mark - lot.price);
+    }
+  }
+
+  return {
+    realized, unrealized, closedCost, openCost, markedCost, unmarkableCost,
+    trades: trades.length, roundTrips,
+    // The whole book, liquidated at the edge: what the wallet actually made on
+    // the money it actually committed.
+    total: realized + unrealized,
+    totalCost: closedCost + markedCost,
+  };
+}
+
+/** Return on committed capital with everything liquidated at the edge. */
+export function markedScore(p) {
+  if (!(p.totalCost > 0)) return null;
+  return {
+    roi: p.total / p.totalCost,
+    total: p.total, totalCost: p.totalCost,
+    realizedShare: p.totalCost > 0 ? p.closedCost / p.totalCost : 0,
+    unmarkableShare: p.openCost > 0 ? p.unmarkableCost / p.openCost : 0,
+    trades: p.trades,
+  };
+}
+
+/**
+ * A price book over every fill we hold: token → the last price at or before a
+ * moment. Built once and binary-searched, because the study asks for it at
+ * several cut-off dates.
+ */
+export function priceBook(allTrades) {
+  const byToken = new Map();
+  for (const t of allTrades) {
+    if (!byToken.has(t.tokenId)) byToken.set(t.tokenId, []);
+    byToken.get(t.tokenId).push([t.ts, t.price]);
+  }
+  for (const arr of byToken.values()) arr.sort((a, b) => a[0] - b[0]);
+  return {
+    tokens: byToken.size,
+    /** Last printed price at or before `at`; null if the token never printed by then. */
+    at(tokenId, at) {
+      const arr = byToken.get(tokenId);
+      if (!arr || !arr.length || arr[0][0] > at) return null;
+      let lo = 0, hi = arr.length;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (arr[mid][0] <= at) lo = mid + 1; else hi = mid;
+      }
+      return arr[lo - 1][1];
+    },
+  };
+}
+
+/**
  * The headline number per wallet: return on the capital it actually put at risk
  * in closed trades.
  *
