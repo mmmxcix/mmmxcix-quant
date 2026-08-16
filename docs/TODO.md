@@ -106,6 +106,45 @@ nicht mehr.
       Gegenwart; die Korpus-Zeile des Skripts zeigt deshalb pro Kanal die
       Abdeckung an
 
+### Projekt 1 · Polymarket — ANGEFANGEN, MESSUNG STEHT NOCH AUS (16. Aug)
+
+- [x] **Datenweg gefunden — keiner der beiden aus dem Briefing.** Polymarkets
+      eigene Domains sind weiterhin tot (polymarket.com, gamma-api, clob,
+      data-api: alle Connect-Fehler, am 16. Aug erneut geprüft). Statt
+      eth_getLogs oder Pages-Proxy: **Polymarkets öffentlicher orderbook-Subgraph
+      auf Goldsky** antwortet von hier, keylos, in ~0,3 s.
+      `api.goldsky.com/api/public/project_cl6mb8i9h0003e201j6li0diw/subgraphs/orderbook-subgraph/prod/gn`
+      Enthält **jeden OrderFilled von 2022-11-21 bis 2026-04-27**. Der Index
+      hängt ~100 Tage hinter der Chain — für einen Live-Copier tödlich, für eine
+      Studie ideal
+- [x] **Gemessene Grenzen** (nicht angenommen): `first` max 1000 ·
+      **455'444'548 Fills insgesamt**, Voll-Harvest ist mit 455'000 Requests
+      ausgeschlossen · `orderbooks(orderBy:tradesQuantity)` läuft im Subgraph-
+      Postgres in einen Statement-Timeout, es gibt also keine billige
+      Top-Wallet-Liste · **aber** `where:{maker:0x…}` und `where:{takerAssetId:…}`
+      sind indexiert (~0,3 s) — darauf steht der ganze Wallet-zentrische Ansatz
+- [x] `scripts/polymarket-harvest.mjs` — Universum wird aus dem **In-Sample-
+      Fenster** gezogen (2025-01 bis T=2025-10-01), stratifiziert über die
+      Aktivitätsspanne, nie nach Profit. Market Maker (>20k Fills/Seite) werden
+      gekappt und **namentlich als `truncated` vermerkt**, nicht still verworfen
+- [x] `src/lib/polymarket/trades.js` + `copy.js` — Fill-Dekodierung (Cash-Bein
+      bestimmt die Richtung), FIFO-P&L mit sichtbarem offenem Rest, das
+      Copy-Fill-Modell (**gleicher Einsatz → schlechterer Preis → WENIGER
+      Anteile**), Wallet-p-Werte und Benjamini-Hochberg über alle getesteten
+      Wallets. 12 Tests
+- [ ] **Der Harvest läuft** (400 Wallets, ~40 min). Erster Anlauf war ein
+      Designfehler: Universum absteigend sortiert ⇒ Start bei Market Makern,
+      181 MB für 36 Wallets, Kurs auf 10 GB. Jetzt komprimierte Trade-Zeilen
+      statt Roh-Events und Verarbeitung von den wenigst-aktiven her
+- [ ] **NOCH NICHT GEBAUT: die zweite Harvest-Phase** — pro OOS-Trade eines
+      gerankten Wallets die Tape des Tokens ab `t+delay` (aliasierte
+      GraphQL-Batches, geschätzt ~500 Requests). Ohne sie kann `replayCopy`
+      nicht laufen
+- [ ] **NOCH NICHT GELAUFEN: die Messung.** `scripts/polymarket-validate.mjs`
+      existiert nicht. Es gibt bis jetzt **kein Ergebnis** — weder positiv noch
+      negativ. Nichts in diesem Repo behauptet, dass Copytrading auf Polymarket
+      funktioniert oder nicht funktioniert
+
 ### Diagnosen
 
 - [x] Cortex: sieht **nur Abstracts**, Volltext auf 0 % — empirisch bestätigt
