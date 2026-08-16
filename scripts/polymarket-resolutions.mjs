@@ -44,7 +44,14 @@ const RPCS = (process.env.PM_RPC || "https://polygon-bor-rpc.publicnode.com,http
   .split(",").map((u) => u.trim()).filter(Boolean);
 const GS = "https://api.goldsky.com/api/public/project_cl6mb8i9h0003e201j6li0diw/subgraphs/orderbook-subgraph/prod/gn";
 
-const CHUNK = 10_000;          // the public RPCs' hard limit on eth_getLogs
+// Every provider caps eth_getLogs differently — 10,000 blocks on Infura, a
+// response-size limit on Alchemy, 50 on 1rpc — and the cap is not always stated
+// in the error. So the chunk size ADAPTS: it starts here and halves whenever a
+// provider complains about the range, down to a floor. Nobody has to look up
+// their plan's limit before running this.
+const CHUNK = +(process.env.PM_CHUNK || 10_000);
+const MIN_CHUNK = 200;
+const RANGE_ERROR = /range|too many|limited to|exceeds|larger than|block range|response size|query returned more/i;
 const WORKERS = 4;
 const START_BLOCK = +(process.env.PM_START_BLOCK || 35_000_000);  // ≈ Nov 2022, before the first fill
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -68,12 +75,45 @@ async function rpc(method, params, tries = 4) {
       if (!r.ok) { await sleep(600 * (a + 1)); continue; }
       const j = await r.json();
       // An RPC error is not an empty range. Returning [] on a rate limit would
-      // silently record "no market resolved in these 10,000 blocks".
-      if (j.error) { await sleep(800 * (a + 1)); continue; }
+      // silently record "no market resolved in these blocks".
+      if (j.error) {
+        if (RANGE_ERROR.test(String(j.error.message || ""))) return { __rangeTooBig: String(j.error.message).slice(0, 80) };
+        await sleep(800 * (a + 1));
+        continue;
+      }
       return j.result;
     } catch { await sleep(900 * (a + 1)); }
   }
   return null;
+}
+
+/** eth_getLogs over a range, halving the window whenever the provider objects. */
+async function getLogsAdaptive(from, to, state) {
+  let size = state.chunk;
+  let cursor = from;
+  const out = [];
+  while (cursor <= to) {
+    const end = Math.min(cursor + size - 1, to);
+    const res = await rpc("eth_getLogs", [{
+      address: CTF_ADDRESS,
+      topics: [CONDITION_RESOLUTION_TOPIC],
+      fromBlock: "0x" + cursor.toString(16),
+      toBlock: "0x" + end.toString(16),
+    }]);
+    if (res && res.__rangeTooBig) {
+      if (size <= MIN_CHUNK) return null;          // even the floor is refused
+      size = Math.max(MIN_CHUNK, Math.floor(size / 2));
+      if (size < state.chunk) {
+        state.chunk = size;
+        console.log(`  window narrowed to ${size} blocks (${res.__rangeTooBig})`);
+      }
+      continue;
+    }
+    if (res === null) return null;
+    out.push(...res);
+    cursor = end + 1;
+  }
+  return out;
 }
 
 // ── phase A: every resolution ───────────────────────────────────────────────
@@ -97,6 +137,7 @@ async function scanResolutions() {
     chunks.push([from, Math.min(from + CHUNK - 1, head)]);
   }
   const done = new Array(chunks.length).fill(false);
+  const sizing = { chunk: CHUNK };   // shared, so one worker's discovery helps all
   let next = 0, finished = 0, found = 0, failed = 0;
 
   async function worker() {
@@ -104,12 +145,7 @@ async function scanResolutions() {
       const i = next++;
       if (i >= chunks.length) return;
       const [from, to] = chunks[i];
-      const logs = await rpc("eth_getLogs", [{
-        address: CTF_ADDRESS,
-        topics: [CONDITION_RESOLUTION_TOPIC],
-        fromBlock: "0x" + from.toString(16),
-        toBlock: "0x" + to.toString(16),
-      }]);
+      const logs = await getLogsAdaptive(from, to, sizing);
       if (logs === null) { failed++; done[i] = false; }
       else {
         for (const log of logs) {
