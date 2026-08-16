@@ -106,7 +106,7 @@ nicht mehr.
       Gegenwart; die Korpus-Zeile des Skripts zeigt deshalb pro Kanal die
       Abdeckung an
 
-### Projekt 1 · Polymarket — ANGEFANGEN, MESSUNG STEHT NOCH AUS (16. Aug)
+### Projekt 1 · Polymarket — Frage 1 gemessen, NICHT als Edge belegt (16. Aug)
 
 - [x] **Datenweg gefunden — keiner der beiden aus dem Briefing.** Polymarkets
       eigene Domains sind weiterhin tot (polymarket.com, gamma-api, clob,
@@ -136,14 +136,34 @@ nicht mehr.
       Designfehler: Universum absteigend sortiert ⇒ Start bei Market Makern,
       181 MB für 36 Wallets, Kurs auf 10 GB. Jetzt komprimierte Trade-Zeilen
       statt Roh-Events und Verarbeitung von den wenigst-aktiven her
+- [x] **Harvest fertig:** 397 Wallets, 776'236 dekodierte Trades, 20 Market Maker
+      gekappt und namentlich ausgeschlossen
+- [x] **Frage 1 GEMESSEN** (`docs/POLYMARKET_FINDINGS.md`): Ranking in-sample →
+      out-of-sample bei den EIGENEN Fills des Leaders. Spearman **0,438**,
+      Top-20 OOS **+15,07 %** (17/20 positiv) gegen **−2,30 %** beim Rest,
+      48 BH-Überlebende. Sieht nach Edge aus — **ist aber nicht als Edge
+      belegt**, siehe unten
+- [x] **Die zwei Artefakte gemessen, die dasselbe Bild gratis erzeugen:**
+      · **Attrition:** 209 Wallets haben einen In-Sample-Wert und **keinen**
+        Out-of-Sample-Wert (58 %). Alles ist auf „hat überlebt" konditioniert —
+        dieselbe Verzerrung wie beim Leaderboard, nur durch die Hintertür
+      · **Dispositionseffekt, und der entscheidet:** die Top-20 lassen
+        **0,653** ihres Kapitals unrealisiert offen, der Rest **0,338** — fast
+        das Doppelte. FIFO auf geschlossenen Round Trips zählt nur, was jemand
+        zu schliessen BESCHLIESST. Wer Gewinner realisiert und auf Verlierern
+        sitzt, gewinnt per Konstruktion — und weil die Gewohnheit stabil ist,
+        reproduziert sie sich out of sample und sieht aus wie ein Edge
+- [ ] **Was es entscheiden würde:** die offenen Positionen bewerten. Dafür
+      braucht es Markt-Auflösungen; der orderbook-Subgraph hat sie nicht, die
+      Geschwister-Subgraphs (`positions`, `pnl`) liefern 404. Das ist der
+      nächste Schritt, und er kommt VOR jeder Fill-Modellierung
 - [ ] **NOCH NICHT GEBAUT: die zweite Harvest-Phase** — pro OOS-Trade eines
       gerankten Wallets die Tape des Tokens ab `t+delay` (aliasierte
       GraphQL-Batches, geschätzt ~500 Requests). Ohne sie kann `replayCopy`
       nicht laufen
-- [ ] **NOCH NICHT GELAUFEN: die Messung.** `scripts/polymarket-validate.mjs`
-      existiert nicht. Es gibt bis jetzt **kein Ergebnis** — weder positiv noch
-      negativ. Nichts in diesem Repo behauptet, dass Copytrading auf Polymarket
-      funktioniert oder nicht funktioniert
+- [ ] Frage 2 (unser Fill) bleibt ungebaut — sie lohnt erst, wenn Frage 1
+      sauber beantwortet ist. Nichts in diesem Repo behauptet, dass Copytrading
+      auf Polymarket funktioniert
 
 ### Diagnosen
 
