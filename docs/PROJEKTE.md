@@ -30,6 +30,33 @@ also nicht die Sandbox, sondern der Netzweg selbst. Zwei Auswege, beide offen:
   raus, nicht aus diesem — ein `/api/polymarket`-Endpoint kann funktionieren, wo
   der lokale Agent scheitert. Muss geprüft werden, nicht angenommen.
 
+**Nachtrag 16. Aug — die Markt-Auflösungen sind KEINE Sackgasse.** Der Lauf vom
+15./16. Aug (`f8e6f1a`, `427d5cf`) blieb daran hängen, dass offene Positionen
+nicht bewertbar seien: der Orderbook-Subgraph kennt keine Auflösungen, die
+Geschwister-Subgraphs (`positions`, `pnl`) geben 404. Man braucht die Subgraphs
+aber gar nicht — die Auflösung steht on-chain, und sie ist von hier aus keylos
+lesbar. Am 16. Aug gegen den öffentlichen RPC nachgemessen:
+
+- **Conditional-Tokens-Contract** (Gnosis CTF, den Polymarket benutzt):
+  `0x4D97DCd97eC945f40cF65F87097ACe5EA0476045` auf Polygon — lebt, 30.016 Zeichen
+  Bytecode, 256.633 Events in 1.500 Blöcken.
+- **`ConditionResolution` = Topic `0xb44d84d3289691f71497564b85d4233648d9dbae8cbdbb4329f301c3a0185894`.**
+  Nicht aus dem Gedächtnis, sondern an einem echten Event dekodiert: 4 Topics
+  (conditionId, oracle, questionId indiziert) und im Datenteil
+  `outcomeSlotCount = 2`, danach `payoutNumerators = [0, 1]` — also „Outcome 2 hat
+  gewonnen". Genau die Zahl, die eine offene Position bewertbar macht.
+- Gelesen über `eth_getLogs` an `polygon-bor-rpc.publicnode.com` bzw.
+  `polygon.drpc.org`, ohne Schlüssel.
+
+**Und die Bewertung offener Positionen braucht die Auflösung nicht einmal
+zwingend**, um den Dispositionseffekt zu entschärfen: Es genügt, jede offene
+Position am Stichtag zum letzten gehandelten Preis zu bewerten — „alle
+liquidieren an der Schnittkante". Das ist die übliche Konvention in
+Trader-Ranking-Studien, es kommt aus Daten, die der Harvester schon hat, und es
+nimmt dem „Verlierer nie schliessen"-Muster sofort seinen Vorteil. Die
+On-chain-Auflösung liefert danach die *wahre* Endbewertung. Beide Zahlen
+nebeneinander sind aussagekräftiger als jede allein.
+
 **Erste ehrliche Lieferung: nicht der Copier, sondern die Messung.** Ein
 Leaderboard ist der überlebensverzerrteste Datensatz, den es gibt — die
 Gewinnerliste besteht per Konstruktion aus denen, die Glück hatten. Die Frage
