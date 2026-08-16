@@ -19,16 +19,18 @@
 //
 // Writes docs/POLYMARKET_FINDINGS.md and data/polymarket/study.json.
 
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { fifoPnl, markedPnl, markedScore, priceBook, splitAt, walletScore } from "../src/lib/polymarket/trades.js";
 import { persistence, walletPValue } from "../src/lib/polymarket/copy.js";
+import { resolvedValue } from "../src/lib/polymarket/resolve.js";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const DIR = join(ROOT, "data", "polymarket");
 const WDIR = join(DIR, "wallets");
+const RPCS = ["https://polygon-bor-rpc.publicnode.com", "https://polygon.drpc.org"];
 
 // SEVERAL cut-offs, not one. A single split date is a single experiment: the
 // 0.438 rank correlation measured at 2025-10-01 could be a property of the
@@ -92,9 +94,9 @@ function tripReturns(trades) {
  * The pair is the point: if a ranking survives the first and dies in the second,
  * the ranking was measuring the habit of not closing losers.
  */
-function runSplit(wallets, book, tSplit, tEnd) {
-  const closedRows = [], markedRows = [];
-  let attrition = 0;
+function runSplit(wallets, book, tSplit, tEnd, resolver) {
+  const closedRows = [], markedRows = [], resolvedRows = [];
+  let attrition = 0, fromResolution = 0, fromLastPrice = 0;
   for (const w of wallets) {
     const { inSample, outSample } = splitAt(w.trades, tSplit);
 
@@ -105,6 +107,20 @@ function runSplit(wallets, book, tSplit, tEnd) {
     const inMp = markedPnl(inSample, (tok) => book.at(tok, tSplit));
     const outMp = markedPnl(outSample, (tok) => book.at(tok, tEnd));
     const inM = markedScore(inMp), outM = markedScore(outMp);
+
+    // The third valuation: the TRUE terminal value where the chain has already
+    // said so BY the edge, and the last traded price where it has not. Refusing
+    // a resolution that landed after the edge matters — the data ends 2026-04
+    // and the chain is read to 2026-08, so four months of "how it turned out"
+    // sit there waiting to be borrowed by accident.
+    const markResolved = (edge) => (tok) => {
+      const r = resolver ? resolver.at(tok, edge) : null;
+      if (r != null) { fromResolution++; return r; }
+      fromLastPrice++;
+      return book.at(tok, edge);
+    };
+    const inR = markedScore(markedPnl(inSample, markResolved(tSplit)));
+    const outR = markedScore(markedPnl(outSample, markResolved(tEnd)));
 
     if (inC && outC) {
       closedRows.push({
@@ -125,11 +141,21 @@ function runSplit(wallets, book, tSplit, tEnd) {
         pValue: walletPValue(tripReturns(outSample)),
       });
     }
+    if (inR && outR) {
+      resolvedRows.push({
+        address: w.address,
+        inRoi: inR.roi, inTrades: inSample.length, inOpenShare: 0,
+        outRoi: outR.roi, outTrades: outSample.length, outOpenShare: 0,
+        outPnl: outR.total, outCost: outR.totalCost,
+        pValue: walletPValue(tripReturns(outSample)),
+      });
+    }
   }
 
   const opts = { topK: TOP_K, alpha: ALPHA, minInTrades: MIN_IN, minOutTrades: MIN_OUT };
   const closed = persistence(closedRows, opts);
   const marked = persistence(markedRows, opts);
+  const resolved = persistence(resolvedRows, opts);
 
   const avg = (xs, k) => (xs.length ? xs.reduce((a, r) => a + (r[k] ?? 0), 0) / xs.length : 0);
   const top = closed.ranked.slice(0, Math.min(TOP_K, closed.ranked.length));
@@ -139,10 +165,38 @@ function runSplit(wallets, book, tSplit, tEnd) {
     topOut: avg(top, "outOpenShare"), restOut: avg(rest, "outOpenShare"),
   };
   const unmarkable = avg(marked.ranked, "unmarkableShare");
-  return { tSplit, attrition, closed, marked, openGap, unmarkable };
+  const resolutionShare = fromResolution + fromLastPrice ? fromResolution / (fromResolution + fromLastPrice) : 0;
+  return { tSplit, attrition, closed, marked, resolved, openGap, unmarkable, resolutionShare };
 }
 
-function main() {
+/**
+ * Block number → unix seconds, from two real anchors.
+ *
+ * The resolutions carry a block, the valuation edge is a timestamp, and the two
+ * have to be comparable before a resolution can be refused as "after the edge".
+ * Polygon's block time is stable enough that a straight line through two
+ * measured points is accurate to hours over years — which is all the precision a
+ * before/after test at a month-scale cut-off needs, and it is stated rather than
+ * assumed exact.
+ */
+async function blockClock() {
+  const get = async (tag) => {
+    const r = await fetch(RPCS[0], {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_getBlockByNumber", params: [tag, false] }),
+      signal: AbortSignal.timeout(30_000),
+    });
+    const j = await r.json();
+    return j?.result ? { n: parseInt(j.result.number, 16), ts: parseInt(j.result.timestamp, 16) } : null;
+  };
+  const head = await get("latest");
+  const old = await get("0x2160EC0");   // 35,000,000 — the scan's start block
+  if (!head || !old || head.n === old.n) return null;
+  const secPerBlock = (head.ts - old.ts) / (head.n - old.n);
+  return (b) => old.ts + (b - old.n) * secPerBlock;
+}
+
+async function main() {
   mkdirSync(DIR, { recursive: true });
   const files = readdirSync(WDIR).filter((f) => /^0x[0-9a-f]{40}\.json$/.test(f));
   if (!files.length) throw new Error(`no wallets in ${WDIR} — run scripts/polymarket-harvest.mjs first`);
@@ -169,23 +223,46 @@ function main() {
   console.log(`price book: ${book.tokens} tokens, data ends ${new Date(tEnd * 1000).toISOString().slice(0, 10)}
 `);
 
-  const runs = SPLITS.map((t) => runSplit(wallets, book, t, tEnd));
+  // The on-chain half, when scripts/polymarket-resolutions.mjs has produced it.
+  let resolver = null, resStats = { conditions: 0, tokens: 0, mapped: 0 };
+  const rPath = join(DIR, "resolutions.json"), tPath = join(DIR, "tokenmap.json");
+  if (existsSync(rPath) && existsSync(tPath)) {
+    const res = JSON.parse(readFileSync(rPath, "utf8"));
+    const tok = JSON.parse(readFileSync(tPath, "utf8"));
+    const conditions = new Map(Object.entries(res.conditions || {}).map(([k, v]) => [k, { payouts: v.p, total: v.t, blockNumber: v.b }]));
+    const tokens = new Map(Object.entries(tok).filter(([, v]) => v));
+    resStats = { conditions: conditions.size, tokens: Object.keys(tok).length, mapped: tokens.size };
+    const clock = await blockClock();
+    resolver = resolvedValue(tokens, conditions, clock);
+    console.log(`resolutions: ${conditions.size} conditions, ${tokens.size}/${resStats.tokens} tokens mapped${clock ? "" : " (no block clock — resolutions cannot be dated, so none are used)"}`);
+    if (!clock) resolver = null;
+  } else {
+    console.log("resolutions: not fetched yet — run scripts/polymarket-resolutions.mjs for the on-chain valuation");
+  }
+
+  const runs = SPLITS.map((t) => runSplit(wallets, book, t, tEnd, resolver));
   for (const r of runs) {
     const d = new Date(r.tSplit * 1000).toISOString().slice(0, 10);
     console.log(`── split ${d} ─────────────────────────────`);
     console.log(`  closed-round-trips only : rho ${r.closed.rankCorrelation.toFixed(3)} · top${r.closed.top.wallets} ${pct(r.closed.top.roi)} vs rest ${pct(r.closed.rest.roi)} · n=${r.closed.tested} · BH ${r.closed.bh.survivors.length}`);
     console.log(`  LIQUIDATED at the edge  : rho ${r.marked.rankCorrelation.toFixed(3)} · top${r.marked.top.wallets} ${pct(r.marked.top.roi)} vs rest ${pct(r.marked.rest.roi)} · n=${r.marked.tested} · BH ${r.marked.bh.survivors.length}`);
-    console.log(`  open share top/rest ${r.openGap.topOut.toFixed(3)}/${r.openGap.restOut.toFixed(3)} · attrition ${r.attrition} · unmarkable ${(r.unmarkable * 100).toFixed(1)}%`);
+    if (r.resolved.tested) {
+      console.log(`  RESOLVED on-chain       : rho ${r.resolved.rankCorrelation.toFixed(3)} · top${r.resolved.top.wallets} ${pct(r.resolved.top.roi)} vs rest ${pct(r.resolved.rest.roi)} · n=${r.resolved.tested} · BH ${r.resolved.bh.survivors.length}`);
+    }
+    console.log(`  open share top/rest ${r.openGap.topOut.toFixed(3)}/${r.openGap.restOut.toFixed(3)} · attrition ${r.attrition} · unmarkable ${(r.unmarkable * 100).toFixed(1)}% · valued by resolution ${(r.resolutionShare * 100).toFixed(1)}%`);
   }
 
   const artifact = {
     builtAt: Date.now(), splits: SPLITS, tEnd,
     wallets: { onDisk: files.length, capped, noTrades, usable: wallets.length, trades: all.length, tokens: book.tokens },
+    resolutions: resStats,
     topK: TOP_K, alpha: ALPHA, minInTrades: MIN_IN, minOutTrades: MIN_OUT,
     runs: runs.map((r) => ({
       tSplit: r.tSplit, attrition: r.attrition, openGap: r.openGap, unmarkable: r.unmarkable,
       closed: { ...r.closed, ranked: r.closed.ranked.slice(0, 25) },
       marked: { ...r.marked, ranked: r.marked.ranked.slice(0, 25) },
+      resolved: { ...r.resolved, ranked: r.resolved.ranked.slice(0, 25) },
+      resolutionShare: r.resolutionShare,
     })),
   };
   writeFileSync(join(DIR, "study.json"), JSON.stringify(artifact, null, 1));
@@ -332,4 +409,4 @@ node scripts/polymarket-validate.mjs
 `;
 }
 
-main();
+main().catch((e) => { console.error(e); process.exit(1); });

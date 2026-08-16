@@ -16,6 +16,7 @@ import assert from "node:assert/strict";
 
 import { CONTRACTS, decodeFill, fifoPnl, splitAt, walletScore, walletTrades } from "../src/lib/polymarket/trades.js";
 import { copyFill, persistence, replayCopy, spearman, walletPValue } from "../src/lib/polymarket/copy.js";
+import { CONDITION_RESOLUTION_TOPIC, decodeResolution, resolvedValue } from "../src/lib/polymarket/resolve.js";
 
 const fill = (o = {}) => ({
   id: o.id || "x", timestamp: String(o.ts ?? 1_700_000_000),
@@ -167,4 +168,54 @@ test("a wallet with too few out-of-sample trades gets no p-value worth having", 
   assert.equal(walletPValue([0.5, 0.4, 0.6]), 1, "three trades is not evidence");
   const good = walletPValue(Array.from({ length: 40 }, () => 0.05));
   assert.ok(good < 0.001, "forty consistent winners should be significant before correction");
+});
+
+// ── the on-chain resolution ────────────────────────────────────────────────
+
+test("a ConditionResolution decodes to the payout that values an open position", () => {
+  // (uint outcomeSlotCount, uint[] payoutNumerators) = (2, [0, 1]) — "outcome 2
+  // paid a dollar". Words: [slotCount][offset=0x40][length][p0][p1].
+  const w = (n) => n.toString(16).padStart(64, "0");
+  const log = {
+    topics: [
+      CONDITION_RESOLUTION_TOPIC,
+      "0xc3d4155148681756bfe67bb41d8d0882a8a122e7d3762b3591bf6598c9bd198b",
+      "0x000000000000000000000000" + "1".repeat(40),
+      "0xdead" + "0".repeat(60),
+    ],
+    data: "0x" + w(2) + w(0x40) + w(2) + w(0) + w(1),
+    blockNumber: "0x1234",
+  };
+  const r = decodeResolution(log);
+  assert.deepEqual(r.payouts, [0, 1]);
+  assert.equal(r.total, 1);
+  assert.equal(r.blockNumber, 0x1234);
+  assert.equal(r.oracle, "0x" + "1".repeat(40));
+});
+
+test("an unresolved or malformed resolution yields nothing rather than a zero payout", () => {
+  const w = (n) => n.toString(16).padStart(64, "0");
+  const topics = [CONDITION_RESOLUTION_TOPIC, "0x" + "a".repeat(64), "0x" + "0".repeat(64), "0x" + "b".repeat(64)];
+  // All-zero numerators: the oracle reported nothing payable. Treating that as
+  // "the position is worthless" would be a decision the chain did not make.
+  assert.equal(decodeResolution({ topics, data: "0x" + w(2) + w(0x40) + w(2) + w(0) + w(0), blockNumber: "0x1" }), null);
+  assert.equal(decodeResolution({ topics, data: "0x" + w(2) }), null, "truncated data");
+  assert.equal(decodeResolution({ topics: topics.slice(0, 2), data: "0x" }), null, "wrong topic count");
+  assert.equal(decodeResolution({ topics: ["0xdeadbeef", ...topics.slice(1)], data: "0x" }), null, "wrong event");
+});
+
+test("a payout is refused when it was only decided AFTER the valuation edge", () => {
+  const tokenMap = { "111": { condition: "0xabc", outcomeIndex: 1 }, "222": { condition: "0xzzz", outcomeIndex: 0 } };
+  const resolutions = { "0xabc": { payouts: [0, 1], total: 1, blockNumber: 1000 } };
+  const clock = (b) => b * 10;                      // block 1000 → t = 10_000
+
+  const v = resolvedValue(tokenMap, resolutions, clock);
+  assert.equal(v.at("111", 20_000), 1, "resolved before the edge — usable");
+  assert.equal(v.at("111", 5_000), null, "resolved AFTER the edge — knowing it is borrowing the future");
+  assert.equal(v.at("222", Infinity), null, "condition never resolved");
+  assert.equal(v.at("999", Infinity), null, "token has no mapping");
+
+  // A loser is worth zero, and that is a real number, not a missing one.
+  const loser = resolvedValue({ "111": { condition: "0xabc", outcomeIndex: 0 } }, resolutions, clock);
+  assert.equal(loser.at("111", 20_000), 0);
 });

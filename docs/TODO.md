@@ -171,7 +171,32 @@ nicht mehr.
       aufhört, hat auch keinen markierten Wert) · der Mark ist der **letzte
       gehandelte Preis, nicht die Auflösung** · die p-Werte behandeln
       korrelierte Trades als unabhängig, was die 48 BH-Überlebenden aufbläst
-- [ ] **Nächster Schritt: die On-chain-Auflösung.** CTF-Contract
+- [x] **On-chain-Auflösung: halb gelöst, mit einem konkreten Blocker.**
+      · **Die fehlende Brücke ist gefunden.** Eine Token-Id lässt sich nicht zur
+        conditionId zurückrechnen (die Ableitung läuft vorwärts über einen
+        Kurvenpunkt). Der orderbook-Subgraph schliesst die Lücke: `MarketData`
+        ist nach Token-Id verschlüsselt und trägt `{ condition, outcomeIndex }`.
+        **121'920 von 121'920 Tokens gemappt**, via `where:{id_in:[…]}` in
+        ~240 Requests statt 121'920 (erster Entwurf lief auf zwei Stunden zu)
+      · `src/lib/polymarket/resolve.js` — Decoder für `ConditionResolution`
+        (Wortlayout `[slotCount][offset][len][p0][p1…]`, Offset wird gelesen
+        nicht angenommen) plus Lookup, der eine Auflösung **nach** der
+        Bewertungskante verweigert. 3 Tests, u.a. dass „alle Numeratoren null"
+        null ergibt und nicht „wertlos"
+      · `scripts/polymarket-resolutions.mjs` — beide Phasen, fortsetzbar
+- [ ] **BLOCKER: kein freier RPC liefert die historischen Logs.** Gemessen,
+      nicht vermutet: `polygon-bor-rpc.publicnode.com` hat die Historie
+      **gepruned** (nur kopfnah lieferbar) · `polygon.drpc.org` lehnt
+      `eth_getLogs` mit Range auf dem Free Plan generell ab (auch bei 2'000
+      Blöcken) · `1rpc.io` deckelt bei **50 Blöcken** · Ankr und Blast wollen
+      Schlüssel · `llamarpc` antwortet leer. Auch die Geschwister-Subgraphen
+      helfen nicht: `oi-subgraph` und `fpmm-subgraph` leben, aber ihr
+      `Condition` hat nur ein Feld — `id`, keine Payouts.
+      **Fix, eine Minute Arbeit für dich:** ein kostenloser Archive-Key
+      (Alchemy/Infura/QuickNode haben alle Polygon-Archive im Free Tier), dann
+      `PM_RPC=<url> node scripts/polymarket-resolutions.mjs --phase resolutions`.
+      Das Skript ist fertig und wartet nur auf den Endpunkt
+- [ ] **Danach:** CTF-Contract
       `0x4D97DCd97eC945f40cF65F87097ACe5EA0476045`, `ConditionResolution` =
       Topic `0xb44d84d3…5894`, `payoutNumerators` im Datenteil, über
       `eth_getLogs` an `polygon-bor-rpc.publicnode.com` (alles in `f14454e`
