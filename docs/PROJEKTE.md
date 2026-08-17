@@ -100,6 +100,44 @@ gemessen haben und die hier alle zugleich zuschlagen:
   Verkaufbarkeits-Prüfung ist jede Statistik geschönt: die Verlierer lassen sich
   gar nicht erst verkaufen und tauchen im Ledger nie auf.
 
+**Nachtrag 17. Aug — Datenwege gemessen, bevor irgendwas gebaut wurde.**
+Das Bild ist deutlich besser als im ursprünglichen Briefing angenommen, und die
+eine echte Hürde sitzt woanders als erwartet.
+
+| Weg | Stand |
+|---|---|
+| DexScreener (`/latest/dex/tokens/…`, `/latest/dex/search`) | **200, keylos** — Liquidität und Poolgrösse |
+| Jupiter Quote | **200**, aber NUR unter `lite-api.jup.ag/swap/v1/quote` bzw. `api.jup.ag/swap/v1/quote`. Der im Umlauf befindliche `quote-api.jup.ag/v6` ist tot (Connect-Fehler) |
+| Öffentliche Solana-RPC `api.mainnet-beta.solana.com` | **200**, und tiefer als gedacht: `getBlock` auf einen Slot ~6 Monate zurück antwortet, `getSignaturesForAddress` paginiert 1000/Seite, `getTransaction` liefert `jsonParsed` (22 KB). **Kein 429 bei ~2 Req/s** |
+| pump.fun `frontend-api` | **530** — von hier blockiert |
+| Birdeye | **401** ohne Schlüssel (freier Tier existiert, Anmeldung nötig) |
+| Helius | 404 ohne Schlüssel |
+
+**Swaps lassen sich OHNE Programmkenntnis erkennen.** Statt Raydium-, Orca- und
+pump.fun-Instruktionen zu dekodieren, reicht `meta.preTokenBalances` gegen
+`meta.postTokenBalances`: die Netto-Änderung je Mint **pro Owner**. Wer in einer
+Transaktion einen Mint verliert und einen anderen gewinnt, hat getauscht — egal
+über welches Programm. Eine Verfeinerung ist nötig und ist am ersten Versuch
+aufgefallen: nach dem SIGNER zu filtern liefert nichts, weil der Signer oft ein
+Relayer ist; der Händler ist der Owner mit der zweiseitigen Änderung.
+
+**Die eigentliche Hürde ist der historische Fill, nicht die Daten.** Jupiters
+Quote bepreist die Liquidität von HEUTE. Für „was hätte ich damals bekommen"
+ist sie unbrauchbar — sie würde einen Coin, der seither gerugt wurde, mit dem
+heutigen (leeren) Pool bewerten. Der Ausweg ist derselbe, der bei Projekt 1
+funktioniert hat: **den Fill aus der Tape rekonstruieren.** Für jeden Trade des
+Leaders die nächsten Trades in DEMSELBEN Token nach unserer Verzögerung nehmen
+und zu deren Preis füllen. Das ist ein gemessener Fill statt eines geschätzten
+Slippage-Aufschlags, und es kommt aus Daten, die dieselbe RPC schon liefert.
+
+**Was das für die Honeypot-Prüfung heisst:** sie fällt teilweise gratis ab. Ein
+Token, in dem nach dem Kauf des Leaders **keine Verkäufe mehr** in der Tape
+auftauchen, ist genau der Fall, den das Briefing meint — der Verlierer, der sich
+nicht verkaufen lässt und deshalb nie im Ledger landet. Er wird hier sichtbar,
+weil ein Ausstieg ohne Gegenpartei schlicht nicht gefüllt wird.
+
+**Noch nicht gebaut.** Dies ist der Datenwege-Teil, nicht die Messung.
+
 **Erste ehrliche Lieferung:** dieselbe Messung wie bei 1, nur härter — die
 Trades verfolgter Wallets nachrechnen zu *unserem* Fill (Zeitstempel des
 Leaders + realistische Verzögerung + Slippage nach Poolgrösse). Vermutlich ist
