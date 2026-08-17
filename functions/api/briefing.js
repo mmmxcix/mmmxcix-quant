@@ -28,13 +28,12 @@ const TTL_MS = 2 * 60 * 60 * 1000; // 2h — matches bias.js; news/fundamentals 
 // while the key still read as "present"). Order = best first.
 const GROQ_MODELS = ["openai/gpt-oss-120b", "openai/gpt-oss-20b"];
 const GEMINI_MODELS = ["gemini-flash-latest", "gemini-2.5-flash", "gemini-flash-lite-latest"];
-// Confirmed live: a real 14-symbol batch (pulse + 8 stories + 14 dense
-// per-symbol writeups) silently truncated past ~4000 tokens, dropping
-// whatever the model generated last (the final symbols in the response) with
-// no error — parseBriefing() only fails loudly on malformed JSON, not on a
-// response that's valid but incomplete. Sized for MAX_SYMBOLS_ENRICHED(24)
-// worth of dense output plus pulse/stories, not just the smaller cases.
-const MAX_TOKENS = 8000;
+// 8000 was WRONG — confirmed live it broke EVERY request, including a single
+// symbol, so it's being rejected/misbehaving at the provider level, not just
+// insufficient for large batches. Reverting to the last known-good value
+// while a proper fix for large-batch truncation (see MAX_SYMBOLS_ENRICHED) is
+// worked out — do not raise this without testing a single-symbol call first.
+const MAX_TOKENS = 4000;
 
 const MAX_SYMBOLS_REQUEST = 40;   // defensive cap on the incoming list (candidate matching is cheap)
 const MAX_SYMBOLS_ENRICHED = 24;  // only this many get an LLM/fundamentals pass per call (cost control) — was 12, too tight for a watchlist+portfolio combined (a real 14-symbol list silently dropped its last 2)
