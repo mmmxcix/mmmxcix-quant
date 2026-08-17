@@ -184,7 +184,31 @@ nicht mehr.
         Bewertungskante verweigert. 3 Tests, u.a. dass „alle Numeratoren null"
         null ergibt und nicht „wertlos"
       · `scripts/polymarket-resolutions.mjs` — beide Phasen, fortsetzbar
-- [ ] **BLOCKER: kein freier RPC liefert die historischen Logs.** Gemessen,
+- [x] **Blocker umgangen — über State statt Logs (17. Aug).** Der Alchemy-Key ist
+      da, aber **Free Tier deckelt `eth_getLogs` bei 10 Blöcken** (5,7 Mio.
+      Requests → tot). Eine Auflösung steht aber auch als State im Contract:
+      `payoutDenominator(bytes32)` und `payoutNumerators(bytes32,uint256)`.
+      `eth_call` hat kein Range-Limit, Archive-`eth_call` und JSON-RPC-Batching
+      gehen beide auf dem Free Tier. **Strikt besser als Logs:** ein State-Read
+      am Bewertungsblock kann einen später aufgelösten Markt gar nicht sehen —
+      der Zukunfts-Leak ist strukturell weg statt nachträglich gefiltert
+- [x] `src/lib/polymarket/keccak.js` — Selektoren werden **berechnet, nicht
+      erinnert** (Node liefert SHA3-256, nicht keccak256). Festgenagelt an zwei
+      Vektoren, der zweite reproduziert `0xb44d84d3…5894` allein aus dem
+      Signatur-String
+- [x] `scripts/polymarket-payouts.mjs` + `polymarket-rpc-check.mjs`
+- [ ] **Drossel-Falle, für die Zukunft:** Alchemy antwortet auf eine überlastete
+      Batch **nicht** mit 429, sondern HTTP 200 mit „exceeded its compute units
+      per second capacity" in den **einzelnen** Calls. Erster Lauf verbuchte das
+      als „nicht aufgelöst" → 629/28'586 und 0 bewertete Tokens, beides reiner
+      Rate-Limiter. Jetzt Requeue + selbstregelnder Takt + unbeantwortete Calls
+      werden gezählt und gedruckt
+- [ ] **Läuft gerade:** Payout-Scan an der Out-of-Sample-Kante. Pass 1 durch —
+      **84'422 von 85'502** beantworteten Bedingungen waren zur Kante bereits
+      aufgelöst (98,7 %), 443 unbeantwortet. Pass 2 (Numeratoren) läuft, ~1,5 h.
+      Danach nur noch `node scripts/polymarket-validate.mjs` — das Skript liest
+      `payouts.json` automatisch und rechnet die dritte Bewertung
+- [ ] Historisch, erledigt durch den State-Weg: kein freier RPC liefert Logs. Gemessen,
       nicht vermutet: `polygon-bor-rpc.publicnode.com` hat die Historie
       **gepruned** (nur kopfnah lieferbar) · `polygon.drpc.org` lehnt
       `eth_getLogs` mit Range auf dem Free Plan generell ab (auch bei 2'000

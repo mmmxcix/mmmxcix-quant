@@ -25,7 +25,6 @@ import { fileURLToPath } from "node:url";
 
 import { fifoPnl, markedPnl, markedScore, priceBook, splitAt, walletScore } from "../src/lib/polymarket/trades.js";
 import { persistence, walletPValue } from "../src/lib/polymarket/copy.js";
-import { resolvedValue } from "../src/lib/polymarket/resolve.js";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const DIR = join(ROOT, "data", "polymarket");
@@ -223,21 +222,39 @@ async function main() {
   console.log(`price book: ${book.tokens} tokens, data ends ${new Date(tEnd * 1000).toISOString().slice(0, 10)}
 `);
 
-  // The on-chain half, when scripts/polymarket-resolutions.mjs has produced it.
-  let resolver = null, resStats = { conditions: 0, tokens: 0, mapped: 0 };
-  const rPath = join(DIR, "resolutions.json"), tPath = join(DIR, "tokenmap.json");
-  if (existsSync(rPath) && existsSync(tPath)) {
-    const res = JSON.parse(readFileSync(rPath, "utf8"));
-    const tok = JSON.parse(readFileSync(tPath, "utf8"));
-    const conditions = new Map(Object.entries(res.conditions || {}).map(([k, v]) => [k, { payouts: v.p, total: v.t, blockNumber: v.b }]));
-    const tokens = new Map(Object.entries(tok).filter(([, v]) => v));
-    resStats = { conditions: conditions.size, tokens: Object.keys(tok).length, mapped: tokens.size };
-    const clock = await blockClock();
-    resolver = resolvedValue(tokens, conditions, clock);
-    console.log(`resolutions: ${conditions.size} conditions, ${tokens.size}/${resStats.tokens} tokens mapped${clock ? "" : " (no block clock — resolutions cannot be dated, so none are used)"}`);
-    if (!clock) resolver = null;
+  // The on-chain half: terminal values read as contract STATE at each valuation
+  // block by scripts/polymarket-payouts.mjs. One map per edge, so "resolved
+  // after the edge" is not something to filter — a market that had not resolved
+  // at that block simply is not in that edge's map.
+  let resolver = null;
+  const resStats = { edges: 0, valued: 0, unanswered: 0 };
+  const pPath = join(DIR, "payouts.json");
+  if (existsSync(pPath)) {
+    const pay = JSON.parse(readFileSync(pPath, "utf8"));
+    const byEdge = new Map();
+    for (const [ts, e] of Object.entries(pay.edges || {})) {
+      byEdge.set(Number(ts), e.values || {});
+      resStats.edges++;
+      resStats.valued += Object.keys(e.values || {}).length;
+      resStats.unanswered += (e.unansweredDen || 0) + (e.unansweredNum || 0);
+      console.log(
+        `payouts @${new Date(Number(ts) * 1000).toISOString().slice(0, 10)}: ` +
+        `${Object.keys(e.values || {}).length} tokens valued from ${e.resolved}/${e.conditions} resolved conditions` +
+        ((e.unansweredDen || e.unansweredNum) ? ` — ${(e.unansweredDen || 0) + (e.unansweredNum || 0)} calls unanswered, those keep their last-price mark` : "")
+      );
+    }
+    // An edge with no map falls back to the last traded price, which is the
+    // in-sample case on purpose: those numbers are a RANKING KEY where only the
+    // ordering matters, while the out-of-sample number is the result.
+    resolver = {
+      at(tokenId, edge) {
+        const m = byEdge.get(edge);
+        const v = m ? m[tokenId] : undefined;
+        return v === undefined ? null : v;
+      },
+    };
   } else {
-    console.log("resolutions: not fetched yet — run scripts/polymarket-resolutions.mjs for the on-chain valuation");
+    console.log("payouts: not fetched yet — run scripts/polymarket-payouts.mjs for the on-chain valuation");
   }
 
   const runs = SPLITS.map((t) => runSplit(wallets, book, t, tEnd, resolver));
