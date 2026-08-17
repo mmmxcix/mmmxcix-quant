@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ExternalLink, Mail, RefreshCw, Search, Radio } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { distinctSymbols } from '@/lib/portfolio';
-import { saveDigestSyncTarget, clearDigestSyncTarget } from '@/lib/digestSync';
+import { saveDigestSyncTarget, clearDigestSyncTarget, getDigestSymbols } from '@/lib/digestSync';
 
 // Sources selectable for the digest, with their access tier (matches
 // functions/api/news.js). "partial" sources are hidden when free-only is on.
@@ -108,9 +107,10 @@ function NewsletterCard() {
     }
     setStatus('sending');
     // Portfolio/watchlist categories need the user's symbols so the digest can
-    // match news to them. distinctSymbols() reads localStorage (this browser).
+    // match news to them. getDigestSymbols() honors a Briefing-tab customized
+    // list if one exists, otherwise falls back to the live watchlist+portfolio.
     const wantsSymbols = categories.includes('watchlist') || categories.includes('portfolio');
-    const symbols = wantsSymbols ? distinctSymbols() : [];
+    const symbols = wantsSymbols ? getDigestSymbols() : [];
     try {
       const res = await fetch('/api/subscribe', {
         method: 'POST',

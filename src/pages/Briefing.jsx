@@ -2,8 +2,15 @@ import { useEffect, useState } from "react";
 import {
   Sparkles, RefreshCw, ExternalLink, Briefcase, Newspaper,
   TrendingUp, TrendingDown, MinusCircle, Target, ShieldAlert,
+  Plus, X, Mail, RotateCcw, Check, Loader2,
 } from "lucide-react";
-import { distinctSymbols } from "@/lib/portfolio";
+import SymbolSearch from "@/components/SymbolSearch";
+import { MARKETS } from "@/lib/data";
+import { searchSymbols } from "@/lib/search";
+import {
+  getDigestSymbols, addDigestSymbol, removeDigestSymbol, resetDigestSymbols,
+  hasCustomDigestSymbols, saveDigestSymbolsNow,
+} from "@/lib/digestSync";
 import { cn } from "@/lib/utils";
 
 // Briefing — the AI-synthesized counterpart to Headlines: a market pulse, a
@@ -13,6 +20,12 @@ import { cn } from "@/lib/utils";
 // Visual language mirrors src/components/BiasSection.jsx's "News & data" card
 // (the app's existing precedent for AI-read content) rather than inventing a
 // new one — same accent-tinted callout, same verdict-chip vocabulary.
+//
+// It's also the digest BUILDER: the symbol list here (src/lib/digestSync.js's
+// getDigestSymbols(), a custom override of watchlist+portfolio once edited)
+// drives both this live view AND — via "Save to my digest email" — the
+// actual email subscription. Editing the list and watching this page update
+// IS the preview; there's no separate preview surface to build.
 
 function relTime(iso) {
   if (!iso) return "";
@@ -24,6 +37,16 @@ function relTime(iso) {
   if (hours < 24) return `${hours}h ago`;
   const days = Math.round(hours / 24);
   return days === 1 ? "yesterday" : `${days}d ago`;
+}
+
+async function resolveName(market, symbol) {
+  try {
+    const results = await searchSymbols(symbol, market);
+    const hit = results.find((r) => r.symbol.toUpperCase() === symbol.toUpperCase());
+    return hit?.name || symbol.toUpperCase();
+  } catch {
+    return symbol.toUpperCase();
+  }
 }
 
 function stanceClasses(v) {
@@ -60,13 +83,21 @@ function SkeletonCard() {
   );
 }
 
-function HoldingCard({ symbol, data }) {
+function HoldingCard({ symbol, name, data, onRemove }) {
   const hasStory = data.enriched && (data.why || data.expectation || data.keyFacts?.length > 0);
   return (
-    <div className="rounded-xl border border-line lg-glass p-4">
-      <div className="flex flex-wrap items-center gap-2 mb-2">
+    <div className="group relative rounded-xl border border-line lg-glass p-4">
+      <button
+        onClick={onRemove}
+        title={`Remove ${symbol} from the digest`}
+        aria-label={`Remove ${symbol} from the digest`}
+        className="absolute right-2.5 top-2.5 rounded-md p-1 text-dim opacity-0 group-hover:opacity-100 hover:text-down hover:bg-down/10 transition-all"
+      >
+        <X className="w-3.5 h-3.5" />
+      </button>
+      <div className="flex flex-wrap items-center gap-2 mb-2 pr-6">
         <span className="font-mono text-sm font-semibold text-text">{symbol}</span>
-        <span className="text-xs text-dim truncate">{data.name}</span>
+        <span className="text-xs text-dim truncate">{name}</span>
         {data.enriched && <StanceChip stance={data.stance} />}
         {!data.enriched && (
           <span className="text-[10px] text-dim uppercase tracking-wide ml-auto">Not yet analyzed</span>
@@ -98,26 +129,103 @@ function HoldingCard({ symbol, data }) {
           {data.relevantHeadlines.map((it, i) => <HeadlineLink key={i} it={it} />)}
         </div>
       ) : !data.why ? (
-        <p className="text-xs text-dim">No headlines specifically about {data.name} today.</p>
+        <p className="text-xs text-dim">No headlines specifically about {name} today.</p>
       ) : null}
     </div>
   );
 }
 
+// The digest builder strip: add a symbol, save the list to the actual email
+// subscription, or reset back to always following the live portfolio/watchlist.
+function BuilderBar({ onAdd, onSave, saveStatus, customized, onReset }) {
+  const [market, setMarket] = useState("stock");
+  const [symbol, setSymbol] = useState("");
+  const [adding, setAdding] = useState(false);
+
+  async function submit() {
+    const sym = symbol.trim();
+    if (!sym || adding) return;
+    setAdding(true);
+    const name = await resolveName(market, sym);
+    onAdd({ market, symbol: sym.toUpperCase(), name });
+    setSymbol("");
+    setAdding(false);
+  }
+
+  return (
+    <div className="rounded-xl border border-line lg-glass p-3 flex flex-wrap items-center gap-3">
+      <div className="flex gap-1">
+        {MARKETS.map((mk) => (
+          <button key={mk.id} type="button" onClick={() => { setMarket(mk.id); setSymbol(""); }}
+            className={cn("chip", market === mk.id ? "chip-active" : "chip-idle")}>
+            {mk.label}
+          </button>
+        ))}
+      </div>
+      <SymbolSearch
+        market={market}
+        value={symbol}
+        onSelect={(s) => setSymbol(s.toUpperCase())}
+        placeholder={market === "crypto" ? "e.g. BTCUSDT" : "e.g. AAPL"}
+        className="w-52"
+      />
+      <button
+        onClick={submit}
+        disabled={!symbol.trim() || adding}
+        className="inline-flex items-center gap-1.5 rounded-lg border border-line px-2.5 py-1.5 text-xs text-dim hover:border-accent/40 hover:text-text transition-colors disabled:opacity-50"
+      >
+        {adding ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+        Add to digest
+      </button>
+
+      <div className="ml-auto flex items-center gap-2">
+        {customized && (
+          <button
+            onClick={onReset}
+            title="Go back to always following your live portfolio/watchlist"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-line px-2.5 py-1.5 text-xs text-dim hover:text-text transition-colors"
+          >
+            <RotateCcw className="w-3.5 h-3.5" /> Reset to portfolio
+          </button>
+        )}
+        <button
+          onClick={onSave}
+          disabled={saveStatus === "saving"}
+          className="btn-accent inline-flex items-center gap-1.5 !text-xs !py-1.5"
+        >
+          {saveStatus === "saving" ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            : saveStatus === "saved" ? <Check className="w-3.5 h-3.5" />
+            : <Mail className="w-3.5 h-3.5" />}
+          {saveStatus === "saved" ? "Saved to your email" : "Save to my digest email"}
+        </button>
+      </div>
+      {saveStatus === "not_subscribed" && (
+        <p className="w-full text-[11px] text-dim">
+          Not subscribed yet — head to the <a href="/news/headlines" className="text-accent hover:underline">Headlines</a> tab and subscribe with "My portfolio" checked first, then this list will apply.
+        </p>
+      )}
+      {saveStatus === "error" && (
+        <p className="w-full text-[11px] text-down">Couldn't save just now — try again in a moment.</p>
+      )}
+    </div>
+  );
+}
+
 export default function Briefing() {
+  const [symbolList, setSymbolList] = useState(() => getDigestSymbols());
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const [saveStatus, setSaveStatus] = useState("idle");
 
-  async function load() {
+  async function load(list) {
     setLoading(true);
     setError(false);
     try {
-      const symbols = distinctSymbols();
       const res = await fetch("/api/briefing", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ symbols }),
+        body: JSON.stringify({ symbols: list }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const d = await res.json();
@@ -129,9 +237,28 @@ export default function Briefing() {
     }
   }
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(symbolList); }, [symbolList]);
 
-  const symbolEntries = data ? Object.entries(data.symbols || {}) : [];
+  function handleAdd(entry) {
+    setSymbolList(addDigestSymbol(entry));
+    setSaveStatus("idle");
+  }
+  function handleRemove(market, symbol) {
+    setSymbolList(removeDigestSymbol(market, symbol));
+    setSaveStatus("idle");
+  }
+  function handleReset() {
+    resetDigestSymbols();
+    setSymbolList(getDigestSymbols());
+    setSaveStatus("idle");
+  }
+  async function handleSave() {
+    setSaveStatus("saving");
+    const result = await saveDigestSymbolsNow();
+    setSaveStatus(result.ok ? "saved" : result.reason === "not_subscribed" ? "not_subscribed" : "error");
+  }
+
+  const symbolEntries = symbolList.map((s) => ({ ...s, data: data?.symbols?.[s.symbol] || null }));
 
   return (
     <div className="space-y-6">
@@ -141,7 +268,7 @@ export default function Briefing() {
           <h1 className="text-2xl font-semibold text-text mt-1">Briefing</h1>
         </div>
         <button
-          onClick={load}
+          onClick={() => load(symbolList)}
           disabled={loading}
           className="inline-flex items-center gap-2 rounded-xl border border-line lg-glass px-3 py-2 text-sm text-dim hover:border-accent/40 hover:text-text transition-colors disabled:opacity-60"
           title="Refresh"
@@ -150,6 +277,14 @@ export default function Briefing() {
           Refresh
         </button>
       </div>
+
+      <BuilderBar
+        onAdd={handleAdd}
+        onSave={handleSave}
+        saveStatus={saveStatus}
+        customized={hasCustomDigestSymbols()}
+        onReset={handleReset}
+      />
 
       {loading && !data && (
         <div className="space-y-3">
@@ -161,7 +296,7 @@ export default function Briefing() {
       {!loading && error && !data && (
         <div className="rounded-xl border border-line lg-glass p-6 text-center">
           <p className="text-text font-medium">Briefing could not be loaded.</p>
-          <button onClick={load} className="mt-4 inline-flex items-center gap-2 rounded-xl border border-line px-3 py-2 text-sm text-dim hover:border-accent/40 hover:text-text transition-colors">
+          <button onClick={() => load(symbolList)} className="mt-4 inline-flex items-center gap-2 rounded-xl border border-line px-3 py-2 text-sm text-dim hover:border-accent/40 hover:text-text transition-colors">
             <RefreshCw size={14} /> Try again
           </button>
         </div>
@@ -188,7 +323,15 @@ export default function Briefing() {
                 <Briefcase className="w-3.5 h-3.5" /> Your holdings
               </p>
               <div className="grid gap-3 md:grid-cols-2">
-                {symbolEntries.map(([symbol, d]) => <HoldingCard key={symbol} symbol={symbol} data={d} />)}
+                {symbolEntries.map((s) => s.data && (
+                  <HoldingCard
+                    key={`${s.market}:${s.symbol}`}
+                    symbol={s.symbol}
+                    name={s.data.name || s.name}
+                    data={s.data}
+                    onRemove={() => handleRemove(s.market, s.symbol)}
+                  />
+                ))}
               </div>
             </div>
           )}
@@ -221,7 +364,7 @@ export default function Briefing() {
             <div className="rounded-xl border border-line lg-glass p-6 text-center">
               <p className="text-text font-medium">Nothing to show yet.</p>
               <p className="text-dim text-sm mt-2">
-                Add symbols to your <a href="/portfolio" className="text-accent hover:underline">portfolio</a> or{" "}
+                Add a symbol above, or add some to your <a href="/portfolio" className="text-accent hover:underline">portfolio</a> or{" "}
                 <a href="/?view=watchlist" className="text-accent hover:underline">watchlist</a> for a personalized read.
               </p>
             </div>

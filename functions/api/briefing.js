@@ -34,6 +34,11 @@ const GEMINI_MODELS = ["gemini-flash-latest", "gemini-2.5-flash", "gemini-flash-
 // while a proper fix for large-batch truncation (see MAX_SYMBOLS_ENRICHED) is
 // worked out — do not raise this without testing a single-symbol call first.
 const MAX_TOKENS = 4000;
+// Negative cache: when the provider chain produces nothing at all, stop asking
+// for a few minutes rather than paying the latency on every request. Short
+// enough that a transient outage self-heals without anyone touching it.
+const FAIL_KEY = "briefing:llmfail";
+const FAIL_COOLDOWN_MS = 10 * 60 * 1000;
 
 const MAX_SYMBOLS_REQUEST = 40;   // defensive cap on the incoming list (candidate matching is cheap)
 const MAX_SYMBOLS_ENRICHED = 24;  // only this many get an LLM/fundamentals pass per call (cost control) — was 12, too tight for a watchlist+portfolio combined (a real 14-symbol list silently dropped its last 2)
@@ -311,7 +316,14 @@ export async function onRequest({ request, env }) {
   // it falls through to the deterministic branch in assemble() automatically.
 
   const needsWork = needMarket || staleSymbols.length > 0;
-  const hasProvider = !!(env.GROQ_API_KEY || env.GEMINI_API_KEY);
+  // A failing provider must not be re-asked on every page load and every digest
+  // run: a failed call writes no cache row, so before this there was no negative
+  // caching at all and the dead path was retried indefinitely (at full latency)
+  // for as long as it stayed broken. One short cooldown, then we try again.
+  const failRow = await read(FAIL_KEY);
+  const inCooldown = failRow && Date.now() - (failRow.at || 0) < FAIL_COOLDOWN_MS;
+  const hasProvider = !!(env.GROQ_API_KEY || env.GEMINI_API_KEY) && !inCooldown;
+  let llmFailed = false;
 
   // Mirrors bias.js exactly: cached hits stay free/unlimited; only fresh LLM
   // work is rate-limited, so the per-symbol cache can't be busted into
@@ -361,6 +373,19 @@ export async function onRequest({ request, env }) {
       const parsed = out ? parseBriefing(out.text) : null;
       return { symbolBlocks, includeMarket, parsed };
     }));
+    // Every chunk came back empty: the provider is refusing us, not merely
+    // having a thin news day. Record it — a run that produces nothing has to be
+    // distinguishable from one that produces nothing INTERESTING, or the whole
+    // feature can go dark (as it did for a day on an oversized token budget)
+    // while the response still claims an LLM is attached.
+    llmFailed = chunkResults.length > 0 && chunkResults.every((c) => !c.parsed);
+    if (llmFailed) {
+      try { await write(FAIL_KEY, { at: Date.now(), chunks: chunkResults.length }); } catch { /* best-effort */ }
+    } else if (failRow) {
+      // Recovered — clear the cooldown immediately rather than serving a
+      // degraded briefing for the rest of the window.
+      try { await write(FAIL_KEY, { at: 0 }); } catch { /* best-effort */ }
+    }
 
     const now = Date.now();
     for (const { symbolBlocks, includeMarket, parsed } of chunkResults) {
@@ -407,14 +432,20 @@ export async function onRequest({ request, env }) {
   }
 
   const marketRow = (freshOut && freshOut.market) || (fresh(cachedMarket) ? cachedMarket : null);
-  return json(assemble(marketRow, symCache, symbols, newsPool, hasProvider, false));
+  // `hasLLM` used to be `hasProvider` — "a key is configured", not "it answered".
+  // That is what let the endpoint report itself healthy while returning a null
+  // pulse, no stories and no enrichment on every single call: nothing in the UI,
+  // the logs or the digest worker's summary could tell the two apart. It now
+  // means what it says — there IS AI content in this response.
+  const gotAiContent = !!marketRow?.pulse || symCache.size > 0;
+  return json(assemble(marketRow, symCache, symbols, newsPool, gotAiContent, false, llmFailed));
 }
 
 // Assemble the response from whatever mix of cache/fresh/deterministic we have.
 // Any symbol not in symCache (never checked because it's past the enrichment
 // cap, or checked-and-missed with no fresh LLM result) falls back to the
 // deterministic name-only match — never the bare-ticker regex, see top note.
-function assemble(marketRow, symCache, symbols, newsPool, hasLLM, rateLimited) {
+function assemble(marketRow, symCache, symbols, newsPool, hasLLM, rateLimited, llmFailed) {
   const out = {
     ok: true, hasLLM: !!hasLLM, at: Date.now(),
     pulse: marketRow?.pulse || null,
@@ -422,6 +453,9 @@ function assemble(marketRow, symCache, symbols, newsPool, hasLLM, rateLimited) {
     symbols: {},
   };
   if (rateLimited) out.rateLimited = true;
+  // Say so out loud when the provider was asked and produced nothing, so the
+  // page can show a degraded state instead of an empty one that looks normal.
+  if (llmFailed) out.llmFailed = true;
 
   for (const s of symbols) {
     const cached = symCache.get(s.symbol);
