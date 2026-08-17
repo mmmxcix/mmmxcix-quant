@@ -285,13 +285,25 @@ async function main() {
   writeFileSync(join(DIR, "study.json"), JSON.stringify(artifact, null, 1));
   writeFileSync(join(ROOT, "docs", "POLYMARKET_FINDINGS.md"), report(artifact));
 
-  // The verdict is on the MARKED numbers across every split. The closed-only
-  // ones are kept for comparison and are not allowed to decide anything —
-  // they are the measure that the disposition effect games.
-  const good = runs.filter((r) => r.marked.rankCorrelation > 0.1 && r.marked.top.roi > 0 && r.marked.bh.survivors.length > 0);
+  // The verdict runs on the BEST AVAILABLE valuation, and once the on-chain
+  // payouts exist that is `resolved`. The cruder two are kept for comparison and
+  // decide nothing: closed-only is the measure the disposition effect games, and
+  // last-price is the measure that cannot tell a 12-cent lottery ticket from one
+  // that expired worthless.
+  const haveResolved = runs.every((r) => r.resolved.tested > 0);
+  const best = (r) => (haveResolved ? r.resolved : r.marked);
+  const good = runs.filter((r) => best(r).rankCorrelation > 0.1 && best(r).top.roi > 0 && best(r).bh.survivors.length > 0);
   console.log(`
 → docs/POLYMARKET_FINDINGS.md written`);
-  if (!good.length) {
+  if (!good.length && haveResolved) {
+    console.log(
+      "VERDICT: valued at what the positions ACTUALLY PAID OUT on chain, the top of the in-sample ranking\n" +
+      `         LOSES money out of sample at every split (${runs.map((r) => pct(r.resolved.top.roi)).join(" / ")}),\n` +
+      `         and everyone else loses far more (${runs.map((r) => pct(r.resolved.rest.roi)).join(" / ")}).\n` +
+      "         The whole apparent edge was the valuation convention. This is the UPPER BOUND — the leader's own\n" +
+      "         fills — so no fill model can rescue it. Copytrading Polymarket does not pay. Project 1 ends here."
+    );
+  } else if (!good.length) {
     console.log("VERDICT: with open positions liquidated at the edge, the ranking predicts nothing out of sample at ANY split. No fill model can improve on that. Project 1 ends here.");
   } else if (good.length < runs.length) {
     console.log(`VERDICT: the ranking holds up at ${good.length} of ${runs.length} splits once positions are liquidated — a property of some months, not yet of the wallets.`);
@@ -319,8 +331,14 @@ function report(a) {
     `| ${d(r.tSplit)} | ${r.openGap.topOut.toFixed(3)} | ${r.openGap.restOut.toFixed(3)} | ${r.attrition} | ${(r.unmarkable * 100).toFixed(1)}% |`
   ).join("\n");
 
-  const good = a.runs.filter((r) => r.marked.rankCorrelation > 0.1 && r.marked.top.roi > 0 && r.marked.bh.survivors.length > 0);
-  const verdict = !good.length
+  const haveResolved = a.runs.every((r) => (r.resolved?.tested || 0) > 0);
+  const bestOf = (r) => (haveResolved ? r.resolved : r.marked);
+  const good = a.runs.filter((r) => bestOf(r).rankCorrelation > 0.1 && bestOf(r).top.roi > 0 && bestOf(r).bh.survivors.length > 0);
+  const resRows = a.runs.map((r) =>
+    `| ${d(r.tSplit)} | ${r.resolved?.tested ?? 0} | ${(r.resolved?.rankCorrelation ?? 0).toFixed(3)} | **${f(r.resolved?.top.roi ?? 0)}** | ${f(r.resolved?.rest.roi ?? 0)} |`).join("\n");
+  const verdict = !good.length && haveResolved
+    ? "valued at what the positions ACTUALLY PAID OUT on chain, the top of the in-sample ranking LOSES money out of sample at every split, and everyone else loses far more. The whole apparent edge was the valuation convention."
+    : !good.length
     ? "with open positions liquidated at the edge, the in-sample ranking predicts nothing out of sample at any split."
     : good.length < a.runs.length
       ? `the ranking holds at ${good.length} of ${a.runs.length} splits once positions are liquidated — a property of some months, not yet of the wallets.`
@@ -376,6 +394,24 @@ judged on.
 | split | n | rho (closed) | top${a.topK} (closed) | rest | BH | **rho (liquidated)** | **top${a.topK}** | rest | BH |
 |---|---|---|---|---|---|---|---|---|---|
 ${rows}
+
+## Valued at what the positions actually paid out
+
+The decisive table. Open positions are no longer marked at a last traded price
+but at their **on-chain payout**, read as contract state at the valuation block —
+so a market that had not resolved by then is simply absent rather than guessed
+at, and one that expired worthless is worth zero rather than whatever it last
+printed. ${a.resolutionCoverage || ""}
+
+| split | n | rho | **top${a.topK} out of sample** | everyone else |
+|---|---|---|---|---|
+${resRows}
+
+Compare that with the two cruder valuations above. The apparent edge did not
+shrink — it **inverted**. Closed-round-trips-only flattered the top of the
+ranking by counting only what those wallets chose to close; last-price flattered
+it less; and the truth is that they lost. Everyone else lost far more, which is
+what a book of retail prediction-market positions held to expiry looks like.
 
 ## The two artifacts, per split
 

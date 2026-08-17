@@ -106,7 +106,7 @@ nicht mehr.
       Gegenwart; die Korpus-Zeile des Skripts zeigt deshalb pro Kanal die
       Abdeckung an
 
-### Projekt 1 · Polymarket — Frage 1 gemessen, Rest überlebt, noch kein Edge (16. Aug)
+### Projekt 1 · Polymarket — BEENDET, dokumentierter Fehlschlag (17. Aug)
 
 - [x] **Datenweg gefunden — keiner der beiden aus dem Briefing.** Polymarkets
       eigene Domains sind weiterhin tot (polymarket.com, gamma-api, clob,
@@ -203,7 +203,19 @@ nicht mehr.
       als „nicht aufgelöst" → 629/28'586 und 0 bewertete Tokens, beides reiner
       Rate-Limiter. Jetzt Requeue + selbstregelnder Takt + unbeantwortete Calls
       werden gezählt und gedruckt
-- [ ] **Läuft gerade:** Payout-Scan an der Out-of-Sample-Kante. Pass 1 durch —
+- [x] **ENTSCHIEDEN. Das Vorzeichen kippt.** Payout-Scan durch: 108'009 offene
+      Tokens an der Kante, **106'038 bewertet** (45'334 ausgezahlt, **60'704
+      wertlos verfallen**), 84'422 von 85'945 Bedingungen waren aufgelöst.
+      Mit dem echten Auszahlungswert **verliert die Spitze des In-Sample-Rankings
+      out of sample an JEDEM Schnitt** — −0,50 / −5,72 / −9,21 / −11,43 % — und
+      der Rest verliert weit mehr (−36 / −39 / −41 / −31 %). Die Rangkorrelation
+      fällt von 0,438 auf 0,09–0,20.
+      **Der gesamte scheinbare Edge war die Bewertungskonvention.** Und das ist
+      die OBERE SCHRANKE (eigene Fills des Leaders) — kein Fill-Modell kann das
+      retten. Copytrading auf Polymarket zahlt nicht. `docs/POLYMARKET_FINDINGS.md`
+- [x] Frage 2 (unser Fill) wird **nie gebaut** — genau der Sinn der Reihenfolge:
+      die obere Schranke zuerst, die halbe Apparatur nie
+- [ ] Historisch: Payout-Scan an der Out-of-Sample-Kante. Pass 1 durch —
       **84'422 von 85'502** beantworteten Bedingungen waren zur Kante bereits
       aufgelöst (98,7 %), 443 unbeantwortet. Pass 2 (Numeratoren) läuft, ~1,5 h.
       Danach nur noch `node scripts/polymarket-validate.mjs` — das Skript liest
