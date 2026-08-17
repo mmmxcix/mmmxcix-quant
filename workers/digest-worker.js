@@ -562,15 +562,32 @@ async function runDigest(env) {
 // Needs DEV_ACCESS_TOKEN as a worker secret; without it the call is skipped
 // silently (the page then just shows an older snapshot, labelled as stale).
 async function syncVolSnapshot(env) {
-  if (!env.DEV_ACCESS_TOKEN) return { skipped: 'no_token' };
+  if (!env.DEV_ACCESS_TOKEN) {
+    // Loudly. Without the secret this returned {skipped:'no_token'} into the
+    // void and the /api/vol snapshot silently went NINE DAYS stale against a
+    // four-day threshold — a cron job that quietly does nothing is
+    // indistinguishable from one that was never deployed.
+    console.error('[vol] SYNC SKIPPED — DEV_ACCESS_TOKEN is not set on this worker. '
+      + 'The volatility snapshot will keep ageing until it is. Set it with: wrangler secret put DEV_ACCESS_TOKEN');
+    return { skipped: 'no_token' };
+  }
   try {
     const r = await fetch('https://quant.mmmxcix.com/api/vol', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ token: env.DEV_ACCESS_TOKEN, sync: true }),
     });
-    return await r.json().catch(() => ({ error: 'bad_json' }));
+    const out = await r.json().catch(() => ({ error: 'bad_json' }));
+    // A 401 here is the OTHER way this goes quiet: the token was rotated on
+    // Pages and not on the worker, so the call keeps being made and keeps
+    // being refused. Say which it is.
+    if (!r.ok || out?.error) {
+      console.error(`[vol] sync failed (HTTP ${r.status}): ${JSON.stringify(out).slice(0, 200)}`
+        + (r.status === 401 ? ' — DEV_ACCESS_TOKEN on this worker no longer matches the one on Pages.' : ''));
+    }
+    return out;
   } catch (e) {
+    console.error(`[vol] sync threw: ${String(e.message || e).slice(0, 160)}`);
     return { error: String(e.message || e).slice(0, 120) };
   }
 }
