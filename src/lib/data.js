@@ -301,14 +301,27 @@ export async function fetchLatestCandles({ market, symbol, interval = "1d" }) {
 }
 
 // Older history for infinite-scroll charts: fetch candles strictly BEFORE
-// `before` (unix seconds). Returns [] when the source has nothing earlier.
+// `before` (unix seconds). Returns [] ONLY when the source genuinely has
+// nothing earlier — a transport or HTTP failure THROWS, because the caller
+// treats an empty result as "history exhausted" and latches it. Conflating the
+// two is what made one failed request kill scroll-back for the whole session.
+//
+// Yahoo will NOT serve an arbitrary period window on an intraday interval: a
+// 10-year period1/period2 on 5m/15m/30m/1m is a hard 422, and 60m rejects
+// period windows altogether. That single fixed slab is why stock intraday
+// charts never loaded a single older bar. Each interval now asks for a window
+// the source actually accepts, and stops at Yahoo's own retention floor rather
+// than requesting data that cannot exist.
 export async function fetchOlderCandles({ market, symbol, interval = "1d", before }) {
   const iDef = intervalDef(interval);
 
   if (market === "crypto") {
     const url = `${BINANCE}/klines?symbol=${encodeURIComponent(symbol.toUpperCase())}&interval=${iDef.binance}&endTime=${before * 1000 - 1}&limit=1000`;
     const res = await fetch(url);
-    if (!res.ok) return [];
+    // 400 = unknown symbol: a real, permanent "nothing here". Anything else is
+    // a failure the next pan may as well retry.
+    if (res.status === 400) return [];
+    if (!res.ok) throw new Error(`Binance error ${res.status}`);
     const rows = await res.json();
     return rows.map((r) => ({
       time: Math.floor(r[0] / 1000),
@@ -320,13 +333,33 @@ export async function fetchOlderCandles({ market, symbol, interval = "1d", befor
     }));
   }
 
-  // Yahoo: explicit period window ending at `before`. Chunk size depends on
-  // the interval — daily gets 10-year slabs, weekly 25-year slabs.
-  const chunkDays = iDef.yahoo === "1wk" ? 9125 : 3650;
-  const period1 = Math.max(0, before - chunkDays * 86400);
+  const now = Math.floor(Date.now() / 1000);
+
+  // 1h: Yahoo 422s on period1/period2 for 60m, so its widest 60m history comes
+  // from range=2y. Ask for that and keep whatever precedes `before`; once
+  // `before` has reached the 2-year floor there is nothing left to serve.
+  if (iDef.yahoo === "60m") {
+    if (before <= now - 730 * 86400) return [];
+    const all = await fetchYahoo(symbol, "60m", "2y", null);
+    return all.filter((c) => c.time < before);
+  }
+
+  // Sub-hour: one chunk of the size Yahoo accepts for this interval (7 days on
+  // 1m, 58 on 5m/15m/30m), clamped to how far back it retains them at all.
+  const sub = YAHOO_SUBHOUR[iDef.yahoo];
+  let period1;
+  if (sub) {
+    const floor = now - sub.maxDays * 86400;
+    if (before <= floor) return []; // at Yahoo's retention edge — genuinely exhausted
+    period1 = Math.max(floor, before - sub.chunk * 86400);
+  } else {
+    // Daily and slower take period windows fine: 10-year slabs, 25 for weekly.
+    period1 = Math.max(0, before - (iDef.yahoo === "1wk" ? 9125 : 3650) * 86400);
+  }
+
   const url = `${YAHOO}/${encodeURIComponent(symbol.toUpperCase())}?period1=${period1}&period2=${before}&interval=${iDef.yahoo}&events=div%2Csplit`;
   const res = await fetch(url);
-  if (!res.ok) return [];
+  if (!res.ok) throw new Error(`Data request failed (${res.status})`);
   const json = await res.json();
   const result = json?.chart?.result?.[0];
   const ts = result?.timestamp || [];

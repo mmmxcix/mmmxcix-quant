@@ -108,6 +108,7 @@ export default function CandleChart({
   const volSeriesRef = useRef(null);
   const overlaySeriesRef = useRef([]);
   const prevFirstTimeRef = useRef(null);
+  const prevLastTimeRef = useRef(null); // newest bar we've drawn — bounds the tail patch
   const loadingOlderRef = useRef(false);
   const exhaustedRef = useRef(false);
   const barCountRef = useRef(0);
@@ -164,6 +165,7 @@ export default function CandleChart({
     chartRef.current = chart;
     priceSeriesRef.current = addPriceSeries(chart, chartType, col);
     prevFirstTimeRef.current = null;
+    prevLastTimeRef.current = null;
 
     if (showVolume) {
       volSeriesRef.current = chart.addHistogramSeries({
@@ -186,16 +188,26 @@ export default function CandleChart({
           return;
         }
       }
-      if (range.from > 12) return;
+      // Ask for older history while the start of the loaded data is still
+      // within ~2 screens of the left edge, instead of waiting for the user to
+      // reach bar 12. An absolute threshold meant a large intraday buffer could
+      // only be extended after ~70 full-width drags: the "load more" existed
+      // but was unreachable by hand. Viewport-relative, so it also fires
+      // immediately when the user simply zooms out.
+      const width = Math.max(1, range.to - range.from);
+      if (range.from > Math.max(12, width * 2)) return;
       if (loadingOlderRef.current || exhaustedRef.current) return;
       const cb = onNeedOlderRef.current;
       if (!cb) return;
       loadingOlderRef.current = true;
       try {
         const added = await cb();
+        // Latch ONLY on a successful "there is nothing older". A thrown error is
+        // transient (dropped request, rate-limited proxy) and the next pan
+        // retries — latching on it used to kill history for the whole session.
         if (!added) exhaustedRef.current = true;
       } catch {
-        exhaustedRef.current = true;
+        /* transient — leave the flag alone so the next pan retries */
       } finally {
         loadingOlderRef.current = false;
       }
@@ -235,6 +247,31 @@ export default function CandleChart({
     const addedCount = isPrepend ? candles.findIndex((c) => c.time === prevFirst) : 0;
     const view = (isPrepend || isTailUpdate) ? chart.timeScale().getVisibleLogicalRange() : null;
     barCountRef.current = candles.length;
+
+    // FAST PATH — a live kline arrives roughly once a second, and re-uploading
+    // the whole series for it meant mapping every bar twice (price + volume) at
+    // that cadence; past a few thousand bars that is the chart's whole frame
+    // budget. Only the bars at or after the previously-known last bar can have
+    // changed, so patch exactly those. Heikin-Ashi is excluded: each of its
+    // bars depends on the one before it, so it has to be recomputed wholesale.
+    const prevLast = prevLastTimeRef.current;
+    if (isTailUpdate && chartType !== "heikin" && prevLast != null) {
+      const from = candles.findIndex((c) => c.time === prevLast);
+      if (from >= 0) {
+        for (let i = from; i < candles.length; i++) {
+          const c = candles[i];
+          if (chartType === "line" || chartType === "area") series.update({ time: c.time, value: c.close });
+          else series.update({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close });
+          volSeriesRef.current?.update({
+            time: c.time, value: c.volume, color: c.close >= c.open ? UP + "33" : DOWN + "33",
+          });
+        }
+        // update() leaves the viewport alone, so there is nothing to restore.
+        prevFirstTimeRef.current = candles[0].time;
+        prevLastTimeRef.current = candles[candles.length - 1].time;
+        return;
+      }
+    }
 
     series.setData(toSeriesData(chartType, candles));
     // Match the price-axis + crosshair precision to the instrument's magnitude, so a
@@ -276,6 +313,7 @@ export default function CandleChart({
       }
     }
     prevFirstTimeRef.current = candles[0].time;
+    prevLastTimeRef.current = candles[candles.length - 1].time;
   }, [candles, chartType]);
 
   // Crosshair magnet: snap the crosshair to the bar under the cursor.
@@ -288,10 +326,12 @@ export default function CandleChart({
   // Live tick: repaint ONLY the forming (last) candle via series.update(), so
   // price ticks in real time without re-rendering the page or recomputing
   // indicators. Heikin-Ashi is skipped (its last bar depends on the whole
-  // recomputation) — it still updates on the ~2s kline cadence.
+  // recomputation) — it still updates on the ~2s kline cadence. The id is
+  // "heikin" (see lib/chartTypes.js); the old "heikin-ashi" never matched, so
+  // every tick was painting RAW OHLC into the smoothed series.
   useEffect(() => {
     const series = priceSeriesRef.current;
-    if (!series || livePrice == null || !candles?.length || chartType === "heikin-ashi") return;
+    if (!series || livePrice == null || !candles?.length || chartType === "heikin") return;
     const last = candles[candles.length - 1];
     const bar = {
       ...last,

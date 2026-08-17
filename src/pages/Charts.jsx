@@ -45,6 +45,10 @@ function PriceHeader({ candles, livePrice }) {
 }
 
 const DEFAULT_SYMBOL = { crypto: "BTCUSDT", stock: "AAPL" };
+// One Binance page. Enough for every overlay (EMA 200 needs 200 bars) and for a
+// comfortable amount of panning; everything older arrives through the chart's
+// own scroll-back rather than being downloaded up front.
+const INITIAL_CHART_BARS = 1000;
 const DRAW_COLORS = ["#38bdf8", "#f59e0b", "#f472b6", "#a78bfa", "#10b981", "#ef4444"];
 
 // The chart reopens on whatever you looked at last (market, symbol, timeframe).
@@ -127,23 +131,34 @@ export default function Charts() {
 
   const chartKey = `${market}:${symbol}`;
 
+  // Keep interval/range valid together: switching to an intraday interval must
+  // snap the range into the allowed set for that interval. Market matters too
+  // (Yahoo caps stock 1m at 8 days; Binance doesn't).
+  //
+  // DERIVED, not corrected after the fact. When this was `range` state fixed up
+  // by a second effect, a timeframe click fetched TWICE — once with the stale
+  // range (5m over "1y" asks for 105k bars and burns six paginated calls whose
+  // result is thrown away) and again after the snap landed. Deriving it means
+  // interval and range change in the same commit, so one click is one fetch.
+  const validRanges = useMemo(() => rangesFor(interval, market), [interval, market]);
+  const effectiveRange = useMemo(() => {
+    if (validRanges.some((r) => r.id === range)) return range;
+    return validRanges[validRanges.length > 2 ? Math.floor(validRanges.length / 2) : 0].id;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [validRanges, range]);
+  // Write the snap back so the stored preference and the chips agree with what
+  // is actually drawn. The fetch keys on `effectiveRange`, which this cannot
+  // change, so it never causes a second request.
+  useEffect(() => {
+    if (effectiveRange !== range) setRange(effectiveRange);
+  }, [effectiveRange, range]);
+
   // Remember what's on screen so the page reopens exactly here next time.
   useEffect(() => {
     try {
-      localStorage.setItem(LAST_CHART_KEY, JSON.stringify({ market, symbol, interval, range }));
+      localStorage.setItem(LAST_CHART_KEY, JSON.stringify({ market, symbol, interval, range: effectiveRange }));
     } catch { /* private mode */ }
-  }, [market, symbol, interval, range]);
-
-  // Keep interval/range valid together: switching to an intraday interval
-  // must snap the range into the allowed set for that interval. Market matters
-  // too (Yahoo caps stock 1m at 8 days; Binance doesn't).
-  const validRanges = useMemo(() => rangesFor(interval, market), [interval, market]);
-  useEffect(() => {
-    if (!validRanges.some((r) => r.id === range)) {
-      setRange(validRanges[validRanges.length > 2 ? Math.floor(validRanges.length / 2) : 0].id);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [interval, market]);
+  }, [market, symbol, interval, effectiveRange]);
 
   // If the current interval isn't available for this market, fall back to 1d.
   const availableIntervals = useMemo(
@@ -159,12 +174,17 @@ export default function Charts() {
     let alive = true;
     setLoading(true);
     setError(null);
-    fetchCandles({ market, symbol, interval, range })
+    // Open with ONE page of history, not six. The chart shows ~110 bars, so
+    // front-loading 6000 cost up to 13 requests before the first paint AND put
+    // the start of the data so far to the left that the infinite-scroll trigger
+    // was unreachable by dragging. One page paints instantly and scroll-back
+    // (fetchOlderCandles) extends it continuously from there.
+    fetchCandles({ market, symbol, interval, range: effectiveRange, maxBars: INITIAL_CHART_BARS })
       .then((c) => { if (alive) setCandles(c); })
       .catch((e) => { if (alive) { setError(e.message); setCandles(null); } })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, [market, symbol, interval, range]);
+  }, [market, symbol, interval, effectiveRange]);
 
   const loadOlder = useCallback(async () => {
     let added = 0;
