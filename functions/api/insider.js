@@ -23,6 +23,7 @@
 // that would let a page imply otherwise.
 
 import { clampInt, putClusters, putFilings, readClusters, readFilings, readStats, TICKER } from "../_lib/insider.mjs";
+import { isAdminRequest } from "../_lib/auth.mjs";
 
 function json(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -40,6 +41,15 @@ function safeEqual(a, b) {
   return d === 0;
 }
 
+/** Machine auth for the PC agents: the same DEV_ACCESS_TOKEN they POST with,
+ *  accepted on reads so the agent's own cluster pass can read its filings back
+ *  once this endpoint stopped being public. */
+function isAuthed(request, env) {
+  if (!env.DEV_ACCESS_TOKEN) return false;
+  const h = request.headers.get("x-lab-token") || "";
+  return !!h && safeEqual(h, env.DEV_ACCESS_TOKEN);
+}
+
 /** A ticker or nothing. An unparseable symbol is refused, never ignored — a
  *  filter that silently stops filtering returns the whole table instead. */
 function symbolParam(url) {
@@ -55,6 +65,14 @@ export async function onRequest({ request, env }) {
   if (!db) return json({ error: "db_not_bound" }, 503);
 
   if (request.method === "GET") {
+    // Private. The insider study was measured and DOCUMENTED AS A FAILURE (see
+    // docs/INSIDER_FINDINGS.md — deflated Sharpe 4.9%), so no page consumes
+    // this and no page should: an open endpoint that looks like a signal feed
+    // is exactly what the finding says not to publish. The agent's own
+    // read-back sends the machine token; a human needs the admin session.
+    if (!isAuthed(request, env) && !(await isAdminRequest(env, request))) {
+      return json({ error: "unauthorized" }, 401);
+    }
     const url = new URL(request.url);
     const what = url.searchParams.get("what") || "clusters";
     const sym = symbolParam(url);

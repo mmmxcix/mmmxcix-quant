@@ -84,7 +84,12 @@ function SymbolView() {
       { x: 0, y: data.ivMonthAgo },
       { x: 1, y: data.ivWeekAgo },
       { x: 2, y: data.iv },
-    ].filter((p) => p.y != null).map((p) => ({ x: p.x, y: p.y * 100 }));
+      // `> 0`, not `!= null`: a checkpoint the upstream doesn't have comes back
+      // as a literal 0, which passed the null check and drew the trend line down
+      // to the axis — a vol collapse that never happened. Volatility is never
+      // actually zero, so a zero here means "missing", and a missing point is
+      // dropped rather than plotted.
+    ].filter((p) => p.y > 0).map((p) => ({ x: p.x, y: p.y * 100 }));
     if (pts.length < 2) return [];
     return [{ label: "Implied vol", color: "var(--c-accent)", points: pts }];
   }, [data]);

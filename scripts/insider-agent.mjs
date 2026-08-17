@@ -201,7 +201,9 @@ async function ingest(days) {
 async function recluster() {
   if (DRY) { console.log(`[${stamp()}] dry run — skipping the cluster pass`); return; }
   const url = `${SITE}/api/insider?what=filings&days=${CLUSTER_WINDOW_DAYS}&limit=2000&purchases=1`;
-  const res = await fetch(url, { signal: AbortSignal.timeout(60_000) });
+  // Reads are token-gated now (the study failed; the endpoint is not a public
+  // signal feed), so the agent identifies itself the same way it does on POST.
+  const res = await fetch(url, { headers: { "x-lab-token": TOKEN }, signal: AbortSignal.timeout(60_000) });
   const out = await res.json().catch(() => ({}));
   if (!res.ok || !out.ok) { console.error(`[${stamp()}] cluster pass: could not read back (${res.status})`); return; }
   const filings = (out.filings || []).filter((f) => f?.symbol);

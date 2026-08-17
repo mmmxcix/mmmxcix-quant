@@ -149,6 +149,7 @@ export default function WorldMap() {
     typeof window === "undefined" ? true : !window.matchMedia("(max-width: 1024px)").matches);
   const [shipStatus, setShipStatus] = useState("off");
   const [planeStatus, setPlaneStatus] = useState("off");
+  const [disasterDown, setDisasterDown] = useState(false); // GDACS feed unreachable
   const [hover, setHover] = useState(null);       // { x, y, label, sub }
   const [hoverCountry, setHoverCountry] = useState(null); // name (for redraw)
   const [selected, setSelected] = useState(null); // { kind, ...data }
@@ -487,9 +488,13 @@ export default function WorldMap() {
     const load = async () => {
       try {
         const r = await fetch("/api/disasters");
-        if (!r.ok) return;
+        // Surface the outage instead of swallowing it — the layer silently
+        // rendered nothing while the endpoint 404'd, which reads as "no
+        // disasters today" rather than "this feed has stopped".
+        if (!r.ok) { if (alive) setDisasterDown(true); return; }
         const j = await r.json();
         if (!alive) return;
+        setDisasterDown(false);
         disastersRef.current = (j.disasters || [])
           .filter(([lat, lon]) => Number.isFinite(+lat) && Number.isFinite(+lon)) // drop null/NaN coords (bad GDACS geometries)
           .map(([lat, lon, type, alert, name, country, date, severity]) =>
@@ -1463,7 +1468,10 @@ export default function WorldMap() {
                     : ld.id === "news" ? (newsRef.current.length || "")
                     : ld.id === "fires" ? (counts.fires ? fmtNum(counts.fires, 0) : "")
                     : ld.id === "conflicts" ? (conflictsRef.current.length ? fmtNum(conflictsRef.current.length, 0) : "")
-                    : ld.id === "disasters" ? (disastersRef.current.length || "")
+                    // An empty layer whose FEED is down looked identical to one with
+                    // nothing to show: /api/disasters has been 404ing and the toggle
+                    // just sat there. Ships and planes say "agent down?"; this does too.
+                    : ld.id === "disasters" ? (disastersRef.current.length || (layers.disasters && disasterDown ? "no feed" : ""))
                     : ld.id === "power" ? (powerRef.current.length ? fmtNum(powerRef.current.length, 0) : "")
                     : ld.id === "pipelines" ? (pipesRef.current ? pipesRef.current.length : "")
                     : ld.id === "mines" ? (minesRef.current.length ? fmtNum(minesRef.current.length, 0) : "")

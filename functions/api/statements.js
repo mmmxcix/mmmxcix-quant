@@ -23,6 +23,7 @@
 // about whether they did.
 
 import { clampInt, putStatements, readStatements, readStats, SPEAKER_ID, THEME_ID } from "../_lib/statements.mjs";
+import { isAdminRequest } from "../_lib/auth.mjs";
 import { THEMES } from "../../src/lib/statements/themes.js";
 
 function json(body, status = 200, maxAge = 0) {
@@ -44,6 +45,14 @@ function safeEqual(a, b) {
   return d === 0;
 }
 
+/** Machine auth for the PC agents — the DEV_ACCESS_TOKEN they already POST
+ *  with, accepted on reads now that this endpoint is no longer public. */
+function isAuthed(request, env) {
+  if (!env.DEV_ACCESS_TOKEN) return false;
+  const h = request.headers.get("x-lab-token") || "";
+  return !!h && safeEqual(h, env.DEV_ACCESS_TOKEN);
+}
+
 const MAX_BATCH = 500;
 
 export async function onRequest({ request, env }) {
@@ -53,6 +62,15 @@ export async function onRequest({ request, env }) {
   if (request.method === "GET") {
     const url = new URL(request.url);
     const what = url.searchParams.get("what") || "statements";
+    // Private, for the same reason as /api/insider: the event study came back
+    // as a documented null result (docs/STATEMENTS_FINDINGS.md — placebo
+    // p = 0.781), nothing in the UI reads this, and an open endpoint shaped
+    // like a signal feed implies an edge the measurement does not support.
+    // The `themes` catalog below stays open — it is a static lexicon, not a
+    // claim about returns.
+    if (what !== "themes" && !isAuthed(request, env) && !(await isAdminRequest(env, request))) {
+      return json({ error: "unauthorized" }, 401);
+    }
 
     // The theme catalog is static and safe to cache — it is the same list the
     // study measured, served so a client never has to hard-code it.
