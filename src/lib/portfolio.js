@@ -83,14 +83,35 @@ const SERVER_NAME = {
   [DEPOSITS_KEY]: "deposits",
 };
 
+// The mirror only exists for a SIGNED-IN account — there is no row to write to
+// otherwise, and /api/prefs correctly answers 401. Before this latch, the app
+// shell called syncFromServer() on every route mount and the store POSTed on
+// every local write, so a signed-out visitor generated three guaranteed-401
+// GETs per page load plus a 401 POST per edit, forever. They cost latency, they
+// filled the network panel with red, and they counted against the WAF rate
+// limit like any other request.
+//
+// `null` = not yet known (try once), `false` = server said no (stop asking),
+// `true` = mirroring works.
+let serverMirror = null;
+
+/** Sign-in/out flips the mirror. Called by the app shell when the session
+ *  resolves, so signing in starts mirroring without a reload. */
+export function setPrefsMirror(enabled) {
+  const next = enabled ? null : false; // re-arm on sign-in, hard-off on sign-out
+  if (serverMirror !== next) serverMirror = next;
+}
+
 async function pushToServer(key, arr) {
   const name = SERVER_NAME[key];
-  if (!name || typeof fetch === "undefined") return;
+  if (!name || typeof fetch === "undefined" || serverMirror === false) return;
   try {
-    await fetch("/api/prefs", {
+    const r = await fetch("/api/prefs", {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ key: name, data: arr }), keepalive: true,
     });
+    if (r.status === 401 || r.status === 403) serverMirror = false;
+    else if (r.ok) serverMirror = true;
   } catch { /* offline — local copy still holds it, retried on next write/sync */ }
 }
 
@@ -133,12 +154,16 @@ const SYNC_KEYS = [
 /** Pull watchlist + portfolio from the server and MERGE with local (union, newer
  *  wins). Never destroys local-only entries; pushes the merged truth back up. */
 export async function syncFromServer() {
-  if (typeof fetch === "undefined") return false;
+  if (typeof fetch === "undefined" || serverMirror === false) return false;
   let changed = false;
   for (const [key, merge] of SYNC_KEYS) {
     try {
       const r = await fetch(`/api/prefs?key=${SERVER_NAME[key]}`);
+      // One 401 answers for all three keys — there is no session, so the other
+      // two would say the same thing. Stop, rather than asking twice more.
+      if (r.status === 401 || r.status === 403) { serverMirror = false; return false; }
       if (!r.ok) continue;
+      serverMirror = true;
       const j = await r.json();
       const server = Array.isArray(j.data) ? j.data : [];
       const local = readArray(key);

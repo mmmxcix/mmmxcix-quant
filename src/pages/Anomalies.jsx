@@ -220,6 +220,23 @@ function BabTab() {
         reality="The edge has faded since ~2020: crowding into low-vol, expensive financing for the leverage the long leg needs, and compressed beta dispersion. Novy-Marx & Velikov (2022) showed the original construction also overweights illiquid small caps. On this liquid mega-cap universe you see the MECHANICS, not an investable product — and no trading costs are charged."
       />
 
+      {/* A factor sort is a statement about a UNIVERSE. When part of that
+          universe could not be fetched, the ranking is a different measurement
+          from the one the page claims to be showing — and it used to say
+          nothing at all: a rate-limited load ranked a third of the names and
+          printed the result as if it were whole. */}
+      {meta.unreachable?.length > 0 && (
+        <div className="rounded-xl border border-warn/40 bg-warn/5 px-4 py-2.5 text-[12px] leading-relaxed text-warn">
+          <b>Partial universe — read the numbers with that in mind.</b>{" "}
+          <span className="text-dim">
+            {meta.unreachable.length} of {meta.universeSize} symbols could not be loaded
+            ({meta.unreachable.slice(0, 8).join(", ")}{meta.unreachable.length > 8 ? "…" : ""}),
+            so the sort ranks {meta.nSymbols} names instead of the full set. Usually a rate limit
+            on the data proxy — reloading in a minute normally fixes it.
+          </span>
+        </div>
+      )}
+
       <div className="flex flex-wrap gap-2">
         <Chip label="BAB Sharpe" value={fmtNum(stats.bab.sharpe, 2)} tone={stats.bab.sharpe > 0 ? "up" : "down"} />
         <Chip label="BAB ann. return" value={`${fmtNum(stats.bab.annRetPct, 1)}%`} tone={stats.bab.annRetPct > 0 ? "up" : "down"} />

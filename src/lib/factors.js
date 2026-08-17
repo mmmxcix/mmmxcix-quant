@@ -66,10 +66,34 @@ export async function mapLimit(items, limit, fn) {
 
 // ── Price series ─────────────────────────────────────────────────────────────
 
-/** Daily closes for one symbol: { symbol, days: Map(dayKey → close) }. */
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** Daily closes for one symbol: { symbol, days: Map(dayKey → close) }.
+ *
+ *  A factor screen asks for the whole universe at once, and an edge rate limit
+ *  answers some of it with 429. That is TRANSIENT — retried a moment later it
+ *  succeeds — but it used to be indistinguishable from "this symbol has no
+ *  data", so the symbol was quietly dropped and the factor ranked whatever
+ *  survived. Measured on production: 29 of ~40 symbols 429'd on one load of
+ *  /screener/anomalies, and the page reported its result as if the universe
+ *  were whole. Back off and retry the transient statuses; a genuine failure
+ *  still throws, but now it means what it says.
+ */
 export async function fetchDailySeries(symbol, range = "2y") {
-  const res = await fetch(`${YAHOO_CHART}/${encodeURIComponent(symbol)}?range=${range}&interval=1d`);
-  if (!res.ok) throw new Error(`chart ${symbol} → ${res.status}`);
+  let res;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    res = await fetch(`${YAHOO_CHART}/${encodeURIComponent(symbol)}?range=${range}&interval=1d`);
+    if (res.ok) break;
+    const transient = res.status === 429 || res.status >= 500;
+    if (!transient || attempt === 2) break;
+    await sleep(700 * (attempt + 1) + Math.floor(Math.random() * 300));
+  }
+  if (!res.ok) {
+    const e = new Error(`chart ${symbol} → ${res.status}`);
+    e.status = res.status;
+    e.transient = res.status === 429 || res.status >= 500;
+    throw e;
+  }
   const json = await res.json();
   const r = json?.chart?.result?.[0];
   const ts = r?.timestamp || [];
@@ -90,11 +114,16 @@ export async function fetchDailySeries(symbol, range = "2y") {
  */
 export async function fetchAligned(symbols, range = "2y", onProgress) {
   let done = 0;
+  const unreachable = []; // the request itself failed — NOT the same as "too short"
   const series = await mapLimit(symbols, 6, async (sym) => {
     try {
       return await fetchDailySeries(sym, range);
-    } catch {
-      return null; // skip failures; they land in `dropped`
+    } catch (e) {
+      // A symbol we could not FETCH is a hole in the measurement; a symbol with
+      // too little history is a modelling choice. Conflating them let a factor
+      // rank a third of its universe and present it as the whole thing.
+      if (e?.transient || e?.status) unreachable.push(sym);
+      return null;
     } finally {
       onProgress?.(++done, symbols.length);
     }
@@ -116,7 +145,7 @@ export async function fetchAligned(symbols, range = "2y", onProgress) {
 
   const closes = {};
   for (const s of kept) closes[s.symbol] = shared.map((d) => s.days.get(d));
-  return { times: shared.map((d) => d * 86400), closes, dropped };
+  return { times: shared.map((d) => d * 86400), closes, dropped, unreachable };
 }
 
 /** Simple returns r[i] = c[i+1]/c[i] − 1 (length n−1). */
@@ -173,7 +202,7 @@ function curveStats(returns, periodsPerYear = 252) {
  *   stats:  { bab, market }                   // curveStats each
  *   snapshot: [{ symbol, name, beta, bucket }] // latest betas, sorted ascending
  *   scatter: [{ symbol, beta, annRetPct }]     // full-sample SML flatness
- *   meta: { nSymbols, from, to, wLong, wShort, dropped }
+ *   meta: { nSymbols, from, to, wLong, wShort, dropped, unreachable, universeSize }
  * }}
  */
 export async function runBAB({ range = "5y", window = 252, rebalance = 21, bucketPct = 0.2, onProgress } = {}) {
@@ -182,7 +211,7 @@ export async function runBAB({ range = "5y", window = 252, rebalance = 21, bucke
   if (hit) return hit;
 
   const symbols = FACTOR_UNIVERSE.map(([s]) => s);
-  const { times, closes, dropped } = await fetchAligned([BENCHMARK, ...symbols], range, onProgress);
+  const { times, closes, dropped, unreachable } = await fetchAligned([BENCHMARK, ...symbols], range, onProgress);
   if (!closes[BENCHMARK]) throw new Error("Benchmark data missing.");
 
   const names = symbols.filter((s) => closes[s]);
@@ -252,6 +281,11 @@ export async function runBAB({ range = "5y", window = 252, rebalance = 21, bucke
       wLong: lastWeights.wLong,
       wShort: lastWeights.wShort,
       dropped,
+      // Symbols the data layer could not reach at all. A factor ranked on a
+      // universe with holes is a different measurement from one ranked on the
+      // designed universe, and the page has to be able to say which it is.
+      unreachable,
+      universeSize: symbols.length,
     },
   });
 }

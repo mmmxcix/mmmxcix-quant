@@ -8,7 +8,7 @@ import SkipLink from "@/components/SkipLink";
 import Brandmark, { BrandGlyph } from "@/components/Brandmark";
 import { authClient, useSession, signOut } from "@/lib/authClient";
 import { THEME_MODES, applyThemeMode, getThemeMode, storeThemeMode } from "@/lib/theme";
-import { syncFromServer as syncPrefs, restoreBackups } from "@/lib/portfolio";
+import { syncFromServer as syncPrefs, restoreBackups, setPrefsMirror } from "@/lib/portfolio";
 import { initDigestAutoResync } from "@/lib/digestSync";
 
 // ⌘ on macOS, Ctrl elsewhere — shown in the quick-nav affordance.
@@ -317,14 +317,20 @@ export default function Layout({ children }) {
 
   // Durability: recover any locally-backed-up watchlist/portfolio entries, then
   // merge with the server copy so a localStorage clear can never lose them.
+  // The server half only applies to a signed-in account — /api/prefs has nothing
+  // to hand a visitor and correctly 401s, so calling it unconditionally meant
+  // three failed requests on every single page load. The local recovery is
+  // unconditional; only the sync waits for a session.
+  const { data: shellSession, isPending: sessionPending } = useSession();
   useEffect(() => {
     restoreBackups();
-    syncPrefs();
-    // Keeps an active digest subscription's symbol list in sync with the live
-    // portfolio/watchlist — see src/lib/digestSync.js for why this lives here
-    // (the persistent app shell) rather than on the News page.
     return initDigestAutoResync();
   }, []);
+  useEffect(() => {
+    if (sessionPending) return;
+    setPrefsMirror(!!shellSession?.user);
+    if (shellSession?.user) syncPrefs();
+  }, [shellSession?.user, sessionPending]);
 
   // Close the mobile drawer on route change and lock body scroll while open.
   useEffect(() => { setDrawerOpen(false); }, [location.pathname]);
