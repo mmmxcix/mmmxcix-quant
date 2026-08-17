@@ -17,6 +17,7 @@ import assert from "node:assert/strict";
 import { CONTRACTS, decodeFill, fifoPnl, splitAt, walletScore, walletTrades } from "../src/lib/polymarket/trades.js";
 import { copyFill, persistence, replayCopy, spearman, walletPValue } from "../src/lib/polymarket/copy.js";
 import { CONDITION_RESOLUTION_TOPIC, decodeResolution, resolvedValue } from "../src/lib/polymarket/resolve.js";
+import { keccakText, selector } from "../src/lib/polymarket/keccak.js";
 
 const fill = (o = {}) => ({
   id: o.id || "x", timestamp: String(o.ts ?? 1_700_000_000),
@@ -218,4 +219,26 @@ test("a payout is refused when it was only decided AFTER the valuation edge", ()
   // A loser is worth zero, and that is a real number, not a missing one.
   const loser = resolvedValue({ "111": { condition: "0xabc", outcomeIndex: 0 } }, resolutions, clock);
   assert.equal(loser.at("111", 20_000), 0);
+});
+
+// ── keccak, because a guessed selector is not a selector ────────────────────
+
+test("keccak256 is pinned by two vectors, one of them a topic decoded off a real log", () => {
+  // If either of these drifts, every derived function selector is silently
+  // wrong and every eth_call returns something plausible for the wrong reason.
+  assert.equal(keccakText(""), "c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470");
+  // Reproducing this from the signature STRING alone is the proof: the same
+  // value was independently read off a live ConditionResolution log on Polygon.
+  assert.equal(
+    keccakText("ConditionResolution(bytes32,address,bytes32,uint256,uint256[])"),
+    CONDITION_RESOLUTION_TOPIC.slice(2),
+  );
+  // And it is not SHA3-256, which differs only in the padding byte.
+  assert.notEqual(keccakText(""), "a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a");
+});
+
+test("the payout getters' selectors are computed, not remembered", () => {
+  assert.equal(selector("payoutDenominator(bytes32)"), "0xdd34de67");
+  assert.equal(selector("payoutNumerators(bytes32,uint256)"), "0x0504c814");
+  assert.equal(selector("transfer(address,uint256)"), "0xa9059cbb", "the most-published selector there is");
 });
