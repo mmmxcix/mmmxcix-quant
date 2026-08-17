@@ -216,12 +216,61 @@ export function deriveLessons(closed, { minSample = SKIP_EVIDENCE_MIN_N, max = 5
       lessons.push(lesson);
     }
   }
+  markBlanketDimensions(lessons, list);
   lessons.sort((a, b) => {
     const an = a.action === "neutral" ? 1 : 0, bn = b.action === "neutral" ? 1 : 0;
     if (an !== bn) return an - bn;                                 // actionable first
     return Math.abs(b.expectancy) - Math.abs(a.expectancy) || b.n - a.n;
   });
   return lessons.slice(0, max);
+}
+
+/**
+ * The second anti-freeze guard, and the one the `bookShare` cap could not make.
+ *
+ * `bookShare` refuses a skip from any single bucket covering most of the book.
+ * But the single-dimension views PARTITION the book, and a partition can close
+ * itself off one legal piece at a time: on the live ledger `bias` had exactly
+ * three values — up (37%), down (18%) and flat (45%) — every one of them under
+ * the 50% cap, every one skip-eligible, and between them 100% of every trade
+ * the agent could ever take. Each refusal was defensible; the set of them meant
+ * "stop trading", which is precisely what the cap exists to prevent.
+ *
+ * So: when EVERY observed value of a dimension is skip-eligible, that dimension
+ * is not telling us which setups to avoid, it is telling us the agent has no
+ * edge at all. That is a SIZE decision. Those lessons keep their suppression
+ * and lose only their veto (`blanket: true`).
+ */
+function markBlanketDimensions(lessons, closed) {
+  const seen = new Map();     // dimension name -> Set of values observed anywhere
+  const eligible = new Map(); // dimension name -> Set of values that could skip
+  for (const view of VIEWS) {
+    for (const c of closed) {
+      const dims = view(c);
+      if (!dimsValid(dims) || Object.keys(dims).length !== 1) continue;
+      const [k, v] = Object.entries(dims)[0];
+      if (!seen.has(k)) seen.set(k, new Set());
+      seen.get(k).add(String(v));
+    }
+  }
+  for (const l of lessons) {
+    const keys = Object.keys(l.dims || {});
+    if (keys.length !== 1) continue;
+    const canSkip = (l.tStat ?? 0) <= SKIP_T_STAT && l.n >= SKIP_EVIDENCE_MIN_N;
+    if (!canSkip) continue;
+    const k = keys[0];
+    if (!eligible.has(k)) eligible.set(k, new Set());
+    eligible.get(k).add(String(l.dims[k]));
+  }
+  for (const [k, values] of eligible) {
+    const all = seen.get(k);
+    // Needs at least two values: a dimension with one observed value says
+    // nothing about coverage, and `bookShare` already handles that case.
+    if (!all || all.size < 2 || values.size < all.size) continue;
+    for (const l of lessons) {
+      if (Object.keys(l.dims || {}).length === 1 && l.dims[k] != null) l.blanket = true;
+    }
+  }
 }
 
 /**
@@ -290,7 +339,7 @@ export function adjustment(lessons, setup, opts = {}) {
     if (l.n < minSample) {
       // Too thin to resize, but still eligible for the evidence-based skip below.
       const provenLoserThin = (l.tStat ?? 0) <= skipTStat && l.n >= skipEvidenceMinN;
-      if (provenLoserThin && (l.bookShare ?? 0) <= skipMaxBookShare) {
+      if (provenLoserThin && (l.bookShare ?? 0) <= skipMaxBookShare && !l.blanket) {
         skip = true;
         if (!weakestSkip || Math.abs(l.tStat) < Math.abs(weakestSkip.tStat)) weakestSkip = l;
         reasons.push(`${describeDims(l.dims)}: ${l.n} trades at ${l.expectancy.toFixed(2)}R (t=${(l.tStat ?? 0).toFixed(1)}) — switched off`);
@@ -321,7 +370,12 @@ export function adjustment(lessons, setup, opts = {}) {
       //     spectacularly. `bookShare` (set by the caller from the ledger) is the
       //     anti-freeze guard: a bucket covering most of the book never skips.
       const provenLoser = (l.tStat ?? 0) <= skipTStat && l.n >= skipEvidenceMinN;
-      const tooBroad = (l.bookShare ?? 0) > skipMaxBookShare;
+      // Two independent anti-freeze guards: one bucket must not cover most of
+      // the book (`bookShare`), and one DIMENSION must not close off all of its
+      // own values (`blanket` — see markBlanketDimensions). The second is what
+      // stops "up-bias, down-bias and flat-bias are all bad" from adding up to
+      // "take no trade at all" while each refusal looks legal on its own.
+      const tooBroad = (l.bookShare ?? 0) > skipMaxBookShare || l.blanket;
       if (provenLoser && !tooBroad) {
         skip = true;
         if (!weakestSkip || Math.abs(l.tStat) < Math.abs(weakestSkip.tStat)) weakestSkip = l;

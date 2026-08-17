@@ -72,7 +72,23 @@ const HALF_LIFE_MS = +(process.env.LAB_ARGUS_HALFLIFE_H || 0) * 3600_000;
 // separately-reasonable skips can still add up to "trade nothing" without any
 // single one tripping it. When this number is high the problem is not the
 // allocation, it is that the entries have no edge to allocate.
-const learnGate = { considered: 0, refused: 0, probed: 0, since: Date.now() };
+// Reset every UTC day (see resetDayIfNeeded) so every number the panel shows is
+// scoped to the same clock. It used to live for the whole process, which is how
+// a budget of 3 ended up printed next to 947 attempts.
+const learnGate = { considered: 0, refused: 0, probed: 0, probeBlocked: 0, since: Date.now() };
+const resetLearnGate = () => {
+  learnGate.considered = 0; learnGate.refused = 0;
+  learnGate.probed = 0; learnGate.probeBlocked = 0; learnGate.since = Date.now();
+};
+// A granted probe still has to clear the skill veto, the volatility and volume
+// gates, the pace gate and sizing, so some attrition is expected and the budget
+// must not be spent by the grant alone. But it must not be FREE either: the
+// budget was checked against probes that actually opened, so a probe that died
+// downstream cost nothing, the counter never moved, and the agent re-granted
+// one on every pass — 947 grants against a budget of 3, none of which ever
+// became a trade. Grants now cost 1/SLACK of a slot, which bounds the runaway
+// while still allowing a full budget to be filled through normal attrition.
+const PROBE_GRANT_SLACK = 4;
 const RVOL_MIN = +(process.env.LAB_ARGUS_RVOL_MIN || 1.1); // breakouts need above-average volume
 const PYRAMID = process.env.LAB_ARGUS_PYRAMID !== "0";     // scale into winners (Turtle-style MM)
 const PYRAMID_MAX_UNITS = +(process.env.LAB_ARGUS_PYRAMID_UNITS || 4);
@@ -82,6 +98,22 @@ const PYRAMID_STEP = +(process.env.LAB_ARGUS_PYRAMID_STEP || 1); // add a unit e
 // (reaching the same target with a tighter stop = more exposure) over long swing
 // holds that hinge on news. The cap is the backstop, not the goal. Tunable.
 const MAX_HOLD_MS = +(process.env.LAB_ARGUS_MAX_HOLD_H || 72) * 3600_000;
+// …and the same backstop expressed in the setup's OWN timeframe, because 72h
+// means something very different to a 5-minute breakout than to a 4-hour one.
+// The live book held a 5m setup for 677 bars — 2.3 days — inside the 72h cap:
+// legal, but by then the timeframe that chose the entry had stopped describing
+// the trade, and the ledger was bucketing it as a 5m result. 288 bars is one
+// full day of 5m, two of 15m, a fortnight of 4h — generous, and still finite.
+const MAX_HOLD_BARS = +(process.env.LAB_ARGUS_MAX_HOLD_BARS || 288);
+const TF_SECONDS = { "1m": 60, "5m": 300, "15m": 900, "30m": 1800, "1h": 3600, "4h": 14400, "1d": 86400 };
+/** Hold cap for a thesis: the tighter of the wall-clock backstop and its own
+ *  timeframe's bar budget. Stamped at open, so a deploy never force-closes a
+ *  position that was opened under the old rule. */
+function holdCapFor(timeframe) {
+  const sec = TF_SECONDS[timeframe];
+  if (!sec) return MAX_HOLD_MS;
+  return Math.min(MAX_HOLD_MS, sec * MAX_HOLD_BARS * 1000);
+}
 // Retrospective review of "invalidated" exits: re-examine each early-cut trade ~12h
 // and again ~24h later, judge whether cutting was right (would it have hit target or
 // the stop?), and LEARN — loosen the invalidation on setups whose cuts kept proving
@@ -242,7 +274,9 @@ function manageExits(inst, last5, ledgerAdd) {
     }
     // Dev "close now" takes priority over the normal stop/target check.
     const devClosed = forceClose.has(th.id);
-    const res = devClosed ? closeThesisAt(th, last5.close) : evaluateExit(th, last5, { maxHoldMs: MAX_HOLD_MS });
+    // `th.maxHoldMs` is stamped when the thesis opens; anything opened before
+    // this existed keeps the old flat backstop rather than being cut on deploy.
+    const res = devClosed ? closeThesisAt(th, last5.close) : evaluateExit(th, last5, { maxHoldMs: th.maxHoldMs || MAX_HOLD_MS });
     if (res) {
       if (devClosed) {
         // Carry the dev's "why" into the post-mortem so Argus learns from the
@@ -447,8 +481,15 @@ function tryOpen(inst, setup, halted) {
     // makes the counter read 8 attempts against a budget of 3 — which is exactly
     // what the live page showed.
     const room = canOpen(open.length, openedToday(ledger, open), { maxConcurrent: MAX_CONCURRENT, maxPerDay: MAX_PER_DAY });
+    // `used` counts probes that OPENED plus a fraction of today's grants, so a
+    // probe blocked further down still draws on the budget instead of being
+    // re-granted forever (see PROBE_GRANT_SLACK).
+    const probeUsed = Math.max(
+      exploredToday(ledger, open),
+      Math.floor(learnGate.probed / PROBE_GRANT_SLACK),
+    );
     const probe = room.ok
-      ? shouldExplore(adj, { used: exploredToday(ledger, open), budget: exploreBudget(MAX_PER_DAY) })
+      ? shouldExplore(adj, { used: probeUsed, budget: exploreBudget(MAX_PER_DAY) })
       : { explore: false, reason: `no room to probe — ${room.reason}` };
     learnGate.refused++;   // the LOOP refused it — recorded whether or not we override
     if (!probe.explore) {
@@ -459,12 +500,21 @@ function tryOpen(inst, setup, halted) {
     learnGate.probed++;
     console.log(`[${new Date().toISOString()}] PROBE ${inst.symbol} ${setup.side} ${setup.kind} — ${probe.reason}`);
   }
+  // A probe that dies at a later gate is the thing that was invisible: 947 were
+  // granted and not one ever opened, with nothing in the log saying which gate
+  // ate them. Name it, every time.
+  const probeDied = (gate) => {
+    if (!exploring) return;
+    learnGate.probeBlocked++;
+    console.log(`[${new Date().toISOString()}] PROBE-BLOCKED ${inst.symbol} ${setup.side} ${setup.kind} — ${gate}`);
+  };
   // REUSE — the last Hermes step. A rule the agent wrote down repeatedly for
   // exactly this situation ("avoid") vetoes the trade; a "prefer" one is noted
   // on the thesis so the reasoning is visible rather than hidden in a number.
   const applicable = skillsFor(skills, { kind: setup.kind, symbol: inst.symbol, side: setup.side });
   const veto = applicable.find((s) => s.verdict === "avoid" && s.times >= 3 && s.avgR < 0);
   if (veto) {
+    probeDied("skill veto");
     console.log(`[${new Date().toISOString()}] SKIP ${inst.symbol} ${setup.side} ${setup.kind} — skill (${veto.times}×, ${veto.avgR}R): ${veto.lesson}`);
     return;
   }
@@ -475,6 +525,7 @@ function tryOpen(inst, setup, halted) {
   // daily ceiling, and the gate never fired once.
   const vol = volStatus(setup.atrPct, inst.asset, setup.timeframe);
   if (!vol.ok) {
+    probeDied(`volatility gate — ${vol.reason}`);
     console.log(`[${new Date().toISOString()}] SKIP ${inst.symbol} ${setup.side} ${setup.kind} — ${vol.reason}`);
     return;
   }
@@ -482,6 +533,7 @@ function tryOpen(inst, setup, halted) {
   // fail (no participation behind the move) — skip it. Reversal fades don't need a
   // volume surge, so only VOLUME_KINDS are gated.
   if (VOLUME_KINDS.has(setup.kind) && Number.isFinite(setup.rvol) && setup.rvol < RVOL_MIN) {
+    probeDied(`thin volume (rvol ${setup.rvol.toFixed(2)} < ${RVOL_MIN})`);
     console.log(`[${new Date().toISOString()}] SKIP ${inst.symbol} ${setup.side} ${setup.kind} — thin volume (rvol ${setup.rvol.toFixed(2)} < ${RVOL_MIN})`);
     return;
   }
@@ -489,6 +541,7 @@ function tryOpen(inst, setup, halted) {
   // setups were otherwise acceptable on a day the budget ran out.
   const pace = canOpen(open.length, openedToday(ledger, open), { maxConcurrent: MAX_CONCURRENT, maxPerDay: MAX_PER_DAY });
   if (!pace.ok) {
+    probeDied(`pace: ${pace.reason}`);
     console.log(`[${new Date().toISOString()}] SKIP ${inst.symbol} ${setup.side} ${setup.kind} — pace: ${pace.reason}`);
     return;
   }
@@ -559,7 +612,9 @@ function tryOpen(inst, setup, halted) {
     { equity, openRisk: openRisk(), openMargin: openMargin(), openNotional: openNotional(), asset: inst.asset,
       heatCap, baseRiskPct: riskPct, maxTradeLev: MAX_TRADE_LEV, portfolioLevCap: PORTFOLIO_LEV_CAP, conviction },
   );
+  if (!th) probeDied("sizing / RR floor — openThesis returned nothing");
   if (th) {
+    th.maxHoldMs = holdCapFor(th.timeframe); // this setup's own timeframe budget
     // Retrospective LEARNING (bidirectional): the 12/24h reviews tune this KIND's
     // invalidation. Premature-heavy → ease or disable the early cut (let the hard stop
     // work); justified-heavy → cut a touch earlier to recover the risk those cuts kept
@@ -713,7 +768,10 @@ async function ackCommands() {
 
 function resetDayIfNeeded() {
   const d = new Date().getUTCDate();
-  if (d !== dayStamp) { dayStamp = d; closedToday = []; equityDayStart = equity; }
+  // The learning-gate counters reset with the day too — `used`/`budget` are
+  // per-day, so leaving `probed` on a process-lifetime clock printed "0/3
+  // probes (947 tried)", three numbers that were never comparable.
+  if (d !== dayStamp) { dayStamp = d; closedToday = []; equityDayStart = equity; resetLearnGate(); }
 }
 
 async function cycle(fullScan) {
@@ -825,7 +883,9 @@ async function persist(ledgerAdd, extra) {
         pace: paceStatus(ledger, open, { maxConcurrent: MAX_CONCURRENT, maxPerDay: MAX_PER_DAY }),
         probes: {
           used: exploredToday(ledger, open),        // probes that became trades
-          attempted: learnGate.probed,              // …and those a later gate then blocked
+          granted: learnGate.probed,                // …granted today (same clock)
+          blocked: learnGate.probeBlocked,          // …and killed by a later gate
+          attempted: learnGate.probed,              // kept for older clients
           budget: exploreBudget(MAX_PER_DAY),
         },
         learnRefusedPct: learnGate.considered ? learnGate.refused / learnGate.considered * 100 : 0,

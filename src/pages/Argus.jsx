@@ -211,7 +211,9 @@ export default function Argus() {
                 <div className="w-28 h-1.5 rounded-full bg-line overflow-hidden">
                   <div className={cn("h-full", eq >= START_EQ ? "bg-accent" : "bg-down")} style={{ width: `${eq >= START_EQ ? pct : 100}%` }} />
                 </div>
-                <span className="text-dim">{money(eq)} <span className="text-dim/60">/ $20k</span></span>
+                {/* Equity is an amount, not a change — money() would print it
+                    with a leading "+" and read as a gain of the whole book. */}
+                <span className="text-dim">${fmtNum(eq, 0)} <span className="text-dim/60">/ $20k</span></span>
               </div>
               <span className="text-dim">expectancy <span className={stats.expectancy > 0 ? "text-up" : "text-down"}>{stats.expectancy >= 0 ? "+" : ""}{stats.expectancy.toFixed(2)}R</span></span>
               <span className="text-dim">{stats.n} trades · win {(stats.winRate * 100).toFixed(0)}%</span>
@@ -234,7 +236,7 @@ export default function Argus() {
       })()}
 
       <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
-        <Stat label="Paper equity" value={state ? fmtNum(state.markEquity ?? state.equity, 0) : "–"} big
+        <Stat label="Paper equity" value={state ? fmtNum(state.markEquity ?? state.equity, 0) : "–"}
           sub={state && state.unrealized ? `${money(state.equity)} + ${money(state.unrealized)} floating` : "mark-to-market"} />
         <Stat label="Open theses" value={theses.length} sub={state ? `${(state.forming ?? 0)} forming` : ""} />
         <Stat label="Portfolio heat" value={state ? `${(state.heatPct * 100).toFixed(1)}%` : "–"}
@@ -251,9 +253,14 @@ export default function Argus() {
             can add up to "trade nothing" without any one of them tripping it. A
             high number here means the entries have no edge to allocate — which is
             not something learning can fix. */}
+        {/* Probes: used / granted / blocked are all TODAY's numbers. They used to
+            mix clocks — a per-day `used` printed against a counter that only
+            reset when the agent process restarted, which is how a budget of 3
+            ended up next to 947 attempts. `blocked` is the useful one: it says
+            how many probes the loop granted and a later gate then ate. */}
         <Stat label="Pace" value={state?.pace ? `${state.pace.open}/${state.pace.maxConcurrent} open` : "–"}
           sub={state?.pace
-            ? `${state.pace.openedToday}/${state.pace.maxPerDay} today${state?.probes ? ` · ${state.probes.used}/${state.probes.budget} probes` + (state.probes.attempted > state.probes.used ? ` (${state.probes.attempted} tried)` : "") : ""}`
+            ? `${state.pace.openedToday}/${state.pace.maxPerDay} today${state?.probes ? ` · ${state.probes.used}/${state.probes.budget} probes` + (state.probes.blocked > 0 ? ` (${state.probes.blocked} blocked)` : "") : ""}`
             : "concurrency + daily budget"}
           tone={state?.pace?.blocked ? "text-warn" : "text-text"} />
         <Stat label="Learning gate" value={state?.learnConsidered ? `${(state.learnRefusedPct ?? 0).toFixed(0)}% refused` : "–"}
