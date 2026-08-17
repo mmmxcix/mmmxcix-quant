@@ -18,6 +18,8 @@ import { isAdminRequest } from "../_lib/auth.mjs";
 import { cleanStrategyName } from "../_lib/strategyName.js";
 
 const MAX_STATE_BYTES = 64 * 1024;
+// How often the read path may PERSIST its self-heal (see the GET handler).
+const HEAL_MIN_INTERVAL_MS = 60 * 60 * 1000;
 // The "Deckel", now per profile: prop and private are two separate books, so a
 // full prop book must not stop a private promotion. Enforced server-side so it
 // holds no matter which producer (agent or Registry) last wrote. Newest
@@ -243,9 +245,20 @@ export async function onRequest({ request, env, waitUntil }) {
       if (field === "strategies" && Array.isArray(parsed?.items)) {
         const cleaned = tidyStrategies(parsed.items);
         if (JSON.stringify(cleaned) !== JSON.stringify(parsed.items)) {
+          // The RESPONSE is always the tidied list — the caller never sees a
+          // duplicate. The WRITE is throttled: three surfaces poll this endpoint
+          // on 60-second timers (Dashboard, Lab panel, Registry), so an
+          // unconditional persist turned every open tab into a steady stream of
+          // KV writes against the free-tier daily budget. Once an hour is plenty
+          // for a self-heal; the POST paths persist immediately as they always did.
+          const healedAt = parsed.healedAt || 0;
           parsed.items = cleaned;
-          const write = env.SUBSCRIBERS.put("lab:strategies", JSON.stringify({ items: cleaned, publishedAt: Date.now() }));
-          if (waitUntil) waitUntil(write); else await write;
+          if (Date.now() - healedAt > HEAL_MIN_INTERVAL_MS) {
+            const write = env.SUBSCRIBERS.put("lab:strategies", JSON.stringify({
+              items: cleaned, publishedAt: parsed.publishedAt || Date.now(), healedAt: Date.now(),
+            }));
+            if (waitUntil) waitUntil(write); else await write;
+          }
         }
       }
       return json({ ok: true, [field]: parsed });

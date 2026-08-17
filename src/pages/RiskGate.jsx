@@ -4,6 +4,7 @@ import { ShieldCheck, ShieldAlert, RefreshCw, Ban, Radar, Link2 } from "lucide-r
 import { RULE_META, DEFAULT_RULES } from "@/lib/riskGate";
 import { PROFILES, PROFILE_IDS, DEFAULT_PROFILE } from "@/lib/profiles";
 import { cn } from "@/lib/utils";
+import Skeleton from "@/components/Skeleton";
 
 // RiskGate — the guard every paper entry passes through. Fails closed: a
 // blocked rule flattens the strategy instead of entering. Same class of rules a
@@ -59,6 +60,16 @@ export default function RiskGate() {
           <RefreshCw className={cn("w-3.5 h-3.5", busy && "animate-spin")} /> Refresh
         </button>
       </div>
+
+      {/* `raw === undefined` is the loading state and used to match NEITHER
+          branch below, so the tab rendered as a bare heading until the fetch
+          returned — indistinguishable from a broken page. */}
+      {raw === undefined && (
+        <div className="space-y-4">
+          <Skeleton className="h-24 w-full rounded-xl" />
+          <Skeleton className="h-40 w-full rounded-xl" />
+        </div>
+      )}
 
       {data === null && (
         <div className="rounded-xl border border-line lg-glass p-5 text-sm text-dim">

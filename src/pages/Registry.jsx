@@ -270,14 +270,36 @@ function verdictDot(v) {
 // carry no research.byMarket). Cached per entry id so re-sorts/re-renders don't
 // recompute; runs JS instantly and Python through the shared Pyodide.
 const probeCache = new Map();
+
+// How far back this probe can ACTUALLY reach on a given interval, and the label
+// that says so. Asking for "10y" and printing "10y" was a lie on anything
+// intraday: fetchCandles silently truncates to the 6000-bar crypto cap (≈21
+// days of 5m) or Yahoo's 58-day intraday ceiling, so the card advertised a
+// decade of evidence behind three weeks of data — in the one chip that is
+// supposed to be the trust signal.
+const PROBE_BARS = 6000;
+function probeWindow(e) {
+  const sec = INTERVAL_SECONDS[e.interval || "1d"] || 86400;
+  const isStock = (e.market || "stock") !== "crypto";
+  let days = Math.floor((PROBE_BARS * sec) / 86400);
+  if (isStock) {
+    if (sec < 3600) days = Math.min(days, 58);        // Yahoo sub-hour ceiling
+    else if (sec < 86400) days = Math.min(days, 730); // 60m tops out at ~2y
+  }
+  days = Math.min(days, 3652);
+  const label = days >= 365 ? `${(days / 365).toFixed(days >= 3650 ? 0 : 1).replace(/\.0$/, "")}y` : `${days}d`;
+  return { days, label, years: days / 365 };
+}
+
 function MarketProbe({ e, onOpen }) {
   const [res, setRes] = useState(() => probeCache.get(e.id) || null);
+  const win = probeWindow(e);
   useEffect(() => {
     if (probeCache.has(e.id)) { setRes(probeCache.get(e.id)); return; }
     let alive = true;
     (async () => {
       try {
-        const candles = await fetchCandles({ market: e.market || "stock", symbol: e.symbol, interval: e.interval || "1d", range: "10y" });
+        const candles = await fetchCandles({ market: e.market || "stock", symbol: e.symbol, interval: e.interval || "1d", range: `${win.days}d` });
         if (!candles || candles.length < 60) throw new Error("no data");
         const lang = e.language === "python" ? "python" : "js";
         const fn = lang === "python" && e.code
@@ -290,11 +312,12 @@ function MarketProbe({ e, onOpen }) {
       } catch { probeCache.set(e.id, "error"); if (alive) setRes("error"); }
     })();
     return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [e.id]);
   return (
-    <button type="button" onClick={onOpen} title={`Backtested 10y on ${e.symbol} — open in the Backtester`}
+    <button type="button" onClick={onOpen} title={`Backtested ${win.label} on ${e.symbol} ${e.interval || "1d"} — the most history this interval reaches. Open in the Backtester`}
       className="group text-[10px] font-mono rounded border border-up/30 bg-up/5 text-up px-1.5 py-0.5 hover:bg-up/15 hover:border-up/50 transition-colors">
-      {e.symbol} <span className="text-dim/80">{e.interval || "1d"}</span> <span className="text-dim/80">10y</span>
+      {e.symbol} <span className="text-dim/80">{e.interval || "1d"}</span> <span className="text-dim/80">{win.label}</span>
       {res === "error" ? <span className="text-down/70"> n/a</span>
         : res ? <span className="text-dim/90"> {fmtNum(res.ret, 0)}%</span>
         : <span className="text-dim/70"> …</span>}
@@ -427,7 +450,9 @@ function Card({ e, rich = false }) {
           on the symbol they were saved with, clickable into the Backtester. */}
       {rich && !(r?.markets || []).length && e.symbol && (e.code || e.strategyId) && (
         <div className="flex flex-wrap items-center gap-1.5">
-          <MarketProbe e={e} onOpen={() => openInBacktest(null, 10)} />
+          {/* The Backtester opens on the SAME window the chip measured, so the
+              number on the card and the number on the page agree. */}
+          <MarketProbe e={e} onOpen={() => openInBacktest(null, probeWindow(e).years)} />
         </div>
       )}
 

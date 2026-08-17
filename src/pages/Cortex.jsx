@@ -23,7 +23,11 @@ export default function Cortex() {
       tabs={[
         { id: "lab", label: "Lab agent", icon: Cpu, el: <LabStatus /> },
         { id: "registry", label: "Registry", icon: Boxes, el: <Registry /> },
-        { id: "paper", label: "Paper", icon: Dices, el: <Lab /> },
+        // "Paper" was the wrong name twice over: this tab is the Monte Carlo
+        // playground (Lab.jsx), it contains no paper trading, and the live paper
+        // book sits one tab to the left under "Lab agent". The route id stays
+        // `paper` so existing links and the smoke list keep working.
+        { id: "paper", label: "Simulator", icon: Dices, el: <Lab /> },
         { id: "riskgate", label: "RiskGate", icon: Shield, el: <RiskGate /> },
         { id: "brain", label: "Brain Vault", icon: Network, el: <BrainVault /> },
       ]}
