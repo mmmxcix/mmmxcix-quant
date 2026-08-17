@@ -33,6 +33,7 @@ export default function Screener() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [missing, setMissing] = useState(null); // symbols the scan could not reach
 
   const [rsiFilter, setRsiFilter] = useState("any");
   const [trendFilter, setTrendFilter] = useState("any");
@@ -46,6 +47,10 @@ export default function Screener() {
     try {
       const data = m === "crypto" ? await scanCrypto({ limit: 30 }) : await scanStocks();
       setRows(data);
+      // A screen is a statement about a LIST. Symbols the data proxy refused
+      // (usually a rate limit) used to vanish from the results with nothing
+      // said, so a partial scan read exactly like a complete one.
+      setMissing(data.unreachable?.length ? { syms: data.unreachable, of: data.universeSize } : null);
     } catch (e) {
       setError(e.message || "Scan failed.");
       setRows([]);
@@ -139,6 +144,21 @@ export default function Screener() {
         {loading ? "Scanning market…" : `${filtered.length} of ${rows.length} symbols`}
         {market === "crypto" ? " · Top 30 by volume" : " · curated stock universe"}
       </p>
+
+      {/* A screen is a statement about a LIST. Symbols the data proxy refused
+          (usually a rate limit) used to vanish from the results with nothing
+          said, so a partial scan read exactly like a complete one. */}
+      {missing && (
+        <div className="rounded-xl border border-warn/40 bg-warn/5 px-4 py-2.5 mb-3 text-[12px] leading-relaxed text-warn">
+          <b>Partial scan.</b>{" "}
+          <span className="text-dim">
+            {missing.syms.length} of {missing.of} symbols could not be loaded
+            ({missing.syms.slice(0, 8).join(", ")}{missing.syms.length > 8 ? "…" : ""}) and are missing
+            from the results below. Usually a rate limit on the data proxy — rescanning in a minute
+            normally fixes it.
+          </span>
+        </div>
+      )}
 
       <div className="rounded-xl border border-line lg-glass overflow-hidden">
         <div className="overflow-x-auto">

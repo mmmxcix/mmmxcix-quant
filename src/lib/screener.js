@@ -9,6 +9,8 @@
 import { sma, rsi } from "./indicators";
 
 const BINANCE = "https://api.binance.com/api/v3";
+import { fetchRetry, mapLimit } from "./netRetry.js";
+
 const YAHOO = "/api/yahoo/v8/finance/chart";
 const CACHE_TTL = 5 * 60 * 1000;
 const cache = new Map(); // key → { t, data }
@@ -50,18 +52,7 @@ export const STOCK_UNIVERSE = [
   ["ARKK", "ARK Innovation", "ETF", null],
 ];
 
-async function mapLimit(items, limit, fn) {
-  const results = new Array(items.length);
-  let i = 0;
-  async function worker() {
-    while (i < items.length) {
-      const idx = i++;
-      results[idx] = await fn(items[idx], idx);
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
-  return results;
-}
+
 
 // Compute metrics from a close-price array.
 function metricsFromCloses(cl) {
@@ -115,10 +106,14 @@ export async function scanStocks() {
   const hit = cache.get(key);
   if (hit && Date.now() - hit.t < CACHE_TTL) return hit.data;
 
+  // A symbol we could not REACH is a hole in the scan, not a symbol with no
+  // data — and the screener used to lose both the same way, quietly showing a
+  // partial universe as if it were the whole list. Transient statuses are
+  // retried with backoff (lib/netRetry.js); what is still missing is named.
+  const unreachable = [];
   const rows = await mapLimit(STOCK_UNIVERSE, 6, async ([symbol, name, sector, employees]) => {
     try {
-      const res = await fetch(`${YAHOO}/${symbol}?range=1y&interval=1d`);
-      if (!res.ok) return null;
+      const res = await fetchRetry(`${YAHOO}/${symbol}?range=1y&interval=1d`);
       const json = await res.json();
       const result = json?.chart?.result?.[0];
       const q = result?.indicators?.quote?.[0];
@@ -139,12 +134,17 @@ export async function scanStocks() {
         volume: vols[vols.length - 1] ?? 0,
         ...metricsFromCloses(closesArr),
       };
-    } catch {
+    } catch (e) {
+      if (e?.status || e?.transient) unreachable.push(symbol);
       return null;
     }
   });
 
   const data = rows.filter(Boolean);
+  // Carried on the array so the page can say the list is incomplete without
+  // changing the shape every caller already destructures.
+  data.unreachable = unreachable;
+  data.universeSize = STOCK_UNIVERSE.length;
   cache.set(key, { t: Date.now(), data });
   return data;
 }

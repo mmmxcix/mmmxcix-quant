@@ -21,6 +21,7 @@ const YAHOO_SUMMARY = "/api/yahoo/v10/finance/quoteSummary";
 const YAHOO_TIMESERIES = "/api/yahoo/ws/fundamentals-timeseries/v1/finance/timeseries";
 
 import { RANKERS, runCrossSectional } from "./crossSection.js";
+import { fetchRetry, mapLimit } from "./netRetry.js";
 
 export const BENCHMARK = "SPY";
 
@@ -51,49 +52,22 @@ function cacheSet(key, data) {
   return data;
 }
 
-export async function mapLimit(items, limit, fn) {
-  const results = new Array(items.length);
-  let i = 0;
-  async function worker() {
-    while (i < items.length) {
-      const idx = i++;
-      results[idx] = await fn(items[idx], idx);
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
-  return results;
-}
+// Re-exported so existing importers keep working; the implementation (and the
+// retry policy that goes with it) lives in lib/netRetry.js.
+export { mapLimit } from "./netRetry.js";
 
 // ── Price series ─────────────────────────────────────────────────────────────
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
 /** Daily closes for one symbol: { symbol, days: Map(dayKey → close) }.
  *
- *  A factor screen asks for the whole universe at once, and an edge rate limit
- *  answers some of it with 429. That is TRANSIENT — retried a moment later it
- *  succeeds — but it used to be indistinguishable from "this symbol has no
- *  data", so the symbol was quietly dropped and the factor ranked whatever
- *  survived. Measured on production: 29 of ~40 symbols 429'd on one load of
- *  /screener/anomalies, and the page reported its result as if the universe
- *  were whole. Back off and retry the transient statuses; a genuine failure
- *  still throws, but now it means what it says.
+ *  Transient statuses (429 from a rate limit, 5xx from a hiccup) are retried
+ *  with backoff and, if they still fail, throw an error carrying `transient` —
+ *  so the caller can record "could not reach this symbol" separately from "this
+ *  symbol has no history". Collapsing the two is how a factor ended up ranking
+ *  a third of its universe and printing it as the whole thing. See lib/netRetry.js.
  */
 export async function fetchDailySeries(symbol, range = "2y") {
-  let res;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    res = await fetch(`${YAHOO_CHART}/${encodeURIComponent(symbol)}?range=${range}&interval=1d`);
-    if (res.ok) break;
-    const transient = res.status === 429 || res.status >= 500;
-    if (!transient || attempt === 2) break;
-    await sleep(700 * (attempt + 1) + Math.floor(Math.random() * 300));
-  }
-  if (!res.ok) {
-    const e = new Error(`chart ${symbol} → ${res.status}`);
-    e.status = res.status;
-    e.transient = res.status === 429 || res.status >= 500;
-    throw e;
-  }
+  const res = await fetchRetry(`${YAHOO_CHART}/${encodeURIComponent(symbol)}?range=${range}&interval=1d`);
   const json = await res.json();
   const r = json?.chart?.result?.[0];
   const ts = r?.timestamp || [];

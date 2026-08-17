@@ -6,6 +6,7 @@
 // gap would drag every stock↔crypto correlation toward zero.
 
 import { fetchCandles } from "@/lib/data";
+import { mapLimit } from "./netRetry.js";
 
 /** A symbol the matrix can hold. Crypto = Binance pair, everything else Yahoo. */
 export const detectMarket = (sym) => (/USDT$/i.test(sym.trim()) ? "crypto" : "stock");
@@ -32,10 +33,16 @@ export function dailyLogReturns(candles) {
  * not blank the whole matrix.
  */
 export async function fetchBasketReturns(symbols, range = "1y") {
-  const settled = await Promise.allSettled(
-    symbols.map((sym) =>
-      fetchCandles({ market: detectMarket(sym), symbol: sym, interval: "1d", range })
-    )
+  // Was Promise.allSettled over the whole basket: every symbol left at once,
+  // with no ceiling. A twenty-name basket is twenty simultaneous requests at
+  // the data proxy, which is how a correlation matrix ends up half "no usable
+  // data" — the symbols were fine, the burst was not. Six at a time, with the
+  // shared backoff underneath (see lib/netRetry.js), covers the same ground and
+  // actually arrives.
+  const settled = await mapLimit(symbols, 6, (sym) =>
+    fetchCandles({ market: detectMarket(sym), symbol: sym, interval: "1d", range })
+      .then((value) => ({ status: "fulfilled", value }))
+      .catch((reason) => ({ status: "rejected", reason }))
   );
   const series = {}, failed = [];
   settled.forEach((r, i) => {
