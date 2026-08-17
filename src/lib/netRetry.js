@@ -33,15 +33,26 @@ export async function fetchRetry(url, { attempts = 3, baseMs = 700, ...init } = 
   let res = null;
   let lastErr = null;
   for (let i = 0; i < attempts; i++) {
+    let wait = baseMs * (i + 1) + Math.floor(Math.random() * 300);
     try {
       res = await fetch(url, init);
       if (res.ok) return res;
       if (!isTransient(res.status) || i === attempts - 1) break;
+      // A rate limit is measured over a WINDOW, so retrying in under a second
+      // just spends another request against the same window. Back off far
+      // enough to be on the other side of it, and prefer the limiter's own
+      // number when it sends one.
+      if (res.status === 429) {
+        const ra = Number(res.headers?.get?.("retry-after"));
+        wait = Number.isFinite(ra) && ra > 0
+          ? Math.min(30_000, ra * 1000)
+          : 2500 * (i + 1) + Math.floor(Math.random() * 800);
+      }
     } catch (e) {
       lastErr = e; // network-level failure — also worth one more try
       if (i === attempts - 1) break;
     }
-    await sleep(baseMs * (i + 1) + Math.floor(Math.random() * 300));
+    await sleep(wait);
   }
   const err = new Error(res ? `HTTP ${res.status} for ${url}` : `network error for ${url}: ${lastErr?.message || "unknown"}`);
   err.status = res ? res.status : 0;
