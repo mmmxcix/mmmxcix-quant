@@ -37,6 +37,12 @@ const MAX_TOKENS = 4000;
 
 const MAX_SYMBOLS_REQUEST = 40;   // defensive cap on the incoming list (candidate matching is cheap)
 const MAX_SYMBOLS_ENRICHED = 24;  // only this many get an LLM/fundamentals pass per call (cost control) — was 12, too tight for a watchlist+portfolio combined (a real 14-symbol list silently dropped its last 2)
+// A single call carrying pulse+stories+ALL symbols silently truncated at 14
+// symbols (~4000 tokens) with no error, and raising MAX_TOKENS to compensate
+// broke every request outright (provider-side rejection). Chunking is the
+// real fix: cap what any ONE call has to produce, run chunks in parallel —
+// scales to MAX_SYMBOLS_ENRICHED regardless of the per-call token ceiling.
+const SYMBOLS_PER_LLM_CALL = 6;
 const MAX_CANDIDATES_PER_SYMBOL = 6;
 const MAX_GENERAL_POOL = 30;
 const MAX_STORIES = 8;
@@ -330,7 +336,7 @@ export async function onRequest({ request, env }) {
   let freshOut = null;
   if (needsWork && hasProvider && newsPool.length) {
     const generalPool = needMarket ? newsPool.slice(0, MAX_GENERAL_POOL) : [];
-    const symbolBlocks = await Promise.all(staleSymbols.map(async (s) => {
+    const allSymbolBlocks = await Promise.all(staleSymbols.map(async (s) => {
       const poolCandidates = candidatesFor(newsPool, s.symbol, s.name);
       const [tickerNews, fundamentals] = await Promise.all([
         s.market === "crypto" ? Promise.resolve([]) : fetchTickerNews(origin, s.symbol),
@@ -340,13 +346,26 @@ export async function onRequest({ request, env }) {
       return { ticker: s.symbol, name: s.name, market: s.market, candidates, fundamentals };
     }));
 
-    const user = buildPrompt(needMarket, generalPool, symbolBlocks);
-    const out = await callLLM(env, user);
-    const parsed = out ? parseBriefing(out.text) : null;
+    // Chunk symbols across multiple small calls instead of one big one — see
+    // SYMBOLS_PER_LLM_CALL. Only the first chunk carries the pulse/stories
+    // request (buildPrompt already omits that section when needMarket=false,
+    // and the model is told pulse/stories are optional — no wasted work).
+    const chunks = [];
+    for (let i = 0; i < allSymbolBlocks.length; i += SYMBOLS_PER_LLM_CALL) chunks.push(allSymbolBlocks.slice(i, i + SYMBOLS_PER_LLM_CALL));
+    if (chunks.length === 0 && needMarket) chunks.push([]); // pulse/stories-only, no stale symbols
 
-    if (parsed) {
-      const now = Date.now();
-      if (needMarket && parsed.pulse) {
+    const chunkResults = await Promise.all(chunks.map(async (symbolBlocks, i) => {
+      const includeMarket = needMarket && i === 0;
+      const user = buildPrompt(includeMarket, generalPool, symbolBlocks);
+      const out = await callLLM(env, user);
+      const parsed = out ? parseBriefing(out.text) : null;
+      return { symbolBlocks, includeMarket, parsed };
+    }));
+
+    const now = Date.now();
+    for (const { symbolBlocks, includeMarket, parsed } of chunkResults) {
+      if (!parsed) continue;
+      if (includeMarket && parsed.pulse) {
         const tone = ["up", "down", "mixed"].includes(parsed.pulse.tone) ? parsed.pulse.tone : "mixed";
         const idxList = Array.isArray(parsed.stories) ? parsed.stories : [];
         const stories = idxList

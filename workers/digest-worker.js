@@ -306,7 +306,7 @@ function buildEmail(sections, snapshot, date, email, unsubToken) {
             .map(
               (it) => `
             <div style="padding:3px 0;">
-              <a href="${escapeHtml(it.link)}" style="color:${C.ink};font-size:12px;text-decoration:none;">${escapeHtml(it.title)}</a>
+              <a href="${escapeHtml(it.link)}" style="color:${C.accent};font-size:12px;text-decoration:underline;">${escapeHtml(it.title)}</a>
               <span style="font-size:10px;color:${C.faint};"> · ${escapeHtml(it.source || '')}</span>
             </div>`
             )
@@ -343,7 +343,7 @@ function buildEmail(sections, snapshot, date, email, unsubToken) {
           <tr>
             <td style="padding:9px 0;border-bottom:1px solid ${C.line};">
               <a href="${escapeHtml(it.link)}"
-                 style="color:${C.ink};font-size:15px;font-weight:600;text-decoration:none;line-height:1.4;">
+                 style="color:${C.accent};font-size:15px;font-weight:600;text-decoration:none;line-height:1.4;">
                 ${escapeHtml(it.title)}
               </a>
               ${desc}
