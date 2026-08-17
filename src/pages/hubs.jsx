@@ -1,74 +1,13 @@
-import { FlaskConical, Scale, Briefcase, Sigma, GraduationCap, BookOpenCheck, Compass, Radar, Telescope, Grid3x3, BrainCircuit, Landmark, CalendarDays, Database, Ship, Plane, CalendarSearch, Activity } from "lucide-react";
-import TabHub from "@/components/TabHub";
-import Backtest from "@/pages/Backtest";
-import Compare from "@/pages/Compare";
-import Portfolio from "@/pages/Portfolio";
-import Options from "@/pages/Options";
-import Volatility from "@/pages/Volatility";
-import Academy from "@/pages/Academy";
-import Guide from "@/pages/Guide";
-import Resources from "@/pages/Resources";
-import Screener from "@/pages/Screener";
-import Anomalies from "@/pages/Anomalies";
-import Correlation from "@/pages/Correlation";
-import MLStudio from "@/pages/MLStudio";
-import { Yields, EconCalendar, L3Archive } from "@/pages/Macro";
-import EventLab from "@/pages/EventLab";
-import Formulas from "@/pages/Formulas";
-import MMSim from "@/pages/MMSim";
-
 // Consolidated hubs — related pages merged into one tabbed route each. Old
 // routes redirect to the matching tab (see App.jsx).
-
-export function BacktestHub() {
-  return (
-    <TabHub base="/backtest" tabs={[
-      { id: "run", label: "Backtest", icon: FlaskConical, el: <Backtest /> },
-      { id: "compare", label: "Compare", icon: Scale, el: <Compare /> },
-      { id: "ml", label: "ML Studio", icon: BrainCircuit, el: <MLStudio /> },
-      { id: "events", label: "Event Lab", icon: CalendarSearch, el: <EventLab /> },
-      { id: "mm", label: "MM Sim", icon: Scale, el: <MMSim /> },
-    ]} />
-  );
-}
-
-export function PortfolioHub() {
-  return (
-    <TabHub base="/portfolio" tabs={[
-      { id: "holdings", label: "Portfolio", icon: Briefcase, el: <Portfolio /> },
-      { id: "options", label: "Options", icon: Sigma, el: <Options /> },
-      { id: "volatility", label: "Volatility", icon: Activity, el: <Volatility /> },
-    ]} />
-  );
-}
-
-export function ScreenerHub() {
-  return (
-    <TabHub base="/screener" tabs={[
-      { id: "scan", label: "Screener", icon: Radar, el: <Screener /> },
-      { id: "anomalies", label: "Anomalies", icon: Telescope, el: <Anomalies /> },
-      { id: "correlation", label: "Correlation", icon: Grid3x3, el: <Correlation /> },
-    ]} />
-  );
-}
-
-export function LearnHub() {
-  return (
-    <TabHub base="/learn" eyebrow="Learn" tabs={[
-      { id: "academy", label: "Academy", icon: GraduationCap, el: <Academy /> },
-      { id: "guide", label: "Guide", icon: BookOpenCheck, el: <Guide /> },
-      { id: "resources", label: "Resources", icon: Compass, el: <Resources /> },
-      { id: "formulas", label: "Formulas", icon: Sigma, el: <Formulas /> },
-    ]} />
-  );
-}
-
-export function MacroHub() {
-  return (
-    <TabHub base="/macro" eyebrow="Macro" tabs={[
-      { id: "yields", label: "Bond Yields", icon: Landmark, el: <Yields /> },
-      { id: "calendar", label: "Econ Events", icon: CalendarDays, el: <EconCalendar /> },
-      { id: "l3", label: "L3 Archive", icon: Database, el: <L3Archive /> },
-    ]} />
-  );
-}
+//
+// Each hub lives in its OWN module under ./hub/ and App.jsx lazy-imports them
+// individually. When all five were exported from this one file they compiled
+// into a single 432 kB chunk, so opening the News tab downloaded the
+// backtester, the academy and the screener with it. This file is now only a
+// convenience barrel for anything that wants them together.
+export { default as BacktestHub } from "@/pages/hub/BacktestHub";
+export { default as PortfolioHub } from "@/pages/hub/PortfolioHub";
+export { default as ScreenerHub } from "@/pages/hub/ScreenerHub";
+export { default as LearnHub } from "@/pages/hub/LearnHub";
+export { default as MacroHub } from "@/pages/hub/MacroHub";

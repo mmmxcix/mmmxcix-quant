@@ -22,7 +22,12 @@ const ROUTES = [
   "/login", "/register", "/accessibility",
   // Admin-gated pages render a lock screen when signed out, but their MODULES still
   // load — which is exactly where a runtime ReferenceError would hide.
-  "/coach", "/cortex/registry", "/cortex/paper", "/cortex/riskgate", "/cortex/brain",
+  "/coach", "/cortex/lab", "/cortex/registry", "/cortex/paper", "/cortex/riskgate", "/cortex/brain",
+  // This list had drifted from App.jsx: /arena, /theme, /account, /pricing,
+  // /about, /changelog and the Cortex "lab" tab (the one showing the live paper
+  // book) were all outside the harness.
+  "/arena", "/theme", "/account", "/pricing", "/about", "/changelog",
+  "/nope-this-route-does-not-exist", // the not-found view must render, not white-screen
 ];
 
 const preview = spawn(process.execPath, ["node_modules/vite/bin/vite.js", "preview", "--port", String(PORT)], { stdio: "ignore", windowsHide: true });

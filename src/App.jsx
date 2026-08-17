@@ -1,5 +1,5 @@
-import { lazy, Suspense } from "react";
-import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
+import { lazy, Suspense, useEffect } from "react";
+import { BrowserRouter, Routes, Route, Navigate, useLocation, Link } from "react-router-dom";
 import Layout from "@/components/Layout";
 import RouteSeo from "@/components/RouteSeo";
 import RequireAdmin from "@/components/RequireAdmin";
@@ -20,11 +20,15 @@ const Board = lazy(() => import("@/pages/Board"));
 const Coach = lazy(() => import("@/pages/Coach"));
 const Cortex = lazy(() => import("@/pages/Cortex"));
 const Argus = lazy(() => import("@/pages/Argus"));
-const BacktestHub = lazy(() => import("@/pages/hubs").then((m) => ({ default: m.BacktestHub })));
-const PortfolioHub = lazy(() => import("@/pages/hubs").then((m) => ({ default: m.PortfolioHub })));
-const ScreenerHub = lazy(() => import("@/pages/hubs").then((m) => ({ default: m.ScreenerHub })));
-const LearnHub = lazy(() => import("@/pages/hubs").then((m) => ({ default: m.LearnHub })));
-const MacroHub = lazy(() => import("@/pages/hubs").then((m) => ({ default: m.MacroHub })));
+// One module per hub, so each is its own chunk. Importing all five from a shared
+// hubs.jsx defeated the code splitting entirely: they compiled into a single
+// 432 kB / 129 kB-gzipped bundle, and opening the Macro tab pulled the
+// backtester, the academy and the screener down with it.
+const BacktestHub = lazy(() => import("@/pages/hub/BacktestHub"));
+const PortfolioHub = lazy(() => import("@/pages/hub/PortfolioHub"));
+const ScreenerHub = lazy(() => import("@/pages/hub/ScreenerHub"));
+const LearnHub = lazy(() => import("@/pages/hub/LearnHub"));
+const MacroHub = lazy(() => import("@/pages/hub/MacroHub"));
 const WorldMap = lazy(() => import("@/pages/WorldMap"));
 const Impressum = lazy(() => import("@/pages/Impressum"));
 const Datenschutz = lazy(() => import("@/pages/Datenschutz"));
@@ -55,6 +59,36 @@ function RouteFallback() {
 function Redir({ to }) {
   const { search } = useLocation();
   return <Navigate to={`${to}${search}`} replace />;
+}
+
+// Unknown route. A client-side router can't set the status code (see
+// public/_redirects for why a root 404.html is not an option here), so the page
+// says plainly what happened and `noindex` keeps the wrong URL out of the index.
+function NotFound() {
+  const { pathname } = useLocation();
+  useEffect(() => {
+    const m = document.createElement("meta");
+    m.name = "robots";
+    m.content = "noindex";
+    document.head.appendChild(m);
+    return () => m.remove();
+  }, []);
+  return (
+    <div className="max-w-lg py-16">
+      <p className="text-[10px] tracking-[0.3em] text-dim uppercase mb-2">Not found</p>
+      <h1 className="text-2xl font-bold mb-3">There's no page at that address</h1>
+      <p className="text-sm text-dim mb-6">
+        <span className="font-mono text-text break-all">{pathname}</span> doesn't match anything on the desk.
+        It may have moved, or the link may be mistyped.
+      </p>
+      <div className="flex flex-wrap gap-2">
+        <Link to="/" className="chip chip-active">Back to the desk</Link>
+        <Link to="/charts" className="chip chip-idle">Charts</Link>
+        <Link to="/backtest" className="chip chip-idle">Backtest</Link>
+        <Link to="/news" className="chip chip-idle">News</Link>
+      </div>
+    </div>
+  );
 }
 
 // The root gate: /welcome is the entry point the FIRST time someone arrives.
@@ -155,7 +189,11 @@ export default function App() {
                 <Route path="/guide" element={<Redir to="/learn/guide" replace />} />
                 <Route path="/resources" element={<Redir to="/learn/resources" replace />} />
 
-                <Route path="*" element={<Dashboard />} />
+                {/* A typo, a dead link or a stale crawler URL used to render the
+                    Dashboard as if it had worked. That is a soft 404: the person
+                    thinks the page they asked for looks like this, and a crawler
+                    (robots.txt invites them) indexes every wrong URL as real. */}
+                <Route path="*" element={<NotFound />} />
               </Routes>
               </Suspense>
             </Layout>

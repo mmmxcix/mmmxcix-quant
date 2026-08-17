@@ -25,7 +25,11 @@ export default function Account() {
     );
   }
 
-  if (!session) {
+  // `session.user`, not `session`: signed out, Better Auth resolves to a
+  // non-null envelope with no `user` on it, so the truthiness check passed and
+  // the page crashed on `u.name` behind the error boundary. Everything below
+  // needs the user, so that is what the guard has to test.
+  if (!session?.user) {
     return (
       <div className="max-w-md mx-auto mt-16">
         <div className="rounded-xl border border-line lg-glass p-6 text-center">

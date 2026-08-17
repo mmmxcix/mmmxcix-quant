@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams, Link } from "react-router-dom";
 import { LayoutDashboard, Star, Activity, TrendingUp, ShieldCheck, RefreshCw, Compass, CandlestickChart, FlaskConical, Radar, GraduationCap, X } from "lucide-react";
-import { fetchCandles, WATCHLIST } from "@/lib/data";
+import { fetchCandles, fetchLatestCandles, WATCHLIST } from "@/lib/data";
 import { getPortfolio, getWatchlist, subscribe as subscribeStore } from "@/lib/portfolio";
 import WorldClock from "@/components/WorldClock";
 import WatchlistPage from "@/pages/Watchlist";
@@ -23,17 +23,40 @@ function useWatchlistQuotes(list) {
   // (a symbol that fails this cycle keeps its last good value instead of blanking
   // out). It never flips `loading` on, so the 30s poll doesn't flash skeletons;
   // only the initial state, a list change and an explicit reload() show it.
+  // The sparkline needs three months of closes; the price and day-change need
+  // two bars. Re-downloading the full series every 30 seconds for every symbol
+  // meant eight 90-bar fetches a cycle to move one number — so the history is
+  // fetched ONCE per symbol and the poll only refreshes the tail, splicing it
+  // onto the cached closes. `sparkCache` is keyed by market:symbol and survives
+  // re-renders, so switching tabs doesn't re-download either.
+  const sparkCache = useRef(new Map());
   const load = useCallback(async () => {
     const results = await Promise.allSettled(
       list.map(async (w) => {
-        const candles = await fetchCandles({ market: w.market, symbol: w.symbol, interval: "1d", range: "3mo" });
-        const last = candles[candles.length - 1];
-        const prev = candles[candles.length - 2];
+        const k = `${w.market}:${w.symbol}`;
+        const cached = sparkCache.current.get(k);
+        if (!cached) {
+          const candles = await fetchCandles({ market: w.market, symbol: w.symbol, interval: "1d", range: "3mo" });
+          sparkCache.current.set(k, candles.slice(-31));
+          const last = candles[candles.length - 1];
+          const prev = candles[candles.length - 2];
+          return { key: k, price: last.close, changePct: ((last.close - prev.close) / prev.close) * 100, spark: candles.slice(-30).map((c) => c.close) };
+        }
+        const latest = await fetchLatestCandles({ market: w.market, symbol: w.symbol, interval: "1d" });
+        if (!latest.length) throw new Error("no tail"); // keep the previous good value
+        const merged = cached.slice();
+        for (const c of latest) {
+          const i = merged.findIndex((x) => x.time === c.time);
+          if (i >= 0) merged[i] = c; else merged.push(c);
+        }
+        const trimmed = merged.slice(-31);
+        sparkCache.current.set(k, trimmed);
+        const last = trimmed[trimmed.length - 1];
+        const prev = trimmed[trimmed.length - 2];
         return {
-          key: `${w.market}:${w.symbol}`,
-          price: last.close,
-          changePct: ((last.close - prev.close) / prev.close) * 100,
-          spark: candles.slice(-30).map((c) => c.close),
+          key: k, price: last.close,
+          changePct: prev ? ((last.close - prev.close) / prev.close) * 100 : 0,
+          spark: trimmed.slice(-30).map((c) => c.close),
         };
       })
     );
