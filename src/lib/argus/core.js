@@ -123,7 +123,13 @@ export function volStatus(atrPct, asset = "crypto", timeframe = "1d") {
  */
 export function chooseLeverage(entry, stopDist, { conviction = 0.5, maxTradeLev = 100, asset = "crypto", rr = 2 } = {}) {
   if (!(stopDist > 0) || !(entry > 0)) return 1;
-  const safeMax = Math.max(1, Math.floor((entry / stopDist) * (1 - MAINT)));   // stop before liquidation (hard)
+  // Liquidation must sit at least TWO stop-distances away, not just past the stop.
+  // At (1 − MAINT) the liq price sat a hair beyond the stop, and a bar that gapped
+  // through both filled at the LIQ level: the 11 live stops that overshot −1R
+  // carried mean leverage 34 vs 20 for clean stops, −2.6R given back for nothing —
+  // in this sizing model leverage has zero upside (risk is fixed by riskAmt;
+  // leverage only moves the liq price closer).
+  const safeMax = Math.max(1, Math.floor((entry / stopDist) * ((1 - MAINT) / 2)));
   const c = Math.max(0, Math.min(1, conviction));
   const bias = ASSET_LEV_BIAS[asset] ?? 0.8;
   const rrBoost = 1 + Math.max(0, Math.min(0.5, (rr - 2) * 0.15));              // 2:1 → ×1, 5:1 → ×1.45
@@ -286,9 +292,28 @@ export function openThesis(setup, { equity, openRisk, openMargin = 0, openNotion
     symbol: setup.symbol, market: setup.market, asset,
     side: setup.side, kind: setup.kind, timeframe: setup.timeframe,
     bias: setup.bias ?? null, // higher-TF regime at entry — carried into the ledger for learning
+    // The rest of the setup's context, persisted for the same reason as `bias`.
+    // This list is a WHITELIST: everything the agent stamps on the setup that is
+    // not named here silently dies at open. That is exactly what happened to
+    // `explore` (1,187 probe grants, zero labeled probes in the ledger — three
+    // layers of probe accounting counting an empty column), to `regime` (the HMM
+    // lesson bucket trained on a column no record ever carried), and to
+    // `conviction`/`atrPct`/`rvol` (the meta-labeller regexing ATR back out of a
+    // UI string because the number was dropped here).
+    explore: setup.explore || undefined,          // undefined → absent from JSON for normal bets
+    regime: setup.regime ?? null,                 // HMM market state at entry ("Bear"/"Neutral"/"Bull")
+    conviction: Number.isFinite(setup.conviction) ? setup.conviction : null,
+    atrPct: Number.isFinite(setup.atrPct) ? setup.atrPct : null,
+    rvol: Number.isFinite(setup.rvol) ? setup.rvol : null,
+    momAtr: Number.isFinite(setup.momAtr) ? setup.momAtr : null,
+    limitFill: !!setup.limitFill,
+    shadow: setup.shadow ?? null,                 // would-veto flags logged, never enforced
     state: "open",
     reason: setup.reason, evidence: setup.evidence || [],
     entry: fillEntry, stop, target: setup.target, invalidation,
+    // Where the invalidation level sits between entry and stop, in R — stamped at
+    // open so exit forensics never have to reconstruct it from prices.
+    invalLevelR: invalidation != null ? +(Math.abs(fillEntry - invalidation) / Math.abs(fillEntry - stop)).toFixed(3) : null,
     size: sized.size, riskAmt: sized.riskAmt,
     // Pyramiding state: one unit at entry; baseSize is the unit to add later, and
     // riskBudget is the ORIGINAL risk the trailing stop keeps total risk inside as
@@ -348,8 +373,22 @@ const INVAL_BUFFER = 0.15;      // close must clear the structural level by this
 const INVAL_MIN_ADVERSE = 0.80; // …AND be ≥ this fraction of the way from entry to the stop (nearly dead)
 const INVAL_CONFIRM_BARS = 2;   // sustained over this many DISTINCT bars before bailing
 
+// FIRSTBREAK mode (LAB_ARGUS_INVAL_MODE, default on): exit on the FIRST qualifying
+// close instead of waiting out the confirm delay. Measured on the live ledger
+// (Aug 19, 33 post-fix invalidations with recorded per-bar break state): the
+// confirm delay cost −0.575R per invalidated trade, hurt in 32 of 33 and helped
+// in 0 — the trade kept bleeding through the bars spent "confirming". The agent's
+// own 12h/24h reviews agree (42 would-have-lost vs 2 premature of 47 reviewed).
+// The arming threshold stays at 0.60 — the value the live overrides were actually
+// running (invalPolicy "cut-earlier") and therefore the ONLY trigger the
+// counterfactual was measured under; a looser trigger (0/0.15) fires on trades
+// that were never in the sample, so it is explicitly not shipped.
+// The fill is the arming bar's CLOSE with normal exit slippage — the same pricing
+// the confirm rule used, so the whole measured gain is timing, not fill fiction.
+const FIRSTBREAK_MIN_ADVERSE = 0.60;
+
 /** Given the latest candle, decide if an open thesis exits, and how. */
-export function evaluateExit(th, candle, { now = Date.now(), maxHoldMs = 3 * 864e5 } = {}) {
+export function evaluateExit(th, candle, { now = Date.now(), maxHoldMs = 3 * 864e5, invalMode = "confirm" } = {}) {
   const hi = candle.high, lo = candle.low;
   // Liquidation: with leverage chosen so the stop sits inside the liq price, a
   // normal stop-out fires first — but if a bar GAPS past the stop to the liq
@@ -368,9 +407,14 @@ export function evaluateExit(th, candle, { now = Date.now(), maxHoldMs = 3 * 864
   // or a 50–70% wobble that can still run to target, no longer cuts the trade.
   if (th.invalidation != null) {
     const riskDist = Math.abs(th.entry - th.stop) || 1;
+    const firstbreak = invalMode === "firstbreak";
     const buffer = th.invalBuffer ?? INVAL_BUFFER;
-    const minAdverse = th.invalMinAdverse ?? INVAL_MIN_ADVERSE;
-    const confirmBars = th.invalConfirmBars ?? INVAL_CONFIRM_BARS;
+    // In firstbreak mode the per-thesis learned overrides are deliberately IGNORED:
+    // the measured exit must not be quietly re-loosened by the same tuner whose
+    // confirm-delay it replaces (review.invalPolicy is mode-aware for the same
+    // reason — only its disable tier survives, at a raised bar).
+    const minAdverse = firstbreak ? FIRSTBREAK_MIN_ADVERSE : (th.invalMinAdverse ?? INVAL_MIN_ADVERSE);
+    const confirmBars = firstbreak ? 1 : (th.invalConfirmBars ?? INVAL_CONFIRM_BARS);
     const beyond = th.side === "long" ? th.invalidation - candle.close : candle.close - th.invalidation;   // past the structural level
     const adverse = th.side === "long" ? th.entry - candle.close : candle.close - th.entry;                // loss on the close (price units)
     const broke = beyond >= buffer * riskDist && adverse >= minAdverse * riskDist;

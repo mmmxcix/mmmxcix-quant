@@ -136,3 +136,44 @@ places orders). It learns from its own outcomes like Hermes.
    Telegram. Deferred.
 
 **Architecture is decision-ready → build Phase 0.**
+
+## Overhaul (Aug 20 2026) — measured, not argued
+
+Every change below shipped with its counterfactual computed on the live ledger
+(203 trades, Aug 11–19); the pre-ship gate killed two proposals the numbers did
+not survive (time-stop: −2.7R residual net of firstbreak; break-even stop:
+negative at every trigger — it now runs as a standing MONITOR, `state.beStudy`).
+
+- **First-break invalidation** (`LAB_ARGUS_INVAL_MODE=firstbreak`, default): the
+  2-bar confirm delay cost −0.575R per invalidated trade (hurt 32/33, helped 0).
+  Exit fires on the first close beyond the level (buffer 0.15) at ≥0.60R adverse.
+  The 12/24h reviews keep auditing it; `shadowConfirmExitR` pairs every exit with
+  where the old rule would have landed.
+- **Bar-replay exits**: every 5m bar since the last seen one is examined (a stop
+  wicked between polls used to be missed entirely); open positions are settled
+  BEFORE the scan/LLM work each cycle; `barsSeen` counts bars, not polls.
+- **Flat sizing** (`LAB_ARGUS_RISK=0.0035` default): the learned multiplier had
+  negative realized covariance with outcome (0.46% risked after losses vs 0.38%
+  after wins). Learning now decides skip/rank only, never size.
+- **Entry bans**: Asia-session crypto shorts (`LAB_ARGUS_BLOCK_ASIA_SHORTS`,
+  −0.575R × 27, BH-significant, replicated pre-fix) and LINKUSDT
+  (`LAB_ARGUS_SYMBOL_BLOCKLIST`, −0.566R × 24; time-boxed, re-admit ~Sep 2 via
+  probes). ADAUSDT deliberately stays as the multiplicity control.
+- **Scanner retirement** (`LAB_ARGUS_KINDS=breakout,mean-reversion,liquidity-sweep`):
+  six kinds with ~zero fills in 8 days stop paying scan cost and multiplicity.
+  The unused 15m fetch is gone.
+- **Leverage ≤25, liquidation ≥2 stop-distances** (was: liq a hair past the stop;
+  11 overshoot stops at mean lev 34 gave back −2.6R).
+- **Ledger integrity**: `explore`/`regime`/`conviction`/`atrPct`/`rvol`/`limitFill`
+  now survive onto closed records (the openThesis whitelist silently dropped them —
+  1,187 probe grants, zero labeled probes); the pace ledger is actually populated
+  (the "12/day" cap admitted ~19 because closes refunded slots); day-start equity
+  survives restarts (the −4% breaker used to re-arm from drawn-down equity).
+- **Learning repair**: lessons derive at the evidence floor (n≥8) so the
+  thin-bucket skip exists in production, not only in tests; rule-(a) refusals are
+  probeable; walk-forward now replays the deployed policy.
+- **Deleted**: correlation-aware heat band (two constants in disguise, the larger
+  one mis-signed inside an all-USDT book) — one flat 10% cap.
+- **Shadow gates** (log-only, on the thesis): `regimeWouldVeto` (mean-reversion in
+  a trending HMM state), `htfWouldVeto` (continuation against 1h bias). Enforce
+  only after ≥30 vetoed-but-taken closes measure negative.

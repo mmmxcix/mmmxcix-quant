@@ -327,9 +327,16 @@ const MOM_BARS = 12;
 /**
  * Run all scanners on the 5m timeframe, gated by the 15m structure + 1h bias.
  * A trend setup must align with the higher-TF bias; mean-reversion may fade it.
+ *
+ * `kinds` (optional Set) is an ALLOWLIST of setup kinds to emit. Ten scanners ×
+ * 10 symbols × 2 sides is a 200-hypothesis space sampled by a ~100-trade book:
+ * six of the ten kinds produced ~zero fills in 8 live days while still holding
+ * lesson buckets and multiplicity budget. The agent passes the survivors
+ * (LAB_ARGUS_KINDS); null keeps every scanner, so tests and the browser see the
+ * full set. Retired kinds re-enter later via labeled probes, not by default.
  * @returns { triggered: setup[], forming: candidate[] }
  */
-export function scan({ c5, c15, c1h }) {
+export function scan({ c5, c15, c1h }, { kinds = null } = {}) {
   const bias = higherBias(c1h);
   // Current volatility regime (ATR as a fraction of price on the 5m), attached to
   // every setup so the agent's risk gate can size down / skip when it's extreme.
@@ -345,6 +352,7 @@ export function scan({ c5, c15, c1h }) {
   for (const fn of SCANNERS) {
     const r = fn(c5);
     if (!r) continue;
+    if (kinds && !kinds.has(r.kind)) continue; // retired kind — not traded, not even "forming"
     const isRev = REVERSAL_KINDS.has(r.kind);
     // The higher-TF bias is carried, NOT used as a hard gate. A real day-trader
     // considers counter-trend signals too — so we emit every coherent setup and

@@ -363,7 +363,13 @@ export function adjustment(lessons, setup, opts = {}) {
       const specific = Object.keys(l.dims || {}).length >= SKIP_MIN_DIMS;
       const brokenEdge = l.expectancy <= skipExpectancy && l.winRate <= skipWinRate;
       // (a) the original rule: a SPECIFIC bucket whose numbers are egregious.
-      if (specific && l.n >= skipMinSample && brokenEdge) skip = true;
+      // It sets `weakestSkip` like rule (b) does — a refusal that never names a
+      // weakest lesson is invisible to the exploration budget and therefore
+      // permanent, which is the deadlock explore.js exists to prevent.
+      if (specific && l.n >= skipMinSample && brokenEdge) {
+        skip = true;
+        if (!weakestSkip || Math.abs(l.tStat ?? 0) < Math.abs(weakestSkip.tStat ?? 0)) weakestSkip = l;
+      }
       // (b) evidence rule: ANY bucket — including a single `kind` — whose mean R
       //     is negative with statistical confidence over a real sample. This is
       //     what finally catches a setup that bleeds steadily instead of

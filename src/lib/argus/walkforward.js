@@ -60,6 +60,11 @@ export function walkForward(closed, { warmup = 20, minSample = 20, step = 1, hal
       const past = led.slice(0, i).filter((p) => (p.exitAt ?? p.openedAt) <= t.openedAt);
       // `now` is the judged trade's open, so decay is measured from the moment
       // the decision was made rather than from today.
+      // deriveLessons at the library default (evidence floor, 8) and adjustment
+      // at `minSample` (20) — the SAME pair the live agent runs. Until Aug 2026
+      // the agent derived at 20, so every walk-forward number (including the
+      // half-life sweep) evaluated a policy that was never deployed; if either
+      // side changes again, change BOTH or the replay measures fiction.
       lessons = deriveLessons(past, { halfLifeMs, now: t.openedAt });
     }
     const a = adjustment(lessons, contextOf(t), { minSample });

@@ -5,37 +5,68 @@
 // Paper only. Persists to /api/argus. Env: LAB_TOKEN (req), LAB_SITE,
 // LAB_ARGUS_EQUITY (paper start, default 10000).
 import { loadMarket } from "./marketdata.mjs";
-import { openThesis, evaluateExit, closeThesisAt, plannedRR, fillPrice, enforceMinStop, MIN_STOP_FRAC, volStatus, pyramidAdd } from "../src/lib/argus/core.js";
+import { openThesis, evaluateExit, closeThesisAt, plannedRR, fillPrice, enforceMinStop, MIN_STOP_FRAC, volStatus, pyramidAdd, breakEvenStudy } from "../src/lib/argus/core.js";
 import { scan, VOLUME_KINDS } from "../src/lib/argus/scanners.js";
 import { buildBrief, diffBrief, renderBrief, parseFearGreed } from "../src/lib/argus/brief.js";
 import { deriveLessons, adjustment, displayLessons, sessionOf } from "../src/lib/argus/learn.js";
 import { marketOpen } from "../src/lib/argus/hours.js";
-import { effectiveHeatCap } from "../src/lib/argus/correlation.js";
 import { canOpen, openedToday, paceStatus, DEFAULT_MAX_CONCURRENT, DEFAULT_MAX_PER_DAY } from "../src/lib/argus/pace.js";
 import { shouldExplore, exploreBudget, exploredToday } from "../src/lib/argus/explore.js";
 import { scoreSetup } from "../src/lib/argus/scorecard.js";
 import { currentRegime } from "../src/lib/hmmRegime.js";
 import { buildReflectionMessages, parseReflection, crystallise, skillsFor, unionSkills } from "../src/lib/argus/reflect.js";
-import { wouldHaveHit, invalVerdict, isTerminal, invalPolicy } from "../src/lib/argus/review.js";
+import { wouldHaveHit, invalVerdict, isTerminal, invalPolicy, confirmRuleShadow } from "../src/lib/argus/review.js";
 import { callArgusLLM, chatOnce } from "../src/lib/argus/llm.js";
 
 const SITE = process.env.LAB_SITE || "https://quant.mmmxcix.com";
 const TOKEN = process.env.LAB_TOKEN;
 if (!TOKEN) { console.error("LAB_TOKEN is not set."); process.exit(1); }
 
-// Heat = max total risk. Base 10%, rising toward MAX_HEAT (20%) when the open
-// positions are UNCORRELATED (a crypto + gold + bond spread diversifies, so a
-// bigger risk budget is warranted; three correlated crypto longs stay at base).
+// Heat = max total risk, ONE number. This was a correlation-aware band (10%→20%
+// when the book looked "diversified"), but inside an all-USDT universe every pair
+// sits at ρ=0.8, so the machine output exactly two values: 12% for a same-side
+// book and 20% for a mixed one — i.e. DOUBLE heat precisely when half the book
+// was shorts, the side that was bleeding. A signed-correlation model whose whole
+// output is two constants, the larger one mis-signed, is complexity with no
+// upside; the flat cap is a sanity rail (4 × 0.35% risk ≈ 1.4% typical heat).
 const HEAT_CAP = +(process.env.LAB_ARGUS_HEAT || 0.10);
-const MAX_HEAT = +(process.env.LAB_ARGUS_MAX_HEAT || 0.20);
-const BASE_RISK = +(process.env.LAB_ARGUS_RISK || 0.02);
-// Leverage: Argus chooses its OWN leverage per trade (bounded so the stop fires
-// before liquidation — core.chooseLeverage), hard-capped at MAX_TRADE_LEV (100×).
-// CONCURRENCY is gated by RISK: Argus may open as many trades as it wants until the
-// HEAT cap (Σ stop-risk) is reached — margin does NOT limit the book. A generous
-// gross-NOTIONAL ceiling (PORTFOLIO_LEV_CAP × equity) is the only extra safety so a
-// run of tight-stop trades can't build unbounded exposure. Both tunable.
-const MAX_TRADE_LEV = +(process.env.LAB_ARGUS_MAX_TRADE_LEV || 100);
+// Flat per-trade risk. This was 2% base × learned-bucket mult × vol mult ×
+// probe mult — a fitted product with NEGATIVE realized covariance to outcome:
+// the live book risked 0.46% after losses vs 0.38% after wins (corr(riskPct,R)
+// = −0.078), turning a flat-R book into −$271. Replaying the same entries at a
+// flat 0.35% flips it to +$67. n=104 cannot support a sizing model fitted over
+// 12 bucket views; the learned multiplier now affects entry CHOICE (skip/rank)
+// only, never size — re-enable sized bets only after a walkforward shows
+// sized-vs-flat edge with n≥50 per arm.
+const BASE_RISK = +(process.env.LAB_ARGUS_RISK || 0.0035);
+// Leverage cap 25×, down from 100×. In this sizing model leverage has ZERO
+// upside — risk is fixed by riskAmt, leverage only moves the liquidation price
+// closer: the 11 live stops that overshot −1R carried mean leverage 34 vs 20
+// for clean stops (−2.6R of pure gap-through-liq giveback).
+const MAX_TRADE_LEV = +(process.env.LAB_ARGUS_MAX_TRADE_LEV || 25);
+// Invalidation exit mode: "firstbreak" (default) exits on the FIRST qualifying
+// close; "confirm" restores the old 2-bar confirm delay (measured cost: −0.575R
+// per invalidated trade, hurt 32/33, helped 0/33 — see core.evaluateExit).
+const INVAL_MODE = process.env.LAB_ARGUS_INVAL_MODE === "confirm" ? "confirm" : "firstbreak";
+// Asia-session crypto shorts are banned outright (env kill-switch to lift). The
+// one bucket that survived Benjamini-Hochberg across all 27 tested AND replicated
+// in both eras independently: post-fix −0.575R (n=27, t=−3.08), pre-fix −0.790R
+// (n=10). Side alone FLIPPED between eras — the session×side pair is the
+// tradeable unit, so the pair is gated, never the side.
+const BLOCK_ASIA_SHORTS = process.env.LAB_ARGUS_BLOCK_ASIA_SHORTS !== "0";
+// Symbol suspensions. LINKUSDT: −0.566R over n=24 (t=−2.89, BH-significant) while
+// being the single most-traded symbol. Time-boxed — re-admit ~Sep 2 2026 via
+// labeled probes once the probe budget is real; ADAUSDT (−0.243R, NOT significant)
+// deliberately stays as the multiplicity control.
+const SYMBOL_BLOCKLIST = new Set((process.env.LAB_ARGUS_SYMBOL_BLOCKLIST ?? "LINKUSDT").split(",").map((s) => s.trim()).filter(Boolean));
+// Setup kinds that may trade. Six of ten scanners produced ~zero fills in 8 live
+// days while paying scan cost and multiplicity budget; several have structural
+// defects (orb's UTC-midnight anchor, vwap-band's σ around the wrong mean,
+// momentum buying the exhaustion bar). Halving the live hypothesis space gets
+// surviving buckets to decision-grade n twice as fast. Retired kinds re-enter
+// via labeled probes, not by default. ifvg is retired on structural grounds
+// (its n=5 says nothing); mean-reversion stays pending shadow-regime data.
+const ARGUS_KINDS = new Set((process.env.LAB_ARGUS_KINDS ?? "breakout,mean-reversion,liquidity-sweep").split(",").map((s) => s.trim()).filter(Boolean));
 const PORTFOLIO_LEV_CAP = +(process.env.LAB_ARGUS_PORTFOLIO_LEV || 50);
 // "Wait for a better entry": rather than chase a momentum setup at the close,
 // Argus may park a LIMIT at the retest of the broken level and enter there — but
@@ -156,7 +187,7 @@ const UNIVERSE_ALL = [
     .map((s) => ({ id: s, asset: "futures", symbol: s, cls: "futures" })),
 ];
 const UNIVERSE_CLASSES = (process.env.LAB_ARGUS_UNIVERSE || "crypto,stock,etf,futures").split(",").map((s) => s.trim());
-const UNIVERSE = UNIVERSE_ALL.filter((u) => UNIVERSE_CLASSES.includes(u.cls));
+const UNIVERSE = UNIVERSE_ALL.filter((u) => UNIVERSE_CLASSES.includes(u.cls) && !SYMBOL_BLOCKLIST.has(u.symbol));
 
 let equity = EQUITY0;
 let open = [];          // open theses
@@ -177,6 +208,7 @@ let retainedSkills = []; // knowledge kept across a reset (journal cleared, skil
 let reflectQueue = [];  // closed trades awaiting their post-mortem
 let invalReviews = [];  // pending retrospections of invalidated exits {id,symbol,asset,side,kind,stop,target,exitAt,dueAt,stage}
 let invalStats = {};    // learned per-kind tally: { [kind]: { premature, justified, unnecessary } } — survives a reset
+let beStudy = [];       // standing break-even-stop counterfactual (monitor only), recomputed each full scan
 let forceClose = new Set(); // thesis ids the dev asked to close now (drained each cycle)
 let forceCloseReason = new Map(); // thesis id → the dev's reason for closing early (fed to the post-mortem)
 let pendingCommands = []; // raw dev commands drained this cycle, acked once handled
@@ -228,95 +260,134 @@ async function runEventChannel() {
   } catch (e) { console.log(`[${new Date().toISOString()}] event failed: ${e.message}`); }
 }
 
+// 5m (entries + exits) and 1h (bias + regime). The 15m feed was fetched for
+// months — three months of candles per symbol per scan — and destructured by
+// scan() without a single read; dropping it also shortens the scan that holds
+// the cycle mutex while open positions wait for their exit check.
 async function loadTF(inst) {
   if (inst.asset === "crypto") {
     // Binance is happy with parallel bursts.
-    const [c5, c15, c1h] = await Promise.all([
+    const [c5, c1h] = await Promise.all([
       loadMarket({ ...inst, interval: "5m", bars: 1000 }),
-      loadMarket({ ...inst, interval: "15m", bars: 1000 }),
       loadMarket({ ...inst, interval: "1h", bars: 1000 }),
     ]);
-    return { c5: c5?.candles, c15: c15?.candles, c1h: c1h?.candles };
+    return { c5: c5?.candles, c1h: c1h?.candles };
   }
   // Yahoo throttles parallel bursts from one IP → fetch stock TFs sequentially.
   const c5 = await loadMarket({ ...inst, interval: "5m", range: "1mo" }); await sleep(250);
-  const c15 = await loadMarket({ ...inst, interval: "15m", range: "3mo" }); await sleep(250);
   const c1h = await loadMarket({ ...inst, interval: "1h", range: "6mo" });
-  return { c5: c5?.candles, c15: c15?.candles, c1h: c1h?.candles };
+  return { c5: c5?.candles, c1h: c1h?.candles };
 }
 
-function manageExits(inst, last5, ledgerAdd) {
-  for (const th of open.filter((o) => o.symbol === inst.symbol)) {
-    // Track the trade's MAX FAVOURABLE / ADVERSE excursion (in R) from the bar's
-    // high/low — so the post-mortem can judge whether the TARGET and STOP were well
-    // placed: e.g. deep in profit before reversing to a loss → target too far / should
-    // have trailed; barely tested before winning → stop wider than needed; ran far
-    // past the target → target too tight. Updated before the exit check so the
-    // closing bar's excursion counts, and carried onto the closed record via ...th.
-    // The TIME of each extreme is recorded alongside it, and that is the whole
-    // point of this block rather than a detail. Without it, a trade that ran to
-    // +0.8R and then reversed is indistinguishable from one that dipped to −0.8R
-    // and then recovered — the pair of magnitudes is identical. The live ledger
-    // showed 22 of 68 losers reaching +0.5R before dying at a full stop, and the
-    // obvious question (would a break-even stop have saved them, or would it
-    // have cost the winners more?) was unanswerable from what was stored.
-    const favMove = th.side === "long" ? last5.high - th.entry : th.entry - last5.low;
-    const advMove = th.side === "long" ? th.entry - last5.low : last5.high - th.entry;
-    if (th.riskAmt > 0) {
-      const favR = (Math.max(0, favMove) * th.size) / th.riskAmt;
-      const advR = (Math.max(0, advMove) * th.size) / th.riskAmt;
-      const at = Number.isFinite(last5.time) ? last5.time * 1000 : Date.now();
-      if (favR > (th.maxFavR || 0)) { th.maxFavR = favR; th.maxFavAt = at; }
-      if (advR > (th.maxAdvR || 0)) { th.maxAdvR = advR; th.maxAdvAt = at; }
-      // Bars seen, so an excursion can be read as "early in the trade" vs "late"
-      // without needing the timeframe to reconstruct it.
-      th.barsSeen = (th.barsSeen || 0) + 1;
-    }
-    // Dev "close now" takes priority over the normal stop/target check.
-    const devClosed = forceClose.has(th.id);
-    // `th.maxHoldMs` is stamped when the thesis opens; anything opened before
-    // this existed keeps the old flat backstop rather than being cut on deploy.
-    const res = devClosed ? closeThesisAt(th, last5.close) : evaluateExit(th, last5, { maxHoldMs: th.maxHoldMs || MAX_HOLD_MS });
-    if (res) {
-      if (devClosed) {
-        // Carry the dev's "why" into the post-mortem so Argus learns from the
-        // judgement call, not just the P&L of an early close.
-        res.devClose = true;
-        res.devCloseReason = forceCloseReason.get(th.id) || "";
-        forceCloseReason.delete(th.id);
-      }
-      open = open.filter((o) => o.id !== th.id);
-      equity += res.pnl;
-      closedToday.push(res);
-      ledgerAdd.push(res);
-      closedAll.push(res); // feed the learning ledger
-      reflectQueue.push(res); // Hermes: every closed trade earns a post-mortem
-      if (res.outcome === "invalidated") queueInvalReview(res); // was cutting it right? re-judge at 12h/24h
-      if (closedAll.length > 600) closedAll = closedAll.slice(-600);
-      console.log(`[${new Date().toISOString()}] CLOSE ${res.symbol} ${res.side} ${res.outcome} R=${res.R.toFixed(2)} pnl=${res.pnl.toFixed(2)} eq=${equity.toFixed(0)}`);
-    } else {
-      // Still open — stamp the live price + floating (unrealized) P&L so the UI can
-      // show current price and the running gain/loss per position (Bug 4).
-      const dir = th.side === "long" ? 1 : -1;
-      th.currentPrice = last5.close;
-      th.unrealizedPnl = (last5.close - th.entry) * th.size * dir;
-      th.unrealizedR = th.riskAmt > 0 ? th.unrealizedPnl / th.riskAmt : 0;
-      th.lastPoll = Date.now();
+// One bar of 5m in ms — the timeframe every setup currently trades on.
+const BAR5_MS = 300_000;
 
-      // PYRAMID into a working CONTINUATION trade (Turtle-style MM): add a unit each
-      // R of profit and trail the stop so total risk stays inside the original
-      // budget — more size on the house's money, never more risk. The rising
-      // threshold (units × step) self-spaces the adds; the gross-notional cap still
-      // binds. Reversal fades (fixed target) don't pyramid.
-      if (PYRAMID && VOLUME_KINDS.has(th.kind) && (th.units || 1) < PYRAMID_MAX_UNITS && th.unrealizedR >= (th.units || 1) * PYRAMID_STEP) {
-        const add = pyramidAdd(th, last5.close, { maxUnits: PYRAMID_MAX_UNITS });
-        if (add && openNotional() - th.notional + add.notional <= PORTFOLIO_LEV_CAP * equity) {
-          Object.assign(th, add);
-          console.log(`[${new Date().toISOString()}] PYRAMID ${th.symbol} ${th.side} → unit ${th.units} @${last5.close.toFixed(4)} size ${th.size.toFixed(4)} stop ${th.stop.toFixed(4)} (risk locked ${th.riskAmt.toFixed(0)})`);
-        }
+/**
+ * Manage exits for every open thesis on this instrument, replaying EVERY 5m bar
+ * since the last one each thesis saw — not just the latest. The old code
+ * evaluated only `c5[last]`: a stop wicked on a bar that was no longer the
+ * latest by the next poll was never examined at all (three live stops show
+ * maxAdvR beyond the recorded |R|), and during a 41-symbol full scan the shared
+ * mutex could hold exit checks off for minutes. Fills stay AT the level
+ * whichever bar the replay finds them on; `detectLagMs` records how stale the
+ * detection was. Excursions (max-fav/adv + timestamps) update per BAR, and
+ * `barsSeen` now counts DISTINCT bars (it used to count polls — ~2.5× inflated).
+ * Replay is idempotent: re-feeding an already-seen bar changes nothing, so the
+ * fast pre-pass and the scan loop can both call this safely.
+ */
+function manageExits(inst, c5, ledgerAdd) {
+  if (!Array.isArray(c5) || !c5.length) return;
+  const lastBar = c5[c5.length - 1];
+  for (const th of open.filter((o) => o.symbol === inst.symbol)) {
+    // Dev "close now" takes priority over the normal exit checks, at the live price.
+    if (forceClose.has(th.id)) {
+      const res = closeThesisAt(th, lastBar.close);
+      res.devClose = true;
+      res.devCloseReason = forceCloseReason.get(th.id) || "";
+      forceCloseReason.delete(th.id);
+      bookClose(th, res, ledgerAdd);
+      continue;
+    }
+    // Bars this thesis has not fully processed yet. A hydrated thesis from before
+    // bar-tracking replays from its open — which also settles, at the recorded
+    // levels, any exit missed while the agent was down. The final bar may still
+    // be FORMING (its high/low move until it closes), so it is re-examined every
+    // poll and only marked done once a later bar exists behind it.
+    const since = th.lastBarTime || th.openedAt || 0;
+    let bars = c5.filter((b) => Number.isFinite(b.time) && b.time * 1000 > since);
+    if (!bars.length) bars = [lastBar];
+    let closed = null;
+    for (const bar of bars) {
+      const barMs = bar.time * 1000;
+      // Excursion tracking BEFORE the exit check so the closing bar's extremes
+      // count. The TIMESTAMPS are the point: without them +0.8R-then-reversed is
+      // indistinguishable from dipped-then-recovered, and every stop-rule
+      // counterfactual is guesswork (this is what killed the break-even-stop and
+      // time-stop proposals on real numbers instead of intuition).
+      const favMove = th.side === "long" ? bar.high - th.entry : th.entry - bar.low;
+      const advMove = th.side === "long" ? th.entry - bar.low : bar.high - th.entry;
+      if (th.riskAmt > 0) {
+        const favR = (Math.max(0, favMove) * th.size) / th.riskAmt;
+        const advR = (Math.max(0, advMove) * th.size) / th.riskAmt;
+        if (favR > (th.maxFavR || 0)) { th.maxFavR = favR; th.maxFavAt = barMs; }
+        if (advR > (th.maxAdvR || 0)) { th.maxAdvR = advR; th.maxAdvAt = barMs; }
+        if (bar.time !== th.lastCountedBar) { th.barsSeen = (th.barsSeen || 0) + 1; th.lastCountedBar = bar.time; }
+      }
+      if (bar !== lastBar) th.lastBarTime = barMs; // a finished bar is done; the forming one is re-read next poll
+      // `now` is the bar's close time (capped at the wall clock) so a replayed
+      // exit is stamped when it HAPPENED, not when it was noticed.
+      const barNow = Math.min(Date.now(), barMs + BAR5_MS);
+      const res = evaluateExit(th, bar, { now: barNow, maxHoldMs: th.maxHoldMs || MAX_HOLD_MS, invalMode: INVAL_MODE });
+      if (res) {
+        res.detectLagMs = Math.max(0, Date.now() - (barMs + BAR5_MS));
+        if (res.outcome === "invalidated") res.exitMode = INVAL_MODE;
+        bookClose(th, res, ledgerAdd);
+        closed = res;
+        break;
+      }
+    }
+    if (closed) continue;
+    // Still open — stamp the live price + floating (unrealized) P&L so the UI can
+    // show current price and the running gain/loss per position (Bug 4).
+    const dir = th.side === "long" ? 1 : -1;
+    th.currentPrice = lastBar.close;
+    th.unrealizedPnl = (lastBar.close - th.entry) * th.size * dir;
+    th.unrealizedR = th.riskAmt > 0 ? th.unrealizedPnl / th.riskAmt : 0;
+    th.lastPoll = Date.now();
+
+    // PYRAMID into a working CONTINUATION trade (Turtle-style MM): add a unit each
+    // R of profit and trail the stop so total risk stays inside the original
+    // budget — more size on the house's money, never more risk. The rising
+    // threshold (units × step) self-spaces the adds; the gross-notional cap still
+    // binds. Reversal fades (fixed target) don't pyramid.
+    if (PYRAMID && VOLUME_KINDS.has(th.kind) && (th.units || 1) < PYRAMID_MAX_UNITS && th.unrealizedR >= (th.units || 1) * PYRAMID_STEP) {
+      const add = pyramidAdd(th, lastBar.close, { maxUnits: PYRAMID_MAX_UNITS });
+      if (add && openNotional() - th.notional + add.notional <= PORTFOLIO_LEV_CAP * equity) {
+        Object.assign(th, add);
+        console.log(`[${new Date().toISOString()}] PYRAMID ${th.symbol} ${th.side} → unit ${th.units} @${lastBar.close.toFixed(4)} size ${th.size.toFixed(4)} stop ${th.stop.toFixed(4)} (risk locked ${th.riskAmt.toFixed(0)})`);
       }
     }
   }
+}
+
+/** Every closed trade goes through here — one place for the bookkeeping, so the
+ *  replay loop, the dev-close path and the fast command loop cannot drift apart.
+ *  Also feeds the PACE ledger: `openedToday` counts opens from `ledger` + `open`,
+ *  and `ledger` was never written — every close silently refunded a day slot, so
+ *  the "12/day" cap admitted ~19 and the probe budget was counted on an empty
+ *  array. */
+function bookClose(th, res, ledgerAdd) {
+  open = open.filter((o) => o.id !== th.id);
+  equity += res.pnl;
+  closedToday.push(res);
+  ledgerAdd.push(res);
+  ledger.push(res);
+  if (ledger.length > 400) ledger = ledger.slice(-400);
+  closedAll.push(res); // feed the learning ledger
+  reflectQueue.push(res); // Hermes: every closed trade earns a post-mortem
+  if (res.outcome === "invalidated") queueInvalReview(res); // was cutting it right? re-judge at 12h/24h
+  if (closedAll.length > 600) closedAll = closedAll.slice(-600);
+  console.log(`[${new Date().toISOString()}] CLOSE ${res.symbol} ${res.side} ${res.outcome} R=${res.R.toFixed(2)} pnl=${res.pnl.toFixed(2)} eq=${equity.toFixed(0)}${res.detectLagMs > BAR5_MS ? ` (detected ${Math.round(res.detectLagMs / 60000)}min late)` : ""}`);
 }
 
 
@@ -351,6 +422,10 @@ function queueInvalReview(res) {
   invalReviews.push({
     id: res.id, symbol: res.symbol, asset: res.asset, side: res.side, kind: res.kind,
     stop: res.stop, target: res.target, exitAt: res.exitAt,
+    // entry + invalidation let the review also simulate where the OLD confirm rule
+    // would have exited (confirmRuleShadow) — every firstbreak exit carries its own
+    // A/B pair instead of the two rules being compared across different trades.
+    entry: res.entry, invalidation: res.invalidation,
     dueAt: res.exitAt + REVIEW_1_MS, stage: 1,
   });
   if (invalReviews.length > 200) invalReviews = invalReviews.slice(-200);
@@ -398,7 +473,16 @@ async function processInvalReviews() {
       continue;
     }
     const rec = recordInvalVerdict(r, would);
-    if (rec) updates.push(rec);
+    if (rec) {
+      // Where would the OLD 2-bar-confirm rule have exited? Stamped on the record
+      // (close-basis R, approx — no slippage) so firstbreak-vs-confirm is a paired
+      // comparison on every single trade, not an argument between eras.
+      if (INVAL_MODE === "firstbreak" && rec.shadowConfirmExitR == null) {
+        const shadow = confirmRuleShadow(r, window);
+        if (shadow) { rec.shadowConfirmExitR = +shadow.shadowR.toFixed(3); rec.shadowConfirmHow = shadow.how; }
+      }
+      updates.push(rec);
+    }
   }
   invalReviews = next;
   return updates;
@@ -409,8 +493,9 @@ function invalReviewSummary() {
   let premature = 0, justified = 0, unnecessary = 0;
   const kinds = [];
   for (const [kind, s] of Object.entries(invalStats)) {
+    if (kind === "_mode") continue; // bookkeeping marker (which exit mode earned this tally), not a kind
     premature += s.premature || 0; justified += s.justified || 0; unnecessary += s.unnecessary || 0;
-    const pol = invalPolicy(s);
+    const pol = invalPolicy(s, INVAL_MODE);
     kinds.push({ kind, premature: s.premature || 0, justified: s.justified || 0, unnecessary: s.unnecessary || 0,
       policy: pol.label || "default" });
   }
@@ -440,6 +525,14 @@ function tryOpen(inst, setup, halted) {
   if (halted) return;
   if (!marketOpen(inst)) return;                          // never open a closed market
   if (open.some((o) => o.symbol === inst.symbol)) return; // one position per instrument
+  // The Asia-session crypto-short ban — hardcoded, NOT a learned lesson, because
+  // the learning stack was under repair when this bucket was proven (and the
+  // strongest finding in the book must not depend on the thing being fixed).
+  // See BLOCK_ASIA_SHORTS above for the numbers.
+  if (BLOCK_ASIA_SHORTS && inst.asset === "crypto" && setup.side === "short" && sessionOf(Date.now()) === "asia") {
+    console.log(`[${new Date().toISOString()}] SKIP ${inst.symbol} short ${setup.kind} — Asia-session crypto shorts are banned (−0.575R × 27, replicated pre-fix)`);
+    return;
+  }
   const bias = eventBias.get(inst.symbol);
 
   // Bias is NOT a gate. Argus trades the TECHNICAL setup on its own merits like a
@@ -456,9 +549,10 @@ function tryOpen(inst, setup, halted) {
     return;
   }
 
-  // Hermes learning: nudge (or veto) sizing from what the ledger has taught us
-  // about this kind of setup. Gentle by construction — mult is hard-clamped and
-  // only buckets with ≥ LEARN_MIN closed trades count.
+  // Hermes learning: veto (skip) or rank from what the ledger has taught us
+  // about this kind of setup — SIZE is flat and never touched by it. Gentle by
+  // construction: mult is hard-clamped, fine-grained rules need ≥ LEARN_MIN
+  // closed trades, and only the evidence-based skip acts from n≥8.
   const evented = biasSide && biasSide === setup.side;
   // The market STATE the trade is being taken in, not just the clock hour. The
   // hidden-Markov model is fitted on the hourly series (5m bars are too noisy to
@@ -545,13 +639,18 @@ function tryOpen(inst, setup, halted) {
     console.log(`[${new Date().toISOString()}] SKIP ${inst.symbol} ${setup.side} ${setup.kind} — pace: ${pace.reason}`);
     return;
   }
-  const riskPct = BASE_RISK * adj.mult * vol.mult * (exploring ? exploring.sizeMult : 1);
+  // FLAT risk. adj.mult is deliberately NOT in this product any more — the learned
+  // multiplier decides whether a setup is TAKEN (skip) and which setup wins the
+  // slot (_rank), never how big the bet is (see BASE_RISK above for the measured
+  // reason). vol.mult stays (shrink in elevated volatility is hygiene, not a fit);
+  // the probe 0.4× stays (a probe is tuition, and the discount marks it as such).
+  const riskPct = BASE_RISK * vol.mult * (exploring ? exploring.sizeMult : 1);
 
   // Conviction = technical setup quality, tilted by an ALIGNED bias (its parts, not
-  // a binary; real signals dominate at 0.7 weight), plus a GENTLE nudge from the
-  // learned prior (adj.mult−1) so a proven bucket leans in a touch harder and a
-  // shaky one eases off — bounded, so learning nudges leverage but never swings it.
-  const conviction = clamp01(0.7 * convictionOf(setup) + 0.3 * (0.5 + 0.5 * (evented ? biasConf : opposes ? -biasConf : 0)) + 0.15 * (adj.mult - 1));
+  // a binary; real signals dominate at 0.7 weight). The learned-prior nudge that
+  // used to ride on top went with sized bets — conviction now only tilts leverage,
+  // which is capped anyway.
+  const conviction = clamp01(0.7 * convictionOf(setup) + 0.3 * (0.5 + 0.5 * (evented ? biasConf : opposes ? -biasConf : 0)));
 
   // WAIT FOR A BETTER ENTRY (user request): rather than chase a momentum setup at
   // the close — where the entry sits right on top of the stop and gets shaken out
@@ -596,21 +695,30 @@ function tryOpen(inst, setup, halted) {
     }
   }
 
-  // Diversification-aware heat: more total risk allowed when this trade is
-  // uncorrelated with what's already open.
-  // Direction matters: long BTC + short ETH is not the same bet as long + long,
-  // and passing bare symbols would have the risk model treat them identically.
-  const heatCap = effectiveHeatCap(
-    open.map((o) => ({ symbol: o.symbol, side: o.side })),
-    { symbol: inst.symbol, side: setup.side }, HEAT_CAP, MAX_HEAT);
+  // Readings for the RECORD. On a direct entry these are the live ones; on a
+  // retest fill they come from when the setup was found (see `reading` in the
+  // limit path), because the gates ran against those. Hoisted above openThesis so
+  // the numbers land ON the closed record instead of dying in a UI label.
+  const rd = setup._reading || { atrPct: setup.atrPct, rvol: setup.rvol, momAtr: setup.momAtr };
+  // SHADOW gates (#13): what a regime filter or higher-TF alignment filter WOULD
+  // have vetoed — logged on the thesis, never enforced. Neither gate has ever had
+  // a replayable record (regime was silently dropped at open until now), so they
+  // earn enforcement only after ≥30 vetoed-but-taken closes measure negative.
+  const shadow = {
+    regimeWouldVeto: setup.kind === "mean-reversion" && (regime === "Bull" || regime === "Bear"),
+    htfWouldVeto: VOLUME_KINDS.has(setup.kind) && setup.aligned === false,
+  };
   const th = openThesis(
     // `regime` (not `_regime`) so it lands on the closed thesis and the learning
     // loop can bucket by it — the underscore fields are scratch and are stripped.
     // `explore` rides along onto the closed thesis, so the track record can always
     // separate a bet we chose from a probe we were running.
-    { ...setup, symbol: inst.symbol, market: inst.asset, conviction, regime, explore: !!exploring, limitFill: !!setup._fromLimit },
+    { ...setup, symbol: inst.symbol, market: inst.asset, conviction, regime, explore: !!exploring, limitFill: !!setup._fromLimit,
+      atrPct: rd.atrPct, rvol: rd.rvol, momAtr: rd.momAtr, shadow },
+    // Heat is ONE flat cap now — see HEAT_CAP above for why the correlation-aware
+    // band was deleted (it doubled the budget for exactly the mixed books that bled).
     { equity, openRisk: openRisk(), openMargin: openMargin(), openNotional: openNotional(), asset: inst.asset,
-      heatCap, baseRiskPct: riskPct, maxTradeLev: MAX_TRADE_LEV, portfolioLevCap: PORTFOLIO_LEV_CAP, conviction },
+      heatCap: HEAT_CAP, baseRiskPct: riskPct, maxTradeLev: MAX_TRADE_LEV, portfolioLevCap: PORTFOLIO_LEV_CAP, conviction },
   );
   if (!th) probeDied("sizing / RR floor — openThesis returned nothing");
   if (th) {
@@ -619,11 +727,13 @@ function tryOpen(inst, setup, halted) {
     // invalidation. Premature-heavy → ease or disable the early cut (let the hard stop
     // work); justified-heavy → cut a touch earlier to recover the risk those cuts kept
     // saving. Every tier is reversible as the tally shifts.
-    const pol = invalPolicy(invalStats[th.kind]);
+    const pol = invalPolicy(invalStats[th.kind], INVAL_MODE);
     if (pol.disable && th.invalidation != null) {
       th.invalidation = null;
       console.log(`[${new Date().toISOString()}] INVAL-OFF ${th.symbol} ${th.kind} — reviews ruled its cuts premature (${JSON.stringify(invalStats[th.kind])})`);
     } else if (pol.invalMinAdverse) {
+      // Unreachable in firstbreak mode (invalPolicy returns no tuning tiers there,
+      // and evaluateExit ignores these overrides anyway) — kept for confirm mode.
       th.invalMinAdverse = pol.invalMinAdverse;
       th.invalConfirmBars = pol.invalConfirmBars;
       if (pol.label) console.log(`[${new Date().toISOString()}] INVAL-${pol.label.toUpperCase()} ${th.symbol} ${th.kind} @${pol.invalMinAdverse}R (${JSON.stringify(invalStats[th.kind])})`);
@@ -639,16 +749,14 @@ function tryOpen(inst, setup, halted) {
     // The risk system's checklist, surfaced on the thesis (Size / Exposure / DD /
     // Volatility / Max-loss → Pass). A trade only reaches here after every gate
     // passed, so this shows WHY it was allowed — auditable, like the reel's slide 5.
-    // Readings for the RECORD. On a direct entry these are the live ones; on a
-    // retest fill they come from when the setup was found (see `reading` above),
-    // because the gates ran against those. Never used to decide anything.
-    const rd = setup._reading || { atrPct: setup.atrPct, rvol: setup.rvol, momAtr: setup.momAtr };
+    // (`rd` — the readings taken when the setup was found — is hoisted above the
+    // openThesis call so the same numbers also land on the record itself.)
     const volLabel = vol.label !== "n/a" ? vol.label
       : (Number.isFinite(rd.atrPct) ? `${(rd.atrPct * 100).toFixed(2)}%/bar` : "n/a");
     th.riskChecks = {
       pass: true,
       size: true,
-      exposure: true, heatUsedPct: +((openRisk() / equity) * 100).toFixed(1), heatCapPct: +(heatCap * 100).toFixed(0),
+      exposure: true, heatUsedPct: +((openRisk() / equity) * 100).toFixed(1), heatCapPct: +(HEAT_CAP * 100).toFixed(0),
       drawdown: true,
       volatility: { ok: vol.ok, elevated: !!vol.elevated, label: volLabel },
       volume: { rvol: Number.isFinite(rd.rvol) ? +rd.rvol.toFixed(2) : null, gated: VOLUME_KINDS.has(setup.kind) },
@@ -666,7 +774,8 @@ function tryOpen(inst, setup, halted) {
       heatUsedPct: th.riskChecks.heatUsedPct, heatCapPct: th.riskChecks.heatCapPct,
     });
     forming = forming.filter((f) => f.symbol !== inst.symbol);
-    if (adj.mult !== 1) console.log(`[${new Date().toISOString()}] LESSON ${inst.symbol} size ×${adj.mult.toFixed(2)} — ${adj.reasons[0] || ""}`);
+    // adj.mult no longer sizes anything — it ranked this setup into the slot.
+    if (adj.mult !== 1) console.log(`[${new Date().toISOString()}] LESSON ${inst.symbol} rank ×${adj.mult.toFixed(2)} (sizing is flat) — ${adj.reasons[0] || ""}`);
     console.log(`[${new Date().toISOString()}] OPEN ${th.symbol} ${th.side} ${th.kind}${th.catalyst ? " [event]" : ""} @${th.entry.toFixed(4)} stop ${th.stop.toFixed(4)} tgt ${th.target.toFixed(4)} risk ${th.riskAmt.toFixed(0)} — ${th.reason}`);
   } else {
     // no heat room → park as forming so it's re-checked on the fast loop
@@ -784,16 +893,45 @@ async function cycle(fullScan) {
     const dailyPnl = closedToday.reduce((a, c) => a + c.pnl, 0);
     const halted = dailyPnl <= -DAILY_STOP * equityDayStart;
 
+    // EXITS FIRST. Everything below — the LLM event channel, reflections, the
+    // 41-symbol scan with its polite sleeps — can hold this cycle for minutes,
+    // and an open position's stop must not wait behind any of it. A light
+    // 5m-only pass settles every open thesis before the heavy work starts; the
+    // bar-replay inside manageExits makes the scan loop's second visit a no-op.
+    for (const inst of activeUniverse().filter((i) => open.some((o) => o.symbol === i.symbol))) {
+      try {
+        const ds = await loadMarket(inst.asset === "crypto"
+          ? { ...inst, interval: "5m", bars: 500 } // loadMarket needs ≥400 bars
+          : { ...inst, interval: "5m", range: "1mo" });
+        if (ds?.candles?.length) manageExits(inst, ds.candles, ledgerAdd);
+      } catch { /* provider hiccup — the scan loop below is the retry */ }
+      if (inst.asset !== "crypto") await sleep(250);
+    }
+
     // Full scans consult the event channel first, so news-driven biases are live
     // before the technical scan runs (and can expand the universe). Then relearn
-    // from the closed-thesis ledger so this scan's sizing reflects the latest edge.
+    // from the closed-thesis ledger so this scan's decisions reflect the latest edge.
     if (fullScan) {
       await runEventChannel();
       handleConflicts(); // close positions a fresh opposing catalyst now argues against
       await runReflections();
       const reviewed = await processInvalReviews(); // judge due invalidated exits (12h/24h) → learn
       for (const rec of reviewed) ledgerAdd.push(rec); // re-persist the annotated ledger records
-      lessons = deriveLessons(closedAll, { minSample: LEARN_MIN, halfLifeMs: HALF_LIFE_MS });
+      // Lessons derive at the EVIDENCE floor (library default n≥8); adjustment()
+      // still demands LEARN_MIN (20) before a lesson may resize/refuse on the
+      // fine-grained rules. Passing LEARN_MIN here too meant lessons with
+      // n∈[8,19] never existed at all, so the thin-bucket skip (built for the
+      // 9-of-9 loser) was dead code in production while every test — using the
+      // library default — passed.
+      lessons = deriveLessons(closedAll, { halfLifeMs: HALF_LIFE_MS });
+      // Standing counterfactual monitor: would a break-even stop have paid? The
+      // live answer is NO at every trigger (it amputates the fat right tail that
+      // is the whole edge — top-3 winners were +$933 of a +$244 book). This keeps
+      // that answer CURRENT so the intuition can't creep back unmeasured; the
+      // alert fires only in the one condition under which BE gets revisited.
+      beStudy = [0.5, 0.8, 1.0, 1.2].map((trigger) => breakEvenStudy(closedAll, { trigger }));
+      const beAlert = beStudy.find((s) => s.delta > 5 && s.applied >= 15);
+      if (beAlert) console.log(`[${new Date().toISOString()}] BE-STUDY ALERT — trigger ${beAlert.trigger}R would have added +${beAlert.delta.toFixed(1)}R over ${beAlert.applied} applications; revisit the break-even stop`);
     }
 
     // On the fast loop, only touch instruments with an open thesis or a forming
@@ -808,14 +946,14 @@ async function cycle(fullScan) {
       let tf;
       try { tf = await loadTF(inst); } catch { continue; }
       if (!tf.c5 || tf.c5.length < 40) continue;
-      manageExits(inst, tf.c5[tf.c5.length - 1], ledgerAdd);
+      manageExits(inst, tf.c5, ledgerAdd);
       // A parked limit ("wait for a better entry") governs this symbol until it
       // fills or expires — if one is pending, don't also open a fresh market entry.
       const limitPending = checkLimits(inst, tf.c5[tf.c5.length - 1], halted);
       // Scan for new / re-check forming: both use the same scan; the fast loop
       // catches a forming setup the moment it triggers ("watch until entry").
-      if (!limitPending && tf.c15 && tf.c1h) {
-        const { triggered } = scan(tf);
+      if (!limitPending && tf.c1h) {
+        const { triggered } = scan(tf, { kinds: ARGUS_KINDS });
         // Label the market state ONCE per symbol per reload and stamp it on every
         // setup. Fitted on the HOURLY series: a hidden-Markov regime read off 5m
         // bars is mostly labelling noise, and the thing we want to bucket by is
@@ -875,8 +1013,9 @@ async function persist(ledgerAdd, extra) {
         unrealized,                             // total floating P&L right now
         open: open.length, forming: forming.length,
         heatPct: openRisk() / equity,           // Σ stop-risk / equity (Bug 2 — the real number)
-        heatCapPct: effectiveHeatCap(open.map((o) => ({ symbol: o.symbol, side: o.side })), null, HEAT_CAP, MAX_HEAT),
-        heatBasePct: HEAT_CAP, heatMaxPct: MAX_HEAT,
+        // One flat cap — the correlation-aware band is gone (see HEAT_CAP above).
+        heatCapPct: HEAT_CAP,
+        heatBasePct: HEAT_CAP, heatMaxPct: HEAT_CAP,
         portfolioLev: openNotional() / equity,  // Σ notional / equity (Bug 1 — true portfolio leverage)
         portfolioLevCap: PORTFOLIO_LEV_CAP,
         marginUsed: openMargin(), marginPct: openMargin() / equity,
@@ -893,6 +1032,13 @@ async function persist(ledgerAdd, extra) {
         dayPnl: extra.dailyPnl,                 // realized today
         dayPnlTotal: extra.dailyPnl + unrealized, // realized + floating (what the top-bar shows)
         halted: extra.halted, universe: activeUniverse().length, events, fng: eventFng,
+        // Day accounting persisted so a mid-drawdown restart cannot re-arm the −4%
+        // breaker from drawn-down equity (hydrate restores these when the UTC day
+        // still matches).
+        utcDay: new Date().toISOString().slice(0, 10),
+        equityDayStart,
+        invalMode: INVAL_MODE,
+        beStudy,                                // standing break-even counterfactual (monitor)
         skills: skills.slice(0, 8),
         // displayLessons, not slice(0,8): the sort ranks by |expectancy|, so on a
         // losing book the top eight are all losses and the one bucket the agent
@@ -927,12 +1073,28 @@ async function hydrate() {
     if (Array.isArray(j.theses)) open = j.theses;
     if (Array.isArray(j.ledger)) { // learn from the full closed ledger on startup
       closedAll = j.ledger.slice(-600);
-      lessons = deriveLessons(closedAll, { minSample: LEARN_MIN, halfLifeMs: HALF_LIFE_MS });
+      lessons = deriveLessons(closedAll, { halfLifeMs: HALF_LIFE_MS }); // evidence floor (8) — see cycle()
+      // Rebuild TODAY from the closed ledger, so a restart forgets nothing the
+      // day already spent: the pace ledger (openedToday counts from it — it was
+      // never populated at all, which made the "12/day" cap admit ~19), today's
+      // realized P&L, and with it the daily-loss breaker's state.
+      const today = new Date().toISOString().slice(0, 10);
+      ledger = closedAll.filter((t) => t?.openedAt && new Date(t.openedAt).toISOString().slice(0, 10) === today).slice(-400);
+      closedToday = closedAll.filter((t) => t?.exitAt && new Date(t.exitAt).toISOString().slice(0, 10) === today);
     }
     if (Array.isArray(j.journal)) journal = j.journal.slice(0, 300);
     if (Array.isArray(j.skills)) skills = j.skills;
     if (Array.isArray(j.retainedSkills)) retainedSkills = j.retainedSkills;
     if (j.invalStats && typeof j.invalStats === "object") invalStats = j.invalStats;
+    // The premature/justified tally means something different per exit mode — a
+    // "justified" earned under the 2-bar confirm delay says nothing about the
+    // first-break cut. On a mode switch the tally restarts from zero.
+    if ((invalStats._mode || "confirm") !== INVAL_MODE) {
+      console.log(`[${new Date().toISOString()}] inval mode ${invalStats._mode || "confirm"} → ${INVAL_MODE}: invalidation tally reset`);
+      invalStats = { _mode: INVAL_MODE };
+    } else {
+      invalStats._mode = INVAL_MODE;
+    }
     if (Array.isArray(j.invalReviews)) invalReviews = j.invalReviews;
     // Backfill: any invalidated close still without a review verdict — and not
     // already queued — gets one, so the retrospection covers the current book too.
@@ -946,8 +1108,14 @@ async function hydrate() {
     for (const e of j.state?.events || []) { // restore fresh event biases across restarts
       if (Date.now() - (e.at || 0) < EVENT_TTL) eventBias.set(e.symbol, { side: e.side, thesis: e.thesis, confidence: e.confidence, evidence: [], horizon: e.horizon, at: e.at, model: e.model });
     }
-    equityDayStart = equity;
-    console.log(`hydrated: eq ${equity.toFixed(0)}, ${open.length} open theses, ${eventBias.size} event-bias, ${closedAll.length} closed → ${lessons.length} lessons, ${journal.length} reflections → ${skills.length} skills`);
+    // Day-start equity survives a restart WITHIN the same UTC day. Setting it to
+    // the current (possibly drawn-down) equity re-armed the −4% breaker mid-fall:
+    // on a 5-red-days-of-6 book, every restart handed the day a fresh loss budget.
+    const todayKey = new Date().toISOString().slice(0, 10);
+    equityDayStart = (j.state?.utcDay === todayKey && Number.isFinite(j.state?.equityDayStart))
+      ? j.state.equityDayStart
+      : equity;
+    console.log(`hydrated: eq ${equity.toFixed(0)} (day-start ${equityDayStart.toFixed(0)}), ${open.length} open theses, ${ledger.length} opened today, ${eventBias.size} event-bias, ${closedAll.length} closed → ${lessons.length} lessons, ${journal.length} reflections → ${skills.length} skills`);
   } catch { /* fresh start */ }
 }
 
@@ -964,9 +1132,10 @@ async function doReset(source) {
   skills = retainedSkills.slice();
   equity = EQUITY0; equityDayStart = EQUITY0;
   open = []; forming = []; closedAll = []; closedToday = []; reflectQueue = [];
+  ledger = []; // the pace ledger tracks the wiped book too
   invalReviews = []; // pending retrospections reference the wiped book — drop them (invalStats KEPT: learned)
   forceClose = new Set(); forceCloseReason = new Map();
-  lessons = deriveLessons(closedAll, { minSample: LEARN_MIN, halfLifeMs: HALF_LIFE_MS });
+  lessons = deriveLessons(closedAll, { halfLifeMs: HALF_LIFE_MS });
   eventBias = new Map();
   console.log(`[${new Date().toISOString()}] RESET (${source}) → ${EQUITY0}: cleared ${b.j} journal + book + ledger, kept ${retainedSkills.length} skills`);
   await persist([], { dailyPnl: 0, halted: false }); // reset state + theses:[] + empty journal + retained skills
@@ -991,19 +1160,33 @@ async function runCommandsFast() {
     if (forceClose.size) {
       const ledgerAdd = [];
       for (const th of open.filter((o) => forceClose.has(o.id))) {
-        let price = th.entry;
+        // A dev-close needs a REAL price. Filling at th.entry on a provider
+        // failure fabricated a 0-P&L close that then fed the learning ledger and
+        // the reflections — three such rows were live before this. On failure:
+        // fall back to the last polled price if it is fresh, else leave the id
+        // queued and let the next 15s tick (or the 2-min loop) retry.
+        let price = null, fillSource = "live";
         try {
           // loadMarket needs ≥400 bars, so pull 500× 1m (one call) and take the
           // last close as the live price.
           const ds = await loadMarket({ id: th.symbol, asset: th.asset, symbol: th.symbol, interval: "1m", bars: 500, range: "1d" });
           const last = ds?.candles?.[ds.candles.length - 1];
           if (last) price = last.close;
-        } catch { /* fall back to entry */ }
+        } catch { /* fall through to the freshness check */ }
+        if (price == null && Number.isFinite(th.currentPrice) && Date.now() - (th.lastPoll || 0) < 10 * 60_000) {
+          price = th.currentPrice; fillSource = "lastPoll";
+        }
+        if (price == null) {
+          console.log(`[${new Date().toISOString()}] CLOSE (dev) ${th.symbol} deferred — no price available, retrying`);
+          continue; // stays in forceClose; ackCommands only acks once it is gone from `open`
+        }
         const res = closeThesisAt(th, price);
-        open = open.filter((o) => o.id !== th.id);
-        equity += res.pnl; closedToday.push(res); ledgerAdd.push(res); closedAll.push(res); reflectQueue.push(res);
+        if (fillSource !== "live") res.fillSource = fillSource;
+        res.devClose = true;
+        res.devCloseReason = forceCloseReason.get(th.id) || "";
+        forceCloseReason.delete(th.id);
+        bookClose(th, res, ledgerAdd);
         forceClose.delete(th.id);
-        console.log(`[${new Date().toISOString()}] CLOSE (dev·instant) ${res.symbol} ${res.outcome} R=${res.R.toFixed(2)} pnl=${res.pnl.toFixed(2)} eq=${equity.toFixed(0)}`);
       }
       if (ledgerAdd.length) await persist(ledgerAdd, { halted: false, dailyPnl: closedToday.reduce((a, c) => a + c.pnl, 0) });
     }
@@ -1016,4 +1199,4 @@ setInterval(() => cycle(true), 15 * 60_000);
 setInterval(() => cycle(false), 2 * 60_000);
 setInterval(runCommandsFast, 15_000);
 cycle(true);
-console.log(`Argus running — universe ${UNIVERSE.length} core (+${EVENT_TICKERS.length} event) · event-channel ${LLM_ON ? "on" : "off"} · heat ${HEAT_CAP * 100}% cap / ${BASE_RISK * 100}% base · daily stop ${DAILY_STOP * 100}% · paper eq ${EQUITY0}`);
+console.log(`Argus running — universe ${UNIVERSE.length} core (+${EVENT_TICKERS.length} event)${SYMBOL_BLOCKLIST.size ? ` · blocked ${[...SYMBOL_BLOCKLIST].join("/")}` : ""} · kinds ${[...ARGUS_KINDS].join(",")} · inval ${INVAL_MODE} · asia-shorts ${BLOCK_ASIA_SHORTS ? "banned" : "allowed"} · event-channel ${LLM_ON ? "on" : "off"} · heat ${HEAT_CAP * 100}% flat · risk ${(BASE_RISK * 100).toFixed(2)}% flat · lev ≤${MAX_TRADE_LEV} · daily stop ${DAILY_STOP * 100}% · paper eq ${EQUITY0}`);
