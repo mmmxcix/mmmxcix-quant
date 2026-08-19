@@ -930,8 +930,10 @@ async function cycle(fullScan) {
       // that answer CURRENT so the intuition can't creep back unmeasured; the
       // alert fires only in the one condition under which BE gets revisited.
       beStudy = [0.5, 0.8, 1.0, 1.2].map((trigger) => breakEvenStudy(closedAll, { trigger }));
-      const beAlert = beStudy.find((s) => s.delta > 5 && s.applied >= 15);
-      if (beAlert) console.log(`[${new Date().toISOString()}] BE-STUDY ALERT — trigger ${beAlert.trigger}R would have added +${beAlert.delta.toFixed(1)}R over ${beAlert.applied} applications; revisit the break-even stop`);
+      // The alert reads NET (saved losers + killed winners) — the loser-side
+      // `delta` alone is a one-sided upper bound that fires on day one.
+      const beAlert = beStudy.find((s) => s.netDelta > 5 && s.applied >= 15);
+      if (beAlert) console.log(`[${new Date().toISOString()}] BE-STUDY ALERT — trigger ${beAlert.trigger}R nets +${beAlert.netDelta.toFixed(1)}R over ${beAlert.applied} saves / ${beAlert.killed} kills; revisit the break-even stop`);
     }
 
     // On the fast loop, only touch instruments with an open thesis or a forming

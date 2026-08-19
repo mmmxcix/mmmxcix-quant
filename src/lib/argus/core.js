@@ -544,19 +544,47 @@ export function breakEvenOutcome(t, { trigger = 0.5 } = {}) {
   return { applies: true, before: R, after: 0, delta: -R, why: "ran, then reversed through entry" };
 }
 
-/** Apply breakEvenOutcome across a ledger and total the effect. */
+/** Apply breakEvenOutcome across a ledger and total the effect.
+ *
+ *  `delta` is the LOSER side only — trades saved by the BE stop — and is an
+ *  upper bound by construction, because breakEvenOutcome calls every winner
+ *  "won anyway": a winner that reached the trigger, dipped back through entry
+ *  and THEN hit its target would in reality have been stopped flat, and the
+ *  per-trade timestamps cannot prove that sequence (a winner's max-favourable
+ *  time is essentially its exit, so the dip always time-sorts before it).
+ *
+ *  The study therefore adds the standard linear-path estimate for those killed
+ *  winners: the trigger is assumed first touched at (trigger/maxFavR) of the
+ *  way to the peak, and a winner whose below-entry dip (maxAdvR ≥ 0.05)
+ *  happened after that touch counts as killed. `netDelta` = saved + killed is
+ *  the number a decision may look at; quoting `delta` alone is how a one-sided
+ *  instrument talks a break-even stop back into a book whose entire edge is
+ *  its fat right tail. (Measured Aug 2026: delta +28R, netDelta ≈ −3R.) */
 export function breakEvenStudy(closed, { trigger = 0.5 } = {}) {
   const rows = (closed || []).map((t) => ({ t, o: breakEvenOutcome(t, { trigger }) }));
   const applied = rows.filter((r) => r.o.applies);
   const undecidable = rows.filter((r) => !r.o.applies && /order (unknown|same-bar)/.test(r.o.why));
   const sumBefore = rows.reduce((a, r) => a + r.o.before, 0);
   const sumAfter = rows.reduce((a, r) => a + r.o.after, 0);
+  let killed = 0, killedR = 0;
+  for (const t of closed || []) {
+    const R = tradeR(t);
+    const fav = t?.maxFavR ?? 0;
+    if (!(R > 0) || !(fav >= trigger)) continue;
+    if (!((t?.maxAdvR ?? 0) >= 0.05)) continue; // never traded back below entry — BE stop untouched
+    if (!Number.isFinite(t?.maxFavAt) || !Number.isFinite(t?.maxAdvAt) || !Number.isFinite(t?.openedAt)) continue;
+    const firstTouch = t.openedAt + (trigger / fav) * (t.maxFavAt - t.openedAt); // linear-path proxy
+    if (t.maxAdvAt > firstTouch) { killed++; killedR += -R; } // flat at BE instead of the +R it made
+  }
+  const delta = sumAfter - sumBefore;
   return {
     trigger,
     n: rows.length,
     applied: applied.length,
     undecidable: undecidable.length,
-    sumBefore, sumAfter, delta: sumAfter - sumBefore,
+    sumBefore, sumAfter, delta,
+    killed, killedR,
+    netDelta: delta + killedR,
   };
 }
 
