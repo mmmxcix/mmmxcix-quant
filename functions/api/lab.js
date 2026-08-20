@@ -429,8 +429,18 @@ export async function onRequest({ request, env, waitUntil }) {
     }
     // 30, matching the agent's local store — with 2–5 harvests per night the
     // old cap of 20 evicted survivors before the daytime re-validator saw them.
-    const items = [...byId.values()].slice(0, 30);
-    const payload = JSON.stringify({ items, updatedAt: Date.now() });
+    let items = [...byId.values()].slice(0, 30);
+    let payload = JSON.stringify({ items, updatedAt: Date.now() });
+    // The KV value budget is a hard 64KB and the merge always contains the whole
+    // stored list — so the old outright 413 meant that once the list grew fat
+    // enough, EVERY later push failed forever, silently ("? stored" in the agent
+    // log): no candidate found after early Aug 2026 ever reached the site or the
+    // revalidator. Trim the OLDEST until it fits instead — the fresh survivors
+    // are the ones the daytime half must see.
+    while (payload.length > MAX_STATE_BYTES && items.length > 1) {
+      items = items.slice(0, -1);
+      payload = JSON.stringify({ items, updatedAt: Date.now() });
+    }
     if (payload.length > MAX_STATE_BYTES) return json({ error: "candidates_too_large", max: MAX_STATE_BYTES }, 413);
     await env.SUBSCRIBERS.put("lab:candidates", payload);
     return json({ ok: true, stored: items.length, bytes: payload.length });
