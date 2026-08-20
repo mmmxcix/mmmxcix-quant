@@ -821,7 +821,7 @@ const NOT_IMPROVABLE = /^(compile:|gen:|runtime|strategy error|no markets|no edg
 // k-fold, noise, holdout, buy&hold, DSR, the Sharpe quality floor (the dominant
 // failure since the Aug bars), drawdown, and the sample floors (trade count /
 // trades-per-year / pooled) — the improve prompt knows a targeted fix for each.
-const IMPROVABLE = /timing-fragile|k-?fold|noise|holdout|buy\s*&\s*hold|DSR|dd\s|PF\s|quality floor|quant-grade|Sharpe\s+[\d.]+\s*(?:<|below)|drawdown|only \d+(?:\.\d+)? trades|trades\/yr|pooled/i;
+const IMPROVABLE = /timing-fragile|k-?fold|noise|holdout|buy\s*&\s*hold|DSR|dd\s|PF\s|quality floor|quant-grade|Sharpe\s+[\d.]+\s*(?:<|below)|drawdown|only \d+(?:\.\d+)? trades|trades\/yr|pooled|stop-?loss|risk management/i;
 const improvePool = ALWAYS_ON
   ? (st.graveyard || []).filter((g) =>
       g.code && (g.improveTries || 0) < MAX_IMPROVE_TRIES &&
