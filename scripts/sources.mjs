@@ -57,7 +57,7 @@ export const RELEVANCE =
 // Hard blocklist on TITLES: news/PR/signal-spam that can contain method words
 // but never contains a testable idea. Checked in addition to RELEVANCE.
 export const JUNK =
-  /^(buy|sell|long|short)\b|market alert|why stocks (are|were) moving|price (prediction|target)s?\b|passes \$|all.?time high|cumulative .{0,24}volume|hires|appoints|joins .{0,30} as|steps down|interview|opinion:|recap\b|market wrap|week ahead|top \d+|best \d+ |airdrop|presale|price analysis|price today|% indicator agreement/i;
+  /^(buy|sell|long|short)\b|market alert|why stocks (are|were) moving|price (prediction|target)s?\b|passes \$|all.?time high|cumulative .{0,24}volume|hires|appoints|joins .{0,30} as|steps down|interview|opinion:|recap\b|market wrap|week ahead|top \d+|best \d+ |airdrop|presale|price analysis|price today|% indicator agreement|^\s*[a-z0-9]{2,12}(usdt?|perp)\b|forming (bullish|bearish)|is \$?\d[\d.,]*[km]? next|to the moon|-?\s*(long|short) set.?up\b/i;
 
 // ── small helpers ───────────────────────────────────────────────────────────
 const clean = (s) => String(s || "").replace(/\s+/g, " ").trim();

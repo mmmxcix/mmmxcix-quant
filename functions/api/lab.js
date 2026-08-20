@@ -402,6 +402,22 @@ export async function onRequest({ request, env, waitUntil }) {
     });
   }
 
+  // Remove candidates by id — the revalidator's cleanup for decayed entries.
+  // Without this the site list only ever accumulated: a candidate that failed
+  // re-validation stayed stored, was re-pulled as "due" on every later pass and
+  // re-decayed forever — burning every run's budget on zombies and flooding the
+  // graveyard with a fresh tombstone each time.
+  if (Array.isArray(body?.candidatesRemove)) {
+    let existing = [];
+    try { existing = JSON.parse((await env.SUBSCRIBERS.get("lab:candidates")) || "{}").items || []; } catch { /* fresh */ }
+    const drop = new Set(body.candidatesRemove.filter(Boolean).map(String));
+    const items = existing.filter((c) => c && !drop.has(String(c.id)));
+    if (items.length !== existing.length) {
+      await env.SUBSCRIBERS.put("lab:candidates", JSON.stringify({ items, updatedAt: Date.now() }));
+    }
+    return json({ ok: true, removed: existing.length - items.length, remaining: items.length });
+  }
+
   // Research candidates ACCUMULATE: merge by id with what's already stored
   // (newest first), so survivors persist on the site across agent runs.
   if (Array.isArray(body?.candidates)) {

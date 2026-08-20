@@ -262,10 +262,17 @@ for (const c of due) {
   } else {
     decayed.push({ id: c.id, name: c.name, reason: verdict.reason });
     console.log(`✗ decayed: ${String(c.name).slice(0, 48)} — ${verdict.reason}`);
-    st.graveyard = [{
+    // Bury WITH the code and a fresh improve budget: a strategy that decayed on a
+    // quality bar is exactly the improve loop's raw material — a code-less
+    // tombstone would be a dead end. Replace a same-title corpse instead of
+    // stacking a duplicate per pass (the old behaviour flooded the 200-cap
+    // graveyard with 8 new tombstones every run and evicted the improvable ones).
+    const corpse = {
       title: String(c.name).slice(0, 70), reason: `revalidate: ${verdict.reason}`,
-      source: c.source, topics: c.topics, at: now,
-    }, ...(st.graveyard || [])].slice(0, 200);
+      source: c.source, topics: c.topics, code: c.code, language: c.language,
+      link: c.paper, improveTries: 0, at: now,
+    };
+    st.graveyard = [corpse, ...(st.graveyard || []).filter((g) => g.title !== corpse.title)].slice(0, 200);
   }
 }
 
@@ -276,13 +283,34 @@ st.candidates = (st.candidates || [])
   .map((c) => survivors.find((s) => s.id === c.id) || c);
 saveResearch(st);
 
+// …and from the SITE store, or they come back as "due" on the next pass and get
+// re-decayed forever (the zombie loop this agent was stuck in until Aug 2026).
+// Stale code-less candidates (an early schema carried none) can never be
+// re-validated OR traded, so they are removed once they are a week old.
+const removeIds = [
+  ...decayed.map((d) => d.id),
+  ...candidates.filter((c) => c && c.id && !c.code && now - (c.foundAt || 0) > 7 * 864e5).map((c) => c.id),
+];
+if (removeIds.length) {
+  try {
+    const r = await api("", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: TOKEN, candidatesRemove: removeIds }),
+    });
+    const o = await r.json().catch(() => ({}));
+    console.log(`site candidates pruned: ${o.removed ?? "?"} removed, ${o.remaining ?? "?"} remain`);
+  } catch (e) { console.error(`candidate prune failed: ${e.message}`); }
+}
+
 // Push survivors back so the site's candidate list carries the fresh verdict.
 if (survivors.length) {
-  const r = await api("", {
-    method: "POST", headers: { "content-type": "application/json" },
-    body: JSON.stringify({ token: TOKEN, candidates: survivors }),
-  });
-  console.log(`candidates refreshed: ${(await r.json().catch(() => ({}))).stored ?? "?"} stored`);
+  try {
+    const r = await api("", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: TOKEN, candidates: survivors }),
+    });
+    console.log(`candidates refreshed: ${(await r.json().catch(() => ({}))).stored ?? "?"} stored`);
+  } catch (e) { console.error(`candidate refresh failed: ${e.message}`); }
 }
 
 // Promotion, gated per profile by the live RiskGate — same rule as the night agent.
@@ -306,12 +334,14 @@ for (const p of toPromote) {
 }
 
 if (allowed.length) {
-  const r = await api("", {
-    method: "POST", headers: { "content-type": "application/json" },
-    body: JSON.stringify({ token: TOKEN, promote: allowed }),
-  });
-  const o = await r.json().catch(() => ({}));
-  console.log(`🤖 promoted ${allowed.length} → ${JSON.stringify(o.byProfile || {})} (caps ${JSON.stringify(o.caps || {})})`);
+  try {
+    const r = await api("", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: TOKEN, promote: allowed }),
+    });
+    const o = await r.json().catch(() => ({}));
+    console.log(`🤖 promoted ${allowed.length} → ${JSON.stringify(o.byProfile || {})} (caps ${JSON.stringify(o.caps || {})})`);
+  } catch (e) { console.error(`promotion push failed: ${e.message}`); }
 }
 if (held.length) console.log(`🚦 held by RiskGate — ${[...new Set(held)].join("; ")}`);
 
@@ -328,11 +358,15 @@ const state = {
     lastDecayed: decayed.slice(0, 3).map((d) => ({ title: String(d.name).slice(0, 70), reason: d.reason })),
   },
 };
-const push = await api("", {
-  method: "POST", headers: { "content-type": "application/json" },
-  body: JSON.stringify({ token: TOKEN, state }),
-});
+let pushOk = false;
+try {
+  const push = await api("", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ token: TOKEN, state }),
+  });
+  pushOk = !!(await push.json().catch(() => ({}))).ok;
+} catch (e) { console.error(`state push failed: ${e.message}`); }
 console.log(
   `revalidate done: ${survivors.length} held up, ${decayed.length} decayed, ${allowed.length} promoted → ` +
-  `push ${(await push.json().catch(() => ({}))).ok ? "ok" : "FAILED"}`
+  `push ${pushOk ? "ok" : "FAILED"}`
 );

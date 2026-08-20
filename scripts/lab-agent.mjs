@@ -232,8 +232,16 @@ function assessIncubation(ps, s) {
 }
 
 // ── main ────────────────────────────────────────────────────────────────────
-const stratRes = await fetch(`${SITE}/api/lab?what=strategies`, { headers: { "x-lab-token": TOKEN } });
-const stratOut = await stratRes.json().catch(() => ({}));
+// try/catch so a network outage exits with one clean line instead of an
+// uncaught ETIMEDOUT stack (which also looks like a crash in the daemon log).
+let stratRes, stratOut;
+try {
+  stratRes = await fetch(`${SITE}/api/lab?what=strategies`, { headers: { "x-lab-token": TOKEN } });
+  stratOut = await stratRes.json().catch(() => ({}));
+} catch (e) {
+  console.error(`site unreachable (${e.message}) — skipping this paper cycle`);
+  process.exit(0);
+}
 if (!stratRes.ok) { console.error("strategy fetch failed:", stratRes.status, stratOut); process.exit(1); }
 const published = stratOut.strategies?.items || [];
 
@@ -579,12 +587,18 @@ const state = {
   note,
 };
 
-const push = await fetch(`${SITE}/api/lab`, {
-  method: "POST",
-  headers: { "content-type": "application/json" },
-  body: JSON.stringify({ token: TOKEN, state }),
-});
-const out = await push.json().catch(() => ({}));
+let push, out;
+try {
+  push = await fetch(`${SITE}/api/lab`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ token: TOKEN, state }),
+  });
+  out = await push.json().catch(() => ({}));
+} catch (e) {
+  console.error(`state push failed (${e.message}) — local state saved, next cycle retries`);
+  process.exit(1);
+}
 if (!push.ok || !out.ok) { console.error("push failed:", push.status, out); process.exit(1); }
 console.log(`paper run complete: ${summaries.length} strategies, combined ${combined ? combined.toFixed(0) : "-"} → pushed ${out.bytes} bytes`);
 

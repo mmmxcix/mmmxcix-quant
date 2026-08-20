@@ -137,6 +137,27 @@ function load() {
 }
 function save(st) { writeFileSync(RESEARCH_FILE, JSON.stringify(st)); }
 
+// Bury with hygiene: replace a same-title corpse instead of stacking a
+// duplicate, and when the cap forces evictions, evict code-LESS corpses first.
+// Entries that carry code are the improve loop's raw material — letting
+// code-less tombstones (e.g. a revalidation sweep's) flood them out is what
+// starved the always-on improve phase to an empty pool in Aug 2026.
+const GRAVE_CAP = 200;
+function bury(st, entry) {
+  const rest = [entry, ...(st.graveyard || []).filter((g) => g.title !== entry.title)];
+  if (rest.length > GRAVE_CAP) {
+    let drop = rest.length - GRAVE_CAP;
+    const keep = [];
+    for (let i = rest.length - 1; i >= 0; i--) {         // oldest → newest
+      if (drop > 0 && !rest[i].code) { drop--; continue; } // shed code-less first
+      keep.unshift(rest[i]);
+    }
+    st.graveyard = keep.slice(0, GRAVE_CAP);             // all carry code → oldest go
+  } else {
+    st.graveyard = rest;
+  }
+}
+
 // How many strategies were tried in the recent SELECTION WINDOW — the pool this
 // candidate was actually chosen from.
 //
@@ -355,7 +376,9 @@ function improveFacts(reason) {
   else if (/noise/i.test(reason)) hint = "Tiny price perturbations destroyed it — widen thresholds/bands so entries never depend on exact price levels.";
   else if (/buy\s*&\s*hold/i.test(reason)) hint = "It underperformed simply holding the asset risk-adjusted — trade less often, be active only in the favourable regime, and/or add the short side.";
   else if (/holdout/i.test(reason)) hint = "It inverted on the most recent 30% of the data — reduce regime dependence; the rule must hold in the CURRENT market, not just the past.";
-  else if (/dd\s/i.test(reason)) hint = "The drawdown is too deep — cut exposure with a volatility or regime filter instead of riding every move.";
+  else if (/dd\s|drawdown/i.test(reason)) hint = "The drawdown is too deep — cut exposure with a volatility or regime filter instead of riding every move.";
+  else if (/quality floor|quant-grade|Sharpe\s+[\d.]+\s*(?:<|below)/i.test(reason)) hint = "The risk-adjusted return is below quant grade (Sharpe < 1) — add a regime/volatility filter so it is only active when the edge exists, cut the losing trades (tighter invalidation), and stay flat in chop; raising Sharpe by trading less is fine.";
+  else if (/only \d+(?:\.\d+)? trades|trades\/yr|pooled/i.test(reason)) hint = "The sample is too thin — the rule fires too rarely. Make the trigger fire more often WITHOUT degrading quality: relative conditions (crossovers, bands, percentiles) instead of rare absolute setups, allow both sides, and make it work on more markets.";
   else if (/PF\s|DSR/i.test(reason)) hint = "The edge is too thin after costs — make entries more selective: higher-conviction setups, fewer trades.";
   return `Failed validation: ${reason}. ${hint}`;
 }
@@ -790,8 +813,15 @@ for (const item of fresh) {
 // stay buried. Each idea gets at most MAX_IMPROVE_TRIES iterations.
 const MAX_IMPROVE_TRIES = +(process.env.LAB_IMPROVE_TRIES || 3);
 const IMPROVE_PER_RUN = +(process.env.LAB_IMPROVE_PER_RUN || 2);
-const NOT_IMPROVABLE = /^(compile:|gen:|runtime|strategy error|no markets|no edge anywhere)/i;
-const IMPROVABLE = /timing-fragile|k-?fold|noise|holdout|buy\s*&\s*hold|DSR|dd\s|PF\s/i;
+// "no edge on any" is the gauntlet's actual wording (the old "no edge anywhere"
+// never matched, so edgeless strategies leaked into the improve pool via the
+// "PF 1.08" in their reason string while real near-misses were excluded).
+const NOT_IMPROVABLE = /^(compile:|gen:|runtime|strategy error|no markets|no edge (on any|anywhere))/i;
+// One fix away from a candidate: every QUALITY-gate failure qualifies — timing,
+// k-fold, noise, holdout, buy&hold, DSR, the Sharpe quality floor (the dominant
+// failure since the Aug bars), drawdown, and the sample floors (trade count /
+// trades-per-year / pooled) — the improve prompt knows a targeted fix for each.
+const IMPROVABLE = /timing-fragile|k-?fold|noise|holdout|buy\s*&\s*hold|DSR|dd\s|PF\s|quality floor|quant-grade|Sharpe\s+[\d.]+\s*(?:<|below)|drawdown|only \d+(?:\.\d+)? trades|trades\/yr|pooled/i;
 const improvePool = ALWAYS_ON
   ? (st.graveyard || []).filter((g) =>
       g.code && (g.improveTries || 0) < MAX_IMPROVE_TRIES &&
@@ -905,18 +935,30 @@ for (const paper of fresh) {
     let { code, language } = await generateStrategy(paper);
     // Self-repair probe: if it won't compile/run, ask the model to fix it once.
     // For Python this runs the code through Pyodide on a synthetic series.
+    //
+    // RATE-LIMIT POLICY for the repair calls: degrade, never abort. The old code
+    // re-threw the skip, which kept the paper "fresh" — so the NEXT run re-spent
+    // a full generation call on the same paper, hit the limit at the same spot,
+    // and looped forever: the exact papers that needed repair burned the most
+    // quota. Now a rate-limited repair just keeps the original code and lets the
+    // gauntlet judge it — the paper is consumed honestly and its corpse (with
+    // code) stays available to the improve loop. Only a rate-limited GENERATION
+    // (no code produced at all) still keeps the paper fresh.
+    let compiledOk = true;
     try {
       compileCheckFor(code, language);
     } catch (ce) {
+      compiledOk = false;
       console.log(`  ⚠ won't compile (${ce.message.slice(0, 45)}) — repair attempt…`);
       try {
         const fixed = await repairStrategy(code, ce.message, language);
         compileCheckFor(fixed, language); // throws if still broken → keep original, gauntlet buries it
         code = fixed;
+        compiledOk = true;
         console.log("  ✓ repaired");
       } catch (re) {
-        if (re.skip) throw re; // rate-limited repair → treat as infra skip, paper stays fresh
-        console.log(`  ✗ repair failed (${String(re.message || "").slice(0, 40)})`);
+        if (re.skip) console.log("  ~ repair rate-limited — keeping original (gauntlet will judge it)");
+        else console.log(`  ✗ repair failed (${String(re.message || "").slice(0, 40)})`);
       }
     }
     // Liveness repair: if the strategy barely trades, it is a degenerate
@@ -924,7 +966,10 @@ for (const paper of fresh) {
     // model ONE chance to make it actually fire — same self-repair pattern as
     // the compile fix, aimed squarely at the n=0/n=1 no-ops. Only keep the
     // rewrite if it genuinely trades more, so a failed repair can't make it worse.
-    if (datasets.length) {
+    // Only for code that COMPILES: probing trades on broken code always reads 0,
+    // so the old flow spent a guaranteed-useless LLM call right after a failed
+    // compile repair.
+    if (datasets.length && compiledOk) {
       const live = livenessTrades(code, datasets, language);
       if (live < 5) {
         console.log(`  ⚠ near-zero trades (max ${live}) — liveness repair…`);
@@ -938,8 +983,8 @@ for (const paper of fresh) {
           if (livenessTrades(fixed, datasets, language) > live) { code = fixed; console.log("  ✓ liveness repaired"); }
           else console.log("  ✗ liveness repair no better — keeping original (gauntlet will bury it)");
         } catch (re) {
-          if (re.skip) throw re; // rate-limited → infra skip, paper stays fresh
-          console.log(`  ✗ liveness repair failed (${String(re.message || "").slice(0, 40)})`);
+          if (re.skip) console.log("  ~ liveness repair rate-limited — keeping original (gauntlet will judge it)");
+          else console.log(`  ✗ liveness repair failed (${String(re.message || "").slice(0, 40)})`);
         }
       }
     }
@@ -954,7 +999,7 @@ for (const paper of fresh) {
       // Optimizer: plateau gate + cautious neighbor adoption.
       const plat = applyPlateau(code, language, verdict, st, [...datasets, ...extras]);
       if (!plat.ok) {
-        st.graveyard = [{ title: paper.title.slice(0, 70), reason: `parameter knife-edge (${plat.summary})`, source: paper.source, link: paper.link, topics: paper.topics, code, language, improveTries: 0, at: Date.now() }, ...st.graveyard].slice(0, 200);
+        bury(st, { title: paper.title.slice(0, 70), reason: `parameter knife-edge (${plat.summary})`, source: paper.source, link: paper.link, topics: paper.topics, code, language, improveTries: 0, at: Date.now() });
         console.log(`✗ knife-edge → graveyard: ${paper.title.slice(0, 50)} — ${plat.summary}`);
         verdict.pass = false; verdict.reason = "parameter knife-edge";
       } else {
@@ -1012,7 +1057,7 @@ for (const paper of fresh) {
       // reason so the improve loop can try to fix it.
       const codeBug = await codeReviewGate(code, cand, language);
       if (codeBug) {
-        st.graveyard = [{ title: paper.title.slice(0, 70), reason: codeBug, source: paper.source, link: paper.link, topics: paper.topics, code, language, improveTries: 0, at: Date.now() }, ...st.graveyard].slice(0, 200);
+        bury(st, { title: paper.title.slice(0, 70), reason: codeBug, source: paper.source, link: paper.link, topics: paper.topics, code, language, improveTries: 0, at: Date.now() });
         console.log(`✗ graveyard (code bug): ${paper.title.slice(0, 50)} — ${codeBug}`);
         continue;
       }
@@ -1035,7 +1080,7 @@ for (const paper of fresh) {
     } else {
       // Buried WITH its code + language + link, so the always-on improve loop
       // can pick the near-misses back up and iterate on them.
-      st.graveyard = [{ title: paper.title.slice(0, 70), reason: verdict.reason, source: paper.source, link: paper.link, topics: paper.topics, code, language, improveTries: 0, at: Date.now() }, ...st.graveyard].slice(0, 200);
+      bury(st, { title: paper.title.slice(0, 70), reason: verdict.reason, source: paper.source, link: paper.link, topics: paper.topics, code, language, improveTries: 0, at: Date.now() });
       console.log(`✗ graveyard: ${paper.title.slice(0, 50)} — ${verdict.reason}`);
     }
   } catch (e) {
@@ -1043,7 +1088,7 @@ for (const paper of fresh) {
       console.log(`~ skipped (infra: ${e.message}) — paper stays fresh for the next run`);
     } else {
       st.seen = [...st.seen, paper.id].slice(-500);
-      st.graveyard = [{ title: paper.title.slice(0, 70), reason: `gen: ${e.message.slice(0, 60)}`, source: paper.source, topics: paper.topics, at: Date.now() }, ...st.graveyard].slice(0, 200);
+      bury(st, { title: paper.title.slice(0, 70), reason: `gen: ${e.message.slice(0, 60)}`, source: paper.source, topics: paper.topics, at: Date.now() });
       console.log(`✗ generation failed: ${e.message}`);
     }
   }
@@ -1243,7 +1288,7 @@ if (ALWAYS_ON && datasets.length && MINE_PER_RUN > 0 && !(UNTIL_HIT && newCandid
         console.log(`✓ MINED → CANDIDATE: ${cand.name} (DSR ${cand.dsr}% on ${cand.bestMarket}) · ${hit.stat}`);
         const codeBug = await codeReviewGate(hit.code, cand, "js");
         if (codeBug) {
-          st.graveyard = [{ title: hit.name.slice(0, 70), reason: codeBug, source: "data-mining", topics: ["anomaly"], code: hit.code, language: "js", improveTries: 0, at: Date.now() }, ...st.graveyard].slice(0, 200);
+          bury(st, { title: hit.name.slice(0, 70), reason: codeBug, source: "data-mining", topics: ["anomaly"], code: hit.code, language: "js", improveTries: 0, at: Date.now() });
           console.log(`✗ mined → graveyard (code bug): ${hit.name.slice(0, 50)} — ${codeBug}`);
         } else {
           cand.committee = await committeeReview(hit.code, cand);
@@ -1252,7 +1297,7 @@ if (ALWAYS_ON && datasets.length && MINE_PER_RUN > 0 && !(UNTIL_HIT && newCandid
           queuePromotions(cand, verdict);
         }
       } else {
-        st.graveyard = [{ title: hit.name.slice(0, 70), reason: verdict.reason, source: "data-mining", topics: ["anomaly"], code: hit.code, language: "js", improveTries: 0, at: Date.now() }, ...st.graveyard].slice(0, 200);
+        bury(st, { title: hit.name.slice(0, 70), reason: verdict.reason, source: "data-mining", topics: ["anomaly"], code: hit.code, language: "js", improveTries: 0, at: Date.now() });
         console.log(`✗ mined → graveyard: ${hit.name.slice(0, 50)} — ${verdict.reason}`);
       }
     } catch (e) {
@@ -1310,7 +1355,7 @@ if (ALWAYS_ON && datasets.length && INTRADAY_PER_RUN > 0 && !(UNTIL_HIT && newCa
         console.log(`✓ INTRADAY → CANDIDATE: ${cand.name} (DSR ${cand.dsr}% on ${cand.bestMarket})`);
         const codeBug = await codeReviewGate(code, cand, "js");
         if (codeBug) {
-          st.graveyard = [{ title: tpl.name.slice(0, 70), reason: codeBug, source: "intraday-template", topics: ["intraday"], code, language: "js", improveTries: 0, at: Date.now() }, ...st.graveyard].slice(0, 200);
+          bury(st, { title: tpl.name.slice(0, 70), reason: codeBug, source: "intraday-template", topics: ["intraday"], code, language: "js", improveTries: 0, at: Date.now() });
           console.log(`✗ intraday → graveyard (code bug): ${tpl.name.slice(0, 50)} — ${codeBug}`);
         } else {
           cand.committee = await committeeReview(code, cand);
@@ -1319,7 +1364,7 @@ if (ALWAYS_ON && datasets.length && INTRADAY_PER_RUN > 0 && !(UNTIL_HIT && newCa
           queuePromotions(cand, verdict);
         }
       } else {
-        st.graveyard = [{ title: tpl.name.slice(0, 70), reason: verdict.reason, source: "intraday-template", topics: ["intraday"], code, language: "js", improveTries: 0, at: Date.now() }, ...st.graveyard].slice(0, 200);
+        bury(st, { title: tpl.name.slice(0, 70), reason: verdict.reason, source: "intraday-template", topics: ["intraday"], code, language: "js", improveTries: 0, at: Date.now() });
         console.log(`✗ intraday → graveyard: ${tpl.name.slice(0, 50)} — ${verdict.reason}`);
       }
     } catch (e) {
@@ -1332,18 +1377,24 @@ if (ALWAYS_ON && datasets.length && INTRADAY_PER_RUN > 0 && !(UNTIL_HIT && newCa
 
 // Read the current lab state ONCE — used both to gate promotion on portfolio
 // health (RiskGate) and to preserve paper state when we merge our summary in.
-const cur = await (await fetch(`${SITE}/api/lab`, { headers: { "x-lab-token": TOKEN } })).json().catch(() => ({}));
+// try/catch around the fetch itself: a network outage here used to be an
+// UNCAUGHT rejection that killed the whole run (ETIMEDOUT → process crash)
+// after all the expensive work was already done.
+let cur = {};
+try { cur = await (await fetch(`${SITE}/api/lab`, { headers: { "x-lab-token": TOKEN } })).json(); } catch { /* offline → merge over nothing */ }
 
 // candidates always accumulate on the site — include the ones the polish phase
 // upgraded or crowned (maxed) so their new code / 👑 flag reaches the Registry.
 const pushCandidates = [...newCandidates];
 for (const c of touchedCandidates) if (!pushCandidates.some((x) => x.id === c.id)) pushCandidates.push(c);
 if (pushCandidates.length) {
-  const r = await fetch(`${SITE}/api/lab`, {
-    method: "POST", headers: { "content-type": "application/json" },
-    body: JSON.stringify({ token: TOKEN, candidates: pushCandidates }),
-  });
-  console.log(`candidates pushed: ${(await r.json().catch(() => ({}))).stored ?? "?"} stored on site`);
+  try {
+    const r = await fetch(`${SITE}/api/lab`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: TOKEN, candidates: pushCandidates }),
+    });
+    console.log(`candidates pushed: ${(await r.json().catch(() => ({}))).stored ?? "?"} stored on site`);
+  } catch (e) { console.error(`candidates push failed: ${e.message} — kept locally, next run re-pushes`); }
 }
 
 // Auto-promotion — gated by RiskGate PER PROFILE: a full prop book must not
@@ -1370,13 +1421,15 @@ for (const p of toPromote) {
   else allowed.push(p);
 }
 if (allowed.length) {
-  const r = await fetch(`${SITE}/api/lab`, {
-    method: "POST", headers: { "content-type": "application/json" },
-    body: JSON.stringify({ token: TOKEN, promote: allowed }),
-  });
-  const o = await r.json().catch(() => ({}));
-  st.autoPromoted = (st.autoPromoted || 0) + allowed.length; save(st);
-  console.log(`🤖 auto-promoted ${allowed.length} → paper portfolio (active autos: ${o.autoActive ?? "?"}/${o.cap ?? "?"})`);
+  try {
+    const r = await fetch(`${SITE}/api/lab`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: TOKEN, promote: allowed }),
+    });
+    const o = await r.json().catch(() => ({}));
+    st.autoPromoted = (st.autoPromoted || 0) + allowed.length; save(st);
+    console.log(`🤖 auto-promoted ${allowed.length} → paper portfolio (active autos: ${o.autoActive ?? "?"}/${o.cap ?? "?"})`);
+  } catch (e) { console.error(`promotion push failed: ${e.message}`); }
 }
 if (heldNotes.length) {
   console.log(`🚦 auto-promotion held by RiskGate — ${[...new Set(heldNotes)].join("; ")}`);
@@ -1427,10 +1480,14 @@ const state = { ...(cur?.state || {}), research: {
   latest: fresh.map((p) => ({ title: p.title.slice(0, 80), link: p.link, source: p.source, kind: p.kind })),
   lastGraveyard: st.graveyard.slice(0, 3).map((g) => ({ title: g.title, reason: g.reason })),
 } };
-const push = await fetch(`${SITE}/api/lab`, {
-  method: "POST", headers: { "content-type": "application/json" },
-  body: JSON.stringify({ token: TOKEN, state }),
-});
+let statePushOk = false;
+try {
+  const push = await fetch(`${SITE}/api/lab`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ token: TOKEN, state }),
+  });
+  statePushOk = !!(await push.json().catch(() => ({}))).ok;
+} catch (e) { console.error(`state push failed: ${e.message}`); }
 const hitThisRun = newCandidates.length > 0;
 if (UNTIL_HIT && !hitThisRun) console.log(`until-hit: no survivor in ${processed} papers (cap ${HARD_CAP} / supply exhausted) — will resume next run`);
-console.log(`research run done: read ${processed}, attempts total ${st.attempts}, graveyard ${st.graveyard.length}, candidates ${st.candidates.length} → push ${(await push.json().catch(() => ({}))).ok ? "ok" : "FAILED"}`);
+console.log(`research run done: read ${processed}, attempts total ${st.attempts}, graveyard ${st.graveyard.length}, candidates ${st.candidates.length} → push ${statePushOk ? "ok" : "FAILED"}`);
