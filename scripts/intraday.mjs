@@ -79,6 +79,82 @@ function strategy(ctx) {
 }`,
   })),
 
+  // ── ORB break-and-RETEST (reel-sourced, Aug 21): don't chase the break — wait
+  // for price to come back into the zone and enter at the midpoint, stop just
+  // beyond the far edge, 3R target. The retest entry is what separates this from
+  // the classic ORB above: a fake-out that never retests is never traded. ──
+  {
+    key: "orb-retest:6:3",
+    name: "ORB break-and-retest (long/short)",
+    code:
+      thesis(
+        "builds a range from the first 6 bars of each UTC day; after a close breaks out of it, WAITS for a pullback that retests the zone midpoint, then enters in the breakout direction at that retest — stop just beyond the far edge of the zone, 3R target, one trade per day.",
+        "liquid intraday sessions where the opening range acts as a level: breaks that retest and hold mark real directional flow with a tight, structural stop.",
+        "trending days that break and never look back (no retest → no trade), and chop that retests straight through the zone."
+      ) +
+`const RANGE_BARS = 6, TARGET_R = 3, STOP_PAD = 0.1;
+let hi = -Infinity, lo = Infinity, count = 0, broke = 0, traded = false, side = 0, stop = 0, target = 0;
+function strategy(ctx) {
+  if (ctx.session.isNewDay) { hi = -Infinity; lo = Infinity; count = 0; broke = 0; traded = false; side = 0; }
+  if (count < RANGE_BARS) { hi = Math.max(hi, ctx.high); lo = Math.min(lo, ctx.low); count++; return "flat"; }
+  if (ctx.position !== "flat") return side === 1 ? { signal: "long", stop, target } : { signal: "short", stop, target };
+  if (traded) return "flat";
+  const width = hi - lo;
+  if (!(width > 0)) return "flat";
+  const mid = (hi + lo) / 2;
+  if (!broke) {
+    if (ctx.close > hi) broke = 1;
+    else if (ctx.close < lo) broke = -1;
+    return "flat";
+  }
+  // armed after the break: enter only on the retest that reaches back to the midpoint
+  if (broke === 1 && ctx.low <= mid && ctx.close > lo) {
+    side = 1; traded = true;
+    stop = lo - STOP_PAD * width;
+    target = ctx.close + TARGET_R * (ctx.close - stop);
+    return { signal: "long", stop, target };
+  }
+  if (broke === -1 && ctx.high >= mid && ctx.close < hi) {
+    side = -1; traded = true;
+    stop = hi + STOP_PAD * width;
+    target = ctx.close - TARGET_R * (stop - ctx.close);
+    return { signal: "short", stop, target };
+  }
+  return "flat";
+}`,
+  },
+
+  // ── Early-range, LATE break (reel-sourced, Aug 21): the pre-open liquidity
+  // range only matters once the liquid session arrives. Range = first 3 bars of
+  // the day; breaks during the early lull are treated as fake-outs and IGNORED —
+  // only a break landing after the wait window is traded. Session-clock idea
+  // (8:00–8:15 ET range, 9:30 breakout) generalized to bar counts so it is
+  // timezone/DST-free and portable across the whole universe. ──
+  {
+    key: "orb-latebreak:3:8:2",
+    name: "Early-range late-break (long/short)",
+    code:
+      thesis(
+        "marks a range from the first 3 bars of each UTC day, then ignores everything until bar 8 of the day; the first close beyond the range AFTER that wait goes long/short with the opposite range edge as the stop and a 2R target — one trade per day.",
+        "instruments where early bars set a liquidity zone but real volume (and the honest break) arrives later in the session.",
+        "sessions whose direction resolves during the ignored window, and ranges so wide the late break never comes."
+      ) +
+`const RANGE_BARS = 3, WAIT_BARS = 8, TARGET_R = 2;
+let hi = -Infinity, lo = Infinity, count = 0, traded = false, side = 0, stop = 0, target = 0;
+function strategy(ctx) {
+  if (ctx.session.isNewDay) { hi = -Infinity; lo = Infinity; count = 0; traded = false; side = 0; }
+  count++;
+  if (count <= RANGE_BARS) { hi = Math.max(hi, ctx.high); lo = Math.min(lo, ctx.low); return "flat"; }
+  if (ctx.position !== "flat") return side === 1 ? { signal: "long", stop, target } : { signal: "short", stop, target };
+  if (traded || count <= WAIT_BARS) return "flat";
+  const width = hi - lo;
+  if (!(width > 0)) return "flat";
+  if (ctx.close > hi) { side = 1; traded = true; stop = lo; target = ctx.close + TARGET_R * width; return { signal: "long", stop, target }; }
+  if (ctx.close < lo) { side = -1; traded = true; stop = hi; target = ctx.close - TARGET_R * width; return { signal: "short", stop, target }; }
+  return "flat";
+}`,
+  },
+
   // ── ADX trend, WITH the short side (user asked for "adx trend (short)") ──
   {
     key: "adx-trend:14:25",
