@@ -28,7 +28,12 @@ const HEAL_MIN_INTERVAL_MS = 60 * 60 * 1000;
 // Kept in sync with src/lib/profiles.js — duplicated deliberately: Pages
 // Functions and the browser bundle do not share a module graph, and a wrong
 // cap here is a portfolio-sizing bug, not a cosmetic one.
-const PROFILE_CAPS = { prop: 3, private: 8 };
+// Tier-1 (docs/CORTEX_BENCHMARK.md): these count paper ENTRIES, and one
+// accepted rule now papers several legs of the pooled object it was validated
+// on — so the caps are entry budgets, raised in step with profiles.js
+// promotion.cap. The number of RULES in the book is bounded agent-side by the
+// ensemble's correlation/marginal-contribution admission, not here.
+const PROFILE_CAPS = { prop: 4, private: 10 };
 const DEFAULT_PROFILE = "private";
 const capFor = (p) => PROFILE_CAPS[p] ?? PROFILE_CAPS[DEFAULT_PROFILE];
 

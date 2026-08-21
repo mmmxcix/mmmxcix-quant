@@ -64,10 +64,24 @@ export const PROFILES = {
       minDsr: 70,
       requireKFold: true,
       requireNoise: true,
+      // ── Tier-1 pooled bars (docs/CORTEX_BENCHMARK.md §4) ──────────────────
+      // A rule is graded on its POOLED daily returns across every market it ran
+      // on — realistic single-rule Sharpe is 0.2–0.5, and pooling is what makes
+      // that statistically confirmable. PF here is a pooled-liveness bar, not
+      // the old per-market 1.25: at 300+ pooled trades even a strong diversified
+      // edge sits near 1.1 (trend shapes win rarely and big). The quant-grade
+      // Sharpe-1 / beat-B&H bars apply to the ENSEMBLE book, not the rule.
+      pooled: {
+        minSharpe: 0.30,
+        minProfitFactor: 1.08,
+        maxDrawdownPct: 12,   // pooled DD is diversified — a prop book still dies at 8% live
+        minTrades: 300,
+        minTradesPerYear: 12,
+      },
     },
     promotion: {
       minDsr: 70,
-      cap: 3,
+      cap: 4, // entries, not rules — an ensemble rule promotes its top markets
       // Re-validation must still clear this after the strategy has aged a day.
       minDsrOnRevalidate: 60,
     },
@@ -112,10 +126,19 @@ export const PROFILES = {
       minDsr: 50,
       requireKFold: true,
       requireNoise: true,
+      // See the prop pooled note. Private tolerates deeper pooled drawdowns but
+      // demands slightly better pooled economics (PF) for taking them.
+      pooled: {
+        minSharpe: 0.30,
+        minProfitFactor: 1.10,
+        maxDrawdownPct: 30,
+        minTrades: 300,
+        minTradesPerYear: 8,
+      },
     },
     promotion: {
       minDsr: 50,
-      cap: 8,
+      cap: 10, // entries, not rules
       minDsrOnRevalidate: 40,
     },
   },
@@ -207,6 +230,59 @@ export function qualifyAll({ perSet, dsrPct }) {
   const reasons = {};
   for (const id of PROFILE_IDS) {
     const r = judgeMetrics({ profileId: id, perSet, dsrPct });
+    if (r.pass) qualified.push(id);
+    else reasons[id] = r.reason;
+  }
+  return { qualified, reasons };
+}
+
+/**
+ * Tier-1 judgement: grade the POOLED portfolio object of one rule (its daily
+ * returns pooled across every tested market) against a profile's pooled bars.
+ * First failure names one concrete cause, like judgeMetrics.
+ *
+ * @param {object} p
+ * @param {ProfileId} p.profileId
+ * @param {{sharpe:number, pf:number, ddPct:number, trades:number,
+ *          tradesPerYear:number, obsDays:number}} p.pooled
+ * @param {number} [p.dsrPct]
+ * @param {{minSharpe?:number}} [p.overrides] — the revalidator passes its
+ *        slightly softer floor here (same WHY as minDsrOnRevalidate).
+ */
+export function judgePooled({ profileId, pooled, dsrPct, overrides = {} }) {
+  const v = getProfile(profileId).validation;
+  const b = v.pooled || {};
+  const minSharpe = overrides.minSharpe ?? +(process.env.LAB_MIN_POOLED_SHARPE || b.minSharpe || 0.30);
+  if (pooled.obsDays < 200) {
+    return { pass: false, reason: `only ${pooled.obsDays} pooled daily observations (need ≥200)` };
+  }
+  if (pooled.sharpe < minSharpe) {
+    return { pass: false, reason: `pooled Sharpe ${pooled.sharpe.toFixed(2)} < ${minSharpe} across the universe` };
+  }
+  if (pooled.trades < (b.minTrades ?? 300)) {
+    return { pass: false, reason: `only ${pooled.trades} trades pooled across all markets (need ≥${b.minTrades ?? 300})` };
+  }
+  if (b.minTradesPerYear && pooled.tradesPerYear < b.minTradesPerYear) {
+    return { pass: false, reason: `only ${pooled.tradesPerYear.toFixed(1)} pooled trades/yr (need ≥${b.minTradesPerYear}/yr)` };
+  }
+  if (pooled.pf < (b.minProfitFactor ?? 1.08)) {
+    return { pass: false, reason: `pooled PF ${pooled.pf.toFixed(2)} < ${b.minProfitFactor} after costs` };
+  }
+  if (pooled.ddPct > (b.maxDrawdownPct ?? 30)) {
+    return { pass: false, reason: `pooled drawdown ${pooled.ddPct.toFixed(0)}% > ${b.maxDrawdownPct}%` };
+  }
+  if (dsrPct != null && dsrPct < v.minDsr) {
+    return { pass: false, reason: `DSR ${dsrPct.toFixed(1)}% < ${v.minDsr}% (pooled)` };
+  }
+  return { pass: true };
+}
+
+/** judgePooled against both profiles in one pass. */
+export function qualifyPooledAll({ pooled, dsrPct }) {
+  const qualified = [];
+  const reasons = {};
+  for (const id of PROFILE_IDS) {
+    const r = judgePooled({ profileId: id, pooled, dsrPct });
     if (r.pass) qualified.push(id);
     else reasons[id] = r.reason;
   }

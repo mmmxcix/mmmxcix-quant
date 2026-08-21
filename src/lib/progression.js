@@ -33,7 +33,11 @@ export function progressEntry(entry, retest, bar = {}) {
   // floor; below ~100 trades variance dominates and a lucky streak looks like
   // an edge. 100 is what a healthy 8–12 trades/yr strategy produces on the
   // 10y windows the library re-tests on.
-  const { minSharpe = 0.8, minPF = 1.15, minTrades = 100, minTradesPerYear = 8, bhMargin = 0 } = bar;
+  const {
+    minSharpe = 0.8, minPF = 1.15, minTrades = 100, minTradesPerYear = 8, bhMargin = 0,
+    // Tier-1 pooled bars, used only for ensemble legs (see the branch below).
+    pooledMinSharpe = 0.3, pooledMinPF = 1.08, pooledMinTrades = 300,
+  } = bar;
   const cur = entry?.status || "factory";
   const m = retest?.metrics;
   const wp = retest?.windowProfile || null;
@@ -41,6 +45,48 @@ export function progressEntry(entry, retest, bar = {}) {
     ({ status: cur, failureReason, reason, changed: false });
 
   if (!m) return keep(entry?.failureReason ?? null, "no result"); // can't judge → leave it
+
+  // ── Tier-1: an ENSEMBLE LEG is not a standalone strategy ────────────────────
+  // A pooled rule is accepted on its WHOLE portfolio; one leg's Sharpe is
+  // attribution, not a verdict — and a leg is allowed to lose money while the
+  // rule earns (that is what diversification looks like from inside). Judging a
+  // leg by the standalone library bar would bury every pooled rule the day it
+  // was promoted. So: quality defers to the rule's pooled record (refreshed on
+  // fresh data by the revalidate agent, which retires rules that truly decayed),
+  // and this pass only reacts to LEG-LOCAL facts — a leg that stopped trading.
+  const pooled = entry?.pooled;
+  if (entry?.ensembleRule && pooled && Number.isFinite(pooled.sharpe)) {
+    if (m.tradeCount < Math.max(5, Math.floor(minTrades / 10))) {
+      return {
+        status: "improve",
+        failureReason: `ensemble leg went quiet — only ${m.tradeCount} trades on re-test; the rule's pooled record stands (Sharpe ${pooled.sharpe})`,
+        reason: "leg-quiet", changed: cur !== "improve",
+      };
+    }
+    if (pooled.sharpe < 0 || (Number.isFinite(pooled.pf) && pooled.pf < 1)) {
+      return {
+        status: "graveyard",
+        failureReason: `pooled record failed: Sharpe ${pooled.sharpe}, PF ${pooled.pf ?? "?"} across ${pooled.trades ?? "?"} trades`,
+        reason: "pooled failed", changed: cur !== "graveyard",
+      };
+    }
+    const pooledClears =
+      pooled.sharpe >= pooledMinSharpe &&
+      (!Number.isFinite(pooled.pf) || pooled.pf >= pooledMinPF) &&
+      (!Number.isFinite(pooled.trades) || pooled.trades >= pooledMinTrades);
+    if (pooledClears) {
+      if (cur === "improve") return { status: "factory", failureReason: null, reason: "recovered (pooled)", changed: true };
+      const i = PIPELINE.indexOf(cur);
+      if (i >= 0 && i < PIPELINE.length - 1) {
+        return { status: PIPELINE[i + 1], failureReason: null, reason: "pooled rule clears", changed: true };
+      }
+      return keep(null, "top of pipeline (pooled)");
+    }
+    return keep(
+      `pooled Sharpe ${pooled.sharpe} below the ${pooledMinSharpe} floor — improve the RULE, not this leg`,
+      "pooled below bar"
+    );
+  }
 
   // 1) DEAD — degenerate trade count, lost money, or negative risk-adjusted return.
   //    Goes to the graveyard (out of the library) with a recorded reason.

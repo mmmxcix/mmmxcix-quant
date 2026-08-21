@@ -25,11 +25,15 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { runBacktest, compileStrategy } from "../src/lib/backtest.js";
-import { kFoldCode, noiseTest, deflatedSharpe, equityReturns } from "../src/lib/validation.js";
+import { deflatedSharpe } from "../src/lib/validation.js";
 import { initPy, compilePyStrategy } from "./pyRunnerNode.mjs";
-import { getProfile, judgeMetrics, PROFILE_IDS } from "../src/lib/profiles.js";
+import { getProfile, judgePooled, PROFILE_IDS } from "../src/lib/profiles.js";
 import { loadUniverse } from "./marketdata.mjs";
-import { UNIVERSE, byId, costFor, effectiveTrials } from "../src/lib/markets.js";
+import { UNIVERSE, byId, costFor } from "../src/lib/markets.js";
+import {
+  dailyReturnsOf, poolDaily, sharpeDaily, maxDrawdownPctDaily, foldsProfitable,
+  pooledProfitFactor, compactSeries,
+} from "../src/lib/ensemble.js";
 
 const SITE = process.env.LAB_SITE || "https://quant.mmmxcix.com";
 const TOKEN = process.env.LAB_TOKEN;
@@ -41,6 +45,9 @@ const MIN_AGE_MS = +(process.env.LAB_REVALIDATE_MIN_AGE_H || 6) * 3600 * 1000;
 // Guard the free LLM tier's neighbour: this agent makes no model calls at all,
 // but it does hammer the market APIs, so cap the work per run.
 const MAX_PER_RUN = +(process.env.LAB_REVALIDATE_MAX || 8);
+// How many legs of a surviving pooled rule reach the paper book (mirrors the
+// research agent's LAB_ENSEMBLE_MARKETS so both halves paper the same shape).
+const ENSEMBLE_MARKETS = Math.max(1, +(process.env.LAB_ENSEMBLE_MARKETS || 2));
 
 if (!TOKEN) { console.error("LAB_TOKEN is not set."); process.exit(1); }
 
@@ -62,44 +69,25 @@ function compileFor(code, lang) {
   return lang === "python" ? compilePyStrategy(code) : compileStrategy(code);
 }
 
-// Sharpe with the whole decision delayed one bar — the execution-robustness
-// probe (a real edge barely changes; a timing artifact collapses). 0 on failure.
-function delayedSharpe(code, candles, feeBps, lang) {
-  try {
-    const inner = compileFor(code, lang);
-    let prev = "flat";
-    const res = runBacktest({ candles, signalFn: (ctx) => { const s = inner(ctx); const out = prev; prev = s; return out; }, initialCapital: 10000, feeBps });
-    return res.warnings.length ? 0 : (res.metrics.sharpe ?? 0);
-  } catch { return 0; }
-}
-
 /**
- * Re-run the gauntlet on fresh data, ONLY on the markets this candidate was
- * originally validated for.
- *
- * Re-testing the whole universe here would be wrong twice over: it would cost
- * ten times the data for no new information, and a strategy that newly happens
- * to work on a venue it was never accepted for is a fresh discovery, not a
- * re-validation — it belongs to the night agent's trial accounting, not this
- * one's. So the question asked here is narrow and correct: *does it still work
- * where it claimed to?*
+ * Re-run the rule on fresh data across the SAME pooled object it was accepted
+ * on (Tier-1, docs/CORTEX_BENCHMARK.md): every leg re-backtested, daily
+ * returns re-pooled, and the pooled bars re-judged at slightly softer
+ * re-validation levels (pooled-Sharpe haircut + minDsrOnRevalidate — same WHY
+ * as always: the trial counter only grows, so the identical threshold would
+ * punish the agent for having kept working). No per-market walls.
  */
+const REVAL_MIN_SHARPE = +(process.env.LAB_REVALIDATE_MIN_SHARPE || 0.25);
 function revalidate(candidate, datasetsById, globalTrials) {
   const code = candidate.code;
   const lang = candidate.language === "python" ? "python" : "js";
   try { compileFor(code, lang); } catch (e) { return { pass: false, reason: `compile: ${e.message.slice(0, 70)}` }; }
 
-  const claimed = (candidate.markets || []).filter((id) => datasetsById[id]);
+  const claimed = (candidate.pooledMarkets || candidate.markets || []).filter((id) => datasetsById[id]);
   if (!claimed.length) return { pass: false, reason: "none of its markets could be loaded" };
 
-  // Same windowed + clustered accounting as discovery (see markets.js), so a
-  // candidate is not re-judged against a harsher bar than it was found under.
-  const trials = effectiveTrials(globalTrials, claimed.map((id) => byId(id)?.asset).filter(Boolean));
   const byMarket = {};
-  const stillWorking = [];
-  const qualified = new Set();
-  const reasons = {};
-
+  const ran = [];
   for (const mid of claimed) {
     const { candles, market } = datasetsById[mid];
     const feeBps = costFor(market);
@@ -111,77 +99,91 @@ function revalidate(candidate, datasetsById, globalTrials) {
       continue;
     }
     if (res.warnings.length) { byMarket[mid] = { rejected: `error: ${res.warnings[0].slice(0, 50)}` }; continue; }
-
     const m = res.metrics;
-    const row = {
+    byMarket[mid] = {
       ret: +m.totalReturnPct.toFixed(1), pf: +m.profitFactor.toFixed(2),
-      dd: +m.maxDrawdownPct.toFixed(1), n: m.tradeCount,
+      dd: +m.maxDrawdownPct.toFixed(1), n: m.tradeCount, sharpe: +(m.sharpe ?? 0).toFixed(2),
     };
+    ran.push({ mid, candles, feeBps, m, equity: res.equity, trades: res.trades });
+  }
+  if (!ran.length) return { pass: false, reason: "every leg errored on fresh data", byMarket };
 
-    // Beats buy & hold risk-adjusted, and survives a 1-bar execution delay — the
-    // two checks that stop optimistic backtests reaching the paper book (a
-    // strategy that loses to holding, or whose edge is a timing artifact, is
-    // what looks great here but goes negative on a broker's fills).
-    if ((m.sharpe ?? 0) <= (m.buyHoldSharpe ?? 0)) {
-      byMarket[mid] = { ...row, rejected: `loses to buy&hold (Sh ${(m.sharpe ?? 0).toFixed(2)} ≤ ${(m.buyHoldSharpe ?? 0).toFixed(2)})` };
-      reasons[mid] = byMarket[mid].rejected; continue;
-    }
-    const delSh = delayedSharpe(code, candles, feeBps, lang);
-    if (delSh < Math.max(0.1, (m.sharpe ?? 0) * 0.5)) {
-      byMarket[mid] = { ...row, rejected: `timing-fragile (Sh ${(m.sharpe ?? 0).toFixed(2)}→${delSh.toFixed(2)} on 1-bar delay)` };
-      reasons[mid] = byMarket[mid].rejected; continue;
-    }
+  const pooledSeries = poolDaily(ran.map((r) => dailyReturnsOf(r.equity)));
+  const spanYears = Math.max(0.1, ...ran.map((r) => r.m.spanYears || 0));
+  const pooledTrades = ran.reduce((s, r) => s + r.m.tradeCount, 0);
+  const pooled = {
+    sharpe: sharpeDaily(pooledSeries.returns),
+    pf: pooledProfitFactor(ran.map((r) => r.trades)),
+    ddPct: maxDrawdownPctDaily(pooledSeries.returns),
+    trades: pooledTrades,
+    tradesPerYear: pooledTrades / spanYears,
+    obsDays: pooledSeries.returns.length,
+  };
 
-    const kf = kFoldCode({ candles, makeSignalFn: () => compileFor(code, lang), feeBps });
-    if (!kf || kf.verdict !== "pass") {
-      byMarket[mid] = { ...row, rejected: `k-fold decayed (${kf ? kf.profitableFolds + "/" + kf.totalFolds : "n/a"})` };
-      reasons[mid] = byMarket[mid].rejected;
+  if (pooled.sharpe < REVAL_MIN_SHARPE) {
+    return { pass: false, reason: `pooled Sharpe decayed to ${pooled.sharpe.toFixed(2)} (< ${REVAL_MIN_SHARPE}) across ${ran.length} legs`, byMarket };
+  }
+
+  // Execution-timing robustness must still hold on fresh tape.
+  const delayed = [];
+  for (const r of ran) {
+    try {
+      const inner = compileFor(code, lang);
+      let prev = "flat";
+      const res = runBacktest({
+        candles: r.candles,
+        signalFn: (ctx) => { const s = inner(ctx); const out = prev; prev = s; return out; },
+        initialCapital: 10000, feeBps: r.feeBps,
+      });
+      if (!res.warnings.length) delayed.push(dailyReturnsOf(res.equity));
+    } catch { /* a leg that errors delayed contributes nothing */ }
+  }
+  const delSharpe = sharpeDaily(poolDaily(delayed).returns);
+  if (delSharpe < Math.max(0.1, pooled.sharpe * 0.5)) {
+    return { pass: false, reason: `timing-fragile on fresh data (pooled Sharpe ${pooled.sharpe.toFixed(2)}→${delSharpe.toFixed(2)} delayed)`, byMarket };
+  }
+
+  const kf = foldsProfitable(pooledSeries.returns, 5);
+  if (kf.profitable < Math.ceil(kf.total * 0.6)) {
+    return { pass: false, reason: `k-fold decayed (${kf.profitable}/${kf.total} pooled folds)`, byMarket };
+  }
+
+  const dsrRaw = deflatedSharpe(pooledSeries.returns, globalTrials);
+  const dsrPct = dsrRaw ? dsrRaw.dsr * 100 : 0;
+
+  // Structural pooled bars at the profile's normal level (minus the small
+  // Sharpe haircut already applied above); only DSR relaxes to the
+  // re-validation threshold.
+  const qualified = [];
+  const reasons = {};
+  for (const pid of PROFILE_IDS) {
+    const prof = getProfile(pid);
+    const structural = judgePooled({ profileId: pid, pooled, overrides: { minSharpe: REVAL_MIN_SHARPE } });
+    if (!structural.pass) { reasons[pid] = structural.reason; continue; }
+    if (dsrPct < prof.promotion.minDsrOnRevalidate) {
+      reasons[pid] = `DSR ${dsrPct.toFixed(1)}% < ${prof.promotion.minDsrOnRevalidate}%`;
       continue;
     }
-    const nz = noiseTest({ candles, makeSignalFn: () => compileFor(code, lang), runs: 15, feeBps });
-    if (!nz || nz.verdict !== "pass") {
-      byMarket[mid] = { ...row, rejected: `noise decayed (median ${nz ? nz.medianReturnPct.toFixed(0) : "?"}%)` };
-      reasons[mid] = byMarket[mid].rejected;
-      continue;
-    }
-
-    const dsrRaw = deflatedSharpe(equityReturns(res.equity), trials);
-    const dsrPct = dsrRaw ? dsrRaw.dsr * 100 : 0;
-
-    // Structural bars stay at the profile's normal level; only the DSR
-    // threshold is relaxed to the re-validation level (see the WHY at the top).
-    const marketProfiles = [];
-    for (const pid of PROFILE_IDS) {
-      const prof = getProfile(pid);
-      const structural = judgeMetrics({ profileId: pid, perSet: [{ name: mid, m }] }); // no dsr here
-      if (!structural.pass) { reasons[`${mid}/${pid}`] = structural.reason; continue; }
-      if (dsrPct < prof.promotion.minDsrOnRevalidate) {
-        reasons[`${mid}/${pid}`] = `DSR ${dsrPct.toFixed(1)}% < ${prof.promotion.minDsrOnRevalidate}%`;
-        continue;
-      }
-      marketProfiles.push(pid);
-      qualified.add(pid);
-    }
-
-    byMarket[mid] = { ...row, dsr: +dsrPct.toFixed(1), profiles: marketProfiles };
-    if (marketProfiles.length) stillWorking.push(mid);
+    qualified.push(pid);
+  }
+  if (!qualified.length) {
+    return { pass: false, reason: reasons.private || reasons.prop || "decayed", byMarket };
   }
 
-  if (!stillWorking.length) {
-    return { pass: false, reason: Object.values(reasons)[0] || "decayed everywhere", byMarket };
-  }
-  // Same pooled sample floor as the research gauntlet: surviving markets must
-  // still add up to a defensible TOTAL sample, not just each clear their own bar.
-  const MIN_POOLED_TRADES = +(process.env.LAB_MIN_POOLED_TRADES || 300);
-  const pooledTrades = stillWorking.reduce((s, mid) => s + (byMarket[mid].n ?? 0), 0);
-  if (pooledTrades < MIN_POOLED_TRADES) {
-    return { pass: false, reason: `pooled sample too thin on re-validation (${pooledTrades} trades across ${stillWorking.length} market(s), need ≥${MIN_POOLED_TRADES} total)`, byMarket };
-  }
-  const best = stillWorking.slice().sort((a, b) => (byMarket[b].dsr ?? 0) - (byMarket[a].dsr ?? 0))[0];
+  const active = ran.filter((r) => r.m.tradeCount >= 20 && (r.m.sharpe ?? 0) > 0)
+    .sort((a, b) => (b.m.sharpe ?? 0) - (a.m.sharpe ?? 0));
+  for (const r of active) byMarket[r.mid] = { ...byMarket[r.mid], earns: true };
+  const markets = active.length ? active.map((r) => r.mid) : ran.map((r) => r.mid);
   return {
-    pass: true, byMarket, markets: stillWorking, bestMarket: best,
-    dsr: byMarket[best].dsr, qualified: [...qualified],
-    lostMarkets: claimed.filter((m) => !stillWorking.includes(m)),
+    pass: true, byMarket, markets, bestMarket: markets[0],
+    dsr: +dsrPct.toFixed(1), qualified,
+    pooled: {
+      sharpe: +pooled.sharpe.toFixed(2), pf: +pooled.pf.toFixed(2),
+      ddPct: +pooled.ddPct.toFixed(1), trades: pooled.trades,
+      obsDays: pooled.obsDays, dsr: +dsrPct.toFixed(1),
+    },
+    pooledDaily: compactSeries(pooledSeries),
+    pooledMarkets: ran.map((r) => r.mid),
   };
 }
 
@@ -239,14 +241,21 @@ for (const c of due) {
     survivors.push({
       ...c, lastRevalidatedAt: now, revalidatedDsr: verdict.dsr,
       profiles: verdict.qualified, markets: verdict.markets,
+      pooled: verdict.pooled, pooledDaily: verdict.pooledDaily, pooledMarkets: verdict.pooledMarkets,
       byMarket: { ...(c.byMarket || {}), ...verdict.byMarket },
     });
-    const lost = verdict.lostMarkets?.length ? ` (lost ${verdict.lostMarkets.join(", ")})` : "";
-    console.log(`✓ holds up: ${String(c.name).slice(0, 44)} (DSR ${c.dsr}% → ${verdict.dsr}% on ${verdict.bestMarket})${lost}`);
-    for (const mid of verdict.markets) {
+    const p = verdict.pooled;
+    console.log(
+      `✓ holds up: ${String(c.name).slice(0, 40)} — pooled Sharpe ${p.sharpe} · PF ${p.pf} · dd ${p.ddPct}% ` +
+      `· n=${p.trades} over ${verdict.pooledMarkets.length} legs (DSR ${c.dsr}% → ${verdict.dsr}%)`
+    );
+    // Paper the strongest legs of the pooled object, one entry per
+    // (profile × leg) — the profiles are earned POOLED, so they apply to every
+    // leg of the same rule rather than being re-derived per market.
+    for (const mid of (verdict.markets || []).slice(0, ENSEMBLE_MARKETS)) {
       const m = byId(mid);
       if (!m) continue;
-      for (const pid of verdict.byMarket[mid]?.profiles || []) {
+      for (const pid of verdict.qualified) {
         toPromote.push({
           id: `${c.id}_${pid}_${mid}`, name: `🤖 ${c.name} · ${m.label}`,
           mode: "code", code: c.code, language: c.language,
@@ -254,8 +263,16 @@ for (const c of due) {
           symbol: m.symbol, interval: m.interval,
           feeBps: costFor(m), positionPct: 100,
           volTarget: true, // GARCH vol-targeted sizing — cuts drawdown by default
-          dsr: verdict.byMarket[mid].dsr, paper: c.paper,
+          dsr: verdict.dsr, paper: c.paper,
           profile: pid, candidateId: c.id, marketId: mid, promotedBy: "revalidate",
+          ensembleRule: c.id,
+          pooled: verdict.pooled, // the leg's judge (see progressEntry)
+          expect: {
+            retPct: verdict.byMarket[mid]?.ret ?? null,
+            ddPct: verdict.byMarket[mid]?.dd ?? null,
+            pf: verdict.byMarket[mid]?.pf ?? null,
+            n: verdict.byMarket[mid]?.n ?? null,
+          },
         });
       }
     }
@@ -281,6 +298,22 @@ const decayedIds = new Set(decayed.map((d) => d.id));
 st.candidates = (st.candidates || [])
   .filter((c) => !decayedIds.has(c.id))
   .map((c) => survivors.find((s) => s.id === c.id) || c);
+
+// Keep the ENSEMBLE book honest: a rule that decayed on fresh data leaves the
+// book (and its paper legs are retired below), and a survivor's member entry
+// gets today's pooled series so the next admission's correlation/marginal
+// checks compare against current behaviour, not last month's.
+if (st.ensemble?.members?.length) {
+  const before = st.ensemble.members.length;
+  st.ensemble.members = st.ensemble.members
+    .filter((m) => !decayedIds.has(m.candId))
+    .map((m) => {
+      const s = survivors.find((x) => x.id === m.candId);
+      return s ? { ...m, sharpe: s.pooled?.sharpe ?? m.sharpe, profiles: s.profiles || m.profiles, pooledDaily: s.pooledDaily || m.pooledDaily } : m;
+    });
+  const dropped = before - st.ensemble.members.length;
+  if (dropped) console.log(`ensemble: ${dropped} decayed rule(s) left the book — ${st.ensemble.members.length} remain`);
+}
 saveResearch(st);
 
 // …and from the SITE store, or they come back as "due" on the next pass and get
@@ -291,6 +324,18 @@ const removeIds = [
   ...decayed.map((d) => d.id),
   ...candidates.filter((c) => c && c.id && !c.code && now - (c.foundAt || 0) > 7 * 864e5).map((c) => c.id),
 ];
+// A decayed rule must also stop TRADING: retire its paper legs, or the book
+// keeps compounding a hypothesis this pass just disproved.
+if (decayed.length) {
+  try {
+    const r = await api("", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: TOKEN, retire: { ids: decayed.map((d) => d.id) } }),
+    });
+    const o = await r.json().catch(() => ({}));
+    if (o.retired) console.log(`retired ${o.retired} paper leg(s) of decayed rule(s)`);
+  } catch (e) { console.error(`retire push failed: ${e.message}`); }
+}
 if (removeIds.length) {
   try {
     const r = await api("", {
@@ -303,11 +348,13 @@ if (removeIds.length) {
 }
 
 // Push survivors back so the site's candidate list carries the fresh verdict.
+// pooledDaily stays LOCAL (thousands of floats — the KV value budget can't
+// afford it and the card doesn't need it); it lives in the research state file.
 if (survivors.length) {
   try {
     const r = await api("", {
       method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ token: TOKEN, candidates: survivors }),
+      body: JSON.stringify({ token: TOKEN, candidates: survivors.map(({ pooledDaily, ...rest }) => rest) }),
     });
     console.log(`candidates refreshed: ${(await r.json().catch(() => ({}))).stored ?? "?"} stored`);
   } catch (e) { console.error(`candidate refresh failed: ${e.message}`); }

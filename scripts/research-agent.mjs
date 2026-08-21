@@ -26,7 +26,12 @@ import { join } from "node:path";
 import { runBacktest, compileStrategy } from "../src/lib/backtest.js";
 import { kFoldCode, noiseTest, deflatedSharpe, equityReturns, signalIC } from "../src/lib/validation.js";
 import { auditStrategy } from "../src/lib/strategyAudit.js";
-import { qualifyAll, getProfile, PROFILE_IDS } from "../src/lib/profiles.js";
+import { qualifyPooledAll, getProfile, PROFILE_IDS } from "../src/lib/profiles.js";
+import {
+  dailyReturnsOf, dailyCloseReturns, poolDaily, sharpeDaily, maxDrawdownPctDaily,
+  totalReturnPctDaily, foldsProfitable, tailStats, corrDaily, pooledProfitFactor,
+  compactSeries, ensembleGrade,
+} from "../src/lib/ensemble.js";
 import { harvestAll, fullTextOf, topicsOf, RELEVANCE, JUNK } from "./sources.mjs";
 import { loadUniverse } from "./marketdata.mjs";
 import { UNIVERSE, MENTIONABLE, byId, costFor, effectiveTrials, describeMarkets } from "../src/lib/markets.js";
@@ -68,20 +73,24 @@ function pickLang(item) {
   return INTRADAY_HINT.test(hay) ? "js" : "python";
 }
 
-// Quality bar (both tunable): a promoted market must beat buy&hold Sharpe by at
-// least BH_SHARPE_MARGIN (not merely tie it), and its RECENT tail (last 30%) must
-// be genuinely profitable — profitFactor ≥ HOLDOUT_MIN_PF and a positive return —
-// so a strategy that decayed and only looks good over the full 10y is rejected.
-const BH_SHARPE_MARGIN = +(process.env.LAB_BH_MARGIN || 0.10);
-const HOLDOUT_MIN_PF = +(process.env.LAB_HOLDOUT_PF || 1.0);
 // Replication (reel #14 / the XAU teardown): on the unseen tail the signal must not
 // ANTI-predict. A near-zero IC is tolerated (asymmetric payoffs are legitimate), but
 // a clearly negative out-of-sample IC means the "edge" reproduces backwards. Tunable.
 const OOS_IC_FLOOR = +(process.env.LAB_OOS_IC || -0.02);
-// Absolute quality floor: a promoted market must clear a real risk-adjusted bar,
-// not merely beat buy&hold — the goal is strategies a quant would actually find
-// attractive (Sharpe ≈ 1+), not marginal ones. Tunable via LAB_MIN_SHARPE.
-const MIN_SHARPE = +(process.env.LAB_MIN_SHARPE || 1.0);
+// ── Tier-1 geometry (docs/CORTEX_BENCHMARK.md, user-approved Aug 21) ─────────
+// The old per-market Sharpe-1.0 / beat-B&H walls sat at the search's own noise
+// ceiling (78% of near-misses died there at median best Sharpe 0.38) — a single
+// rule on a single market realistically carries 0.2–0.5, and only overfits can
+// clear 1.0. Rules are now graded on their POOLED daily returns across the
+// whole universe (breadth does the statistical lifting); survivors combine into
+// the ENSEMBLE book, and the quant-grade bars (Sharpe ≥ 1, beat buy&hold) apply
+// to THAT book — where they are achievable and meaningful. Pooled bars live in
+// profiles.js (judgePooled); the floor is env-tunable:
+//   LAB_MIN_POOLED_SHARPE  (0.30)  pooled after-cost Sharpe floor per rule
+//   LAB_ENSEMBLE_MARKETS   (2)     paper legs a promoted rule trades
+//   LAB_ENSEMBLE_CORR_CAP  (0.7)   |ρ| above which a rule must beat the member it clones
+const ENSEMBLE_MARKETS = Math.max(1, +(process.env.LAB_ENSEMBLE_MARKETS || 2));
+const ENSEMBLE_CORR_CAP = +(process.env.LAB_ENSEMBLE_CORR_CAP || 0.7);
 
 // Compile a strategy to a signalFn regardless of language: Python goes through
 // Pyodide (vectorised signals(df), memoised per candle array — a drop-in for the
@@ -375,10 +384,11 @@ function improveFacts(reason) {
   else if (/k-?fold/i.test(reason)) hint = "Returns came from one lucky window — make the rule consistent across sub-periods (stronger regime filter, fewer/looser parameters).";
   else if (/noise/i.test(reason)) hint = "Tiny price perturbations destroyed it — widen thresholds/bands so entries never depend on exact price levels.";
   else if (/buy\s*&\s*hold/i.test(reason)) hint = "It underperformed simply holding the asset risk-adjusted — trade less often, be active only in the favourable regime, and/or add the short side.";
-  else if (/holdout/i.test(reason)) hint = "It inverted on the most recent 30% of the data — reduce regime dependence; the rule must hold in the CURRENT market, not just the past.";
+  else if (/holdout|stale recent tail/i.test(reason)) hint = "It decayed — flat or bleeding on the most recent 30% of the data. Reduce regime dependence; the rule must hold in the CURRENT market, not just the past.";
   else if (/dd\s|drawdown/i.test(reason)) hint = "The drawdown is too deep — cut exposure with a volatility or regime filter instead of riding every move.";
-  else if (/quality floor|quant-grade|Sharpe\s+[\d.]+\s*(?:<|below)/i.test(reason)) hint = "The risk-adjusted return is below quant grade (Sharpe < 1) — add a regime/volatility filter so it is only active when the edge exists, cut the losing trades (tighter invalidation), and stay flat in chop; raising Sharpe by trading less is fine.";
-  else if (/only \d+(?:\.\d+)? trades|trades\/yr|pooled/i.test(reason)) hint = "The sample is too thin — the rule fires too rarely. Make the trigger fire more often WITHOUT degrading quality: relative conditions (crossovers, bands, percentiles) instead of rare absolute setups, allow both sides, and make it work on more markets.";
+  else if (/pooled Sharpe/i.test(reason)) hint = "The POOLED risk-adjusted return across the whole universe is below the floor. Breadth is the lever: uncorrelated legs lift pooled Sharpe by roughly √N, so make the rule PORTABLE — relative, ATR/percentile-scaled conditions instead of asset-specific price levels, keep both long and short sides, and add a regime filter so it sits flat where the edge is absent instead of bleeding there.";
+  else if (/quality floor|quant-grade|Sharpe\s+[\d.]+\s*(?:<|below)/i.test(reason)) hint = "The risk-adjusted return is below the floor — add a regime/volatility filter so it is only active when the edge exists, cut the losing trades (tighter invalidation), and stay flat in chop; raising Sharpe by trading less is fine.";
+  else if (/only \d+(?:\.\d+)? trades|trades\/yr|pooled|barely trades/i.test(reason)) hint = "The sample is too thin — the rule fires too rarely. Make the trigger fire more often WITHOUT degrading quality: relative conditions (crossovers, bands, percentiles) instead of rare absolute setups, allow both sides, and make it work on more markets.";
   else if (/PF\s|DSR/i.test(reason)) hint = "The edge is too thin after costs — make entries more selective: higher-conviction setups, fewer trades.";
   return `Failed validation: ${reason}. ${hint}`;
 }
@@ -397,58 +407,25 @@ async function improveStrategy(g) {
 // ── 3. validation gauntlet (candle fetchers live in marketdata.mjs) ─────────
 
 /**
- * Out-of-sample holdout: re-run on the most recent 30% alone.
+ * The gauntlet, Tier-1 geometry: one rule = ONE portfolio, its daily returns
+ * pooled equal-weight across every market it ran on.
  *
- * With hardcoded parameters there is nothing to "train", so walk-forward
- * optimisation does not apply. What DOES apply is regime stability — a rule
- * fitted (by the model, from the paper) to the era that dominates the series
- * will fall apart on the recent tail. This catches that.
- */
-function holdout(code, candles, feeBps, lang) {
-  const cut = Math.floor(candles.length * 0.7);
-  const tail = candles.slice(cut);
-  if (tail.length < 150) return { ok: true, skipped: "too short" };
-  try {
-    const res = runBacktest({ candles: tail, signalFn: compileFor(code, lang), initialCapital: 10000, feeBps });
-    if (res.warnings.length) return { ok: false, detail: "error on holdout" };
-    const m = res.metrics;
-    if (m.tradeCount < 5) return { ok: true, skipped: "few trades" };
-    // REPLICATION: does the signal actually PREDICT on unseen data, or did the
-    // backtest profit come from a few lucky trades? A clearly negative out-of-sample
-    // IC = the "edge" reproduces backwards → bury it (the XAU-reel failure mode).
-    const { ic, n: icN } = signalIC(tail, res.signals);
-    if (ic != null && ic < OOS_IC_FLOOR) {
-      return { ok: false, detail: `failed replication: OOS signal anti-predicts (IC ${ic.toFixed(3)}, n=${icN})`, ic: +ic.toFixed(3) };
-    }
-    // The RECENT tail must actually be PROFITABLE, not merely "not inverted": a
-    // strategy that made its money years ago but is flat or bleeding lately is
-    // decayed and shouldn't be traded now. (Tunable via LAB_HOLDOUT_PF.)
-    if (m.profitFactor < HOLDOUT_MIN_PF || m.totalReturnPct <= 0) {
-      return { ok: false, detail: `stale recent tail: PF ${m.profitFactor.toFixed(2)}, ret ${m.totalReturnPct.toFixed(0)}%`, ic: ic != null ? +ic.toFixed(3) : null };
-    }
-    return { ok: true, pf: +m.profitFactor.toFixed(2), ret: +m.totalReturnPct.toFixed(1), ic: ic != null ? +ic.toFixed(3) : null };
-  } catch {
-    return { ok: false, detail: "holdout threw" };
-  }
-}
-
-/**
- * Run the gauntlet across the WHOLE market universe and report where the
- * strategy actually works.
+ * Why (docs/CORTEX_BENCHMARK.md): the old per-market walls (Sharpe ≥ 1.0,
+ * beat B&H per venue) demanded from a single rule on a single market what only
+ * overfits deliver — 78% of near-misses died there at a median best Sharpe of
+ * 0.38, and E[max noise Sharpe] at our trial count was ≈1.1, i.e. the wall sat
+ * at the search's own noise ceiling. Pooling every tested venue (no selection,
+ * so no cherry-picking and no market-cluster trial multiplier) is what turns a
+ * genuine 0.3-Sharpe edge into a statistically confirmable object, and the
+ * quant-grade bars move to the ensemble book where they are achievable.
  *
- * The old version demanded success on BTC 4h AND SPY 1d, which buried anything
- * specialised — a rule that is excellent on 15-minute AAPL and useless on
- * Bitcoin was recorded as a failure. It is not a failure; it is a strategy with
- * a domain. So each market is judged on its own and the result is TAGGED.
+ * The robustness suite survives intact — delay retention ≥50% (pooled), k-fold
+ * (pooled folds), noise (top contributors), holdout tail + OOS IC (pooled),
+ * DSR at the windowed trial count — plus the pooled profile bars in
+ * profiles.js (PF, drawdown, 300-trade and trades/yr floors).
  *
- * The obvious hazard is cherry-picking: test ten venues, keep the luckiest.
- * That is handled honestly rather than ignored — the Deflated Sharpe trial
- * count is multiplied by the number of markets tested (effectiveTrials), so
- * searching wider genuinely makes each claim harder to sustain.
- *
- * Costs are per market: 15-minute equity pays far more spread than daily, and
- * a flat 10bps everywhere was flattering exactly the strategies most likely to
- * be noise.
+ * Costs are still per market: 15-minute equity pays far more spread than
+ * daily, and a flat 10bps everywhere would flatter exactly the noise.
  */
 
 // The committee's bear case. Runs ONLY on a strategy that already survived the
@@ -519,18 +496,18 @@ function livenessTrades(code, datasets, lang) {
   return max;
 }
 
-// Sharpe when the strategy's ENTIRE decision is delayed by one bar — the
-// execution-robustness probe. A genuine edge barely changes; a timing artifact
-// that only works with perfect fills collapses. Returns 0 on any failure.
-function delayedSharpe(code, candles, feeBps, lang) {
+// One-bar-delayed run of a single leg — the execution-robustness probe, now
+// POOLED by the gauntlet: a genuine edge barely changes when every decision
+// fills a bar late; a timing artifact collapses. Returns the leg's delayed
+// DAILY returns (null on failure) so the gauntlet can re-pool them.
+function delayedDailyOf(code, leg, lang) {
   try {
     const inner = compileFor(code, lang);
     let prev = "flat";
     const fn = (ctx) => { const s = inner(ctx); const out = prev; prev = s; return out; };
-    const res = runBacktest({ candles, signalFn: fn, initialCapital: 10000, feeBps });
-    if (res.warnings.length) return 0;
-    return res.metrics.sharpe ?? 0;
-  } catch { return 0; }
+    const res = runBacktest({ candles: leg.candles, signalFn: fn, initialCapital: 10000, feeBps: leg.feeBps });
+    return res.warnings.length ? null : dailyReturnsOf(res.equity);
+  } catch { return null; }
 }
 
 // Pull the EDGE / WORKS / BREAKS header the generation prompt asks for, so a
@@ -588,146 +565,132 @@ function gauntlet(code, datasets, globalTrials, lang) {
     // fatal. Everything else, incl. the implausible-result warning, rejects.)
     const fatal = res.warnings.filter((w) => !w.includes("Bracket sanity"));
     if (fatal.length) return { pass: false, reason: `strategy error (${name}): ${fatal[0].slice(0, 70)}` };
-    ran.push({ name, market, candles, feeBps, m: res.metrics, equity: res.equity });
+    ran.push({ name, market, candles, feeBps, m: res.metrics, equity: res.equity, signals: res.signals, trades: res.trades });
   }
 
-  const promising = ran.filter((r) => r.m.tradeCount >= 20 && r.m.totalReturnPct > 0 && r.m.profitFactor > 1.05);
-  if (!promising.length) {
-    const best = ran.slice().sort((a, b) => b.m.profitFactor - a.m.profitFactor)[0];
-    return {
-      pass: false,
-      // Name how wide the search actually was — "TSLA1d" in a failure line just
-      // means TSLA was the closest of ALL tested venues, not the only one.
-      reason: best
-        ? `no edge on any of ${ran.length} markets (closest ${best.name}: ret ${best.m.totalReturnPct.toFixed(0)}%, PF ${best.m.profitFactor.toFixed(2)}, n=${best.m.tradeCount})`
-        : "no markets ran",
-      byMarket: summarise(ran),
-    };
+  if (!ran.length) return { pass: false, reason: "no markets ran" };
+
+  // ── Tier-1 POOLED acceptance ────────────────────────────────────────────────
+  // The rule is graded as ONE portfolio: its daily returns pooled (equal-weight
+  // by calendar date) across EVERY market it ran on — no venue selection, so no
+  // cherry-picking to punish, and the Deflated Sharpe trial count goes back to
+  // being the windowed attempt count alone. Per-market rows are kept for the
+  // record (where does it earn?), but no per-market wall can kill the rule.
+  const pooledTrades = ran.reduce((s, r) => s + r.m.tradeCount, 0);
+  const byMarket = summarise(ran);
+  if (pooledTrades < 20) {
+    return { pass: false, reason: `barely trades: ${pooledTrades} trades pooled across ${ran.length} markets`, byMarket };
   }
 
-  // The honest hurdle. globalTrials is a WINDOWED count (see windowTrials
-  // below), and markets are counted as correlated clusters rather than
-  // individually — SPY and QQQ are not two independent bets.
-  const trials = effectiveTrials(globalTrials, datasets.map((d) => d.market.asset));
+  const pooledSeries = poolDaily(ran.map((r) => dailyReturnsOf(r.equity)));
+  const spanYears = Math.max(0.1, ...ran.map((r) => r.m.spanYears || 0));
+  const pooled = {
+    sharpe: sharpeDaily(pooledSeries.returns),
+    pf: pooledProfitFactor(ran.map((r) => r.trades)),
+    ddPct: maxDrawdownPctDaily(pooledSeries.returns),
+    retPct: totalReturnPctDaily(pooledSeries.returns),
+    trades: pooledTrades,
+    tradesPerYear: pooledTrades / spanYears,
+    obsDays: pooledSeries.returns.length,
+  };
+  const roundedPooled = {
+    sharpe: +pooled.sharpe.toFixed(2), pf: +pooled.pf.toFixed(2),
+    ddPct: +pooled.ddPct.toFixed(1), retPct: +pooled.retPct.toFixed(1),
+    trades: pooled.trades, tradesPerYear: +pooled.tradesPerYear.toFixed(1),
+    obsDays: pooled.obsDays,
+  };
+  const trials = globalTrials;
+  const fail = (reason) => ({ pass: false, reason, byMarket, pooled: roundedPooled, trials });
 
-  // Pass 2 — expensive robustness, only on the promising venues.
-  const byMarket = {};
-  const qualifiedProfiles = new Set();
-  const winningMarkets = [];
-  const rejections = [];
-
-  for (const r of promising) {
-    const mk = { ...metricRow(r.m) };
-
-    // BUY & HOLD BENCHMARK — the honest bar that was missing. A strategy with a
-    // real statistical edge (passes DSR/k-fold/noise) can STILL be worse than
-    // simply holding the asset through a bull market, because it trades less
-    // than 100% exposure and pays fees. Sharpe is the exposure-fair comparison:
-    // if the strategy doesn't beat holding risk-adjusted, it does not belong in
-    // the paper book for that market — no matter how "real" its edge is.
-    const bhS = r.m.buyHoldSharpe ?? 0, sh = r.m.sharpe ?? 0;
-    // (a) Absolute quality floor — must be genuinely attractive on its own, not
-    // just positive. A quant ignores a Sharpe-0.4 strategy however you dress it.
-    if (sh < MIN_SHARPE) {
-      byMarket[r.name] = { ...mk, rejected: `Sharpe ${sh.toFixed(2)} < ${MIN_SHARPE} quality floor` };
-      rejections.push(`${r.name}: Sharpe ${sh.toFixed(2)} below the ${MIN_SHARPE} quant-grade floor`);
-      continue;
-    }
-    // (b) And it must still BEAT buy&hold by a margin — a great Sharpe that merely
-    // matches holding the asset isn't worth the execution risk. (LAB_BH_MARGIN.)
-    if (sh < bhS + BH_SHARPE_MARGIN) {
-      byMarket[r.name] = { ...mk, rejected: `Sharpe ${sh.toFixed(2)} < buy&hold ${bhS.toFixed(2)} + ${BH_SHARPE_MARGIN}` };
-      rejections.push(`${r.name}: doesn't clear buy & hold by margin (Sharpe ${sh.toFixed(2)} vs ${bhS.toFixed(2)}+${BH_SHARPE_MARGIN})`);
-      continue;
-    }
-
-    // EXECUTION-TIMING ROBUSTNESS — the edge must not depend on catching a move
-    // within one bar. Re-run with the whole decision delayed by ONE bar; if the
-    // Sharpe collapses, the backtest overstated real performance and the strategy
-    // will go negative on a broker's actual fills. This is the test that was
-    // missing — DSR/k-fold/noise all use the same favourable fill timing, so they
-    // passed timing-fragile strategies. It caught ICT on BTC: +3086% → -43%.
-    const delSharpe = delayedSharpe(code, r.candles, r.feeBps, lang);
-    if (delSharpe < Math.max(0.1, sh * 0.5)) {
-      byMarket[r.name] = { ...mk, rejected: `timing-fragile (Sharpe ${sh.toFixed(2)}→${delSharpe.toFixed(2)} on 1-bar delay)` };
-      rejections.push(`${r.name}: timing-fragile (collapses on 1-bar execution delay)`);
-      continue;
-    }
-
-    const kf = kFoldCode({ candles: r.candles, makeSignalFn: () => compileFor(code, lang), feeBps: r.feeBps });
-    if (!kf || kf.verdict !== "pass") {
-      byMarket[r.name] = { ...mk, rejected: `k-fold ${kf ? kf.profitableFolds + "/" + kf.totalFolds : "n/a"}` };
-      rejections.push(`${r.name}: k-fold`);
-      continue;
-    }
-    const nz = noiseTest({ candles: r.candles, makeSignalFn: () => compileFor(code, lang), runs: 15, feeBps: r.feeBps });
-    if (!nz || nz.verdict !== "pass") {
-      byMarket[r.name] = { ...mk, rejected: `noise ${nz ? nz.medianReturnPct.toFixed(0) + "%" : "n/a"}` };
-      rejections.push(`${r.name}: noise`);
-      continue;
-    }
-    const ho = holdout(code, r.candles, r.feeBps, lang);
-    if (!ho.ok) {
-      byMarket[r.name] = { ...mk, rejected: ho.detail };
-      rejections.push(`${r.name}: ${ho.detail}`);
-      continue;
-    }
-
-    const dsrRaw = deflatedSharpe(equityReturns(r.equity), trials);
-    const dsrPct = dsrRaw ? dsrRaw.dsr * 100 : 0;
-
-    const { qualified, reasons } = qualifyAll({ perSet: [{ name: r.name, m: r.m }], dsrPct });
-    byMarket[r.name] = {
-      ...mk, dsr: +dsrPct.toFixed(1), holdoutPf: ho.pf ?? null, oosIc: ho.ic ?? null,
-      profiles: qualified,
-      ...(qualified.length ? {} : { rejected: reasons.private || reasons.prop }),
-    };
-    if (qualified.length) {
-      winningMarkets.push(r.name);
-      for (const p of qualified) qualifiedProfiles.add(p);
-    } else {
-      rejections.push(`${r.name}: ${reasons.private || reasons.prop}`);
-    }
+  const MIN_POOLED_SHARPE = +(process.env.LAB_MIN_POOLED_SHARPE || 0.30);
+  if (pooled.obsDays < 200) return fail(`only ${pooled.obsDays} pooled daily observations (need ≥200)`);
+  if (pooled.sharpe < MIN_POOLED_SHARPE) {
+    const best = ran.slice().sort((a, b) => (b.m.sharpe ?? 0) - (a.m.sharpe ?? 0))[0];
+    return fail(
+      `pooled Sharpe ${pooled.sharpe.toFixed(2)} < ${MIN_POOLED_SHARPE} across ${ran.length} markets` +
+      ` (best single: ${best.name} ${(best.m.sharpe ?? 0).toFixed(2)})`
+    );
   }
 
-  // Fill in the markets that never reached pass 2, so the record is complete.
-  for (const r of ran) if (!byMarket[r.name]) byMarket[r.name] = { ...metricRow(r.m), rejected: "no edge" };
-
-  if (!winningMarkets.length) {
-    return {
-      pass: false,
-      reason: `${promising.length}/${ran.length} markets promising, none survived — ${rejections[0] || "failed robustness"}`,
-      byMarket, trials,
-    };
+  // EXECUTION-TIMING ROBUSTNESS on the pool: every leg delayed one bar,
+  // re-pooled. The retention bar (keep ≥50%) matches walk-forward-efficiency
+  // doctrine and the measured live haircut — it stays, because it is the test
+  // that separates real edges from fill-timing artifacts (ICT/BTC: +3086% → −43%).
+  const delSharpe = sharpeDaily(poolDaily(ran.map((r) => delayedDailyOf(code, r, lang)).filter(Boolean)).returns);
+  if (delSharpe < Math.max(0.1, pooled.sharpe * 0.5)) {
+    return fail(`timing-fragile (pooled Sharpe ${pooled.sharpe.toFixed(2)}→${delSharpe.toFixed(2)} on 1-bar delay)`);
   }
 
-  // POOLED sample floor — the per-market bars guarantee no single venue is
-  // noise, but institutional-grade confidence (200–500 trades, López de Prado)
-  // comes from the TOTAL sample across the winning venues. A candidate whose
-  // pooled count is thin isn't proven wrong, just unproven — the reason names
-  // frequency/markets so the improve loop pushes in that direction.
-  const MIN_POOLED_TRADES = +(process.env.LAB_MIN_POOLED_TRADES || 300);
-  const pooledTrades = winningMarkets.reduce((s, name) => s + (byMarket[name].n ?? 0), 0);
-  if (pooledTrades < MIN_POOLED_TRADES) {
-    return {
-      pass: false,
-      reason: `only ${pooledTrades} trades pooled across ${winningMarkets.length} winning market(s) (need ≥${MIN_POOLED_TRADES} total) — raise the trade frequency or make the edge work on more markets`,
-      byMarket, trials,
-    };
+  // k-fold on the pooled series — pure math, no re-backtests.
+  const kf = foldsProfitable(pooledSeries.returns, 5);
+  if (kf.profitable < Math.ceil(kf.total * 0.6)) {
+    return fail(`k-fold ${kf.profitable}/${kf.total} pooled folds profitable`);
   }
 
-  // Report the strongest venue as the headline.
-  const best = winningMarkets
-    .slice()
-    .sort((a, b) => (byMarket[b].dsr ?? 0) - (byMarket[a].dsr ?? 0))[0];
+  // Price-noise robustness, spot-checked on the two biggest contributors (a
+  // full pooled noise pass would be runs × markets backtests; the fragility it
+  // hunts — entries pinned to exact price levels — shows up where the rule
+  // actually trades).
+  const contributors = ran.filter((r) => r.m.tradeCount >= 20)
+    .sort((a, b) => (b.m.sharpe ?? 0) - (a.m.sharpe ?? 0)).slice(0, 2);
+  for (const r of contributors) {
+    const nz = noiseTest({ candles: r.candles, makeSignalFn: () => compileFor(code, lang), runs: 8, feeBps: r.feeBps });
+    if (!nz || nz.verdict !== "pass") return fail(`noise (${r.name})`);
+  }
+
+  // Holdout: the POOLED recent tail must be profitable — a rule that made its
+  // money years ago and bleeds now is decayed. And the signal must not
+  // ANTI-predict out of sample (mean IC across legs ≥ floor) — the replication
+  // check that catches backwards "edges".
+  const tail = tailStats(pooledSeries.returns, 0.3);
+  if (tail.n >= 60 && (tail.retPct <= 0 || tail.sharpe <= 0)) {
+    return fail(`stale recent tail: pooled ret ${tail.retPct.toFixed(0)}%, Sharpe ${tail.sharpe.toFixed(2)} over the last 30%`);
+  }
+  const ics = [];
+  for (const r of ran) {
+    const cut = Math.floor(r.candles.length * 0.7);
+    const { ic } = signalIC(r.candles.slice(cut), (r.signals || []).slice(cut));
+    if (ic != null) ics.push(ic);
+  }
+  const meanIc = ics.length ? ics.reduce((a, b) => a + b, 0) / ics.length : null;
+  if (meanIc != null && meanIc < OOS_IC_FLOOR) {
+    return fail(`failed replication: mean OOS signal IC ${meanIc.toFixed(3)} across ${ics.length} markets`);
+  }
+
+  // Deflated Sharpe of the pooled daily returns at the windowed trial count.
+  const dsrRaw = deflatedSharpe(pooledSeries.returns, trials);
+  const dsrPct = dsrRaw ? dsrRaw.dsr * 100 : 0;
+
+  const { qualified, reasons } = qualifyPooledAll({ pooled, dsrPct });
+  if (!qualified.length) return fail(reasons.private || reasons.prop);
+
+  // Where it EARNS (display + which legs the paper book trades): active,
+  // positive-Sharpe legs, strongest first. Purely informational — acceptance
+  // was pooled, so listing the good legs is reporting, not selection.
+  const active = ran.filter((r) => r.m.tradeCount >= 20 && (r.m.sharpe ?? 0) > 0)
+    .sort((a, b) => (b.m.sharpe ?? 0) - (a.m.sharpe ?? 0));
+  for (const r of active) byMarket[r.name] = { ...byMarket[r.name], earns: true };
+  const winningMarkets = active.map((r) => r.name);
+  const best = winningMarkets[0] || ran[0].name;
 
   return {
     pass: true,
     byMarket,
     markets: winningMarkets,
     bestMarket: best,
-    dsr: byMarket[best].dsr,
-    qualified: [...qualifiedProfiles],
+    dsr: +dsrPct.toFixed(1),
+    qualified,
+    // The pooled portfolio object this rule was ACCEPTED on — the honest
+    // headline. Per-market rows above are attribution, not the verdict.
+    pooled: {
+      ...roundedPooled,
+      dsr: +dsrPct.toFixed(1),
+      delayedSharpe: +delSharpe.toFixed(2),
+      oosIc: meanIc != null ? +meanIc.toFixed(3) : null,
+      kFold: `${kf.profitable}/${kf.total}`,
+    },
+    pooledDaily: compactSeries(pooledSeries),
+    pooledMarkets: ran.map((r) => r.name),
     trials,
     marketsTested: datasets.length,
     // Non-fatal code-audit warnings (e.g. no stop-loss) — surfaced on the survivor so
@@ -735,9 +698,6 @@ function gauntlet(code, datasets, globalTrials, lang) {
     auditWarnings: audit.warnings ? audit.findings.filter((f) => f.severity === "warn").map((f) => f.id) : undefined,
   };
 }
-
-/** Which profiles a single market qualified for. */
-const byMarket_profiles = (verdict, mid) => verdict.byMarket?.[mid]?.profiles;
 
 const metricRow = (m) => ({
   ret: +m.totalReturnPct.toFixed(1), pf: +m.profitFactor.toFixed(2),
@@ -821,7 +781,7 @@ const NOT_IMPROVABLE = /^(compile:|gen:|runtime|strategy error|no markets|no edg
 // k-fold, noise, holdout, buy&hold, DSR, the Sharpe quality floor (the dominant
 // failure since the Aug bars), drawdown, and the sample floors (trade count /
 // trades-per-year / pooled) — the improve prompt knows a targeted fix for each.
-const IMPROVABLE = /timing-fragile|k-?fold|noise|holdout|buy\s*&\s*hold|DSR|dd\s|PF\s|quality floor|quant-grade|Sharpe\s+[\d.]+\s*(?:<|below)|drawdown|only \d+(?:\.\d+)? trades|trades\/yr|pooled|stop-?loss|risk management/i;
+const IMPROVABLE = /timing-fragile|k-?fold|noise|holdout|stale recent tail|buy\s*&\s*hold|DSR|dd\s|PF\s|quality floor|quant-grade|Sharpe\s+[\d.]+\s*(?:<|below)|drawdown|only \d+(?:\.\d+)? trades|trades\/yr|pooled|barely trades|stop-?loss|risk management|failed replication/i;
 const improvePool = ALWAYS_ON
   ? (st.graveyard || []).filter((g) =>
       g.code && (g.improveTries || 0) < MAX_IMPROVE_TRIES &&
@@ -858,17 +818,60 @@ if (needPy) {
 const newCandidates = [];
 const touchedCandidates = []; // existing candidates the polish phase upgraded or maxed
 const toPromote = [];
+const retireIds = []; // ensemble members replaced this run — their paper legs retire
 
-// Auto-promote per profile AND per winning market: a strategy that works on
-// both EUR/USD daily and SOL 15m is two paper positions, not one — collapsing
-// them to a single line would lie about what was validated. Shared by the
-// fresh-paper loop and the always-on improve loop.
+// {dates, returns} → [{d, r}] pair list, the shape poolDaily consumes.
+const toPairs = (s) => (s?.dates || []).map((d, i) => ({ d, r: s.returns[i] }));
+
+// ── Tier-1 promotion: admit the RULE to the ensemble, then paper its legs ────
+// A survivor joins the ensemble book only if it adds something: not a clone of
+// a member (|ρ| cap — the WorldQuant/Carver self-correlation rule; a strictly
+// better clone REPLACES its incumbent and retires the incumbent's paper legs)
+// and never degrading the combined book. Admitted rules paper-trade their
+// strongest ENSEMBLE_MARKETS legs, one entry per (profile × market), so the
+// live book mirrors the pooled object that was actually validated.
 function queuePromotions(cand, verdict) {
+  if (!verdict.pooledDaily) return; // legacy verdict shape — nothing to admit
+  st.ensemble = st.ensemble || { members: [] };
+  const mine = verdict.pooledDaily;
+
+  const clash = st.ensemble.members
+    .map((m) => ({ m, rho: corrDaily(m.pooledDaily, mine) }))
+    .filter((x) => x.rho != null && Math.abs(x.rho) > ENSEMBLE_CORR_CAP)
+    .sort((a, b) => Math.abs(b.rho) - Math.abs(a.rho))[0];
+  if (clash) {
+    if ((verdict.pooled?.sharpe ?? 0) <= (clash.m.sharpe ?? 0) * 1.1) {
+      cand.ensembleNote = `held: ρ ${clash.rho.toFixed(2)} with "${clash.m.name}" and not clearly better`;
+      console.log(`  ⛔ ensemble: ${cand.name} — ${cand.ensembleNote}`);
+      return;
+    }
+    console.log(`  ↔ ensemble: ${cand.name} replaces correlated member "${clash.m.name}" (ρ ${clash.rho.toFixed(2)})`);
+    st.ensemble.members = st.ensemble.members.filter((m) => m !== clash.m);
+    if (clash.m.candId) retireIds.push(clash.m.candId);
+  }
+
+  // Marginal contribution: with ≥2 members, a new rule must not drag the book.
+  const cur = st.ensemble.members.map((m) => toPairs(m.pooledDaily));
+  if (cur.length >= 2) {
+    const without = sharpeDaily(poolDaily(cur).returns);
+    const withNew = sharpeDaily(poolDaily([...cur, toPairs(mine)]).returns);
+    if (withNew < without - 0.02) {
+      cand.ensembleNote = `held: would drag the book (Sharpe ${without.toFixed(2)} → ${withNew.toFixed(2)})`;
+      console.log(`  ⛔ ensemble: ${cand.name} — ${cand.ensembleNote}`);
+      return;
+    }
+  }
+
+  st.ensemble.members = [
+    ...st.ensemble.members,
+    { candId: cand.id, name: cand.name, sharpe: verdict.pooled?.sharpe ?? 0, profiles: verdict.qualified, pooledDaily: mine, at: Date.now() },
+  ].slice(-12); // bounded — a 12-rule book is already beyond both profile caps
+
+  const legs = (verdict.markets || []).slice(0, ENSEMBLE_MARKETS);
   for (const pid of verdict.qualified) {
     const prof = getProfile(pid);
-    if (cand.dsr < prof.promotion.minDsr) continue;
-    for (const mid of verdict.markets) {
-      if (!(byMarket_profiles(verdict, mid) || []).includes(pid)) continue;
+    if ((verdict.dsr ?? 0) < prof.promotion.minDsr) continue;
+    for (const mid of legs) {
       const m = byId(mid);
       if (!m) continue;
       toPromote.push({
@@ -878,10 +881,15 @@ function queuePromotions(cand, verdict) {
         symbol: m.symbol, interval: m.interval,
         feeBps: costFor(m), positionPct: 100,
         volTarget: true, // GARCH vol-targeted sizing — cuts drawdown by default
-        dsr: verdict.byMarket[mid]?.dsr ?? cand.dsr, paper: cand.paper,
+        dsr: verdict.dsr, paper: cand.paper,
         profile: pid, candidateId: cand.id, marketId: mid,
+        ensembleRule: cand.id, // groups this leg under its rule in the book
+        // The rule's POOLED record travels with every leg: the library police
+        // (retest-library → progressEntry) judges a leg on this, never on the
+        // leg's own Sharpe — otherwise it would bury the rule on day one.
+        pooled: verdict.pooled,
         // Backtest expectation — the incubation watchdog in the lab agent
-        // grades live paper behaviour against exactly this.
+        // grades live paper behaviour against exactly this (per-leg numbers).
         expect: {
           retPct: verdict.byMarket[mid]?.ret ?? null,
           ddPct: verdict.byMarket[mid]?.dd ?? null,
@@ -889,7 +897,7 @@ function queuePromotions(cand, verdict) {
           n: verdict.byMarket[mid]?.n ?? null,
         },
       });
-      console.log(`  🤖 auto-promote queued: ${prof.label} · ${m.label}`);
+      console.log(`  🤖 ensemble leg queued: ${prof.label} · ${m.label}`);
     }
   }
 }
@@ -1032,12 +1040,14 @@ for (const paper of fresh) {
         // what kills it) instead of being an opaque block of code.
         thesis: parseThesis(code),
         // Where it works, not just how well. byMarket carries every venue that
-        // was tried, including the rejections and why — the graveyard for a
-        // strategy that ALMOST worked is the most useful thing in the record.
+        // was tried — attribution for the POOLED verdict the rule was actually
+        // accepted on (pooled = the headline; pooledDaily feeds the ensemble's
+        // correlation/marginal admission and stays LOCAL — stripped on push).
         byMarket: verdict.byMarket,
         markets: verdict.markets,
         bestMarket: verdict.bestMarket,
         marketsTested: verdict.marketsTested,
+        pooled: verdict.pooled, pooledDaily: verdict.pooledDaily, pooledMarkets: verdict.pooledMarkets,
         trialsUsed: verdict.trials,
         dsr: verdict.dsr,
         // Which regimes this cleared. A strategy can be private-grade and still
@@ -1137,6 +1147,7 @@ if (improvePool.length && datasets.length && !(UNTIL_HIT && newCandidates.length
           thesis: parseThesis(code),
           byMarket: verdict.byMarket, markets: verdict.markets,
           bestMarket: verdict.bestMarket, marketsTested: verdict.marketsTested,
+          pooled: verdict.pooled, pooledDaily: verdict.pooledDaily, pooledMarkets: verdict.pooledMarkets,
           trialsUsed: verdict.trials, dsr: verdict.dsr,
           profiles: verdict.qualified, trialsAtPass: st.attempts, foundAt: Date.now(),
         };
@@ -1206,6 +1217,7 @@ if (polishPool.length && datasets.length) {
         Object.assign(cand, {
           code: finalCode, language, dsr: verdict.dsr, byMarket: verdict.byMarket,
           markets: verdict.markets, bestMarket: verdict.bestMarket, marketsTested: verdict.marketsTested,
+          pooled: verdict.pooled, pooledDaily: verdict.pooledDaily, pooledMarkets: verdict.pooledMarkets,
           profiles: verdict.qualified, improveTries: 0, thesis: parseThesis(finalCode),
         });
         cand.name = cleanStrategyName(parseThesis(finalCode).name, finalCode) || cand.name;
@@ -1282,6 +1294,7 @@ if (ALWAYS_ON && datasets.length && MINE_PER_RUN > 0 && !(UNTIL_HIT && newCandid
           thesis: parseThesis(hit.code),
           byMarket: verdict.byMarket, markets: verdict.markets,
           bestMarket: verdict.bestMarket, marketsTested: verdict.marketsTested,
+          pooled: verdict.pooled, pooledDaily: verdict.pooledDaily, pooledMarkets: verdict.pooledMarkets,
           trialsUsed: verdict.trials, dsr: verdict.dsr,
           profiles: verdict.qualified, trialsAtPass: st.attempts, foundAt: Date.now(),
         };
@@ -1349,6 +1362,7 @@ if (ALWAYS_ON && datasets.length && INTRADAY_PER_RUN > 0 && !(UNTIL_HIT && newCa
           thesis: parseThesis(code),
           byMarket: verdict.byMarket, markets: verdict.markets,
           bestMarket: verdict.bestMarket, marketsTested: verdict.marketsTested,
+          pooled: verdict.pooled, pooledDaily: verdict.pooledDaily, pooledMarkets: verdict.pooledMarkets,
           trialsUsed: verdict.trials, dsr: verdict.dsr,
           profiles: verdict.qualified, trialsAtPass: st.attempts, foundAt: Date.now(),
         };
@@ -1389,9 +1403,12 @@ const pushCandidates = [...newCandidates];
 for (const c of touchedCandidates) if (!pushCandidates.some((x) => x.id === c.id)) pushCandidates.push(c);
 if (pushCandidates.length) {
   try {
+    // pooledDaily is the ensemble's local working data (thousands of floats) —
+    // the site card doesn't need it and the KV budget can't afford it.
+    const slim = pushCandidates.map(({ pooledDaily, ...rest }) => rest);
     const r = await fetch(`${SITE}/api/lab`, {
       method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ token: TOKEN, candidates: pushCandidates }),
+      body: JSON.stringify({ token: TOKEN, candidates: slim }),
     });
     console.log(`candidates pushed: ${(await r.json().catch(() => ({}))).stored ?? "?"} stored on site`);
   } catch (e) { console.error(`candidates push failed: ${e.message} — kept locally, next run re-pushes`); }
@@ -1435,6 +1452,36 @@ if (heldNotes.length) {
   console.log(`🚦 auto-promotion held by RiskGate — ${[...new Set(heldNotes)].join("; ")}`);
 }
 
+// Paper legs of ensemble members that were REPLACED by a better-correlated twin
+// this run — retire them so the book mirrors the current member set.
+if (retireIds.length) {
+  try {
+    const r = await fetch(`${SITE}/api/lab`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: TOKEN, retire: { ids: retireIds } }),
+    });
+    const o = await r.json().catch(() => ({}));
+    console.log(`retired ${o.retired ?? "?"} paper leg(s) of replaced ensemble member(s)`);
+  } catch (e) { console.error(`retire push failed: ${e.message}`); }
+}
+
+// ── the ensemble book's grade — the level the hard quant-grade bars apply to ──
+let ensembleReport = null;
+try {
+  const members = st.ensemble?.members || [];
+  if (members.length) {
+    const bh = datasets.length ? poolDaily(datasets.map((d) => dailyCloseReturns(d.candles))) : null;
+    const g = ensembleGrade(members.map((m) => toPairs(m.pooledDaily)), bh);
+    delete g.series;
+    ensembleReport = {
+      ...g,
+      rules: members.length,
+      members: members.map((m) => ({ name: m.name, sharpe: +(m.sharpe ?? 0).toFixed(2), profiles: m.profiles || [] })),
+    };
+    console.log(`ensemble book: ${members.length} rule(s) · Sharpe ${g.sharpe} vs B&H ${g.bhSharpe ?? "?"} · dd ${g.ddPct}% → ${g.quantGrade ? "QUANT-GRADE" : "building"}`);
+  }
+} catch (e) { console.error(`ensemble grade failed: ${e.message}`); }
+
 // brain vault: push the knowledge graph (nodes = papers, edges = shared topics)
 try {
   const r = await fetch(`${SITE}/api/lab`, {
@@ -1476,6 +1523,10 @@ const state = { ...(cur?.state || {}), research: {
     return hits;
   })(),
   universeSize: UNIVERSE.length,
+  // Tier-1: the combined book of admitted rules and its grade against the
+  // quant-grade bars (Sharpe ≥ 1, beat holding the universe) — the number the
+  // Coach page should headline now, instead of any per-market stat.
+  ensemble: ensembleReport,
   lastRun: Date.now(),
   latest: fresh.map((p) => ({ title: p.title.slice(0, 80), link: p.link, source: p.source, kind: p.kind })),
   lastGraveyard: st.graveyard.slice(0, 3).map((g) => ({ title: g.title, reason: g.reason })),
