@@ -3,23 +3,50 @@
 // when it closes). We normalize each message to our candle shape plus a
 // `closed` flag and hand it to onCandle. Handles auto-reconnect with backoff.
 //
+// Three streams are combined when a live price is wanted:
+//   @kline_<iv>  authoritative candle (open/high/low/close/volume)
+//   @aggTrade    last traded price — moves only when a trade prints
+//   @bookTicker  best bid/ask — moves on every book change, many times a second
+// The book is what makes the displayed price tick as continuously as a broker
+// terminal; the trade tape alone leaves the number frozen for stretches of a
+// second or more even on a liquid pair.
+//
 // The Cloudflare CSP must allow `wss://stream.binance.com:9443` in connect-src
 // (see public/_headers) or the browser blocks this connection.
 
 const WS_BASE = "wss://stream.binance.com:9443/ws";
 
-// Minimum ms between tick callbacks — every executed trade arrives on the
-// aggTrade stream (can be dozens/second on majors). Ticks only repaint the
-// forming candle imperatively, so a fast cadence stays cheap; 120ms (~8/s)
-// reads as smoothly live like a pro terminal.
-const TICK_THROTTLE_MS = 120;
+// Quotes arrive faster than any screen can show them, so they are coalesced
+// rather than dropped: the newest value is kept and flushed on the next
+// animation frame. The old fixed 120ms leading-edge throttle discarded every
+// update inside its window, which meant the newest print was routinely the one
+// thrown away and the price sat visibly stale. rAF also parks itself while the
+// tab is hidden and resumes with the latest value on return.
+const raf = typeof requestAnimationFrame === "function"
+  ? requestAnimationFrame
+  : (fn) => setTimeout(fn, 16);
+const cancelRaf = typeof cancelAnimationFrame === "function"
+  ? cancelAnimationFrame
+  : clearTimeout;
 
-export function openBinanceKlineStream({ symbol, interval, onCandle, onTick, onStatus }) {
-  // Combined stream: kline (authoritative candle) + aggTrade (instant price).
-  const streamName = onTick
-    ? `${symbol.toLowerCase()}@kline_${interval}/${symbol.toLowerCase()}@aggTrade`
-    : `${symbol.toLowerCase()}@kline_${interval}`;
-  let lastTickAt = 0;
+export function openBinanceKlineStream({ symbol, interval, onCandle, onTick, onQuote, onStatus }) {
+  const wantsPrice = Boolean(onTick || onQuote);
+  const s = symbol.toLowerCase();
+  const streamName = wantsPrice
+    ? `${s}@kline_${interval}/${s}@aggTrade/${s}@bookTicker`
+    : `${s}@kline_${interval}`;
+
+  // Coalesced quote state: overwritten as fast as messages land, flushed once
+  // per frame so the UI always paints the newest value it could have.
+  let pendingTick = null;
+  let pendingQuote = null;
+  let frame = 0;
+  const flush = () => {
+    frame = 0;
+    if (pendingTick != null) { const p = pendingTick; pendingTick = null; onTick?.(p); }
+    if (pendingQuote != null) { const q = pendingQuote; pendingQuote = null; onQuote?.(q); }
+  };
+  const schedule = () => { if (!frame) frame = raf(flush); };
   let ws = null;
   let closedByUs = false;
   let retry = 0;
@@ -29,7 +56,7 @@ export function openBinanceKlineStream({ symbol, interval, onCandle, onTick, onS
     try {
       // Single stream uses the raw endpoint; multiple streams need the
       // combined endpoint, which wraps payloads in { stream, data }.
-      ws = new WebSocket(onTick
+      ws = new WebSocket(wantsPrice
         ? `wss://stream.binance.com:9443/stream?streams=${streamName}`
         : `${WS_BASE}/${streamName}`);
     } catch {
@@ -44,13 +71,19 @@ export function openBinanceKlineStream({ symbol, interval, onCandle, onTick, onS
       try { msg = JSON.parse(ev.data); } catch { return; }
       const payload = msg?.data ?? msg; // combined vs raw format
 
-      // aggTrade: instant last price, throttled.
-      if (payload?.e === "aggTrade" && onTick) {
-        const now = Date.now();
-        if (now - lastTickAt >= TICK_THROTTLE_MS) {
-          lastTickAt = now;
-          onTick(+payload.p);
-        }
+      // aggTrade: last traded price.
+      if (payload?.e === "aggTrade" && wantsPrice) {
+        pendingTick = +payload.p;
+        schedule();
+        return;
+      }
+
+      // bookTicker: best bid/ask. It carries no `e` event-type field, so it is
+      // identified by the stream name (combined format) or by its shape.
+      if (wantsPrice && payload?.e === undefined && payload?.b !== undefined && payload?.a !== undefined) {
+        const bid = +payload.b;
+        const ask = +payload.a;
+        if (bid > 0 && ask > 0) { pendingQuote = { bid, ask }; schedule(); }
         return;
       }
 
@@ -89,6 +122,9 @@ export function openBinanceKlineStream({ symbol, interval, onCandle, onTick, onS
   return () => {
     closedByUs = true;
     clearTimeout(reconnectTimer);
+    if (frame) { cancelRaf(frame); frame = 0; }
+    pendingTick = null;
+    pendingQuote = null;
     if (ws) {
       ws.onclose = null;
       ws.onerror = null;

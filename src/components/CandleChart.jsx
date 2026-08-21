@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { createChart, CrosshairMode } from "lightweight-charts";
 import { toSeriesData } from "@/lib/chartTypes";
 import { priceDecimals } from "@/lib/utils";
+import { subscribeLiveQuote, getLiveQuote, livePriceOf } from "@/lib/liveQuote";
 
 // Chart colours are read from the app's theme tokens so the chart matches the
 // light/dark UI. Grid/border pick per-theme neutrals; series colours come from
@@ -95,7 +96,7 @@ export default function CandleChart({
   height = 440,
   magnet = false, // crosshair snaps to the hovered candle instead of floating free
   fitAll = false, // always show the whole dataset (backtest results: every marker visible)
-  livePrice = null, // latest tick price — updates the forming candle imperatively
+  liveQuote = false, // subscribe to the live quote store and patch the forming candle
   onNeedOlder,
   onChartReady,
   children,
@@ -329,21 +330,37 @@ export default function CandleChart({
   // recomputation) — it still updates on the ~2s kline cadence. The id is
   // "heikin" (see lib/chartTypes.js); the old "heikin-ashi" never matched, so
   // every tick was painting RAW OHLC into the smoothed series.
+  //
+  // The quote is pulled from the store by subscription instead of arriving as
+  // a prop, so a tick never triggers a React render anywhere in the tree — the
+  // series is patched directly. Refs carry the current candles/chartType into
+  // the subscription so it does not have to be torn down and rebuilt on every
+  // candle update.
+  const liveDepsRef = useRef({ candles, chartType });
+  liveDepsRef.current = { candles, chartType };
   useEffect(() => {
-    const series = priceSeriesRef.current;
-    if (!series || livePrice == null || !candles?.length || chartType === "heikin") return;
-    const last = candles[candles.length - 1];
-    const bar = {
-      ...last,
-      close: livePrice,
-      high: Math.max(last.high, livePrice),
-      low: Math.min(last.low, livePrice),
+    if (!liveQuote) return;
+    const paint = () => {
+      const series = priceSeriesRef.current;
+      const { candles: bars, chartType: type } = liveDepsRef.current;
+      if (!series || !bars?.length || type === "heikin") return;
+      const price = livePriceOf(getLiveQuote());
+      if (!(price > 0)) return;
+      const last = bars[bars.length - 1];
+      const bar = {
+        ...last,
+        close: price,
+        high: Math.max(last.high, price),
+        low: Math.min(last.low, price),
+      };
+      try {
+        if (type === "line" || type === "area") series.update({ time: bar.time, value: bar.close });
+        else series.update({ time: bar.time, open: bar.open, high: bar.high, low: bar.low, close: bar.close });
+      } catch { /* series torn down / stale time */ }
     };
-    try {
-      if (chartType === "line" || chartType === "area") series.update({ time: bar.time, value: bar.close });
-      else series.update({ time: bar.time, open: bar.open, high: bar.high, low: bar.low, close: bar.close });
-    } catch { /* series torn down / stale time */ }
-  }, [livePrice, chartType, candles]);
+    paint(); // the series may have just been rebuilt — restore the live price
+    return subscribeLiveQuote(paint);
+  }, [liveQuote, chartEpoch]);
 
   // Trade markers (backtest buy/sell arrows). lightweight-charts renders
   // markers on the main series; line/area series support them too.

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { useSearchParams } from "react-router-dom";
 import { TrendingUp, Minus, MoveHorizontal, AlignVerticalJustifyCenter, Square, GitBranch, Trash2, Pencil, Magnet, Wand2 } from "lucide-react";
 import CandleChart from "@/components/CandleChart";
@@ -10,6 +10,7 @@ import SymbolInfoPanel from "@/components/SymbolInfoPanel";
 import IndicatorPane from "@/components/IndicatorPane";
 import { fetchCandles, fetchOlderCandles, fetchLatestCandles, MARKETS, INTERVALS, rangesFor } from "@/lib/data";
 import { openBinanceKlineStream, mergeLiveCandle } from "@/lib/liveStream";
+import { setLiveQuote, resetLiveQuote, subscribeLiveQuote, getLiveQuote, livePriceOf } from "@/lib/liveQuote";
 import { CHART_TYPES } from "@/lib/chartTypes";
 import { sma, ema, bollinger, closes } from "@/lib/indicators";
 import { vizColor } from "@/lib/vizColors";
@@ -17,13 +18,20 @@ import { getAlertsFor, addAlert, removeAlert, subscribeAlerts, checkAlerts, ensu
 import { cn, fmtPrice, fmtPct } from "@/lib/utils";
 import { Bell, X, Scale, Info as InfoIcon, Radio } from "lucide-react";
 
-// Compact price header above the chart — last price (live tick if streaming),
-// change vs the previous bar, and the current bar's OHLC.
-function PriceHeader({ candles, livePrice }) {
+// Compact price header above the chart — live price, change vs the previous
+// bar, and the current bar's OHLC.
+//
+// The live quote is read straight out of the external store rather than passed
+// down as a prop: a prop would mean the Charts page re-renders on every tick,
+// and re-rendering the whole chart tree many times a second is exactly what
+// used to hold the displayed price back to ~3 updates/s. Here only this header
+// re-renders.
+function PriceHeader({ candles }) {
+  const quote = useSyncExternalStore(subscribeLiveQuote, getLiveQuote, getLiveQuote);
   if (!candles || candles.length < 2) return null;
   const bar = candles[candles.length - 1];
   const prev = candles[candles.length - 2];
-  const px = livePrice ?? bar.close;
+  const px = livePriceOf(quote) ?? bar.close;
   const ch = prev.close ? ((px - prev.close) / prev.close) * 100 : 0;
   return (
     <div className="flex flex-wrap items-baseline gap-x-4 gap-y-2 px-1 pb-3 mb-3 border-b border-line">
@@ -99,7 +107,6 @@ export default function Charts() {
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
   const [live, setLive] = useState(false); // WS connected (crypto real-time)
-  const [livePrice, setLivePrice] = useState(null); // latest tick, drives the forming candle only
   const [mainChart, setMainChart] = useState(null); // for pane time-sync
   const [mainSeries, setMainSeries] = useState(null); // for alert price lines
 
@@ -214,16 +221,21 @@ export default function Charts() {
         symbol,
         interval: bIv,
         onCandle: (c) => setCandles((prev) => mergeLiveCandle(prev, c)),
-        // Every trade updates only the forming candle (imperative series.update
-        // in CandleChart) — no page re-render, so it ticks smoothly like a pro
-        // terminal. The kline stream keeps the array authoritative.
-        onTick: (price) => setLivePrice(price),
+        // Trades and book updates land in the external quote store, never in
+        // page state: the header subscribes to it and the chart patches its
+        // forming candle imperatively, so a tick costs one small re-render
+        // instead of a full chart-tree render. The kline stream stays
+        // authoritative for the candle array.
+        onTick: (price) => setLiveQuote({ last: price, at: Date.now() }),
+        onQuote: ({ bid, ask }) => setLiveQuote({ bid, ask, at: Date.now() }),
         onStatus: (s) => setLive(s === "live"),
       });
-      return () => { close(); setLive(false); setLivePrice(null); };
+      return () => { close(); setLive(false); resetLiveQuote(); };
     }
 
-    // Stocks: polling fallback.
+    // Stocks: polling fallback, no tick feed — clear any crypto quote so the
+    // header falls back to the bar close instead of showing a stale price.
+    resetLiveQuote();
     let alive = true;
     const tick = async () => {
       if (document.hidden) return;
@@ -666,7 +678,7 @@ export default function Charts() {
       )}
 
       <div className="rounded-xl border border-line lg-glass p-3">
-        {!error && candles && <PriceHeader candles={candles} livePrice={livePrice} />}
+        {!error && candles && <PriceHeader candles={candles} />}
         {error ? (
           <div className="h-96 flex items-center justify-center text-sm text-down px-6 text-center">{error}</div>
         ) : loading && !candles ? (
@@ -682,7 +694,7 @@ export default function Charts() {
               markers={allMarkers}
               height={chartHeight()}
               magnet={magnet}
-              livePrice={livePrice}
+              liveQuote={market === "crypto"}
               onNeedOlder={loadOlder}
               onChartReady={(chart, series) => { setMainChart(chart); setMainSeries(series); }}
             >
