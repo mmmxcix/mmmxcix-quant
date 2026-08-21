@@ -103,7 +103,38 @@ Keep these — they are best-in-class and none of the research argues against th
 
 ## 4. Upgrade plan (proposed, in priority order)
 
-### Tier 1 — change the acceptance geometry (the actual fix)
+### Tier 1 — change the acceptance geometry — ✅ SHIPPED Aug 21 2026 (01247bd, 5bacf0e)
+
+Implemented as described below, plus one trap found during the build: the
+library retest police (`retest-library.mjs` → `progressEntry`, per-market
+Sharpe 0.8 / 100 trades) would have buried every pooled rule the day it was
+promoted, so an ensemble LEG is now judged on its RULE's pooled record
+(`entry.pooled`, carried on every promotion) and a losing leg of a healthy
+rule survives — that is what diversification looks like from inside.
+
+Measured on the live 14-market universe, same rule family, **0/14 markets
+clearing the old Sharpe-1.0 wall in every case**:
+
+| variant | pooled Sharpe | pooled DD | DSR (60 trials) | recent tail | verdict |
+|---|---|---|---|---|---|
+| naive EMA trend | 0.567 | 38.0% | 42.6% | −7.0% | fails (DD + decayed tail) |
+| + vol/regime filter | 0.626 | 22.7% | 52.6% | +19.3% | **PASS private** |
+| + patience/confirmation | 0.758 | 19.5% | 73.7% | +25.7% | **PASS private** |
+
+Neither cleared *prop* (needs pooled DD ≤ 12%) — correct, a prop account dies
+at 8% live. Env levers: `LAB_MIN_POOLED_SHARPE` (0.30), `LAB_ENSEMBLE_MARKETS`
+(2 legs/rule), `LAB_ENSEMBLE_CORR_CAP` (0.7), `LAB_REVALIDATE_MIN_SHARPE` (0.25).
+
+**Known strictness, deliberately kept:** the pool includes legs where a
+daily-ish rule churns to death (SOL 15m, AAPL 15m at 15-minute costs), which
+inflates pooled drawdown. Non-portability is a real defect and the improve hint
+now names the fix ("make the rule PORTABLE — sit flat where the edge is
+absent"). If pooled DD becomes the new universal wall, the honest next step is
+inverse-volatility (risk-parity) leg weighting — **not** dropping bad legs,
+which would re-introduce the cherry-picking the pooling exists to prevent.
+
+The original plan, for the record:
+
 1. **Pooled evaluation + ensemble promotion (Carver route).** Grade every candidate on its
    POOLED daily returns across all 14 markets (one rule applied everywhere = thousands of
    observations, the instrument-diversification multiplier is free). Accept rules at pooled
