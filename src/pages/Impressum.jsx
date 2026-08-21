@@ -21,8 +21,7 @@ export default function Impressum() {
 
       <H2>Contact</H2>
       <p>
-        Email: <a href="mailto:admin@mmmxcix.com" className="text-accent hover:underline">admin@mmmxcix.com</a><br />
-        Phone: <a href="tel:+41774321718" className="text-accent hover:underline">+41 77 432 17 18</a>
+        Email: <a href="mailto:admin@mmmxcix.com" className="text-accent hover:underline">admin@mmmxcix.com</a>
       </p>
 
       <H2>Responsible for content</H2>
