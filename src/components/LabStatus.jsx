@@ -422,6 +422,52 @@ function LabStatus() {
             {data.note && <span className="text-dim italic font-sans w-full">“{data.note}”</span>}
           </div>
 
+          {/* Ensemble book — the level the quant-grade bars apply to (Tier 1).
+              A single rule realistically carries Sharpe 0.2–0.5; the BOOK of
+              low-correlation rules is what has to clear Sharpe 1 and beat
+              holding the universe. See docs/CORTEX_BENCHMARK.md. */}
+          {data.research?.ensemble && (
+            <div className="mt-3 border-t border-line pt-3">
+              <p className="text-[10px] text-dim font-medium mb-1.5">
+                Ensemble book
+                <span
+                  className={`ml-2 px-1.5 py-0.5 rounded text-[9px] ${
+                    data.research.ensemble.quantGrade ? "bg-up/15 text-up" : "bg-line text-dim"
+                  }`}
+                  title="The hard bars (Sharpe ≥ 1 AND beating the universe risk-adjusted) are judged on the combined book, not on any single rule"
+                >
+                  {data.research.ensemble.quantGrade ? "quant-grade" : "building"}
+                </span>
+              </p>
+              <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs font-mono">
+                <span className="text-dim" title="Rules admitted to the book — each must be uncorrelated with the others (|ρ| ≤ 0.7) and must not drag the combined Sharpe">
+                  rules <span className="text-text">{data.research.ensemble.rules}</span>
+                </span>
+                <span className="text-dim">
+                  Sharpe{" "}
+                  <span className={data.research.ensemble.sharpe >= 1 ? "text-up" : "text-text"}>
+                    {data.research.ensemble.sharpe?.toFixed?.(2) ?? data.research.ensemble.sharpe}
+                  </span>
+                  {data.research.ensemble.bhSharpe != null && (
+                    <span className="text-dim/70"> vs hold {data.research.ensemble.bhSharpe}</span>
+                  )}
+                </span>
+                <span className="text-dim">drawdown <span className="text-down">{data.research.ensemble.ddPct}%</span></span>
+                <span className="text-dim">return <span className="text-text">{data.research.ensemble.retPct}%</span></span>
+                <span className="text-dim" title="Pooled daily observations behind the book's statistics">
+                  obs <span className="text-text">{data.research.ensemble.obsDays}</span>
+                </span>
+              </div>
+              {data.research.ensemble.members?.length > 0 && (
+                <p className="text-[10px] text-dim/80 mt-1.5">
+                  members: {data.research.ensemble.members
+                    .map((m) => `${m.name} (${m.sharpe}${m.profiles?.length ? " · " + m.profiles.join("/") : ""})`)
+                    .join(" · ")}
+                </p>
+              )}
+            </div>
+          )}
+
           {/* Research loop stats (autonomous paper→strategy pipeline) */}
           {data.research && (
             <div className="mt-3 border-t border-line pt-3">
