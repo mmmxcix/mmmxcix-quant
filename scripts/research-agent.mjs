@@ -272,6 +272,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // spent day is recognised ONCE instead of rediscovered every 30 minutes.
 const LLM_DAILY_CALLS = +(process.env.LAB_LLM_DAILY_CALLS || 45);
 const LLM_FAIL_STREAK = +(process.env.LAB_LLM_FAIL_STREAK || 3);
+// How long a day declared "spent" stays closed before one probe call re-checks.
+const LLM_RETRY_AFTER_MS = +(process.env.LAB_LLM_RETRY_AFTER_MIN || 90) * 60000;
 let _budgetState = null;
 function llmBudget() {
   const day = new Date().toISOString().slice(0, 10);
@@ -283,6 +285,18 @@ function llmBudget() {
   if (!_budgetState.exhausted && _budgetState.calls >= LLM_DAILY_CALLS) {
     _budgetState.exhausted = true;
     console.log(`  ⛔ daily LLM call budget reached (${_budgetState.calls}/${LLM_DAILY_CALLS})`);
+  }
+  // Re-open on a schedule. "Exhausted" is inferred from refusals, and a refusal
+  // can also mean a transient outage or a provider that refills on a rolling
+  // window rather than at midnight — so without this, one bad half-hour would
+  // idle Cortex for the rest of the day. A probe costs a single call.
+  if (_budgetState.exhausted && _budgetState.calls < LLM_DAILY_CALLS &&
+      Date.now() - (_budgetState.probedAt || 0) > LLM_RETRY_AFTER_MS) {
+    _budgetState.probedAt = Date.now();
+    _budgetState.exhausted = false;
+    _budgetState.fails = 0;
+    deadModels.clear();
+    console.log(`  ↻ LLM budget re-opened for a probe (last checked ${Math.round((Date.now() - (_budgetState.probedAt || 0)) / 60000)}min ago)`);
   }
   return _budgetState;
 }
