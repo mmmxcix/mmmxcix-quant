@@ -605,18 +605,49 @@ function livenessTrades(code, datasets, lang) {
   return max;
 }
 
-// One-bar-delayed run of a single leg — the execution-robustness probe, now
-// POOLED by the gauntlet: a genuine edge barely changes when every decision
-// fills a bar late; a timing artifact collapses. Returns the leg's delayed
-// DAILY returns (null on failure) so the gauntlet can re-pool them.
+// Warnings that do NOT invalidate a run. The engine's "Bracket sanity" note is
+// informational — a trailing stop overtaken by a weekend gap fills at the open,
+// which is honest. Shared by the normal and the delayed path so both judge a
+// leg by the same standard (see delayedPool below for why that matters).
+const fatalWarnings = (res) => res.warnings.filter((w) => !w.includes("Bracket sanity"));
+
+// One-bar-delayed run of a single leg — the execution-robustness probe.
+// Returns the leg's delayed DAILY returns, or null if the delayed run failed.
 function delayedDailyOf(code, leg, lang) {
   try {
     const inner = compileFor(code, lang);
     let prev = "flat";
     const fn = (ctx) => { const s = inner(ctx); const out = prev; prev = s; return out; };
     const res = runBacktest({ candles: leg.candles, signalFn: fn, initialCapital: 10000, feeBps: leg.feeBps });
-    return res.warnings.length ? null : dailyReturnsOf(res.equity);
+    return fatalWarnings(res).length ? null : dailyReturnsOf(res.equity);
   } catch { return null; }
+}
+
+/**
+ * Pooled normal-vs-delayed Sharpe over exactly the SAME legs.
+ *
+ * The subtle way to get this wrong (and the way I got it wrong first): compute
+ * the delayed pool over whichever legs happened to survive, and compare it to a
+ * normal pool built from all of them. Then the two numbers describe different
+ * portfolios, and a rule whose per-market Sharpes barely move (0.39→0.40,
+ * 0.60→0.62) reads as a catastrophic 0.61→-1.00 collapse purely because a few
+ * profitable legs dropped out of one side. Every leg that cannot produce a
+ * delayed series is therefore excluded from BOTH sides.
+ */
+function delayedPool(code, ran, lang) {
+  const keptNormal = [], keptDelayed = [];
+  for (const r of ran) {
+    const d = delayedDailyOf(code, r, lang);
+    if (!d) continue;                       // unusable delayed → drop from both
+    keptNormal.push(dailyReturnsOf(r.equity));
+    keptDelayed.push(d);
+  }
+  if (!keptDelayed.length) return { base: 0, delayed: 0, legs: 0 };
+  return {
+    base: sharpeDaily(poolDaily(keptNormal).returns),
+    delayed: sharpeDaily(poolDaily(keptDelayed).returns),
+    legs: keptDelayed.length,
+  };
 }
 
 // Pull the EDGE / WORKS / BREAKS header the generation prompt asks for, so a
@@ -725,9 +756,11 @@ function gauntlet(code, datasets, globalTrials, lang) {
   // re-pooled. The retention bar (keep ≥50%) matches walk-forward-efficiency
   // doctrine and the measured live haircut — it stays, because it is the test
   // that separates real edges from fill-timing artifacts (ICT/BTC: +3086% → −43%).
-  const delSharpe = sharpeDaily(poolDaily(ran.map((r) => delayedDailyOf(code, r, lang)).filter(Boolean)).returns);
-  if (delSharpe < Math.max(0.1, pooled.sharpe * 0.5)) {
-    return fail(`timing-fragile (pooled Sharpe ${pooled.sharpe.toFixed(2)}→${delSharpe.toFixed(2)} on 1-bar delay)`);
+  const del = delayedPool(code, ran, lang);
+  const delSharpe = del.delayed;
+  // Judged against the SAME-LEG baseline, not the full-universe pooled figure.
+  if (delSharpe < Math.max(0.1, del.base * 0.5)) {
+    return fail(`timing-fragile (pooled Sharpe ${del.base.toFixed(2)}→${delSharpe.toFixed(2)} on 1-bar delay, ${del.legs} legs)`);
   }
 
   // k-fold on the pooled series — pure math, no re-backtests.

@@ -124,8 +124,12 @@ function revalidate(candidate, datasetsById, globalTrials) {
     return { pass: false, reason: `pooled Sharpe decayed to ${pooled.sharpe.toFixed(2)} (< ${REVAL_MIN_SHARPE}) across ${ran.length} legs`, byMarket };
   }
 
-  // Execution-timing robustness must still hold on fresh tape.
-  const delayed = [];
+  // Execution-timing robustness must still hold on fresh tape — compared over
+  // exactly the SAME legs on both sides. Pooling the delayed run over whichever
+  // legs survived, against a baseline built from all of them, compares two
+  // different portfolios and invents collapses that never happened. The engine's
+  // informational "Bracket sanity" note is not a failure.
+  const keptBase = [], keptDelayed = [];
   for (const r of ran) {
     try {
       const inner = compileFor(code, lang);
@@ -135,12 +139,15 @@ function revalidate(candidate, datasetsById, globalTrials) {
         signalFn: (ctx) => { const s = inner(ctx); const out = prev; prev = s; return out; },
         initialCapital: 10000, feeBps: r.feeBps,
       });
-      if (!res.warnings.length) delayed.push(dailyReturnsOf(res.equity));
-    } catch { /* a leg that errors delayed contributes nothing */ }
+      if (res.warnings.filter((w) => !w.includes("Bracket sanity")).length) continue;
+      keptBase.push(dailyReturnsOf(r.equity));
+      keptDelayed.push(dailyReturnsOf(res.equity));
+    } catch { /* a leg that errors delayed contributes to neither side */ }
   }
-  const delSharpe = sharpeDaily(poolDaily(delayed).returns);
-  if (delSharpe < Math.max(0.1, pooled.sharpe * 0.5)) {
-    return { pass: false, reason: `timing-fragile on fresh data (pooled Sharpe ${pooled.sharpe.toFixed(2)}→${delSharpe.toFixed(2)} delayed)`, byMarket };
+  const baseSharpe = keptBase.length ? sharpeDaily(poolDaily(keptBase).returns) : pooled.sharpe;
+  const delSharpe = keptDelayed.length ? sharpeDaily(poolDaily(keptDelayed).returns) : 0;
+  if (delSharpe < Math.max(0.1, baseSharpe * 0.5)) {
+    return { pass: false, reason: `timing-fragile on fresh data (pooled Sharpe ${baseSharpe.toFixed(2)}→${delSharpe.toFixed(2)} delayed)`, byMarket };
   }
 
   const kf = foldsProfitable(pooledSeries.returns, 5);
