@@ -24,7 +24,11 @@
 import { isAdminRequest } from "../_lib/auth.mjs";
 
 const ANTHROPIC_MODEL = "claude-sonnet-5";
-const MISTRAL_MODEL = "codestral-latest"; // Mistral's code-specialised model
+// Mistral fallback LIST, same reasoning as GROQ_MODELS below: codestral is the
+// best of them for code, but it is also the one most likely to be capped or
+// gated on a free key — and when it 429s, a single-model chain step threw the
+// WHOLE Mistral quota away. Ordered best-first; each becomes its own step.
+const MISTRAL_MODELS = ["codestral-latest", "mistral-small-latest", "open-mistral-nemo"];
 // Fallback LIST — Groq retires models on a schedule (llama-3.3-70b-versatile
 // died Aug 2026). Each entry becomes its own chain step; order = best first.
 const GROQ_MODELS = ["openai/gpt-oss-120b", "openai/gpt-oss-20b"];
@@ -634,7 +638,7 @@ export async function onRequest({ request, env }) {
   // attempted, so the chain adapts to whichever secrets are set.
   const chain = [];
   if (env.ANTHROPIC_API_KEY) chain.push(() => callAnthropic(env, userMsg, system));
-  if (env.MISTRAL_API_KEY) chain.push(() => callOpenAICompatible("https://api.mistral.ai/v1", env.MISTRAL_API_KEY, MISTRAL_MODEL, userMsg, system));
+  if (env.MISTRAL_API_KEY) for (const m of MISTRAL_MODELS) chain.push(() => callOpenAICompatible("https://api.mistral.ai/v1", env.MISTRAL_API_KEY, m, userMsg, system));
   if (env.GROQ_API_KEY) for (const m of GROQ_MODELS) chain.push(() => callOpenAICompatible("https://api.groq.com/openai/v1", env.GROQ_API_KEY, m, userMsg, system));
   if (env.GEMINI_API_KEY) chain.push(() => callGemini(env, userMsg, system));
 
