@@ -332,17 +332,35 @@ const LLM_URL = (process.env.LAB_LLM_URL || "").replace(/\/+$/, "");
 // error about the retired llama-3.3-70b-versatile), and every other free
 // provider in the router replied 401/404/410. Only these survive a real probe,
 // so the cascade tries each and remembers which ones are dead for this run.
-const LLM_MODELS = (process.env.LAB_LLM_MODELS || process.env.LAB_LLM_MODEL ||
-  "groq/openai/gpt-oss-120b,nvidia/openai/gpt-oss-20b,nvidia/openai/gpt-oss-120b")
-  .split(",").map((s) => s.trim()).filter(Boolean)
-  .filter((m) => !/^(auto|cc|claude|aug|no-think)\//i.test(m)); // never the subscription
+const SAFE_LLM_MODELS = "groq/openai/gpt-oss-120b,nvidia/openai/gpt-oss-20b,nvidia/openai/gpt-oss-120b";
+const SUBSCRIPTION_ALIAS = /^(auto|cc|claude|aug|no-think)\//i;
+const LLM_MODELS = (() => {
+  const raw = (process.env.LAB_LLM_MODELS || process.env.LAB_LLM_MODEL || SAFE_LLM_MODELS)
+    .split(",").map((s) => s.trim()).filter(Boolean);
+  const safe = raw.filter((m) => !SUBSCRIPTION_ALIAS.test(m));
+  const dropped = raw.filter((m) => SUBSCRIPTION_ALIAS.test(m));
+  if (dropped.length) {
+    // This is not hypothetical: LAB_LLM_MODEL was found set to "auto/coding" in
+    // the machine environment, which routes every nightly call to the strongest
+    // model available — i.e. the Claude Code subscription. Refuse it, say so
+    // loudly, and fall back to the free cascade rather than to nothing.
+    console.log(`  ⚠ ignoring subscription-routing model(s) [${dropped.join(", ")}] from the environment — a nightly agent must not spend the Claude subscription. Set LAB_LLM_MODELS to concrete free models instead.`);
+  }
+  return safe.length ? safe : SAFE_LLM_MODELS.split(",");
+})();
 // A strategy is ~1.5k characters. 4000 max_tokens bought nothing and cost a lot:
 // Groq bills its rate limiter on the ESTIMATE, which includes max_tokens, so an
 // oversized ceiling was burning the daily cap roughly twice as fast as needed.
 const LLM_MAX_TOKENS = +(process.env.LAB_LLM_MAX_TOKENS || 1800);
 // Per-model timeout. Short enough that a cascade of three still fits inside the
 // old single-model budget — a queued provider must not eat the whole run.
-const LLM_TIMEOUT_MS = +(process.env.LAB_LLM_TIMEOUT_MS || 75000);
+const LLM_TIMEOUT_MS = +(process.env.LAB_LLM_TIMEOUT_MS || 45000);
+// Strikes before a model is retired FOR THIS RUN. A dying free tier does not
+// announce itself with a tidy 429 — it also answers with empty bodies and hangs
+// until the timeout. Counting only the tidy refusals meant every single call
+// re-paid three timeouts (~4 minutes) and the run never concluded the supply
+// was gone. Any failure is a strike; two strikes and the model sits out.
+const LLM_STRIKES = +(process.env.LAB_LLM_STRIKES || 2);
 
 // Errors that mean "this supply is gone for today" rather than "try again in a
 // moment". Sleeping on a DAILY cap is pure waste — the old code burned 135s of
@@ -350,7 +368,8 @@ const LLM_TIMEOUT_MS = +(process.env.LAB_LLM_TIMEOUT_MS || 75000);
 const DAILY_CAP_RE = /per day|TPD|daily limit|quota exceeded|insufficient_quota/i;
 const HARD_DEAD_RE = /HTTP (401|402|403|404|410)/;
 
-const deadModels = new Set(); // models that failed hard THIS RUN — skipped after
+const deadModels = new Set();   // models retired for THIS RUN
+const modelStrikes = new Map(); // model → failures so far this run
 
 async function callLocalRouter(system, user, model) {
   const res = await fetch(`${LLM_URL}/chat/completions`, {
@@ -390,11 +409,15 @@ async function callRouterCascade(system, user) {
     } catch (e) {
       const msg = String(e.message || "");
       last = e;
-      // A daily cap or a hard 4xx means this model is finished for now — stop
-      // paying its latency again and again within the same run.
-      if (DAILY_CAP_RE.test(msg) || HARD_DEAD_RE.test(msg)) {
+      const strikes = (modelStrikes.get(model) || 0) + 1;
+      modelStrikes.set(model, strikes);
+      // A daily cap or a hard 4xx is terminal immediately; everything else
+      // (empty bodies, hangs) retires the model after LLM_STRIKES attempts, so
+      // one run can never spend minutes re-probing the same dead provider.
+      const terminal = DAILY_CAP_RE.test(msg) || HARD_DEAD_RE.test(msg);
+      if (terminal || strikes >= LLM_STRIKES) {
         deadModels.add(model);
-        console.log(`  ~ ${model} out (${msg.slice(0, 90)})`);
+        console.log(`  ~ ${model} out after ${strikes} (${msg.slice(0, 80)})`);
       } else {
         console.log(`  ~ ${model} failed (${msg.slice(0, 60)})`);
       }
@@ -458,8 +481,12 @@ async function aiCall(payload) {
     e.skip = true;
     // Both supplies refusing = the free tiers are spent. Record it so the rest
     // of the run (and the rest of the day) stops paying for the same answer.
+    // The site chain is the LAST resort: if it refuses this many times in a
+    // row, the supply is gone whatever the router is doing. (Requiring the
+    // router to be fully retired as well meant a router that merely hangs kept
+    // the day "open" forever.)
     budget2.fails++;
-    if (budget2.fails >= LLM_FAIL_STREAK && deadModels.size >= LLM_MODELS.length) {
+    if (budget2.fails >= LLM_FAIL_STREAK) {
       markExhausted(`LLM supply spent (${budget2.fails} straight refusals)`);
     }
   }
