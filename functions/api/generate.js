@@ -346,6 +346,24 @@ export async function onRequest({ request, env }) {
   // Cheap auth check (no AI call) — legacy probe, kept for compatibility.
   if (body?.validate === true) return json({ ok: true });
 
+  // Provider inventory — which keys are actually configured, as BOOLEANS only
+  // (never the values). Added Aug 2026 after a full day was lost to "the LLM is
+  // rate-limited" without knowing that only ONE provider was ever configured:
+  // the whole pipeline funnelled into a single Groq free account with a 200k
+  // tokens/day cap. Same dev-token gate as everything else here.
+  if (body?.providers === true) {
+    return json({
+      ok: true,
+      providers: {
+        anthropic: !!env.ANTHROPIC_API_KEY,
+        mistral: !!env.MISTRAL_API_KEY,
+        groq: !!env.GROQ_API_KEY,
+        gemini: !!env.GEMINI_API_KEY,
+      },
+      chainOrder: ["anthropic", "mistral", "groq(×2 models)", "gemini"],
+    });
+  }
+
   // postProcess: the client ran the prompts through its OWN model (its local
   // OmniRoute) and hands back the raw text for the SAME server-side extraction
   // the provider chain would apply — so a browser-side/local generation is
