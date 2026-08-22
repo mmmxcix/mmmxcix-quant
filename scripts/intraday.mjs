@@ -251,6 +251,178 @@ function strategy(ctx) {
 }`,
   },
 
+  // ── PORTABLE ARCHETYPES (Aug 2026) ─────────────────────────────────────────
+  // Cortex's only LLM-free strategy supply. Free tiers are daily-capped, so on a
+  // spent day the paper/improve channels go quiet — these keep the gauntlet fed
+  // with textbook, hand-written rules. Every one is written to be PORTABLE, the
+  // lesson the pooled geometry teaches: conditions are relative (ATR-scaled,
+  // percentile, crossover) rather than tied to a price level or a session clock,
+  // and each sits FLAT when its regime is absent instead of churning through
+  // costs. All causal, all with a hard risk exit. Not tuned on our data — the
+  // gauntlet charges each one a trial like any other candidate.
+
+  // Trend, but only when a trend actually exists and volatility is payable.
+  {
+    key: "ema-trend-volgate:50:200",
+    name: "Volatility-gated EMA trend (long/short)",
+    code:
+      thesis(
+        "trades the EMA50/EMA200 stack only when per-bar ATR sits in a payable band (0.2%–5% of price) AND the two EMAs are separated by more than 1.5×ATR — so it is flat in chop, flat when costs would eat the move, and flat while the averages are tangled. ATR(14)×3 stop.",
+        "instruments and timeframes with real, separated trends; the volatility gate is what makes it portable from daily equities down to fast crypto bars.",
+        "regime flips where the EMAs cross repeatedly; markets whose volatility never enters the payable band."
+      ) +
+`const ATR_MULT = 3, VOL_MIN = 0.002, VOL_MAX = 0.05, SEP_MULT = 1.5;
+let C = null;
+function strategy(ctx) {
+  const i = ctx.index, c = ctx.candles;
+  if (!C) { const cl = ctx.indicators.closes(c); C = { f: ctx.indicators.ema(cl, 50), s: ctx.indicators.ema(cl, 200), a: ctx.indicators.atr(c, 14) }; }
+  const f = C.f[i], s = C.s[i], a = C.a[i];
+  if (!(f > 0) || !(s > 0) || !(a > 0) || !(ctx.close > 0)) return "flat";
+  const atrPct = a / ctx.close;
+  if (atrPct < VOL_MIN || atrPct > VOL_MAX) return "flat";       // unpayable / untradeable
+  if (Math.abs(f - s) / ctx.close < SEP_MULT * atrPct) return "flat"; // tangled = no trend
+  if (f > s && ctx.close > f) return { signal: "long", stop: ctx.close - ATR_MULT * a };
+  if (f < s && ctx.close < f) return { signal: "short", stop: ctx.close + ATR_MULT * a };
+  return "flat";
+}`,
+  },
+
+  // Mean reversion that respects the trend — the Connors rule, made portable.
+  {
+    key: "bb-fade-trend:20:2",
+    name: "Bollinger fade with trend filter (long/short)",
+    code:
+      thesis(
+        "fades stretched moves back to the mean, but only WITH the longer trend: long when price closes below the lower Bollinger(20,2) band while above EMA200, short when it closes above the upper band while below EMA200; exits on the middle band. ATR(14)×2.5 stop, because 'it must come back' is how accounts die.",
+        "ranging, liquid markets with mean-reverting noise around a persistent trend.",
+        "trending crashes where price rides the band for many bars — the stop is what makes that survivable."
+      ) +
+`const ATR_MULT = 2.5;
+let C = null;
+function strategy(ctx) {
+  const i = ctx.index, c = ctx.candles;
+  if (!C) { const cl = ctx.indicators.closes(c); C = { bb: ctx.indicators.bollinger(cl, 20, 2), e: ctx.indicators.ema(cl, 200), a: ctx.indicators.atr(c, 14) }; }
+  const bb = C.bb[i], e = C.e[i], a = C.a[i];
+  if (!bb || !(e > 0) || !(a > 0)) return "flat";
+  if (ctx.position === "long") return ctx.close >= bb.mid ? "flat" : { signal: "long", stop: ctx.close - ATR_MULT * a };
+  if (ctx.position === "short") return ctx.close <= bb.mid ? "flat" : { signal: "short", stop: ctx.close + ATR_MULT * a };
+  if (ctx.close < bb.lower && ctx.close > e) return { signal: "long", stop: ctx.close - ATR_MULT * a };
+  if (ctx.close > bb.upper && ctx.close < e) return { signal: "short", stop: ctx.close + ATR_MULT * a };
+  return "flat";
+}`,
+  },
+
+  // Time-series (absolute) momentum — the most robust single-asset factor.
+  {
+    key: "tsmom:100:20",
+    name: "Time-series momentum with ATR stop (long/short)",
+    code:
+      thesis(
+        "holds the asset in the direction of its own trailing 100-bar return, requiring the move to exceed 1×ATR so noise does not flip it, and re-checks every bar; ATR(14)×4 stop. The classic absolute-momentum factor rather than a chart pattern.",
+        "assets with persistent drift — the effect Moskowitz/Ooi/Pedersen documented across asset classes.",
+        "mean-reverting, range-bound regimes where trailing return oscillates around zero."
+      ) +
+`const LOOK = 100, ATR_MULT = 4;
+let C = null;
+function strategy(ctx) {
+  const i = ctx.index, c = ctx.candles;
+  if (!C) C = { a: ctx.indicators.atr(c, 14) };
+  const a = C.a[i];
+  if (i < LOOK + 1 || !(a > 0)) return "flat";
+  const past = c[i - LOOK].close;
+  if (!(past > 0)) return "flat";
+  const move = ctx.close - past;
+  if (Math.abs(move) < a) return "flat";               // drift smaller than one ATR = noise
+  if (move > 0) return { signal: "long", stop: ctx.close - ATR_MULT * a };
+  return { signal: "short", stop: ctx.close + ATR_MULT * a };
+}`,
+  },
+
+  // Keltner squeeze → expansion breakout.
+  {
+    key: "keltner-squeeze:20:2",
+    name: "Squeeze expansion breakout (long/short)",
+    code:
+      thesis(
+        "waits for volatility to COMPRESS (ATR below its own 100-bar median) and then trades the first close beyond an EMA20 ± 2×ATR envelope — volatility clusters, so expansion after compression tends to run. ATR(14)×2.5 stop, one direction per expansion.",
+        "any market that alternates between quiet coils and directional expansion.",
+        "false breaks out of a coil that immediately reverse; permanently high-volatility instruments never arm it."
+      ) +
+`const ATR_MULT = 2.5, ENV_MULT = 2, MED_LOOK = 100;
+let C = null;
+function strategy(ctx) {
+  const i = ctx.index, c = ctx.candles;
+  if (!C) { const cl = ctx.indicators.closes(c); C = { e: ctx.indicators.ema(cl, 20), a: ctx.indicators.atr(c, 14) }; }
+  const e = C.e[i], a = C.a[i];
+  if (i < MED_LOOK + 15 || !(e > 0) || !(a > 0)) return "flat";
+  let sum = 0, n = 0;
+  for (let k = i - MED_LOOK; k < i; k++) { const v = C.a[k]; if (v > 0) { sum += v; n++; } }
+  if (!n) return "flat";
+  const avgAtr = sum / n;
+  if (a > avgAtr * 0.9) return ctx.position;           // not compressed → no fresh arm
+  if (ctx.close > e + ENV_MULT * a) return { signal: "long", stop: ctx.close - ATR_MULT * a };
+  if (ctx.close < e - ENV_MULT * a) return { signal: "short", stop: ctx.close + ATR_MULT * a };
+  return ctx.position;
+}`,
+  },
+
+  // MACD trend confirmed by the histogram, with a trailing structure stop.
+  {
+    key: "macd-trend-trail:12:26:9",
+    name: "MACD trend with trailing stop (long/short)",
+    code:
+      thesis(
+        "takes MACD(12,26,9) signal-line crosses only in the direction of the EMA200, then TRAILS a monotonic ATR stop behind the position so winners keep running and the give-back is bounded.",
+        "sustained directional moves where the histogram confirms momentum behind the cross.",
+        "chop, where crosses alternate and each trail is stopped out near entry."
+      ) +
+`const ATR_MULT = 3;
+let C = null, trail = 0, side = 0;
+function strategy(ctx) {
+  const i = ctx.index, c = ctx.candles;
+  if (!C) { const cl = ctx.indicators.closes(c); C = { m: ctx.indicators.macd(cl, 12, 26, 9), e: ctx.indicators.ema(cl, 200), a: ctx.indicators.atr(c, 14) }; }
+  const m = C.m[i], e = C.e[i], a = C.a[i];
+  if (!m || !(e > 0) || !(a > 0)) return "flat";
+  if (ctx.position === "long") {
+    trail = Math.max(trail, ctx.close - ATR_MULT * a);   // monotonic: may only rise
+    return m.macd < m.signal ? "flat" : { signal: "long", stop: trail };
+  }
+  if (ctx.position === "short") {
+    trail = trail === 0 ? ctx.close + ATR_MULT * a : Math.min(trail, ctx.close + ATR_MULT * a);
+    return m.macd > m.signal ? "flat" : { signal: "short", stop: trail };
+  }
+  if (m.macd > m.signal && m.hist > 0 && ctx.close > e) { side = 1; trail = ctx.close - ATR_MULT * a; return { signal: "long", stop: trail }; }
+  if (m.macd < m.signal && m.hist < 0 && ctx.close < e) { side = -1; trail = ctx.close + ATR_MULT * a; return { signal: "short", stop: trail }; }
+  return "flat";
+}`,
+  },
+
+  // Turtle-style dual channel: enter on the long channel, exit on the short one.
+  {
+    key: "turtle-dual:55:20",
+    name: "Dual-channel turtle breakout (long/short)",
+    code:
+      thesis(
+        "enters on a close beyond the prior 55-bar extreme and exits on a close beyond the opposite 20-bar extreme — the original Turtle asymmetry: slow to enter, quick to leave. ATR(14)×3 disaster stop underneath.",
+        "markets with long directional runs; the 55/20 asymmetry is what captures the fat tail.",
+        "range-bound periods where 55-bar breaks fail immediately."
+      ) +
+`const ATR_MULT = 3;
+let C = null;
+function strategy(ctx) {
+  const i = ctx.index, c = ctx.candles;
+  if (!C) C = { slow: ctx.indicators.donchian(c, 55), fast: ctx.indicators.donchian(c, 20), a: ctx.indicators.atr(c, 14) };
+  if (i < 57) return "flat";
+  const slow = C.slow[i - 1], fast = C.fast[i - 1], a = C.a[i];
+  if (!slow || !fast || !(a > 0)) return "flat";
+  if (ctx.position === "long") return ctx.close < fast.lower ? "flat" : { signal: "long", stop: ctx.close - ATR_MULT * a };
+  if (ctx.position === "short") return ctx.close > fast.upper ? "flat" : { signal: "short", stop: ctx.close + ATR_MULT * a };
+  if (ctx.close > slow.upper) return { signal: "long", stop: ctx.close - ATR_MULT * a };
+  if (ctx.close < slow.lower) return { signal: "short", stop: ctx.close + ATR_MULT * a };
+  return "flat";
+}`,
+  },
+
   // ── Donchian breakout with ATR stop (long/short) ──
   {
     key: "donchian:20",

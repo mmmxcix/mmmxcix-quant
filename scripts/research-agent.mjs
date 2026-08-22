@@ -262,6 +262,33 @@ function buildBrain(st) {
 // ── 2. abstract → strategy code via the site's own AI endpoint ─────────────
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// ── daily LLM budget (the fix for the Aug-2026 drought) ─────────────────────
+// Every supply we have is DAILY-capped and shared: the router's groq models and
+// the site's GROQ_API_KEY are the same free account (200k tokens/day), and the
+// site's other provider is Mistral's free tier. Running 48 times a day and
+// spending up to 8 calls per run, Cortex burned the whole day's quota within the
+// first hour and then spent the remaining 47 runs sleeping through retries
+// against a wall. So the budget is now explicit, persisted per UTC day, and a
+// spent day is recognised ONCE instead of rediscovered every 30 minutes.
+const LLM_DAILY_CALLS = +(process.env.LAB_LLM_DAILY_CALLS || 45);
+const LLM_FAIL_STREAK = +(process.env.LAB_LLM_FAIL_STREAK || 3);
+let _budgetState = null;
+function llmBudget() {
+  const day = new Date().toISOString().slice(0, 10);
+  if (!_budgetState || _budgetState.day !== day) {
+    const prior = st?.llmDay?.day === day ? st.llmDay : null;
+    _budgetState = prior || { day, calls: 0, fails: 0, exhausted: false };
+    if (st) st.llmDay = _budgetState;
+  }
+  if (!_budgetState.exhausted && _budgetState.calls >= LLM_DAILY_CALLS) {
+    _budgetState.exhausted = true;
+    console.log(`  ⛔ daily LLM call budget reached (${_budgetState.calls}/${LLM_DAILY_CALLS})`);
+  }
+  return _budgetState;
+}
+/** Is there any point starting an LLM phase at all? */
+const llmAvailable = () => !llmBudget().exhausted;
+
 // Rate limits are infrastructure noise, not strategy failures: retry with
 // backoff, and signal "SKIP" (don't bury, don't mark seen) if still limited.
 // ── local LLM router (OmniRoute) ────────────────────────────────────────────
@@ -272,45 +299,104 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // post-processes with the same shared helpers the server uses. Any failure
 // falls back to the site's own provider chain — nothing gets less reliable.
 const LLM_URL = (process.env.LAB_LLM_URL || "").replace(/\/+$/, "");
-// The models this nightly agent requests from OmniRoute. CRITICAL: do NOT use
-// `auto/coding` / `auto/reasoning` / `auto/best-*` here — those route to the
-// STRONGEST model available, which becomes your Claude Code Opus SUBSCRIPTION
-// once it's connected. A nightly agent reading many papers would burn it fast.
-// Default to a concrete FREE model; override with LAB_LLM_MODEL if your OmniRoute
-// names it differently. Any failure falls back to the site's provider chain.
-// Default routed through OmniRoute's groq/ provider — llama-3.3-70b-versatile
-// was retired by Groq in Aug 2026, so the default now targets its official
-// replacement. LAB_LLM_MODEL still overrides.
-const LLM_MODEL = process.env.LAB_LLM_MODEL || "groq/openai/gpt-oss-120b";
-const LLM_CRITIQUE_MODEL = process.env.LAB_LLM_CRITIQUE_MODEL || LLM_MODEL;
+// The models this nightly agent requests from OmniRoute, tried IN ORDER.
+//
+// CRITICAL: never put `auto/*`, `cc/*`, `claude/*` or `aug/*` here — those route
+// to the strongest model available, i.e. the user's Claude Code SUBSCRIPTION. A
+// nightly agent reading papers around the clock would burn it in a day.
+//
+// Why a LIST (Aug 2026): a single model was a single point of failure and the
+// measured reality is that free tiers die constantly — groq/openai/gpt-oss-120b
+// hits "tokens per day (TPD): Limit 200000" and is then dead until midnight,
+// groq/openai/gpt-oss-20b is MISROUTED inside OmniRoute (it answers with an
+// error about the retired llama-3.3-70b-versatile), and every other free
+// provider in the router replied 401/404/410. Only these survive a real probe,
+// so the cascade tries each and remembers which ones are dead for this run.
+const LLM_MODELS = (process.env.LAB_LLM_MODELS || process.env.LAB_LLM_MODEL ||
+  "groq/openai/gpt-oss-120b,nvidia/openai/gpt-oss-20b,nvidia/openai/gpt-oss-120b")
+  .split(",").map((s) => s.trim()).filter(Boolean)
+  .filter((m) => !/^(auto|cc|claude|aug|no-think)\//i.test(m)); // never the subscription
+// A strategy is ~1.5k characters. 4000 max_tokens bought nothing and cost a lot:
+// Groq bills its rate limiter on the ESTIMATE, which includes max_tokens, so an
+// oversized ceiling was burning the daily cap roughly twice as fast as needed.
+const LLM_MAX_TOKENS = +(process.env.LAB_LLM_MAX_TOKENS || 1800);
+// Per-model timeout. Short enough that a cascade of three still fits inside the
+// old single-model budget — a queued provider must not eat the whole run.
+const LLM_TIMEOUT_MS = +(process.env.LAB_LLM_TIMEOUT_MS || 75000);
+
+// Errors that mean "this supply is gone for today" rather than "try again in a
+// moment". Sleeping on a DAILY cap is pure waste — the old code burned 135s of
+// retry sleeps per paper, 48 times a day, against a quota that resets at midnight.
+const DAILY_CAP_RE = /per day|TPD|daily limit|quota exceeded|insufficient_quota/i;
+const HARD_DEAD_RE = /HTTP (401|402|403|404|410)/;
+
+const deadModels = new Set(); // models that failed hard THIS RUN — skipped after
 
 async function callLocalRouter(system, user, model) {
   const res = await fetch(`${LLM_URL}/chat/completions`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
-      model, stream: false, max_tokens: 4000,
+      model, stream: false, max_tokens: LLM_MAX_TOKENS,
       messages: [
         ...(system ? [{ role: "system", content: system }] : []),
         { role: "user", content: user },
       ],
     }),
-    signal: AbortSignal.timeout(180000),
+    signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
   });
-  if (!res.ok) throw new Error(`router HTTP ${res.status}`);
+  if (!res.ok) {
+    // Carry the provider's own words: "tokens per day (TPD): Limit 200000" is
+    // the difference between a useful log line and a mystery.
+    const detail = (await res.text().catch(() => "")).slice(0, 160).replace(/\s+/g, " ");
+    const e = new Error(`router HTTP ${res.status}${detail ? ` — ${detail}` : ""}`);
+    e.status = res.status;
+    throw e;
+  }
   const j = await res.json();
   const text = j?.choices?.[0]?.message?.content || "";
   if (!text.trim()) throw new Error("router empty reply");
   return text;
 }
 
+/** Walk the model cascade; returns the first real reply. Throws if all fail. */
+async function callRouterCascade(system, user) {
+  const live = LLM_MODELS.filter((m) => !deadModels.has(m));
+  if (!live.length) throw new Error("all router models dead this run");
+  let last = null;
+  for (const model of live) {
+    try {
+      return await callLocalRouter(system, user, model);
+    } catch (e) {
+      const msg = String(e.message || "");
+      last = e;
+      // A daily cap or a hard 4xx means this model is finished for now — stop
+      // paying its latency again and again within the same run.
+      if (DAILY_CAP_RE.test(msg) || HARD_DEAD_RE.test(msg)) {
+        deadModels.add(model);
+        console.log(`  ~ ${model} out (${msg.slice(0, 90)})`);
+      } else {
+        console.log(`  ~ ${model} failed (${msg.slice(0, 60)})`);
+      }
+    }
+  }
+  throw last || new Error("router cascade exhausted");
+}
+
 /**
- * One AI call: local router first (prompts from the site), site chain as
+ * One AI call: local router cascade first (prompts from the site), site chain as
  * fallback. Returns the same shape the site returns ({code, language} or
  * {critique}); throws with .skip on rate limits like the old direct calls.
  */
 async function aiCall(payload) {
-  if (LLM_URL) {
+  const budget = llmBudget();
+  if (budget.exhausted) {
+    const e = new Error(`llm budget spent for today (${budget.calls} calls, ${budget.fails} failures)`);
+    e.skip = true;
+    e.budget = true;
+    throw e;
+  }
+  if (LLM_URL && LLM_MODELS.length && deadModels.size < LLM_MODELS.length) {
     try {
       const pRes = await fetch(`${SITE}/api/generate`, {
         method: "POST", headers: { "content-type": "application/json" },
@@ -318,7 +404,8 @@ async function aiCall(payload) {
       });
       const p = await pRes.json().catch(() => ({}));
       if (pRes.ok && p.user) {
-        const text = await callLocalRouter(p.system || "", p.user, (p.isCritique || p.isCodeReview) ? LLM_CRITIQUE_MODEL : LLM_MODEL);
+        const text = await callRouterCascade(p.system || "", p.user);
+        budget.calls++;
         if (p.isCritique) return { critique: parseVerdict(text) };
         if (p.isCodeReview) return { codeReview: parseCodeReview(text) };
         const out = extractCode(text);
@@ -327,17 +414,36 @@ async function aiCall(payload) {
         return { code: wrap ? ensureStrategyFn(out) : out, language: p.language };
       }
     } catch (e) {
-      console.log(`  ~ local router failed (${String(e.message || "").slice(0, 50)}) — falling back to site AI`);
+      console.log(`  ~ router unavailable (${String(e.message || "").slice(0, 60)}) — trying site AI`);
     }
   }
-  const res = await fetch(`${SITE}/api/generate`, {
-    method: "POST", headers: { "content-type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  const out = await res.json().catch(() => ({}));
-  if (res.ok && (out.code || out.critique || out.codeReview)) return out;
+  const budget2 = llmBudget();
+  let res, out;
+  try {
+    res = await fetch(`${SITE}/api/generate`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
+    });
+    out = await res.json().catch(() => ({}));
+  } catch (e) {
+    budget2.fails++;
+    const err = new Error(`site AI unreachable: ${String(e.message || e).slice(0, 60)}`);
+    err.skip = true;
+    throw err;
+  }
+  if (res.ok && (out.code || out.critique || out.codeReview)) { budget2.calls++; return out; }
   const e = new Error(out.error || `generate HTTP ${res.status}`);
-  if (res.status === 429 || out.error === "rate_limited") e.skip = true;
+  if (res.status === 429 || out.error === "rate_limited") {
+    e.skip = true;
+    // Both supplies refusing = the free tiers are spent. Record it so the rest
+    // of the run (and the rest of the day) stops paying for the same answer.
+    budget2.fails++;
+    if (budget2.fails >= LLM_FAIL_STREAK && deadModels.size >= LLM_MODELS.length) {
+      budget2.exhausted = true;
+      console.log(`  ⛔ LLM supply exhausted for today (${budget2.fails} straight refusals) — Cortex switches to LLM-free work`);
+    }
+  }
   throw e;
 }
 
@@ -354,13 +460,16 @@ async function generateStrategy(item) {
     language,
     research: { title: item.title.slice(0, 200), kind: item.kind || "document", text },
   };
-  for (let attempt = 1; attempt <= 3; attempt++) {
+  // ONE short retry, and only for a transient refusal. The old code slept 45s
+  // then 90s on every rate limit — but our limits are DAILY, so those 135s
+  // bought nothing and were paid 48 times a day. A spent budget fails instantly.
+  for (let attempt = 1; attempt <= 2; attempt++) {
     try {
       const out = await aiCall(payload);
       if (out.code) return { code: out.code, language: out.language || language };
       throw new Error("no code in reply");
     } catch (e) {
-      if (e.skip && attempt < 3) { console.log(`  rate-limited, retry ${attempt}/2 in ${attempt * 45}s…`); await sleep(attempt * 45000); continue; }
+      if (e.skip && !e.budget && attempt < 2) { console.log("  refused — one retry in 20s…"); await sleep(20000); continue; }
       throw e;
     }
   }
@@ -935,7 +1044,14 @@ async function loadMentioned(paper) {
 
 let firstPaper = true;
 let processed = 0; // papers actually evaluated this run (may stop early on a hit)
-for (const paper of fresh) {
+// Reading papers costs an LLM call each. With the budget spent, skip straight to
+// the channels that need no model at all (mining, intraday templates) — a
+// no-supply day should still produce tested strategies, not just log failures.
+// The papers stay unseen, so tomorrow's budget gets them.
+if (fresh.length && !llmAvailable()) {
+  console.log(`llm budget spent — skipping ${fresh.length} fresh paper(s); they stay queued for the next window`);
+}
+for (const paper of (llmAvailable() ? fresh : [])) {
   if (!firstPaper) await sleep(20000); // stay under the free tier's per-minute cap
   firstPaper = false;
   processed++;
@@ -1114,7 +1230,7 @@ for (const paper of fresh) {
 // other generation. improvePool entries reference st.graveyard directly, so
 // updating them here persists via save(st).
 let improvedThisRun = 0;
-if (improvePool.length && datasets.length && !(UNTIL_HIT && newCandidates.length)) {
+if (improvePool.length && datasets.length && !(UNTIL_HIT && newCandidates.length) && llmAvailable()) {
   console.log(`always-on: improve phase — ${improvePool.length} near-miss(es) in the pool, budget ${IMPROVE_PER_RUN}`);
   for (const g of improvePool) {
     if (improvedThisRun >= IMPROVE_PER_RUN) break;
@@ -1190,7 +1306,7 @@ save(st);
 // place (higher DSR) or, after MAX_IMPROVE_TRIES misses, crowns it MAXED OUT so
 // it's left alone. Every attempt is charged to the trial window.
 let polishedThisRun = 0;
-if (polishPool.length && datasets.length) {
+if (polishPool.length && datasets.length && llmAvailable()) {
   console.log(`polish: ${polishPool.length} candidate(s) still improvable`);
   for (const cand of polishPool) {
     if (polishedThisRun >= POLISH_PER_RUN) break;
@@ -1505,6 +1621,16 @@ const state = { ...(cur?.state || {}), research: {
   polished: st.polished || 0,
   maxed: (st.candidates || []).filter((c) => c.maxed).length,
   alwaysOn: ALWAYS_ON,
+  // LLM supply health — so a dead free tier is VISIBLE on the Coach page
+  // instead of looking like "Cortex stopped researching".
+  llm: {
+    day: llmBudget().day,
+    calls: llmBudget().calls,
+    dailyCap: LLM_DAILY_CALLS,
+    exhausted: !!llmBudget().exhausted,
+    deadModels: [...deadModels],
+    models: LLM_MODELS,
+  },
   sources: brainSources(st),
   // What each source actually yielded this run — makes a quietly dead feed
   // visible on the Coach page instead of only in the 3am log.
