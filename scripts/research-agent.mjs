@@ -439,7 +439,13 @@ async function aiCall(payload) {
     e.budget = true;
     throw e;
   }
-  if (LLM_URL && LLM_MODELS.length && deadModels.size < LLM_MODELS.length) {
+  // Skip the local router entirely while it is known-dead. Its free models hang
+  // to the timeout rather than refusing cleanly, so re-discovering that costs
+  // ~90s of wall clock at the start of EVERY run — 48 times a day — while the
+  // site chain answers in ~2.5s. The flag rides the same UTC day + 90-minute
+  // re-probe window as the token budget, so a recovered router comes back.
+  const routerRested = budget.routerDeadAt && Date.now() - budget.routerDeadAt < LLM_RETRY_AFTER_MS;
+  if (LLM_URL && LLM_MODELS.length && !routerRested && deadModels.size < LLM_MODELS.length) {
     try {
       const pRes = await fetch(`${SITE}/api/generate`, {
         method: "POST", headers: { "content-type": "application/json" },
@@ -458,6 +464,10 @@ async function aiCall(payload) {
       }
     } catch (e) {
       console.log(`  ~ router unavailable (${String(e.message || "").slice(0, 60)}) — trying site AI`);
+      if (deadModels.size >= LLM_MODELS.length && !budget.routerDeadAt) {
+        budget.routerDeadAt = Date.now();
+        console.log(`  ~ router rested for ${Math.round(LLM_RETRY_AFTER_MS / 60000)}min — every model is out; the site chain carries the load`);
+      }
     }
   }
   const budget2 = llmBudget();
