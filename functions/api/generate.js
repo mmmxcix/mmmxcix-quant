@@ -34,7 +34,11 @@ const MISTRAL_MODELS = ["codestral-latest", "mistral-small-latest", "open-mistra
 const GROQ_MODELS = ["openai/gpt-oss-120b", "openai/gpt-oss-20b"];
 // Free-tier quotas differ wildly per model — on 429/404 we walk down this
 // list instead of failing (flash-lite has the most generous free limits).
-const GEMINI_MODELS = ["gemini-flash-latest", "gemini-2.5-flash", "gemini-flash-lite-latest", "gemini-2.5-flash-lite"];
+// Ordered by free-tier generosity, cheapest-and-most-generous first: the lite
+// tiers carry the highest daily request allowances, and this endpoint wants a
+// short block of code rather than deep reasoning. gemini-2.0-flash closes the
+// list as a non-thinking stable fallback.
+const GEMINI_MODELS = ["gemini-flash-lite-latest", "gemini-2.5-flash-lite", "gemini-flash-latest", "gemini-2.5-flash", "gemini-2.0-flash"];
 const MAX_PROMPT_CHARS = 2000;
 // Research documents (paper bodies, article text, video transcripts) are read
 // whole rather than as abstracts, so they get their own, larger ceiling. Sized
@@ -288,7 +292,14 @@ async function callGemini(env, userMsg, system = SYSTEM_PROMPT) {
   // Models are tried in order; 429/404 falls through to the next one.
   let lastStatus = 502;
   for (const model of GEMINI_MODELS) {
-    const res = await fetch(
+    // THINKING BUDGET — the reason Gemini looked "broken" when it was healthy:
+    // every model in this list is a 2.5-family thinking model, and reasoning
+    // tokens are drawn from maxOutputTokens. On a code-generation prompt the
+    // model would spend the whole 2500 on thinking and return a 200 with an
+    // EMPTY body, which this function reported as 502 — an outage that never
+    // happened. thinkingBudget 0 turns reasoning off (we want code, not a
+    // deliberation), and the ceiling is raised so a long strategy still fits.
+    const send = (thinking) => fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
       {
         method: "POST",
@@ -296,16 +307,24 @@ async function callGemini(env, userMsg, system = SYSTEM_PROMPT) {
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: system }] },
           contents: [{ role: "user", parts: [{ text: userMsg }] }],
-          generationConfig: { maxOutputTokens: 2500, temperature: 0.4 },
+          generationConfig: {
+            maxOutputTokens: 4000,
+            temperature: 0.4,
+            ...(thinking ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
+          },
         }),
       }
     );
+    let res = await send(true);
+    // A model that does not know thinkingConfig rejects the whole request with
+    // 400 — retry once without it rather than losing the provider.
+    if (res.status === 400) res = await send(false);
     if (res.ok) {
       const data = await res.json();
       const text = (data?.candidates?.[0]?.content?.parts || []).map((p) => p.text || "").join("\n");
       if (text) return { text };
       lastStatus = 502;
-      continue;
+      continue; // empty body (safety block / truncation) → try the next model
     }
     lastStatus = res.status;
     if (res.status !== 429 && res.status !== 404) break; // real error — stop walking models
