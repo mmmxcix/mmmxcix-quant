@@ -506,6 +506,19 @@ function LabStatus() {
                   </span>
                 )}
               </div>
+              {/* LLM supply. Every provider we use is DAILY-capped, so a spent
+                  budget looks exactly like "Cortex stopped researching" unless
+                  it says so. Shown only when there is something to report. */}
+              {data.research.llm && (
+                <p className={`text-[10px] mt-1.5 ${data.research.llm.exhausted ? "text-down" : "text-dim/80"}`}>
+                  {data.research.llm.exhausted
+                    ? `⛔ LLM supply spent for ${data.research.llm.day} — the free tiers are daily-capped; Cortex is running its LLM-free channels (templates, mining) until they reset.`
+                    : `LLM ${data.research.llm.calls}/${data.research.llm.dailyCap} calls today`}
+                  {data.research.llm.deadModels?.length > 0 && (
+                    <span className="text-dim/70"> · out: {data.research.llm.deadModels.join(", ")}</span>
+                  )}
+                </p>
+              )}
               {data.research.sourceYield && (
                 <p className="text-[10px] text-dim/80 mt-1.5">
                   last harvest: {Object.entries(data.research.sourceYield).map(([s, n]) => `${s} ${n}`).join(" · ")}
