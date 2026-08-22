@@ -283,22 +283,28 @@ function llmBudget() {
     if (st) st.llmDay = _budgetState;
   }
   if (!_budgetState.exhausted && _budgetState.calls >= LLM_DAILY_CALLS) {
-    _budgetState.exhausted = true;
-    console.log(`  ⛔ daily LLM call budget reached (${_budgetState.calls}/${LLM_DAILY_CALLS})`);
+    markExhausted(`daily LLM call budget reached (${_budgetState.calls}/${LLM_DAILY_CALLS})`);
   }
   // Re-open on a schedule. "Exhausted" is inferred from refusals, and a refusal
   // can also mean a transient outage or a provider that refills on a rolling
   // window rather than at midnight — so without this, one bad half-hour would
   // idle Cortex for the rest of the day. A probe costs a single call.
-  if (_budgetState.exhausted && _budgetState.calls < LLM_DAILY_CALLS &&
-      Date.now() - (_budgetState.probedAt || 0) > LLM_RETRY_AFTER_MS) {
-    _budgetState.probedAt = Date.now();
+  const since = Date.now() - (_budgetState.closedAt || 0);
+  if (_budgetState.exhausted && _budgetState.calls < LLM_DAILY_CALLS && since > LLM_RETRY_AFTER_MS) {
     _budgetState.exhausted = false;
     _budgetState.fails = 0;
     deadModels.clear();
-    console.log(`  ↻ LLM budget re-opened for a probe (last checked ${Math.round((Date.now() - (_budgetState.probedAt || 0)) / 60000)}min ago)`);
+    console.log(`  ↻ LLM budget re-opened for a probe (closed ${Math.round(since / 60000)}min ago)`);
   }
   return _budgetState;
+}
+
+/** Close the day's LLM work, stamping WHEN — the re-probe window runs from here. */
+function markExhausted(why) {
+  if (!_budgetState) return;
+  _budgetState.exhausted = true;
+  _budgetState.closedAt = Date.now();
+  console.log(`  ⛔ ${why} — Cortex switches to LLM-free work`);
 }
 /** Is there any point starting an LLM phase at all? */
 const llmAvailable = () => !llmBudget().exhausted;
@@ -454,8 +460,7 @@ async function aiCall(payload) {
     // of the run (and the rest of the day) stops paying for the same answer.
     budget2.fails++;
     if (budget2.fails >= LLM_FAIL_STREAK && deadModels.size >= LLM_MODELS.length) {
-      budget2.exhausted = true;
-      console.log(`  ⛔ LLM supply exhausted for today (${budget2.fails} straight refusals) — Cortex switches to LLM-free work`);
+      markExhausted(`LLM supply spent (${budget2.fails} straight refusals)`);
     }
   }
   throw e;
