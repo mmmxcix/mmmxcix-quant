@@ -512,8 +512,21 @@ function LabStatus() {
               {data.research.llm && (
                 <p className={`text-[10px] mt-1.5 ${data.research.llm.exhausted ? "text-down" : "text-dim/80"}`}>
                   {data.research.llm.exhausted
-                    ? `⛔ LLM supply spent for ${data.research.llm.day} — the free tiers are daily-capped; Cortex is running its LLM-free channels (templates, mining) until they reset.`
+                    ? `⛔ Every LLM supply spent for ${data.research.llm.day} — the free tiers are daily-capped; Cortex is running its LLM-free channels (templates, mining) until they reset.`
                     : `LLM ${data.research.llm.calls}/${data.research.llm.dailyCap} calls today`}
+                  {/* Per supply, because "spent" was never one number: the day
+                      used to close at 45 calls with ZERO failures because two
+                      independent accounts shared one counter, and a total can
+                      never say which account is actually out. */}
+                  {data.research.llm.supplies && !data.research.llm.exhausted && (
+                    <span className="text-dim/70">
+                      {" ("}
+                      {Object.entries(data.research.llm.supplies)
+                        .map(([name, s]) => `${name} ${s.calls}/${data.research.llm.perSupplyCap ?? "?"}${s.exhausted ? " spent" : ""}`)
+                        .join(" · ")}
+                      {")"}
+                    </span>
+                  )}
                   {data.research.llm.deadModels?.length > 0 && (
                     <span className="text-dim/70"> · out: {data.research.llm.deadModels.join(", ")}</span>
                   )}

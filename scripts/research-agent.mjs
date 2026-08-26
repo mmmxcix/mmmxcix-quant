@@ -270,44 +270,94 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // first hour and then spent the remaining 47 runs sleeping through retries
 // against a wall. So the budget is now explicit, persisted per UTC day, and a
 // spent day is recognised ONCE instead of rediscovered every 30 minutes.
-const LLM_DAILY_CALLS = +(process.env.LAB_LLM_DAILY_CALLS || 45);
+// ── the budget is PER SUPPLY, not shared ─────────────────────────────────────
+// The cap above was calibrated for ONE free account and then applied to two.
+// Cortex draws on two independent supplies — the local router cascade (groq +
+// nvidia gpt-oss) and the site chain behind /api/generate (Mistral first, then
+// groq/Gemini) — and both incremented the same counter. The Aug-26 state made
+// the consequence exact:
+//
+//   llmDay: { calls: 45, fails: 0, exhausted: true }
+//
+// Forty-five calls, ZERO failures, day closed. Nothing refused; Cortex simply
+// spent a one-account allowance across two accounts and then idled — which is
+// why the log read "llm budget spent — skipping 2 fresh paper(s)" on run after
+// run while `attempts` sat at 3,075 and the ensemble stayed at one rule.
+//
+// So each supply now carries its OWN counter and its own closure. The day ends
+// only when every supply is closed, and a supply that refuses no longer drags
+// the other down with it. This does not loosen a single quality gate: it buys
+// the generator more attempts, which is the one input the Tier-1 work in
+// docs/CORTEX_BENCHMARK.md left starved.
+const SUPPLIES = ["router", "site"];
+const LLM_DAILY_CALLS = +(process.env.LAB_LLM_DAILY_CALLS || 45); // PER SUPPLY
 const LLM_FAIL_STREAK = +(process.env.LAB_LLM_FAIL_STREAK || 3);
-// How long a day declared "spent" stays closed before one probe call re-checks.
+// How long a supply declared "spent" stays closed before one probe call re-checks.
 const LLM_RETRY_AFTER_MS = +(process.env.LAB_LLM_RETRY_AFTER_MIN || 90) * 60000;
 let _budgetState = null;
+
+const blankSupply = () => ({ calls: 0, fails: 0, exhausted: false, closedAt: 0 });
+
 function llmBudget() {
   const day = new Date().toISOString().slice(0, 10);
   if (!_budgetState || _budgetState.day !== day) {
     const prior = st?.llmDay?.day === day ? st.llmDay : null;
     _budgetState = prior || { day, calls: 0, fails: 0, exhausted: false };
+    // Migrate a same-day state written before the split: the old flat counters
+    // are the best available estimate of what the ROUTER spent, because that is
+    // the supply tried first. Guessing low here would re-open a genuinely spent
+    // account, so the whole prior spend is charged to it.
+    if (!_budgetState.per) {
+      _budgetState.per = Object.fromEntries(SUPPLIES.map((s) => [s, blankSupply()]));
+      _budgetState.per.router.calls = _budgetState.calls || 0;
+      _budgetState.per.router.fails = _budgetState.fails || 0;
+      _budgetState.per.router.exhausted = !!_budgetState.exhausted;
+      _budgetState.per.router.closedAt = _budgetState.closedAt || 0;
+    }
+    for (const s of SUPPLIES) _budgetState.per[s] ||= blankSupply();
     if (st) st.llmDay = _budgetState;
   }
-  if (!_budgetState.exhausted && _budgetState.calls >= LLM_DAILY_CALLS) {
-    markExhausted(`daily LLM call budget reached (${_budgetState.calls}/${LLM_DAILY_CALLS})`);
+  for (const name of SUPPLIES) {
+    const sup = _budgetState.per[name];
+    if (!sup.exhausted && sup.calls >= LLM_DAILY_CALLS) {
+      closeSupply(name, `${name} daily call budget reached (${sup.calls}/${LLM_DAILY_CALLS})`);
+    }
+    // Re-open on a schedule. "Exhausted" is inferred from refusals, and a refusal
+    // can also mean a transient outage or a provider that refills on a rolling
+    // window rather than at midnight — so without this, one bad half-hour would
+    // idle Cortex for the rest of the day. A probe costs a single call.
+    const since = Date.now() - (sup.closedAt || 0);
+    if (sup.exhausted && sup.calls < LLM_DAILY_CALLS && since > LLM_RETRY_AFTER_MS) {
+      sup.exhausted = false;
+      sup.fails = 0;
+      if (name === "router") deadModels.clear();
+      console.log(`  ↻ ${name} LLM budget re-opened for a probe (closed ${Math.round(since / 60000)}min ago)`);
+    }
   }
-  // Re-open on a schedule. "Exhausted" is inferred from refusals, and a refusal
-  // can also mean a transient outage or a provider that refills on a rolling
-  // window rather than at midnight — so without this, one bad half-hour would
-  // idle Cortex for the rest of the day. A probe costs a single call.
-  const since = Date.now() - (_budgetState.closedAt || 0);
-  if (_budgetState.exhausted && _budgetState.calls < LLM_DAILY_CALLS && since > LLM_RETRY_AFTER_MS) {
-    _budgetState.exhausted = false;
-    _budgetState.fails = 0;
-    deadModels.clear();
-    console.log(`  ↻ LLM budget re-opened for a probe (closed ${Math.round(since / 60000)}min ago)`);
-  }
+  // Keep the flat fields accurate as the AGGREGATE, so the state push, the log
+  // lines and anything reading the old shape still mean what they say.
+  _budgetState.calls = SUPPLIES.reduce((a, s) => a + _budgetState.per[s].calls, 0);
+  _budgetState.fails = SUPPLIES.reduce((a, s) => a + _budgetState.per[s].fails, 0);
+  _budgetState.exhausted = SUPPLIES.every((s) => _budgetState.per[s].exhausted);
   return _budgetState;
 }
 
-/** Close the day's LLM work, stamping WHEN — the re-probe window runs from here. */
-function markExhausted(why) {
-  if (!_budgetState) return;
-  _budgetState.exhausted = true;
-  _budgetState.closedAt = Date.now();
-  console.log(`  ⛔ ${why} — Cortex switches to LLM-free work`);
+/** The per-supply view, always present. */
+const supply = (name) => llmBudget().per[name];
+const supplyOpen = (name) => !supply(name).exhausted;
+
+/** Close ONE supply, stamping WHEN — the re-probe window runs from here. */
+function closeSupply(name, why) {
+  if (!_budgetState?.per?.[name] || _budgetState.per[name].exhausted) return;
+  _budgetState.per[name].exhausted = true;
+  _budgetState.per[name].closedAt = Date.now();
+  const others = SUPPLIES.filter((s) => s !== name && !_budgetState.per[s].exhausted);
+  console.log(others.length
+    ? `  ⛔ ${why} — ${others.join(", ")} still open`
+    : `  ⛔ ${why} — every supply is spent; Cortex switches to LLM-free work`);
 }
 /** Is there any point starting an LLM phase at all? */
-const llmAvailable = () => !llmBudget().exhausted;
+const llmAvailable = () => SUPPLIES.some(supplyOpen);
 
 // Rate limits are infrastructure noise, not strategy failures: retry with
 // backoff, and signal "SKIP" (don't bury, don't mark seen) if still limited.
@@ -434,7 +484,8 @@ async function callRouterCascade(system, user) {
 async function aiCall(payload) {
   const budget = llmBudget();
   if (budget.exhausted) {
-    const e = new Error(`llm budget spent for today (${budget.calls} calls, ${budget.fails} failures)`);
+    const spent = SUPPLIES.map((s) => `${s} ${budget.per[s].calls}/${LLM_DAILY_CALLS}`).join(", ");
+    const e = new Error(`every llm supply spent for today (${spent})`);
     e.skip = true;
     e.budget = true;
     throw e;
@@ -445,7 +496,7 @@ async function aiCall(payload) {
   // site chain answers in ~2.5s. The flag rides the same UTC day + 90-minute
   // re-probe window as the token budget, so a recovered router comes back.
   const routerRested = budget.routerDeadAt && Date.now() - budget.routerDeadAt < LLM_RETRY_AFTER_MS;
-  if (LLM_URL && LLM_MODELS.length && !routerRested && deadModels.size < LLM_MODELS.length) {
+  if (supplyOpen("router") && LLM_URL && LLM_MODELS.length && !routerRested && deadModels.size < LLM_MODELS.length) {
     try {
       const pRes = await fetch(`${SITE}/api/generate`, {
         method: "POST", headers: { "content-type": "application/json" },
@@ -454,7 +505,7 @@ async function aiCall(payload) {
       const p = await pRes.json().catch(() => ({}));
       if (pRes.ok && p.user) {
         const text = await callRouterCascade(p.system || "", p.user);
-        budget.calls++;
+        supply("router").calls++;
         if (p.isCritique) return { critique: parseVerdict(text) };
         if (p.isCodeReview) return { codeReview: parseCodeReview(text) };
         const out = extractCode(text);
@@ -470,7 +521,16 @@ async function aiCall(payload) {
       }
     }
   }
-  const budget2 = llmBudget();
+  // The router either was not tried or did not answer. If the SITE chain is
+  // separately spent, say so rather than firing a request that is certain to be
+  // refused — that pointless call is what the shared counter used to hide.
+  if (!supplyOpen("site")) {
+    const e = new Error(`site AI supply spent (${supply("site").calls}/${LLM_DAILY_CALLS} calls today)`);
+    e.skip = true;
+    e.budget = true;
+    throw e;
+  }
+  const siteSupply = supply("site");
   let res, out;
   try {
     res = await fetch(`${SITE}/api/generate`, {
@@ -480,12 +540,12 @@ async function aiCall(payload) {
     });
     out = await res.json().catch(() => ({}));
   } catch (e) {
-    budget2.fails++;
+    siteSupply.fails++;
     const err = new Error(`site AI unreachable: ${String(e.message || e).slice(0, 60)}`);
     err.skip = true;
     throw err;
   }
-  if (res.ok && (out.code || out.critique || out.codeReview)) { budget2.calls++; return out; }
+  if (res.ok && (out.code || out.critique || out.codeReview)) { siteSupply.calls++; siteSupply.fails = 0; return out; }
   const e = new Error(out.error || `generate HTTP ${res.status}`);
   if (res.status === 429 || out.error === "rate_limited") {
     e.skip = true;
@@ -495,9 +555,12 @@ async function aiCall(payload) {
     // row, the supply is gone whatever the router is doing. (Requiring the
     // router to be fully retired as well meant a router that merely hangs kept
     // the day "open" forever.)
-    budget2.fails++;
-    if (budget2.fails >= LLM_FAIL_STREAK) {
-      markExhausted(`LLM supply spent (${budget2.fails} straight refusals)`);
+    siteSupply.fails++;
+    if (siteSupply.fails >= LLM_FAIL_STREAK) {
+      // Closes the SITE supply only. It used to close the day, which meant the
+      // last-resort chain refusing three times also silenced a router that was
+      // answering perfectly well.
+      closeSupply("site", `site AI supply spent (${siteSupply.fails} straight refusals)`);
     }
   }
   throw e;
@@ -1714,9 +1777,15 @@ const state = { ...(cur?.state || {}), research: {
   // instead of looking like "Cortex stopped researching".
   llm: {
     day: llmBudget().day,
-    calls: llmBudget().calls,
-    dailyCap: LLM_DAILY_CALLS,
-    exhausted: !!llmBudget().exhausted,
+    calls: llmBudget().calls,          // aggregate across supplies
+    dailyCap: LLM_DAILY_CALLS * SUPPLIES.length,
+    perSupplyCap: LLM_DAILY_CALLS,
+    // Per supply, because "spent" was never one number: the day used to close
+    // with 45 calls and zero failures because two independent accounts shared
+    // one counter. A page that shows only the total cannot tell you which
+    // account is actually out.
+    supplies: Object.fromEntries(SUPPLIES.map((s) => [s, { ...llmBudget().per[s] }])),
+    exhausted: !!llmBudget().exhausted, // true only when EVERY supply is closed
     deadModels: [...deadModels],
     models: LLM_MODELS,
   },

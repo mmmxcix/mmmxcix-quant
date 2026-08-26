@@ -189,6 +189,42 @@ The original plan, for the record:
     baseline (McLean–Pontiff / Mulligan / Carver), so live grading expects the haircut instead
     of flagging it.
 
+### Tier 0 — the bottleneck was never the gate — ✅ FIXED Aug 26 2026
+
+Before any of the tiers below is worth building, the thing actually stopping
+Cortex was measured, and it is not a research problem.
+
+The state on disk read:
+
+```
+llmDay: { day: "2026-08-26", calls: 45, fails: 0, exhausted: true }
+```
+
+**Forty-five calls, zero failures, day closed.** Nothing refused. The log had been
+repeating `llm budget spent — skipping 2 fresh paper(s)` / `read 0` / `until-hit:
+no survivor in 0 papers` on run after run while `attempts` sat frozen at 3,075 and
+the ensemble stayed at one rule (pooled Sharpe 0.89 vs B&H 0.97).
+
+The cause: `LLM_DAILY_CALLS` was calibrated for **one** free account and then
+applied to **two independent supplies** — the local router cascade (groq + nvidia
+gpt-oss) and the site chain behind `/api/generate` (Mistral first, then
+groq/Gemini). Both incremented the same counter, so groq's allowance closed
+Mistral's door. Worse, `markExhausted` closed the whole *day* on a three-refusal
+streak from the site chain — the last-resort supply could silence a router that
+was answering perfectly well.
+
+Each supply now carries its own counter, its own failure streak and its own
+90-minute re-probe window. The day ends only when every supply is closed.
+Verified against the real persisted state: the migration charges the historic
+spend to the router (the supply tried first, so the conservative attribution) and
+frees the site chain immediately. Daily capacity goes 45 → 90 calls without
+loosening a single quality gate — the generator simply gets the attempts the
+Tier-1 work left it starved of.
+
+**None of this makes the strategies better.** It makes there be strategies to
+judge. Re-read the funnel numbers after a few full-supply days before concluding
+anything from Tier 2–4.
+
 ## 5. Honest caveats
 
 - The B&H+margin gate killed 18% of near-misses — on BTC/QQQ/NVDA the underlying B&H Sharpe
