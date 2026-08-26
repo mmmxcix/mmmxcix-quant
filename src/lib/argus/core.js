@@ -308,6 +308,11 @@ export function openThesis(setup, { equity, openRisk, openMargin = 0, openNotion
     momAtr: Number.isFinite(setup.momAtr) ? setup.momAtr : null,
     limitFill: !!setup.limitFill,
     shadow: setup.shadow ?? null,                 // would-veto flags logged, never enforced
+    // The catalyst a trade was taken ON, when there was one. learn.sourceOf
+    // buckets the whole ledger on the presence of this field, so leaving it off
+    // the whitelist would make the event channel unmeasurable in exactly the way
+    // `explore` and `regime` already were (see the note above).
+    catalyst: setup.catalyst ?? null,
     state: "open",
     reason: setup.reason, evidence: setup.evidence || [],
     entry: fillEntry, stop, target: setup.target, invalidation,
@@ -649,5 +654,99 @@ export function weightedLedgerStats(closed, { halfLifeMs = 0, now = Date.now() }
     expectancy: avgR,
     sdR,
     tStat: se > 0 ? avgR / se : 0,
+  };
+}
+
+// ── timeframe aggregation ────────────────────────────────────────────────────
+/**
+ * Roll a fine candle series up into a coarser one, bucketed on WALL-CLOCK
+ * boundaries rather than by chunking the array from its start. The distinction
+ * is the whole point: chunk-by-N drifts with whatever the provider happened to
+ * return first, so the same instrument reloaded a minute later produces a
+ * different set of "15m" bars and every level a scanner reads moves underneath
+ * it. Bucketing on `time - (time % seconds)` gives the same 15m bars any chart
+ * would draw, every time.
+ *
+ * The last bucket is dropped unless it is provably complete (its final source
+ * candle sits on the closing boundary), because a scanner reading a half-formed
+ * bar is reading the future's opinion of a level that has not settled yet.
+ *
+ * @param candles  [{ time:<seconds>, open, high, low, close, volume }, …] ascending
+ * @param seconds  target bar length in seconds (900 = 15m)
+ */
+export function aggregateCandles(candles, seconds) {
+  if (!Array.isArray(candles) || !candles.length || !(seconds > 0)) return [];
+  const src = Number(candles[1]?.time) - Number(candles[0]?.time);
+  const out = [];
+  let cur = null;
+  for (const c of candles) {
+    const t = Number(c?.time);
+    if (!Number.isFinite(t) || !Number.isFinite(c?.close)) continue;
+    const bucket = t - (t % seconds);
+    if (!cur || cur.time !== bucket) {
+      if (cur) out.push(cur);
+      cur = { time: bucket, open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume || 0, _last: t };
+      continue;
+    }
+    cur.high = Math.max(cur.high, c.high);
+    cur.low = Math.min(cur.low, c.low);
+    cur.close = c.close;
+    cur.volume += c.volume || 0;
+    cur._last = t;
+  }
+  if (cur) out.push(cur);
+  // Drop a trailing bucket whose last source candle does not reach the closing
+  // boundary — that bar is still forming.
+  const tail = out[out.length - 1];
+  if (tail && Number.isFinite(src) && src > 0 && tail._last + src < tail.time + seconds) out.pop();
+  for (const b of out) delete b._last;
+  return out;
+}
+
+// ── evidence-gated position size ─────────────────────────────────────────────
+/**
+ * How large the base bet may be, given what the book has PROVEN so far.
+ *
+ * The complaint that started this ("it only does minor trades") is true and was
+ * correct: at a flat 0.35% risk, 47 trades moved equity by 2%. But the answer to
+ * a small bet on an unproven book is not a bigger bet — the previous sizing
+ * model was a fitted product with negative realized covariance to outcome (see
+ * BASE_RISK in argus-agent.mjs), and raising a flat size on a −0.15R book just
+ * loses the same edge faster.
+ *
+ * So size follows EVIDENCE, one direction at a time. The ladder only steps up
+ * when the whole book's expectancy is positive with enough sample and enough
+ * t-statistic to mean something, and it steps back down the moment that stops
+ * being true. It is a ratchet with no memory: the rung is recomputed from the
+ * current book on every trade, never accumulated.
+ *
+ * Rungs are deliberately coarse — three of them — because a continuous function
+ * of t would be a fitted sizing model wearing a different hat.
+ *
+ * @param closed  closed theses (the whole book, not a bucket)
+ * @returns {{ mult:number, rung:number, reason:string, n:number, avgR:number, tStat:number }}
+ */
+export function riskLadder(closed, { rungs = [
+  { n: 40, t: 1.0, mult: 1.5 },
+  { n: 80, t: 1.5, mult: 2.0 },
+  { n: 150, t: 2.0, mult: 3.0 },
+] } = {}) {
+  const s = ledgerStats(closed || []);
+  const base = { mult: 1, rung: 0, n: s.n, avgR: s.avgR ?? 0, tStat: s.tStat ?? 0 };
+  if (s.n < (rungs[0]?.n ?? Infinity)) {
+    return { ...base, reason: `unproven — ${s.n} closed, need ${rungs[0]?.n ?? "?"}` };
+  }
+  if (!(s.avgR > 0)) {
+    return { ...base, reason: `book expectancy ${s.avgR.toFixed(3)}R is not positive` };
+  }
+  let hit = null, rung = 0;
+  for (let i = 0; i < rungs.length; i++) {
+    const r = rungs[i];
+    if (s.n >= r.n && s.tStat >= r.t) { hit = r; rung = i + 1; }
+  }
+  if (!hit) return { ...base, reason: `t=${s.tStat.toFixed(2)} below the first rung (needs ${rungs[0].t})` };
+  return {
+    mult: hit.mult, rung, n: s.n, avgR: s.avgR, tStat: s.tStat,
+    reason: `rung ${rung}: ${s.n} closed, Ø ${s.avgR.toFixed(3)}R, t=${s.tStat.toFixed(2)} → ×${hit.mult}`,
   };
 }

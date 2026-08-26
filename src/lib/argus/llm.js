@@ -12,6 +12,18 @@ const LLM_URL = (process.env.LAB_LLM_URL || "http://localhost:3000/v1").replace(
 // SUBSCRIPTION. Background agents must run on FREE models only, so this is an
 // explicit list of free models (set via env), NOT a "best" route. If every free
 // model is rate-limited the event channel just skips a cycle (best-effort).
+//
+// STATE OF THE POOL, Aug 26 2026 (probed directly against the local OmniRoute):
+// there is currently NO working free model. `groq/*` returns 404 on every model
+// id — the key's default model was decommissioned, which is why every log line
+// for weeks read "llm unavailable (empty response / timeout)"; that was not
+// flakiness, the channel was hard-dead. cerebras, mistral and openrouter all
+// answer "No active credentials for provider", github-models is 410, and ddgw
+// fails its anti-abuse challenge. The only routes with live credentials are
+// aug/cc/claude — i.e. the Claude subscription, which background agents must
+// never resolve to (see below). So the event channel stays inert until a free
+// provider is connected in OmniRoute; point LAB_ARGUS_MODEL /
+// LAB_ARGUS_FALLBACKS at it when one is.
 const MODEL_CHAIN = [
   process.env.LAB_ARGUS_MODEL || "groq/llama-3.3-70b-versatile",
   // Fallbacks default to EMPTY — no `auto/*` route at all, so an agent can never

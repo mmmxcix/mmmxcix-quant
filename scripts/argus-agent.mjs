@@ -5,12 +5,13 @@
 // Paper only. Persists to /api/argus. Env: LAB_TOKEN (req), LAB_SITE,
 // LAB_ARGUS_EQUITY (paper start, default 10000).
 import { loadMarket } from "./marketdata.mjs";
-import { openThesis, evaluateExit, closeThesisAt, plannedRR, fillPrice, enforceMinStop, MIN_STOP_FRAC, volStatus, pyramidAdd, breakEvenStudy } from "../src/lib/argus/core.js";
+import { openThesis, evaluateExit, closeThesisAt, plannedRR, fillPrice, enforceMinStop, MIN_STOP_FRAC, volStatus, pyramidAdd, breakEvenStudy, aggregateCandles, riskLadder } from "../src/lib/argus/core.js";
 import { scan, VOLUME_KINDS } from "../src/lib/argus/scanners.js";
 import { buildBrief, diffBrief, renderBrief, parseFearGreed } from "../src/lib/argus/brief.js";
 import { deriveLessons, adjustment, displayLessons, sessionOf } from "../src/lib/argus/learn.js";
 import { marketOpen } from "../src/lib/argus/hours.js";
-import { canOpen, openedToday, paceStatus, DEFAULT_MAX_CONCURRENT, DEFAULT_MAX_PER_DAY } from "../src/lib/argus/pace.js";
+import { canOpen, openedToday, openedInSession, paceStatus, parseSessionBudget, dayKey, DEFAULT_MAX_CONCURRENT, DEFAULT_MAX_PER_DAY } from "../src/lib/argus/pace.js";
+import { eventSetup } from "../src/lib/argus/eventTrade.js";
 import { shouldExplore, exploreBudget, exploredToday } from "../src/lib/argus/explore.js";
 import { scoreSetup } from "../src/lib/argus/scorecard.js";
 import { currentRegime } from "../src/lib/hmmRegime.js";
@@ -89,6 +90,41 @@ const LEARN_MIN = +(process.env.LAB_ARGUS_LEARN_MIN || 20);
 // 0 on either disables it.
 const MAX_CONCURRENT = +(process.env.LAB_ARGUS_MAX_CONCURRENT ?? DEFAULT_MAX_CONCURRENT);
 const MAX_PER_DAY = +(process.env.LAB_ARGUS_MAX_PER_DAY ?? DEFAULT_MAX_PER_DAY);
+// …and WHEN it may act. The flat daily cap above resets at 00:00 UTC, the start
+// of the deadest window of the day, and a 24/7 agent spent it there: every one
+// of the first 47 post-overhaul trades opened between 21:00 and 06:00 UTC, 12 of
+// 12 slots gone by 06:00 on all four days, so Argus never once traded London or
+// New York. The per-session split (see pace.js) redistributes the SAME twelve
+// trades toward the sessions that carry the volume. Override with
+// LAB_ARGUS_SESSION_BUDGET="ny:5,london:4,asia:2,off:1".
+const SESSION_BUDGET = parseSessionBudget(process.env.LAB_ARGUS_SESSION_BUDGET);
+// The timeframe entries are SIGNALLED on. Exits still replay 5m bars — precision
+// where it is free — but a 15-minute scan loop cannot honestly time a 5-minute
+// signal, and the live book measured the cost: median detection lag 305s (a full
+// bar), and trades entered ≥2 min late averaged −0.21R against −0.04R for the
+// fast ones. The 15m series is aggregated from the 5m feed already being
+// fetched, so this costs no extra request.
+const SIGNAL_TF = process.env.LAB_ARGUS_SIGNAL_TF === "5m" ? "5m" : "15m";
+// A hard staleness gate, in multiples of the signal bar. On 15m signals from a
+// 15-minute loop it should essentially never fire; it exists so the cadence
+// mismatch cannot be reintroduced silently by changing one env var.
+const MAX_SIGNAL_LAG_BARS = +(process.env.LAB_ARGUS_MAX_SIGNAL_LAG_BARS || 1.5);
+// Ceiling on the evidence-gated risk ladder (see core.riskLadder). The ladder
+// may multiply BASE_RISK only while the whole book shows positive expectancy
+// with enough sample; this bounds where that can end up.
+const MAX_RISK = +(process.env.LAB_ARGUS_MAX_RISK || 0.01);
+// The event channel may now OPEN trades, not just tilt technical ones. It has
+// been a bias-only input since Phase 1 and the ledger shows the consequence:
+// every closed trade is source "technical", none is "event", so the channel the
+// whole design calls the differentiator has never produced one measurable
+// observation about itself. It gets a SEPARATE, small daily budget rather than
+// competing for the session slots, for the same reason: a channel that never
+// wins the ranking never gets graded, and "it lost the queue" is not evidence.
+const EVENT_TRADES_ON = process.env.LAB_ARGUS_EVENT_TRADES !== "0";
+const EVENT_MIN_CONF = +(process.env.LAB_ARGUS_EVENT_MIN_CONF || 0.75);
+const EVENT_MAX_PER_DAY = +(process.env.LAB_ARGUS_EVENT_MAX_PER_DAY || 2);
+const EVENT_ATR_MULT = +(process.env.LAB_ARGUS_EVENT_ATR_MULT || 1.5);
+const EVENT_R_MULT = +(process.env.LAB_ARGUS_EVENT_R_MULT || 2.5);
 // Recency weighting for the learning loop, in hours. OFF by default and that is
 // a measured choice, not an oversight: swept against the live ledger, every
 // half-life of 2 days or more produced an identical result because the whole
@@ -202,6 +238,11 @@ let cycleRunning = false;
 let eventBias = new Map(); // symbol -> { side, thesis, confidence, evidence, horizon, at, model }
 let prevBrief = null;
 let eventFng = null; // latest crypto Fear & Greed reading (shown on the Argus page)
+// Health of the event channel, reset each UTC day. Without this the channel's
+// failure mode is SILENCE: for weeks the log said "llm unavailable" on every
+// cycle while the page showed nothing at all, so "the catalyst channel has
+// produced no trades" was indistinguishable from "there were no catalysts".
+let eventHealth = { cycles: 0, answered: 0, biases: 0, trades: 0, lastError: null };
 let journal = [];       // Hermes post-mortems, newest first
 let skills = [];        // lessons crystallised from repeats — consulted before a trade
 let retainedSkills = []; // knowledge kept across a reset (journal cleared, skills survive)
@@ -250,33 +291,46 @@ async function runEventChannel() {
     const out = await callArgusLLM(renderBrief(brief), ctx);
     const now = Date.now();
     for (const [k, v] of eventBias) if (now - v.at > EVENT_TTL) eventBias.delete(k); // prune stale
-    if (!out.ok) { console.log(`[${new Date().toISOString()}] event: llm unavailable (${out.error})`); return; }
+    eventHealth.cycles++;
+    if (!out.ok) {
+      eventHealth.lastError = String(out.error || "unknown").slice(0, 160);
+      console.log(`[${new Date().toISOString()}] event: llm unavailable (${out.error}) — catalyst channel is inert; connect a free provider in OmniRoute and set LAB_ARGUS_MODEL`);
+      return;
+    }
+    eventHealth.answered++;
+    eventHealth.lastError = null;
     for (const t of out.theses) {
       if (!/^[A-Z]{1,6}(USDT)?$/.test(t.symbol)) continue; // sane ticker only
       if (!isCore(t.symbol) && !EVENT_TICKERS.includes(t.symbol)) continue; // don't invent instruments
-      eventBias.set(t.symbol, { side: t.side, thesis: t.thesis, confidence: t.confidence, evidence: t.evidence, horizon: t.horizon, at: now, model: out.model });
+      eventBias.set(t.symbol, { side: t.side, thesis: t.thesis, invalidation: t.invalidation, confidence: t.confidence, evidence: t.evidence, horizon: t.horizon, at: now, model: out.model });
+      eventHealth.biases++;
     }
     if (out.theses.length) console.log(`[${new Date().toISOString()}] event: ${out.theses.length} bias via ${out.model} — ${out.theses.map((t) => `${t.symbol} ${t.side}`).join(", ")}`);
   } catch (e) { console.log(`[${new Date().toISOString()}] event failed: ${e.message}`); }
 }
 
-// 5m (entries + exits) and 1h (bias + regime). The 15m feed was fetched for
-// months — three months of candles per symbol per scan — and destructured by
-// scan() without a single read; dropping it also shortens the scan that holds
-// the cycle mutex while open positions wait for their exit check.
+// 5m (exits, and the source the 15m signal series is built from) and 1h (bias +
+// regime). The 15m feed used to be FETCHED — three months of candles per symbol
+// per scan, destructured by scan() without a single read — and was dropped. It
+// is back as an AGGREGATION of the 5m series instead: same bars any chart would
+// draw, zero extra requests, and no second provider round-trip holding the cycle
+// mutex while open positions wait for their exit check.
 async function loadTF(inst) {
+  let c5, c1h;
   if (inst.asset === "crypto") {
     // Binance is happy with parallel bursts.
-    const [c5, c1h] = await Promise.all([
+    const [a, b] = await Promise.all([
       loadMarket({ ...inst, interval: "5m", bars: 1000 }),
       loadMarket({ ...inst, interval: "1h", bars: 1000 }),
     ]);
-    return { c5: c5?.candles, c1h: c1h?.candles };
+    c5 = a?.candles; c1h = b?.candles;
+  } else {
+    // Yahoo throttles parallel bursts from one IP → fetch stock TFs sequentially.
+    const a = await loadMarket({ ...inst, interval: "5m", range: "1mo" }); await sleep(250);
+    const b = await loadMarket({ ...inst, interval: "1h", range: "6mo" });
+    c5 = a?.candles; c1h = b?.candles;
   }
-  // Yahoo throttles parallel bursts from one IP → fetch stock TFs sequentially.
-  const c5 = await loadMarket({ ...inst, interval: "5m", range: "1mo" }); await sleep(250);
-  const c1h = await loadMarket({ ...inst, interval: "1h", range: "6mo" });
-  return { c5: c5?.candles, c1h: c1h?.candles };
+  return { c5, c15: c5 ? aggregateCandles(c5, 900) : null, c1h };
 }
 
 // One bar of 5m in ms — the timeframe every setup currently trades on.
@@ -521,8 +575,46 @@ function convictionOf(setup) {
   return clamp01(c);
 }
 
+/** The pace question, asked identically everywhere. The session arguments used
+ *  to be absent by construction — there was only a daily total — and the whole
+ *  point of the split is lost if one call site forgets them, so there is exactly
+ *  one place that assembles them. */
+function paceRoom(now = Date.now(), { event = false } = {}) {
+  // Concurrency is shared — four live bets is four live bets whatever produced
+  // them — but the OPENING budget is not: catalyst trades draw on their own
+  // small daily allowance so they are never simply crowded out by scanner flow.
+  if (event) {
+    if (MAX_CONCURRENT > 0 && open.length >= MAX_CONCURRENT) {
+      return { ok: false, reason: `${open.length} positions already open (cap ${MAX_CONCURRENT})` };
+    }
+    const used = eventOpenedToday(now);
+    if (EVENT_MAX_PER_DAY > 0 && used >= EVENT_MAX_PER_DAY) {
+      return { ok: false, reason: `${used} catalyst trades opened today (cap ${EVENT_MAX_PER_DAY})` };
+    }
+    return { ok: true };
+  }
+  return canOpen(open.length, openedToday(ledger, open, now), {
+    maxConcurrent: MAX_CONCURRENT,
+    maxPerDay: MAX_PER_DAY,
+    session: sessionOf(now),
+    sessionOpened: openedInSession(ledger, open, now),
+    sessionBudget: SESSION_BUDGET,
+  });
+}
+
+/** Catalyst trades opened in the current UTC day, from the ledger plus what is
+ *  still open — same both-sides count as pace.openedToday, and for the same
+ *  reason: counting only closed ones resets the budget exactly when a catalyst
+ *  trade is still running. */
+function eventOpenedToday(now = Date.now()) {
+  const key = dayKey(now);
+  const count = (arr) => (arr || []).filter((t) => t?.catalyst && t?.openedAt && dayKey(t.openedAt) === key).length;
+  return count(ledger) + count(open);
+}
+
 function tryOpen(inst, setup, halted) {
   if (halted) return;
+  const isEvent = setup.kind === "event";
   if (!marketOpen(inst)) return;                          // never open a closed market
   if (open.some((o) => o.symbol === inst.symbol)) return; // one position per instrument
   // The Asia-session crypto-short ban — hardcoded, NOT a learned lesson, because
@@ -532,6 +624,21 @@ function tryOpen(inst, setup, halted) {
   if (BLOCK_ASIA_SHORTS && inst.asset === "crypto" && setup.side === "short" && sessionOf(Date.now()) === "asia") {
     console.log(`[${new Date().toISOString()}] SKIP ${inst.symbol} short ${setup.kind} — Asia-session crypto shorts are banned (−0.575R × 27, replicated pre-fix)`);
     return;
+  }
+  // STALENESS. A setup is a statement about a level as of the bar that produced
+  // it, and it decays: the live book's fast entries (<2 min after the signal bar
+  // closed) averaged −0.04R while everything slower averaged −0.21R, on a scan
+  // loop that ran every 15 minutes against 5-minute bars. Signalling on 15m
+  // fixes the mismatch at the root; this gate makes it impossible to reintroduce
+  // by accident. `_fromLimit` fills are exempt — a parked limit is deliberately
+  // waiting, and its freshness was judged when it was placed.
+  if (!setup._fromLimit && Number.isFinite(setup.signalBarMs) && Number.isFinite(setup.barMs)) {
+    const lag = Date.now() - setup.signalBarMs;
+    const cap = MAX_SIGNAL_LAG_BARS * setup.barMs;
+    if (lag > cap) {
+      console.log(`[${new Date().toISOString()}] SKIP ${inst.symbol} ${setup.side} ${setup.kind} — stale signal (${(lag / 60000).toFixed(1)}min after the ${setup.timeframe} bar closed, cap ${(cap / 60000).toFixed(1)}min)`);
+      return;
+    }
   }
   const bias = eventBias.get(inst.symbol);
 
@@ -574,7 +681,7 @@ function tryOpen(inst, setup, halted) {
     // anyway spends nothing real, but it logs a probe that never happens and
     // makes the counter read 8 attempts against a budget of 3 — which is exactly
     // what the live page showed.
-    const room = canOpen(open.length, openedToday(ledger, open), { maxConcurrent: MAX_CONCURRENT, maxPerDay: MAX_PER_DAY });
+    const room = paceRoom(Date.now(), { event: isEvent });
     // `used` counts probes that OPENED plus a fraction of today's grants, so a
     // probe blocked further down still draws on the budget instead of being
     // re-granted forever (see PROBE_GRANT_SLACK).
@@ -633,7 +740,7 @@ function tryOpen(inst, setup, halted) {
   }
   // Pace gate: checked LAST of the skip conditions, so the log still shows which
   // setups were otherwise acceptable on a day the budget ran out.
-  const pace = canOpen(open.length, openedToday(ledger, open), { maxConcurrent: MAX_CONCURRENT, maxPerDay: MAX_PER_DAY });
+  const pace = paceRoom(Date.now(), { event: isEvent });
   if (!pace.ok) {
     probeDied(`pace: ${pace.reason}`);
     console.log(`[${new Date().toISOString()}] SKIP ${inst.symbol} ${setup.side} ${setup.kind} — pace: ${pace.reason}`);
@@ -644,7 +751,16 @@ function tryOpen(inst, setup, halted) {
   // slot (_rank), never how big the bet is (see BASE_RISK above for the measured
   // reason). vol.mult stays (shrink in elevated volatility is hygiene, not a fit);
   // the probe 0.4× stays (a probe is tuition, and the discount marks it as such).
-  const riskPct = BASE_RISK * vol.mult * (exploring ? exploring.sizeMult : 1);
+  // Size follows EVIDENCE. BASE_RISK stays flat while the book is unproven —
+  // that flatness was measured and is not up for negotiation (see BASE_RISK) —
+  // but "flat forever" is what makes a working agent invisible: 47 trades at
+  // 0.35% moved equity by 2%. riskLadder multiplies the base ONLY while the
+  // whole book's expectancy is positive with enough sample and t-statistic to
+  // mean something, recomputed from the current book on every trade, and drops
+  // straight back to ×1 the moment that stops holding. It is not a fitted sizing
+  // model: three coarse rungs, no per-bucket view, no memory.
+  const ladder = riskLadder(closedAll);
+  const riskPct = Math.min(MAX_RISK, BASE_RISK * ladder.mult) * vol.mult * (exploring ? exploring.sizeMult : 1);
 
   // Conviction = technical setup quality, tilted by an ALIGNED bias (its parts, not
   // a binary; real signals dominate at 0.7 weight). The learned-prior nudge that
@@ -880,7 +996,12 @@ function resetDayIfNeeded() {
   // The learning-gate counters reset with the day too — `used`/`budget` are
   // per-day, so leaving `probed` on a process-lifetime clock printed "0/3
   // probes (947 tried)", three numbers that were never comparable.
-  if (d !== dayStamp) { dayStamp = d; closedToday = []; equityDayStart = equity; resetLearnGate(); }
+  if (d !== dayStamp) {
+    dayStamp = d; closedToday = []; equityDayStart = equity; resetLearnGate();
+    // Same clock as the learning gate, for the same reason: a counter that only
+    // reset on process restart is how "3 probes" ended up printed next to 947.
+    eventHealth = { cycles: 0, answered: 0, biases: 0, trades: 0, lastError: null };
+  }
 }
 
 async function cycle(fullScan) {
@@ -955,7 +1076,7 @@ async function cycle(fullScan) {
       // Scan for new / re-check forming: both use the same scan; the fast loop
       // catches a forming setup the moment it triggers ("watch until entry").
       if (!limitPending && tf.c1h) {
-        const { triggered } = scan(tf, { kinds: ARGUS_KINDS });
+        const { triggered } = scan(tf, { kinds: ARGUS_KINDS, timeframe: SIGNAL_TF });
         // Label the market state ONCE per symbol per reload and stamp it on every
         // setup. Fitted on the HOURLY series: a hidden-Markov regime read off 5m
         // bars is mostly labelling noise, and the thing we want to bucket by is
@@ -979,6 +1100,28 @@ async function cycle(fullScan) {
         }
         triggered.sort((a, b) => (b._rank ?? 0) - (a._rank ?? 0));
         for (const s of triggered) tryOpen(inst, s, halted);
+
+        // THE EVENT CHANNEL, as a trade source. A high-confidence catalyst on a
+        // symbol the scanners had nothing to say about is exactly the case the
+        // design was built for and the case the old bias-only wiring threw away:
+        // with no technical setup there was nothing for the bias to tilt, so the
+        // idea died silently. It runs AFTER the technical pass and only when
+        // nothing was opened, so a catalyst never competes with a chart setup on
+        // the same instrument — it takes the trades that would otherwise not
+        // exist. Everything downstream is unchanged: the same volatility gate,
+        // the same skill vetoes, the same learning refusals, the same sizing.
+        if (EVENT_TRADES_ON && !open.some((o) => o.symbol === inst.symbol)) {
+          const ev = eventSetup(eventBias.get(inst.symbol), tf.c15 || tf.c5, {
+            timeframe: SIGNAL_TF, minConfidence: EVENT_MIN_CONF,
+            atrMult: EVENT_ATR_MULT, rMult: EVENT_R_MULT,
+          });
+          if (ev) {
+            ev._regime = regime;
+            const before = open.length;
+            tryOpen(inst, ev, halted);
+            if (open.length > before) eventHealth.trades++;
+          }
+        }
       }
       if (inst.asset !== "crypto") await sleep(400); // be gentle on Yahoo
     }
@@ -992,7 +1135,11 @@ async function cycle(fullScan) {
       lastPersistSig = sig;
     }
     await ackCommands(); // clear handled dev commands from the queue
-    if (fullScan) console.log(`[${new Date().toISOString()}] scan: ${insts.length}/${uni.length} open-mkt · ${open.length} open · ${forming.length} forming · ${eventBias.size} event-bias · ${lessons.length} lessons · eq ${equity.toFixed(0)} · heat ${(openRisk() / equity * 100).toFixed(1)}%${halted ? " · DAILY-HALT" : ""}`);
+    if (fullScan) {
+      const ps = paceStatus(ledger, open, { maxConcurrent: MAX_CONCURRENT, maxPerDay: MAX_PER_DAY, sessionBudget: SESSION_BUDGET });
+      const rl = riskLadder(closedAll);
+      console.log(`[${new Date().toISOString()}] scan: ${insts.length}/${uni.length} open-mkt · ${SIGNAL_TF} signals · ${open.length} open · ${forming.length} forming · ${eventBias.size} event-bias · ${lessons.length} lessons · eq ${equity.toFixed(0)} · heat ${(openRisk() / equity * 100).toFixed(1)}% · risk ${(Math.min(MAX_RISK, BASE_RISK * rl.mult) * 100).toFixed(2)}%${rl.rung ? ` (rung ${rl.rung})` : ""} · ${ps.session} ${ps.sessionOpened}/${ps.sessionCap}, day ${ps.openedToday}/${ps.maxPerDay}${halted ? " · DAILY-HALT" : ""}`);
+    }
   } catch (e) {
     console.error(`cycle failed: ${e.message}`);
   } finally {
@@ -1021,7 +1168,13 @@ async function persist(ledgerAdd, extra) {
         portfolioLev: openNotional() / equity,  // Σ notional / equity (Bug 1 — true portfolio leverage)
         portfolioLevCap: PORTFOLIO_LEV_CAP,
         marginUsed: openMargin(), marginPct: openMargin() / equity,
-        pace: paceStatus(ledger, open, { maxConcurrent: MAX_CONCURRENT, maxPerDay: MAX_PER_DAY }),
+        pace: paceStatus(ledger, open, { maxConcurrent: MAX_CONCURRENT, maxPerDay: MAX_PER_DAY, sessionBudget: SESSION_BUDGET }),
+        signalTf: SIGNAL_TF,                    // the timeframe entries are signalled on
+        eventHealth: { ...eventHealth, budget: EVENT_MAX_PER_DAY, usedToday: eventOpenedToday() },
+        risk: (() => {                          // where the evidence-gated size ladder currently stands
+          const l = riskLadder(closedAll);
+          return { basePct: BASE_RISK, mult: l.mult, pct: Math.min(MAX_RISK, BASE_RISK * l.mult), rung: l.rung, reason: l.reason, n: l.n, avgR: l.avgR, tStat: l.tStat };
+        })(),
         probes: {
           used: exploredToday(ledger, open),        // probes that became trades
           granted: learnGate.probed,                // …granted today (same clock)

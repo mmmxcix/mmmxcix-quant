@@ -321,12 +321,25 @@ const REVERSAL_KINDS = new Set(["mean-reversion", "liquidity-sweep", "ifvg", "vw
 // (reversal fades do not need a volume surge, so they're exempt).
 export const VOLUME_KINDS = new Set(["breakout", "orb", "momentum", "pullback"]);
 
-// Bars of 5m that make up the momentum window the scorecard records (one hour).
-const MOM_BARS = 12;
+// The momentum window the scorecard records is ONE HOUR, so the bar count has
+// to follow the timeframe the scan actually runs on — 12 bars of 5m and 4 bars
+// of 15m are the same hour, and hardcoding 12 would silently turn it into three.
+const MOM_BARS_BY_TF = { "5m": 12, "15m": 4 };
+const MOM_BARS = MOM_BARS_BY_TF["5m"];
 
 /**
- * Run all scanners on the 5m timeframe, gated by the 15m structure + 1h bias.
- * A trend setup must align with the higher-TF bias; mean-reversion may fade it.
+ * Run all scanners on the SIGNAL timeframe, gated by the 1h bias. A trend setup
+ * must align with the higher-TF bias; mean-reversion may fade it.
+ *
+ * `timeframe` selects the series the scanners read: "15m" (the default for the
+ * live agent) uses `c15`, "5m" uses `c5`. That choice is a cadence decision, not
+ * a taste one. The agent's full scan runs every 15 minutes, so a 5m signal was
+ * reaching the entry a median of 305 seconds — a whole bar — after the bar that
+ * produced it had closed, and the live book split accordingly: trades entered
+ * within 2 minutes averaged −0.04R, everything slower −0.21R. On a 15m signal
+ * the same 15-minute loop is at most one bar behind, which is the lag a 15m
+ * trader actually lives with. Exits keep replaying 5m bars regardless — a stop
+ * should be as precise as the data allows, whatever the entry was timed on.
  *
  * `kinds` (optional Set) is an ALLOWLIST of setup kinds to emit. Ten scanners ×
  * 10 symbols × 2 sides is a 200-hypothesis space sampled by a ~100-trade book:
@@ -336,21 +349,37 @@ const MOM_BARS = 12;
  * full set. Retired kinds re-enter later via labeled probes, not by default.
  * @returns { triggered: setup[], forming: candidate[] }
  */
-export function scan({ c5, c15, c1h }, { kinds = null } = {}) {
+export function scan({ c5, c15, c1h }, { kinds = null, timeframe = "5m" } = {}) {
   const bias = higherBias(c1h);
-  // Current volatility regime (ATR as a fraction of price on the 5m), attached to
-  // every setup so the agent's risk gate can size down / skip when it's extreme.
-  const A5 = atr(c5, 14), lastClose = c5[c5.length - 1]?.close;
+  // The series every scanner reads. A requested 15m series that is missing or
+  // too short falls back to 5m rather than scanning nothing — a data hiccup
+  // should cost freshness, not blind the agent — and the setup is stamped with
+  // the timeframe it was ACTUALLY found on, because the volatility ceiling and
+  // the staleness gate both scale by it and must not be told a fiction.
+  const want = timeframe === "15m" ? c15 : c5;
+  const tf = Array.isArray(want) && want.length >= 40 ? timeframe : "5m";
+  const src = tf === "15m" ? c15 : c5;
+  if (!Array.isArray(src) || !src.length) return { triggered: [], forming: [], bias };
+  // Current volatility regime (ATR as a fraction of price on the signal series),
+  // attached to every setup so the agent's risk gate can size down / skip when
+  // it's extreme.
+  const A5 = atr(src, 14), lastClose = src[src.length - 1]?.close;
   const atrPct = A5 > 0 && lastClose > 0 ? A5 / lastClose : null;
-  const rvol = relVolume(c5, 20); // participation vs the last 20 bars, for the volume gate
-  // Last hour's move in ATR units (12 × 5m), signed in MARKET direction — the
-  // scorecard signs it into the trade's direction. Recorded only: no gate reads
-  // it, so a setup that triggers is unaffected by what this says.
-  const back = c5[c5.length - 1 - MOM_BARS]?.close;
+  const rvol = relVolume(src, 20); // participation vs the last 20 bars, for the volume gate
+  // Last hour's move in ATR units, signed in MARKET direction — the scorecard
+  // signs it into the trade's direction. Recorded only: no gate reads it, so a
+  // setup that triggers is unaffected by what this says.
+  const momBars = MOM_BARS_BY_TF[tf] ?? MOM_BARS;
+  const back = src[src.length - 1 - momBars]?.close;
   const momAtr = A5 > 0 && lastClose > 0 && back > 0 ? (lastClose - back) / A5 : null;
+  // When the signal bar CLOSED, so the agent can refuse a stale entry. Candle
+  // times are the bar's OPEN in seconds; the close is one bar later.
+  const barSec = tf === "15m" ? 900 : 300;
+  const signalBarMs = Number.isFinite(src[src.length - 1]?.time)
+    ? (src[src.length - 1].time + barSec) * 1000 : null;
   const triggered = [], forming = [];
   for (const fn of SCANNERS) {
-    const r = fn(c5);
+    const r = fn(src);
     if (!r) continue;
     if (kinds && !kinds.has(r.kind)) continue; // retired kind — not traded, not even "forming"
     const isRev = REVERSAL_KINDS.has(r.kind);
@@ -359,7 +388,7 @@ export function scan({ c5, c15, c1h }, { kinds = null } = {}) {
     // tag whether it aligns with the 1h bias; the agent folds that into conviction
     // (lower leverage against the trend) and its learning can veto losing buckets.
     const aligned = isRev || (r.side === "long" && bias !== "down") || (r.side === "short" && bias !== "up");
-    const setup = { ...r, timeframe: "5m", bias, aligned, atrPct, rvol, momAtr };
+    const setup = { ...r, timeframe: tf, bias, aligned, atrPct, rvol, momAtr, signalBarMs, barMs: barSec * 1000 };
     if (r.state === "triggered") triggered.push(setup);
     else forming.push(setup);
   }

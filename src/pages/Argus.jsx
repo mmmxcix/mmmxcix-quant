@@ -258,11 +258,38 @@ export default function Argus() {
             reset when the agent process restarted, which is how a budget of 3
             ended up next to 947 attempts. `blocked` is the useful one: it says
             how many probes the loop granted and a later gate then ate. */}
+        {/* The daily budget is now split PER SESSION, and the headline number is
+            the session one: a pooled "12 today" was what hid the defect this
+            replaced — the agent spent the whole day's budget in the 00:00–06:00
+            UTC window and every liquid session read as "blocked" for reasons the
+            panel never showed. */}
         <Stat label="Pace" value={state?.pace ? `${state.pace.open}/${state.pace.maxConcurrent} open` : "–"}
           sub={state?.pace
-            ? `${state.pace.openedToday}/${state.pace.maxPerDay} today${state?.probes ? ` · ${state.probes.used}/${state.probes.budget} probes` + (state.probes.blocked > 0 ? ` (${state.probes.blocked} blocked)` : "") : ""}`
-            : "concurrency + daily budget"}
+            ? `${state.pace.session ? `${state.pace.session} ${state.pace.sessionOpened}/${state.pace.sessionCap ?? "–"} · ` : ""}${state.pace.openedToday}/${state.pace.maxPerDay} today${state?.probes ? ` · ${state.probes.used}/${state.probes.budget} probes` : ""}`
+            : "concurrency + session budget"}
           tone={state?.pace?.blocked ? "text-warn" : "text-text"} />
+        {/* Position size follows EVIDENCE, so the panel has to say where that
+            stands: a flat rung 0 is the honest reading of an unproven book, not
+            a stuck number. */}
+        <Stat label="Risk / trade" value={state?.risk ? `${(state.risk.pct * 100).toFixed(2)}%` : "–"}
+          sub={state?.risk ? state.risk.reason : "base risk, gated on measured expectancy"}
+          tone={state?.risk?.rung ? "text-up" : "text-text"} />
+        {/* The catalyst channel reports its own health, because its failure mode
+            is silence: it logged "llm unavailable" on every cycle for weeks
+            while this page showed nothing, making a dead channel look exactly
+            like a quiet news day. */}
+        <Stat label="Catalyst channel"
+          value={state?.eventHealth
+            ? (state.eventHealth.cycles === 0 ? "idle"
+              : state.eventHealth.answered === 0 ? "no model"
+              : `${state.eventHealth.biases} read`)
+            : "–"}
+          sub={state?.eventHealth
+            ? (state.eventHealth.answered === 0 && state.eventHealth.cycles > 0
+              ? `${state.eventHealth.cycles} cycles, no usable reply${state.eventHealth.lastError ? ` — ${state.eventHealth.lastError}` : ""}`
+              : `${state.eventHealth.trades}/${state.eventHealth.budget} catalyst trades today`)
+            : "news → instrument → risk-defined trade"}
+          tone={state?.eventHealth?.cycles > 0 && state?.eventHealth?.answered === 0 ? "text-down" : "text-text"} />
         <Stat label="Learning gate" value={state?.learnConsidered ? `${(state.learnRefusedPct ?? 0).toFixed(0)}% refused` : "–"}
           sub={state?.learnConsidered ? `of ${state.learnConsidered} setups considered` : "no setups considered yet"}
           tone={(state?.learnRefusedPct ?? 0) > 60 ? "text-down" : (state?.learnRefusedPct ?? 0) > 35 ? "text-warn" : "text-text"} />
