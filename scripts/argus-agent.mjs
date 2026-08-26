@@ -121,7 +121,18 @@ const MAX_RISK = +(process.env.LAB_ARGUS_MAX_RISK || 0.01);
 // competing for the session slots, for the same reason: a channel that never
 // wins the ranking never gets graded, and "it lost the queue" is not evidence.
 const EVENT_TRADES_ON = process.env.LAB_ARGUS_EVENT_TRADES !== "0";
-const EVENT_MIN_CONF = +(process.env.LAB_ARGUS_EVENT_MIN_CONF || 0.75);
+// The confidence bar is CALIBRATED to what the model actually emits, not picked.
+// Measured against the live chain on four briefings of escalating strength: a
+// textbook single-name catalyst (refinery fire, 400kbd, named wire, clean
+// invalidation) scored 0.70–0.75, and a deliberately extreme one (blowout
+// earnings, 40% guide-up, 9% implied move) also topped out at 0.75 — these
+// models simply do not emit higher. A 0.75 bar therefore sits ON the ceiling and
+// would admit only the single best idea of a cycle, silently, which is the exact
+// failure mode this channel is being rescued from. 0.70 admits a clearly-argued
+// catalyst and still rejects the 0.6 filler the same replies contained. The
+// safety property was checked separately: on a no-catalyst briefing the model
+// returns [] rather than manufacturing a trade.
+const EVENT_MIN_CONF = +(process.env.LAB_ARGUS_EVENT_MIN_CONF || 0.70);
 const EVENT_MAX_PER_DAY = +(process.env.LAB_ARGUS_EVENT_MAX_PER_DAY || 2);
 const EVENT_ATR_MULT = +(process.env.LAB_ARGUS_EVENT_ATR_MULT || 1.5);
 const EVENT_R_MULT = +(process.env.LAB_ARGUS_EVENT_R_MULT || 2.5);

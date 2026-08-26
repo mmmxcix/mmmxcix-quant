@@ -13,23 +13,35 @@ const LLM_URL = (process.env.LAB_LLM_URL || "http://localhost:3000/v1").replace(
 // explicit list of free models (set via env), NOT a "best" route. If every free
 // model is rate-limited the event channel just skips a cycle (best-effort).
 //
-// STATE OF THE POOL, Aug 26 2026 (probed directly against the local OmniRoute):
-// there is currently NO working free model. `groq/*` returns 404 on every model
-// id — the key's default model was decommissioned, which is why every log line
-// for weeks read "llm unavailable (empty response / timeout)"; that was not
-// flakiness, the channel was hard-dead. cerebras, mistral and openrouter all
-// answer "No active credentials for provider", github-models is 410, and ddgw
-// fails its anti-abuse challenge. The only routes with live credentials are
-// aug/cc/claude — i.e. the Claude subscription, which background agents must
-// never resolve to (see below). So the event channel stays inert until a free
-// provider is connected in OmniRoute; point LAB_ARGUS_MODEL /
-// LAB_ARGUS_FALLBACKS at it when one is.
+// WHY THE CHAIN CHANGED, Aug 26 2026 (probed directly against the local
+// OmniRoute). Every log line for weeks read "llm unavailable (empty response /
+// timeout)", and there were TWO independent causes, either of which alone was
+// fatal:
+//
+//   1. `groq/llama-3.3-70b-versatile` — the configured default — has been
+//      DECOMMISSIONED and 404s on every request. The same groq key serves
+//      `groq/openai/gpt-oss-20b` and `-120b` perfectly well.
+//   2. OmniRoute answers with an SSE stream even when the request says
+//      `stream: false`, so `res.json()` threw on a body beginning `data: {…}`
+//      and the caller reported it as "empty response". A working model would
+//      have failed in exactly the same way. See readCompletion below.
+//
+// The models here are gpt-oss REASONING models: they emit a `reasoning` field
+// before any content, so a small max_tokens returns a technically-successful
+// reply with an empty `content`. That is why the ceiling is 1500 and not 900 —
+// measured, the reasoning alone runs 150-560 tokens on these prompts.
+//
+// Other providers in the router are NOT usable: cerebras, mistral and
+// openrouter answer "No active credentials for provider", github-models is 410,
+// ddgw fails its anti-abuse challenge. aug/cc/claude have live credentials and
+// are the Claude subscription — never route a background agent there (below).
 const MODEL_CHAIN = [
-  process.env.LAB_ARGUS_MODEL || "groq/llama-3.3-70b-versatile",
-  // Fallbacks default to EMPTY — no `auto/*` route at all, so an agent can never
-  // resolve to your Claude Code subscription in OmniRoute. Add explicit FREE
-  // models via LAB_ARGUS_FALLBACKS if you want more resilience.
-  ...(process.env.LAB_ARGUS_FALLBACKS || "").split(",").map((s) => s.trim()),
+  process.env.LAB_ARGUS_MODEL || "groq/openai/gpt-oss-20b",
+  // Fallbacks are explicit FREE models — never an `auto/*` route, so an agent
+  // can never resolve to your Claude Code subscription in OmniRoute. Both were
+  // verified answering this exact prompt shape on Aug 26 2026.
+  ...(process.env.LAB_ARGUS_FALLBACKS || "groq/openai/gpt-oss-120b,nvidia/openai/gpt-oss-20b")
+    .split(",").map((s) => s.trim()),
 ].filter(Boolean).filter((m, i, a) => a.indexOf(m) === i);
 
 /** Robustly pull a JSON array of theses out of an LLM reply (fences, prose). */
@@ -79,18 +91,52 @@ export function buildMessages(briefText, ctx) {
   return [{ role: "system", content: system }, { role: "user", content: user }];
 }
 
-async function callOnce(model, messages) {
+/**
+ * Read a completion body that may be EITHER a JSON object or an SSE stream.
+ *
+ * OmniRoute returns `text/event-stream` for several upstreams regardless of
+ * `stream: false`, and the old code went straight to `res.json()`. That threw on
+ * the leading `data: ` and every caller logged it as "empty response" — the
+ * single most common line in this agent's history, on replies that were in fact
+ * complete. Parsing both shapes is the whole fix.
+ *
+ * Exported so the tests can pin it: this used to be two unnamed lines that
+ * nothing could reach.
+ */
+export function readCompletion(raw) {
+  const text = String(raw || "");
+  const pick = (o) => o?.delta?.content ?? o?.message?.content ?? "";
+  if (!text.trimStart().startsWith("data:")) {
+    let j;
+    try { j = JSON.parse(text); } catch { throw new Error("unparseable response"); }
+    if (j?.error) throw new Error(String(j.error?.message || j.error).slice(0, 160));
+    return { content: pick(j?.choices?.[0]) || "", model: j?.model || null };
+  }
+  let content = "", model = null;
+  for (const line of text.split("\n")) {
+    if (!line.startsWith("data:")) continue;
+    const payload = line.slice(5).trim();
+    if (!payload || payload === "[DONE]") continue;
+    let j;
+    try { j = JSON.parse(payload); } catch { continue; } // a split chunk, not a failure
+    if (j?.error) throw new Error(String(j.error?.message || j.error).slice(0, 160));
+    content += pick(j?.choices?.[0]) || "";
+    model ||= j?.model || null;
+  }
+  return { content, model };
+}
+
+async function callOnce(model, messages, { maxTokens = 1500, temperature = 0.4, timeoutMs = 90_000 } = {}) {
   const res = await fetch(`${LLM_URL}/chat/completions`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ model, messages, max_tokens: 900, temperature: 0.4, stream: false }),
-    signal: AbortSignal.timeout(90_000),
+    body: JSON.stringify({ model, messages, max_tokens: maxTokens, temperature, stream: false }),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const j = await res.json();
-  const content = j?.choices?.[0]?.message?.content || "";
-  if (!content.trim()) throw new Error("empty response");
-  return { content, model: j?.model || model };
+  const out = readCompletion(await res.text());
+  if (!out.content.trim()) throw new Error("empty response");
+  return { content: out.content, model: out.model || model };
 }
 
 /**
@@ -98,21 +144,15 @@ async function callOnce(model, messages) {
  * post-mortem (reflect.js), which needs its own system prompt rather than the
  * event-thesis one. Returns { ok, text, model?, error? }. Never throws.
  */
-export async function chatOnce(messages, { maxTokens = 500, temperature = 0.3 } = {}) {
+export async function chatOnce(messages, { maxTokens = 1200, temperature = 0.3 } = {}) {
   let lastErr = "no model available";
   for (const model of MODEL_CHAIN) {
     try {
-      const res = await fetch(`${LLM_URL}/chat/completions`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ model, messages, max_tokens: maxTokens, temperature, stream: false }),
-        signal: AbortSignal.timeout(60_000),
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const j = await res.json();
-      const text = j?.choices?.[0]?.message?.content || "";
-      if (!text.trim()) throw new Error("empty response");
-      return { ok: true, text, model: j?.model || model };
+      // Same transport as the event call. This used to carry its OWN copy of the
+      // res.json() bug, so the Hermes post-mortems were failing silently for
+      // exactly the same reason the theses were.
+      const { content, model: served } = await callOnce(model, messages, { maxTokens, temperature, timeoutMs: 60_000 });
+      return { ok: true, text: content, model: served };
     } catch (e) {
       lastErr = `${model}: ${String(e.message || e)}`;
     }

@@ -239,11 +239,35 @@ technical setup's conviction and could veto one on strong disagreement. It could
 not open anything. With no technical setup on a symbol there was nothing to tilt,
 so the idea died silently — hence zero `event` rows in the ledger.
 
-And underneath that: the channel's LLM was not flaky, it was **dead**. Probed
-directly against the local OmniRoute on Aug 26 — `groq/*` returns 404 on every
-model id (the configured model was decommissioned), cerebras / mistral /
-openrouter all answer "No active credentials for provider", github-models is 410,
-ddgw fails its anti-abuse challenge. The only live routes are the Claude
+And underneath that: the channel's LLM was not flaky either. Probed directly
+against the local OmniRoute on Aug 26, there were **two independent faults,
+either of which alone was fatal**:
+
+1. `groq/llama-3.3-70b-versatile`, the configured default, has been
+   **decommissioned** and 404s on every request. The same groq key serves
+   `groq/openai/gpt-oss-20b` and `-120b` perfectly well.
+2. OmniRoute answers with an **SSE stream even when the request says
+   `stream: false`**, and both call sites went straight to `res.json()`. That
+   threw on a body beginning `data: {…}` and was reported as "empty response" —
+   so a *working* model failed in exactly the same way as a dead one. This also
+   silently broke the Hermes post-mortems, which carried their own copy of it.
+
+Both are fixed (`readCompletion` parses either shape; the chain is
+`groq/openai/gpt-oss-20b → -120b → nvidia/openai/gpt-oss-20b`, all three
+verified). The ceiling moved 900 → 1500 tokens because these are gpt-oss
+*reasoning* models: reasoning alone measured 150–560 tokens on these prompts, and
+a reply whose whole budget went to reasoning returns valid JSON with empty
+content. End-to-end the channel now returns well-formed theses with invalidation
+sentences, and returns `[]` on a no-catalyst briefing rather than manufacturing a
+trade.
+
+The confidence bar is calibrated to that measurement rather than picked: the
+model scores a textbook catalyst 0.70–0.75 and a deliberately extreme one still
+0.75, so a 0.75 gate sits *on* the ceiling. It is 0.70.
+
+Other providers in the router remain unusable — cerebras / mistral / openrouter
+answer "No active credentials for provider", github-models is 410, ddgw fails its
+anti-abuse challenge. `aug/cc/claude` have live credentials and are the Claude
 subscription, which background agents must never resolve to.
 
 ## What changed
@@ -295,12 +319,14 @@ usable replies, biases and catalyst trades per UTC day, and the page shows
 "no model" in red when the LLM answers nothing. Its old failure mode was silence:
 a dead channel and a quiet news day looked identical.
 
-## Open, and not ours to close
+## The one thing to keep an eye on
 
-The catalyst channel is **inert until a free provider is connected in OmniRoute**
-and `LAB_ARGUS_MODEL` / `LAB_ARGUS_FALLBACKS` point at it. The code path is built,
-tested and instrumented; it has nothing to call. Never an `auto/best-*` route —
-those resolve to the Claude subscription.
+The chain is three free gpt-oss models behind one router, and the decommissioned
+default proves how quietly that can rot. `state.eventHealth` is the tripwire: if
+`cycles > 0` and `answered === 0`, the panel says **"no model"** in red and the
+log names the failing model and error. Repoint `LAB_ARGUS_MODEL` /
+`LAB_ARGUS_FALLBACKS` at concrete free models when that happens — never an
+`auto/*` or `best-*` route, which resolve to the Claude subscription.
 
 ## How to judge this
 

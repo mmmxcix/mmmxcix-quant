@@ -41,7 +41,7 @@ export const DEFAULT_MAX_AGE_MS = 90 * 60_000;
  */
 export function eventSetup(bias, candles, {
   timeframe = "15m",
-  minConfidence = 0.75,
+  minConfidence = 0.70,
   atrMult = 1.5,
   rMult = 2.5,
   maxAgeMs = DEFAULT_MAX_AGE_MS,
@@ -49,8 +49,11 @@ export function eventSetup(bias, candles, {
 } = {}) {
   if (!bias || (bias.side !== "long" && bias.side !== "short")) return null;
   const conf = Number(bias.confidence);
-  // The confidence bar is deliberately high. A channel with no track record gets
-  // the agent's smallest, most selective slice of attention, not its widest.
+  // The bar is calibrated to what the model actually emits, not chosen for how
+  // strict it sounds. Measured on the live chain: a textbook catalyst scores
+  // 0.70–0.75 and a deliberately extreme one still tops out at 0.75, so a 0.75
+  // bar sits ON the ceiling and would silently admit at most one idea per cycle.
+  // See LAB_ARGUS_EVENT_MIN_CONF in argus-agent.mjs for the measurement.
   if (!Number.isFinite(conf) || conf < minConfidence) return null;
   if (Number.isFinite(bias.at) && now - bias.at > maxAgeMs) return null;
   if (!Array.isArray(candles) || candles.length < 20) return null;
