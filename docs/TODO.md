@@ -7,6 +7,64 @@ nicht mehr.
 
 ---
 
+## ZUSCHNITT-KORREKTUR — 17. Aug, lies das zuerst
+
+**Die fünf Projekte waren als Erweiterung dessen gemeint, was das Tool ANBIETET
+— nicht als Strategien, die man validiert und dann beerdigt.** Die Messungen
+weiter unten waren als Qualitätsschranke für die *Behauptungen* gedacht, nicht
+als das Produkt. Ich habe die Oberfläche bei 3, 4 und 1 jedes Mal bewusst
+weggelassen und das auch so committet; das war der Fehler.
+
+Verloren ist wenig: der teure Teil (Ingest, D1, Agents) steht. Es fehlen die
+Oberflächen — und die Endpunkte müssen wieder auf, denn sie wurden *deshalb*
+zugesperrt, weil ich schloss, es dürfe keine Seite geben.
+
+### Der korrigierte Zuschnitt
+
+| Projekt | Form | Stand |
+|---|---|---|
+| **3 · Insider (Form 4)** | **Feature, eigene Seite** | Pipeline ✅ · D1 ✅ · Endpunkt ✅ (admin-gated, muss auf) · Seite ❌ |
+| **4 · Aussagen → Körbe** | **Feature, eigene Seite** | Pipeline ✅ · D1 ✅ · Endpunkt ✅ (admin-gated, muss auf) · Seite ❌ |
+| **1 · Polymarket** | **Bot — kleines Geschwister von Argus** | Daten lokal ✅ (776k Trades + Payouts) · D1 ❌ · Agent ❌ · Seite ❌ |
+| **2 · Memecoin** | **Bot — kleines Geschwister von Argus** | nur Datenwege geprüft |
+
+**Die gemessenen Befunde gehören SICHTBAR auf die jeweilige Seite**, nicht nur in
+`docs/`. Eine Cluster-Liste ohne Kontext liest sich zwangsläufig wie ein Signal;
+„hier sind die Cluster, und hier ist, was sie historisch gebracht haben — nichts"
+ist das, was dieses Projekt von jedem Screener unterscheidet, und der einzige
+Grund, warum jemand den Zahlen glauben sollte. Deckt sich mit `/about`.
+
+### Eine Schranke, die beim Bot-Zuschnitt nicht ignorierbar ist
+
+Argus ist paper-only und hat offen dokumentiert **keinen** nachgewiesenen Edge —
+ein Geschwister darf also existieren, ohne einen zu behaupten. Es produziert
+einen Datensatz, keinen Gewinn. Aber:
+
+- **Ein Polymarket-Geschwister darf KEIN Copytrader sein.** Das ist gemessen
+  tot (`docs/POLYMARKET_FINDINGS.md`: mit echtem Auszahlungswert verliert die
+  Spitze des Rankings out of sample an jedem Schnitt, und das ist die *obere
+  Schranke*). Ein Bot, der auf Prediction Markets nach EIGENER Logik paper
+  handelt, ist etwas anderes und legitim — aber „folge den guten Wallets" ist
+  widerlegt und darf nicht die Prämisse sein.
+- **Ein Memecoin-Copytrader ist ungemessen.** Die Fill-Messung aus Projekt 2 ist
+  nie gelaufen. Nach der Doktrin kommt sie vor dem Bot — sie ist inzwischen
+  billig: Datenwege stehen (`docs/PROJEKTE.md` §2), und das Fill-Modell aus der
+  Tape ist entworfen. Fällt sie negativ aus, bekommt das Geschwister eine andere
+  Prämisse, nicht keinen Bot.
+
+### Nächste Schritte, in dieser Reihenfolge
+
+1. `/api/insider` und `/api/statements` wieder öffentlich lesbar machen (die
+   Quellen SIND öffentlich: SEC-Filings, öffentliche Telegram-Previews)
+2. Seite für Insider — Cluster + Filings + der Befund daneben
+3. Seite für Aussagen — Aussage → Thema → Korb + Mechanismus + der Befund daneben
+4. Einordnung im Router: es gibt schon Hubs mit Tabs (`/news/:tab`,
+   `/screener/:tab`, `/portfolio/:tab`) — beides passt als Tab statt als
+   eigene Top-Level-Seite
+5. Erst danach die zwei Bot-Geschwister
+
+---
+
 ## Abgeschlossen
 
 ### Die Zugriffsschicht — Welle 1 · 13./14. Aug
