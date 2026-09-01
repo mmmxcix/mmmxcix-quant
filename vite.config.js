@@ -3,6 +3,8 @@ import react from "@vitejs/plugin-react";
 import path from "path";
 import { existsSync, readFileSync } from "fs";
 import { trimForApi } from "./functions/_lib/bvol.mjs";
+import { compactOverview, validateOverviewSnapshot, cleanMeta } from "./functions/_lib/binanceOptions.mjs";
+import { fetchOptionsOverview, clearBinanceOptionsCache } from "./src/lib/binanceOptions.js";
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
@@ -60,8 +62,54 @@ function bvolDevApi() {
   };
 }
 
+// Dev stand-in for the Pages Function /api/binance-options. In production the
+// snapshot is PUSHED by scripts/binance-options-relay.mjs from the PC (Binance's
+// options host is unreachable from Cloudflare and from browsers); here the same
+// Node fetchers run inside the dev server, so `npm run dev` shows live data
+// with no relay running. Same response shape as the function, cached 60 s.
+// POST is accepted too (any token, in-memory) so the relay's push path can be
+// exercised against localhost; a pushed snapshot is served until it is older
+// than the computed one.
+function binanceOptionsDevApi() {
+  let computed = null; // { at, overview, meta }
+  let pushed = null;
+  const reply = (res, status, body) => { res.statusCode = status; res.setHeader("content-type", "application/json"); res.end(JSON.stringify(body)); };
+  return {
+    name: "binance-options-dev-api",
+    configureServer(server) {
+      server.middlewares.use("/api/binance-options", async (req, res) => {
+        if (req.method === "POST") {
+          let raw = "";
+          req.on("data", (c) => { raw += c; });
+          req.on("end", () => {
+            let body;
+            try { body = JSON.parse(raw); } catch { return reply(res, 400, { ok: false, error: "bad_json" }); }
+            const v = validateOverviewSnapshot(body?.overview);
+            if (!v.ok) return reply(res, 400, { ok: false, error: v.error });
+            pushed = { at: Date.now(), overview: v.overview, meta: cleanMeta(body.meta) };
+            reply(res, 200, { ok: true, stored: v.overview.length, at: pushed.at, dev: true });
+          });
+          return;
+        }
+        if (req.method !== "GET") return reply(res, 405, { ok: false, error: "method" });
+        try {
+          if (!computed || Date.now() - computed.at > 60_000) {
+            clearBinanceOptionsCache();
+            const c = compactOverview(await fetchOptionsOverview());
+            computed = { at: c.at, overview: c.overview, meta: c.meta };
+          }
+          const snap = pushed && pushed.at >= computed.at ? pushed : computed;
+          reply(res, 200, { ok: true, at: snap.at, ageMin: Math.max(0, Math.round((Date.now() - snap.at) / 60_000)), overview: snap.overview, meta: snap.meta });
+        } catch (e) {
+          reply(res, 502, { ok: false, error: "upstream", detail: String(e.message || e).slice(0, 160) });
+        }
+      });
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [react(), bvolDevApi()],
+  plugins: [react(), bvolDevApi(), binanceOptionsDevApi()],
   resolve: {
     alias: { "@": path.resolve(__dirname, "./src") },
   },
@@ -80,13 +128,6 @@ export default defineConfig({
           }
           return out;
         },
-      },
-      // Mirrors functions/api/binance-options/[[path]].js: Binance's OPTIONS host
-      // (eapi) sends no CORS headers, unlike spot/futures, so it needs a proxy.
-      "/api/binance-options": {
-        target: "https://eapi.binance.com",
-        changeOrigin: true,
-        rewrite: (p) => p.replace(/^\/api\/binance-options/, "/eapi/v1"),
       },
     },
   },

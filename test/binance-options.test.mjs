@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   parseSymbol, normalizeContracts, interpolateAt, atmIvAtIndex, ivAtDelta, putCallRatio, summarizeChain,
 } from "../src/lib/binanceOptions.js";
+import { compactOverview, validateOverviewSnapshot, cleanMeta, SNAPSHOT_MAX_ROWS } from "../functions/_lib/binanceOptions.mjs";
 
 // Chain-summary math for the Binance options source. A fixed synthetic chain
 // with a KNOWN skew and known deltas, so every derived number has a hand-
@@ -111,6 +112,79 @@ test("summarizeChain ignores expired contracts and survives an empty chain", () 
   assert.equal(s.atmIv30, null);
   assert.equal(s.pcrVolume, null);
   assert.equal(summarizeChain([], 100).contractCount, 0);
+});
+
+// ── the relayed snapshot: what the PC pushes and the endpoint accepts ────────
+function overviewFixture() {
+  const rows = [
+    { underlying: "BTCUSDT", base: "BTC", indexPrice: 78083.6676087, ...summarizeChain([...expiry(10), ...expiry(60, { iv: () => 0.5, withOi: false })], 102.5) },
+    { underlying: "XAGUSDT", base: "XAG", indexPrice: 65.28, ...summarizeChain(expiry(3, { callVol: 1, putVol: 0 }), 100) },
+  ];
+  return { at: NOW, rows, oiCoverage: { maxDays: 90, requested: 3, failed: 1 } };
+}
+
+test("compactOverview keeps summaries only, rounds, and never carries contracts", () => {
+  const snap = compactOverview(overviewFixture());
+  assert.equal(snap.at, NOW);
+  assert.deepEqual(snap.meta, { oiMaxDays: 90, oiRequested: 3, oiFailed: 1 });
+  assert.equal(snap.overview.length, 2);
+  const btc = snap.overview[0];
+  assert.deepEqual(Object.keys(btc).sort(), [
+    "atmIv30", "base", "contracts", "expiries", "illiquid", "index", "oi", "oiExpiries", "oiUsd",
+    "pcOi", "pcVol", "skew25", "skewByExpiry", "term", "turnover", "underlying",
+  ].sort());
+  assert.equal(btc.index, 78083.6676087, "index keeps its precision (DOGE needs 6 decimals)");
+  assert.equal(btc.atmIv30, 0.53);
+  assert.equal(btc.pcVol, 1.5);
+  assert.equal(btc.expiries, 2, "expiries becomes a COUNT");
+  assert.equal(btc.contracts, 20);
+  assert.equal(btc.term.length, 2);
+  assert.deepEqual(btc.term[1], { expiry: btc.term[1].expiry, dte: 60, atmIv: 0.5 });
+  assert.equal(btc.skewByExpiry.length, 2);
+  assert.equal(typeof btc.skewByExpiry[0].skew25, "number");
+  assert.equal(String(btc.skew25).replace(/^-?\d\.?/, "").length <= 4, true, "4 decimals");
+  const xag = snap.overview[1];
+  assert.equal(xag.pcVol, 0, "puts with no calls traded still give a 0, not null");
+  assert.equal(xag.illiquid, true);
+  // Under 10 KB for two underlyings; the real eight land around the same order.
+  assert.ok(JSON.stringify(snap).length < 10_000);
+});
+
+test("validateOverviewSnapshot accepts what compactOverview emits and strips anything else", () => {
+  const snap = compactOverview(overviewFixture());
+  const v = validateOverviewSnapshot(snap.overview);
+  assert.equal(v.ok, true);
+  assert.deepEqual(v.overview, snap.overview, "a clean push round-trips unchanged");
+  const smuggled = snap.overview.map((r) => ({ ...r, contractsRaw: new Array(50).fill({ x: 1 }), note: "<script>" }));
+  const v2 = validateOverviewSnapshot(smuggled);
+  assert.equal(v2.ok, true);
+  assert.equal("contractsRaw" in v2.overview[0], false);
+  assert.equal("note" in v2.overview[0], false);
+  assert.deepEqual(cleanMeta({ oiMaxDays: 90, oiRequested: 3, oiFailed: 0, extra: 1 }), { oiMaxDays: 90, oiRequested: 3, oiFailed: 0 });
+  assert.equal(cleanMeta("junk"), null);
+});
+
+test("validateOverviewSnapshot rejects the shapes a bad push could send", () => {
+  const good = compactOverview(overviewFixture()).overview;
+  const reject = (input, code) => { const r = validateOverviewSnapshot(input); assert.equal(r.ok, false); assert.equal(r.error, code); };
+  reject(null, "overview_not_array");
+  reject({ overview: good }, "overview_not_array");
+  reject([], "overview_empty");
+  reject(Array.from({ length: SNAPSHOT_MAX_ROWS + 1 }, (_, i) => ({ ...good[0], underlying: `U${i}USDT` })), "overview_too_large");
+  reject([{ ...good[0], underlying: "btc usdt" }], "bad_underlying");
+  reject([good[0], good[0]], "duplicate_underlying");
+  reject([{ ...good[0], atmIv30: "0.35" }], "bad_atmIv30");
+  reject([{ ...good[0], oiUsd: Infinity }], "bad_oiUsd");
+  reject([{ ...good[0], term: [{ expiry: "tomorrow", dte: 1, atmIv: 0.3 }] }], "bad_curve");
+  reject([{ ...good[0], term: [{ expiry: "2026-09-25", dte: 1, atmIv: null }] }], "bad_curve");
+  reject([{ ...good[0], skewByExpiry: "none" }], "bad_curve");
+  reject([{ ...good[0], term: Array.from({ length: 61 }, () => ({ expiry: "2026-09-25", dte: 1, atmIv: 0.3 })) }], "bad_curve");
+  reject(["BTCUSDT"], "row_not_object");
+  // nulls are fine — an illiquid name has no skew and no OI
+  const r = validateOverviewSnapshot([{ underlying: "XAGUSDT", index: null, atmIv30: null, skew25: null, pcVol: null, pcOi: null, oiUsd: null }]);
+  assert.equal(r.ok, true);
+  assert.equal(r.overview[0].base, "XAG");
+  assert.deepEqual(r.overview[0].term, []);
 });
 
 test("normalizeContracts merges the three feeds and maps Binance's sentinels", () => {

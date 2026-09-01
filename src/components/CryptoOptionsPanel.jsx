@@ -1,18 +1,19 @@
 import { useEffect, useMemo, useState } from "react";
 import { Loader2, Info } from "lucide-react";
 import XYLineChart from "@/components/XYLineChart";
-import {
-  fetchOptionsOverview, fetchBvolHistory, ILLIQUID_TURNOVER_USDT, OI_MAX_DAYS,
-} from "@/lib/binanceOptions";
+import { fetchOptionsSnapshot, fetchBvolHistory, ILLIQUID_TURNOVER_USDT } from "@/lib/binanceOptions";
 import { vizColor } from "@/lib/vizColors";
 import { cn, fmtNum, fmtPrice } from "@/lib/utils";
 
 // Crypto options (Binance) — the Volatility tab's third view. Three things:
 //   1. BVOL, Binance's 30-day implied-vol index for BTC / ETH (the crypto VIX),
 //      as a history from the nightly-synced archive (/api/bvol);
-//   2. the LIVE term structure and 25-delta skew from the option chain
-//      (src/lib/binanceOptions.js, straight from Binance);
+//   2. the term structure and 25-delta skew from the option chain;
 //   3. one row per underlying: 30-day ATM IV, put/call ratios, open interest.
+// 2 and 3 come from /api/binance-options — a snapshot the user's PC pushes
+// (scripts/binance-options-relay.mjs), because Binance's options host is
+// unreachable from both the browser (no CORS) and Cloudflare (403). So the
+// panel says WHEN the snapshot was taken, and flags one that has gone stale.
 // The smaller names are shown but tagged — a P/C ratio on 3k USDT of turnover
 // is a curiosity, not a signal, and the page should say so rather than let a
 // gold contract that listed last week sit next to BTC as an equal.
@@ -21,6 +22,7 @@ const HEADLINE = ["BTCUSDT", "ETHUSDT"];
 const BVOL = { BTCUSDT: "BTCBVOLUSDT", ETHUSDT: "ETHBVOLUSDT" };
 const LABEL = { BTCUSDT: "BTC", ETHUSDT: "ETH" };
 const RANGES = [["1mo", "1M", 30], ["3mo", "3M", 90], ["1y", "1Y", 365], ["max", "All", Infinity]];
+const STALE_MIN = 60; // the relay pushes every 15 min; an hour means it isn't running
 
 const fmtIv = (v) => (v == null ? "–" : `${fmtNum(v * 100, 1)}%`);
 const fmtSkew = (v) => (v == null ? "–" : `${v > 0 ? "+" : ""}${fmtNum(v * 100, 1)}`);
@@ -35,6 +37,8 @@ function fmtUsd(v) {
 }
 const fmtDay = (sec, long) =>
   new Date(sec * 1000).toLocaleDateString("en-US", long ? { month: "short", year: "2-digit", timeZone: "UTC" } : { month: "short", day: "numeric", timeZone: "UTC" });
+const fmtClock = (ms) => new Date(ms).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "UTC" }) + " UTC";
+const fmtAge = (min) => (min < 1 ? "just now" : min < 60 ? `${min} min ago` : min < 60 * 48 ? `${Math.round(min / 60)} h ago` : `${Math.round(min / 1440)} d ago`);
 
 function Stat({ label, value, sub, tone }) {
   return (
@@ -150,9 +154,8 @@ function TermCharts({ rows }) {
   const byU = Object.fromEntries((rows || []).map((r) => [r.underlying, r]));
   const term = HEADLINE.map((u) => byU[u]).filter((r) => r?.term?.length >= 2)
     .map((r) => ({ label: `${LABEL[r.underlying]} ATM IV`, color: colors[r.underlying], points: r.term.map((t) => ({ x: t.dte, y: t.atmIv * 100 })) }));
-  const skew = HEADLINE.map((u) => byU[u]).filter((r) => r?.term?.some((t) => t.skew25 != null))
-    .map((r) => ({ label: `${LABEL[r.underlying]} 25Δ skew`, color: colors[r.underlying], points: r.term.filter((t) => t.skew25 != null).map((t) => ({ x: t.dte, y: t.skew25 * 100 })) }))
-    .filter((s) => s.points.length >= 2);
+  const skew = HEADLINE.map((u) => byU[u]).filter((r) => r?.skewByExpiry?.length >= 2)
+    .map((r) => ({ label: `${LABEL[r.underlying]} 25Δ skew`, color: colors[r.underlying], points: r.skewByExpiry.map((t) => ({ x: t.dte, y: t.skew25 * 100 })) }));
   if (!term.length) return null;
   return (
     <div className="grid lg:grid-cols-2 gap-3 mb-5">
@@ -182,10 +185,9 @@ function TermCharts({ rows }) {
   );
 }
 
-function OverviewTable({ data }) {
-  const rows = data?.rows || [];
+function OverviewTable({ rows, oiMaxDays }) {
   return (
-    <div className="rounded-xl border border-line lg-glass overflow-hidden mb-5">
+    <div className="rounded-xl border border-line lg-glass overflow-hidden mb-3">
       <div className="overflow-x-auto">
         <table className="w-full text-[11px] font-mono whitespace-nowrap">
           <thead>
@@ -196,7 +198,7 @@ function OverviewTable({ data }) {
               <th className="px-3 py-2 font-sans font-medium text-right" title="Put IV minus call IV at 25 delta, 30 days, vol points">25Δ skew</th>
               <th className="px-3 py-2 font-sans font-medium text-right" title="Put/call ratio by 24h volume (contracts)">P/C vol</th>
               <th className="px-3 py-2 font-sans font-medium text-right" title="Put/call ratio by open interest">P/C OI</th>
-              <th className="px-3 py-2 font-sans font-medium text-right" title={`Open interest, expiries within ${OI_MAX_DAYS} days`}>OI ≤{OI_MAX_DAYS}d</th>
+              <th className="px-3 py-2 font-sans font-medium text-right" title={`Open interest, expiries within ${oiMaxDays ?? 90} days`}>OI ≤{oiMaxDays ?? 90}d</th>
               <th className="px-3 py-2 font-sans font-medium text-right">24h turnover</th>
               <th className="px-3 py-2 font-sans font-medium text-right">Expiries</th>
               <th className="px-3 py-2 font-sans font-medium"></th>
@@ -206,14 +208,14 @@ function OverviewTable({ data }) {
             {rows.map((r) => (
               <tr key={r.underlying} className={cn("border-b border-line/40 last:border-0", r.illiquid && "text-dim")}>
                 <td className="px-3 py-1.5 text-text font-semibold">{r.base}<span className="text-dim font-normal">/USDT</span></td>
-                <td className="px-3 py-1.5 text-right">{r.indexPrice != null ? fmtPrice(r.indexPrice) : "–"}</td>
+                <td className="px-3 py-1.5 text-right">{r.index != null ? fmtPrice(r.index) : "–"}</td>
                 <td className={cn("px-3 py-1.5 text-right", !r.illiquid && "text-text font-semibold")}>{fmtIv(r.atmIv30)}</td>
-                <td className="px-3 py-1.5 text-right">{fmtSkew(r.skew30)}</td>
-                <td className="px-3 py-1.5 text-right">{fmtRatio(r.pcrVolume)}</td>
-                <td className="px-3 py-1.5 text-right">{fmtRatio(r.pcrOi)}</td>
+                <td className="px-3 py-1.5 text-right">{fmtSkew(r.skew25)}</td>
+                <td className="px-3 py-1.5 text-right">{fmtRatio(r.pcVol)}</td>
+                <td className="px-3 py-1.5 text-right">{fmtRatio(r.pcOi)}</td>
                 <td className="px-3 py-1.5 text-right">{fmtUsd(r.oiUsd)}</td>
-                <td className="px-3 py-1.5 text-right">{fmtUsd(r.turnover24h)}</td>
-                <td className="px-3 py-1.5 text-right">{r.expiries.length}</td>
+                <td className="px-3 py-1.5 text-right">{fmtUsd(r.turnover)}</td>
+                <td className="px-3 py-1.5 text-right">{r.expiries}</td>
                 <td className="px-3 py-1.5">
                   {r.illiquid && (
                     <span className="chip chip-idle !text-[10px] !py-0 text-warn" title={`Under ${fmtUsd(ILLIQUID_TURNOVER_USDT)} traded in 24h — ratios and skew here are noise`}>
@@ -231,20 +233,20 @@ function OverviewTable({ data }) {
 }
 
 export default function CryptoOptionsPanel() {
-  const [overview, setOverview] = useState(null);
-  const [ovLoading, setOvLoading] = useState(true);
-  const [ovError, setOvError] = useState(null);
+  const [snap, setSnap] = useState(null);
+  const [snapLoading, setSnapLoading] = useState(true);
+  const [snapError, setSnapError] = useState(null); // { code, message }
   const [bvol, setBvol] = useState({});
   const [bvolLoading, setBvolLoading] = useState(true);
   const [bvolError, setBvolError] = useState(null);
 
   useEffect(() => {
     let alive = true;
-    setOvLoading(true); setOvError(null);
-    fetchOptionsOverview()
-      .then((d) => { if (alive) setOverview(d); })
-      .catch((e) => { if (alive) setOvError(e.message); })
-      .finally(() => { if (alive) setOvLoading(false); });
+    setSnapLoading(true); setSnapError(null);
+    fetchOptionsSnapshot()
+      .then((d) => { if (alive) setSnap(d); })
+      .catch((e) => { if (alive) setSnapError({ code: e.code, message: e.message }); })
+      .finally(() => { if (alive) setSnapLoading(false); });
     return () => { alive = false; };
   }, []);
 
@@ -263,29 +265,56 @@ export default function CryptoOptionsPanel() {
     return () => { alive = false; };
   }, []);
 
+  const stale = snap && snap.ageMin >= STALE_MIN;
+
   return (
     <div>
       <p className="text-[11px] text-dim mb-4 max-w-2xl leading-relaxed">
         Binance lists European options on BTC and ETH with real depth, thin markets on BNB, SOL, XRP and DOGE,
         and brand-new gold and silver contracts that barely trade yet. BVOL is its 30-day implied-vol index —
-        the crypto VIX. Everything below is live from Binance except the BVOL history, which is synced nightly.
+        the crypto VIX. The chain summaries below are a snapshot relayed from the desk every few minutes; the
+        BVOL history is synced nightly.
       </p>
 
       <BvolCard series={bvol} loading={bvolLoading} error={bvolError} />
 
-      {ovLoading && (
+      <div className="flex flex-wrap items-baseline justify-between gap-2 mb-3">
+        <p className="text-xs text-dim font-medium">Option chain — term structure, skew, ratios, open interest</p>
+        {snap && (
+          <p className={cn("text-[11px] font-mono", stale ? "text-warn" : "text-dim")}>
+            Snapshot {fmtClock(snap.at)} · {fmtAge(snap.ageMin)}
+            {stale && " · the relay hasn't pushed for a while"}
+          </p>
+        )}
+      </div>
+
+      {snapLoading && (
         <div className="flex items-center gap-2 text-sm text-dim py-8">
-          <Loader2 className="w-4 h-4 animate-spin" /> Reading the Binance option chain…
+          <Loader2 className="w-4 h-4 animate-spin" /> Loading the chain snapshot…
         </div>
       )}
-      {ovError && !ovLoading && <p className="text-sm text-down py-4">{ovError}</p>}
-      {overview && !ovLoading && (
+      {snapError && !snapLoading && (
+        snapError.code === "not_synced" ? (
+          <div className="rounded-xl border border-line lg-glass p-4 mb-5">
+            <p className="text-sm text-text font-medium mb-1">No chain snapshot yet</p>
+            <p className="text-[11px] text-dim leading-relaxed">
+              The Binance options chain can only be read from the desk PC (Binance blocks both browsers and
+              Cloudflare), so it arrives as a relayed snapshot — and none has been pushed yet. Once
+              <span className="font-mono"> scripts/binance-options-relay.mjs</span> runs, the term structure,
+              skew and per-underlying table appear here. BVOL above is unaffected.
+            </p>
+          </div>
+        ) : (
+          <p className="text-sm text-down py-4">{snapError.message}</p>
+        )
+      )}
+      {snap && !snapLoading && (
         <>
-          <TermCharts rows={overview.rows} />
-          <OverviewTable data={overview} />
-          {overview.oiCoverage.failed > 0 && (
+          <TermCharts rows={snap.overview} />
+          <OverviewTable rows={snap.overview} oiMaxDays={snap.meta?.oiMaxDays} />
+          {snap.meta?.oiFailed > 0 && (
             <p className="text-[11px] text-warn mb-3">
-              {overview.oiCoverage.failed} of {overview.oiCoverage.requested} open-interest lookups failed — OI columns are partial.
+              {snap.meta.oiFailed} of {snap.meta.oiRequested} open-interest lookups failed when this snapshot was taken — OI columns are partial.
             </p>
           )}
         </>
@@ -293,10 +322,11 @@ export default function CryptoOptionsPanel() {
 
       <p className="flex items-start gap-1.5 text-[10px] text-dim/80 mt-2 leading-relaxed">
         <Info className="w-3.5 h-3.5 shrink-0" />
-        Source: the Binance Options public API (live, via the site's proxy with a 30-second cache), and the BVOL
-        daily archive on data.binance.vision (one row per second, sampled hourly, appended each night — the last
-        point is yesterday's close). Open interest is a per-expiry call, so it covers expiries within {OI_MAX_DAYS} days
-        only. "Illiquid" = under {fmtUsd(ILLIQUID_TURNOVER_USDT)} traded in 24h. Educational, not investment advice.
+        Source: the Binance Options public API, summarised on the desk PC and relayed here as a snapshot (the host
+        is unreachable from browsers and from Cloudflare), and the BVOL daily archive on data.binance.vision (one row
+        per second, sampled hourly, appended each night — the last point is yesterday's close). Open interest is a
+        per-expiry call, so it covers expiries within {snap?.meta?.oiMaxDays ?? 90} days only. "Illiquid" = under{" "}
+        {fmtUsd(ILLIQUID_TURNOVER_USDT)} traded in 24h. Educational, not investment advice.
       </p>
     </div>
   );

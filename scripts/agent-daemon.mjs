@@ -224,6 +224,13 @@ if (process.env.INSIDER_AGENT !== "0") atHours([5], () => runAgent("insider", "i
 // LOCAL OmniRoute router. Opt out with STATEMENTS_AGENT=0.
 if (process.env.STATEMENTS_AGENT !== "0") everyMinutes(30, () => runAgent("statements", "statements-agent.mjs"));
 
+// Binance options snapshot (see src/lib/binanceOptions.js): Binance answers
+// eapi calls from Cloudflare Workers with a CloudFront 403, so the option chain
+// is summarised HERE and pushed to /api/binance-options; the site only ever
+// reads that snapshot. Every 15 min, alongside the lab pass. Opt out with
+// BINANCE_OPTIONS_AGENT=0.
+if (process.env.BINANCE_OPTIONS_AGENT !== "0") everyMinutes(15, () => runAgent("binance-options", "binance-options-relay.mjs"));
+
 // Native backtest executor: a persistent poller that runs C++/q/native-Python/JS
 // backtests the browser submits, and pushes results back. Opt out with
 // LAB_EXECUTOR=0 (e.g. on a machine without the toolchains).

@@ -2,12 +2,15 @@
 // chain per underlying, and the derived numbers a vol trader actually reads
 // (ATM IV term structure, 25-delta skew, put/call ratios, open interest).
 //
-// Public and keyless, but NOT browser-callable: unlike spot/futures, the options
-// host (eapi) sends no CORS headers (verified 2026-09-01), so in the browser
-// every call goes through /api/binance-options/* — a Pages Function in
-// production (functions/api/binance-options/[[path]].js), the vite proxy in dev
-// — exactly the Yahoo arrangement. In Node (scripts, tests) it goes direct.
-// The summary math is pure and exported for tests.
+// Public and keyless, but reachable ONLY from a plain machine: the options host
+// (eapi) sends no CORS headers (so no browser), AND it answers every request
+// from Cloudflare Workers with a CloudFront 403 (so no Pages-Function proxy —
+// both verified 2026-09-01; spot/futures and the BVOL archive are fine). So the
+// live fetchers below run in Node on the user's PC — scripts/binance-options-
+// relay.mjs builds the overview here and pushes it to /api/binance-options as a
+// compact snapshot — and the browser reads that snapshot (fetchOptionsSnapshot).
+// Under `vite dev` a middleware runs the same Node fetchers, so the panel is
+// live locally without a relay. The summary math is pure and exported for tests.
 //
 // SHAPE OF THE UPSTREAM, measured 2026-09-01 (worth knowing before "optimising"):
 //   • exchangeInfo   1.2 MB raw / 33 KB gzipped, weight 1. The contract master:
@@ -20,18 +23,14 @@
 //   • index          1 per underlying, weight 1.
 //   • openInterest   per (underlying, expiry) — the only per-expiry call, so it
 //                    is bounded here (expiries ≤ 90 days, ≤ 8 per underlying).
-// Limit: 400 request-weight per minute — shared by everyone behind the proxy's
-// egress, which is why the proxy edge-caches mark/ticker for 30s. A full
-// overview costs ~50 + one call per OI expiry; the big three are additionally
-// cached for a minute per browser session.
+// Limit: 400 request-weight per minute per IP. A full overview costs ~50 + one
+// call per OI expiry (~35 today); the big three are cached for a minute in-process.
 //
 // IVs from Binance are FRACTIONS (0.763 = 76.3%); a bidIV of -1.0 means "no bid"
 // and is mapped to null. All Greeks are Binance's own (one surface per
 // underlying: a call and put on the same strike share one markIV).
 
-export const EAPI_DIRECT = "https://eapi.binance.com/eapi/v1";
-export const EAPI_PROXY = "/api/binance-options";
-export const EAPI = typeof window === "undefined" ? EAPI_DIRECT : EAPI_PROXY;
+export const EAPI = "https://eapi.binance.com/eapi/v1";
 /** 24h turnover below this, in USDT, and the underlying is tagged illiquid.
  *  Context: BTC options on Binance turn ~8M USDT/day, ETH ~2M; BNB/SOL ~15-25k,
  *  XRP/DOGE/XAU ~3-6k, XAG < 1k. The gold/silver contracts are weeks old. */
@@ -345,6 +344,28 @@ export async function fetchOptionsOverview(opts = {}) {
   });
   rows.sort((a, b) => b.turnover24h - a.turnover24h);
   return { at, rows, oiCoverage: { maxDays: opts.maxDays ?? OI_MAX_DAYS, requested: oi.requested, failed: oi.failed } };
+}
+
+// ── the browser's view: the relayed snapshot ─────────────────────────────────
+/**
+ * The latest overview snapshot from /api/binance-options (pushed by the PC-side
+ * relay; computed live by the vite dev middleware). Resolves to
+ * { ok, at, ageMin, overview:[{ underlying, base, index, atmIv30, skew25, pcVol,
+ *   pcOi, oi, oiUsd, oiExpiries, turnover, expiries, contracts, illiquid,
+ *   term:[{expiry,dte,atmIv}], skewByExpiry:[{expiry,dte,skew25}] }], meta }.
+ * Throws with `code` = the API's error ("not_synced" when nothing was pushed yet).
+ */
+export async function fetchOptionsSnapshot({ base = "" } = {}) {
+  const res = await fetch(`${base}/api/binance-options`);
+  const data = await res.json().catch(() => null);
+  if (!data) throw Object.assign(new Error("Options snapshot service unreachable."), { code: "unreachable" });
+  if (!data.ok) {
+    const msg = data.error === "not_synced" ? "No Binance options snapshot yet — the relay hasn't pushed one."
+      : data.error === "rate_limited" ? "Too many requests — wait a minute."
+      : data.detail || data.error || "Request failed.";
+    throw Object.assign(new Error(msg), { code: data.error || "error" });
+  }
+  return data;
 }
 
 // ── BVOL history (served by /api/bvol from the nightly-synced archive) ───────
