@@ -16,7 +16,7 @@ const ROUTES = [
   "/", "/charts", "/news", "/tools", "/regimes", "/argus", "/map", "/board",
   "/backtest/run", "/backtest/compare", "/backtest/ml", "/backtest/events", "/backtest/mm",
   "/screener/scan", "/screener/anomalies", "/screener/correlation",
-  "/portfolio/holdings", "/portfolio/options",
+  "/portfolio/holdings", "/portfolio/options", "/portfolio/volatility",
   "/macro/yields", "/macro/calendar", "/macro/l3",
   "/learn/academy", "/learn/guide", "/learn/resources", "/learn/formulas",
   "/login", "/register", "/accessibility",

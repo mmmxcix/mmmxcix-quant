@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Activity, Loader2, TrendingUp, TrendingDown, Info } from "lucide-react";
 import SymbolSearch from "@/components/SymbolSearch";
 import XYLineChart from "@/components/XYLineChart";
+import CryptoOptionsPanel from "@/components/CryptoOptionsPanel";
 import { fetchIv, fetchIvLeaders, ivRankVerdict, premiumVerdict } from "@/lib/volData";
 import { fetchCandles } from "@/lib/data";
 import { allEstimators, ESTIMATOR_NOTES } from "@/lib/volEstimators";
@@ -13,7 +14,8 @@ import { cn, fmtNum } from "@/lib/utils";
 // decides whether you buy or sell premium.
 //
 // Data: the free public DoltHub `post-no-preference/options` database via
-// /api/vol (2,300+ US optionable symbols, daily, back to 2019).
+// /api/vol (2,300+ US optionable symbols, daily, back to 2019). The crypto view
+// (CryptoOptionsPanel) reads Binance's option chain live and BVOL via /api/bvol.
 
 const toneClass = (tone) =>
   tone === "high" ? "text-down" : tone === "low" ? "text-up" : "text-text";
@@ -304,11 +306,11 @@ export default function Volatility() {
       <p className="text-sm text-dim mb-5 max-w-2xl">
         Is an option expensive or cheap? Not in the abstract — relative to what that same name's
         volatility has been over the last year. Free end-of-day data covering 2,300+ US optionable
-        symbols. Educational, not investment advice.
+        symbols, plus Binance's live crypto option chain and its BVOL index. Educational, not investment advice.
       </p>
 
-      <div className="flex items-center gap-1.5 mb-5">
-        {[["symbol", "By symbol"], ["leaders", "Universe screener"]].map(([id, label]) => (
+      <div className="flex flex-wrap items-center gap-1.5 mb-5">
+        {[["symbol", "By symbol"], ["leaders", "Universe screener"], ["crypto", "Crypto options (Binance)"]].map(([id, label]) => (
           <button key={id} onClick={() => setView(id)}
             className={cn("chip !text-[11px]", view === id ? "chip-active" : "chip-idle")}>
             {label}
@@ -316,14 +318,16 @@ export default function Volatility() {
         ))}
       </div>
 
-      {view === "symbol" ? <SymbolView /> : <LeadersView />}
+      {view === "symbol" ? <SymbolView /> : view === "leaders" ? <LeadersView /> : <CryptoOptionsPanel />}
 
-      <p className="flex items-start gap-1.5 text-[10px] text-dim/80 mt-5 leading-relaxed">
-        <Info className="w-3.5 h-3.5 shrink-0" />
-        Source: the public DoltHub <span className="font-mono">post-no-preference/options</span> database
-        (end-of-day, updated daily, back to 2019). Free and community-maintained — it can lag or be
-        briefly unavailable, in which case this page says so rather than showing stale numbers as live.
-      </p>
+      {view !== "crypto" && (
+        <p className="flex items-start gap-1.5 text-[10px] text-dim/80 mt-5 leading-relaxed">
+          <Info className="w-3.5 h-3.5 shrink-0" />
+          Source: the public DoltHub <span className="font-mono">post-no-preference/options</span> database
+          (end-of-day, updated daily, back to 2019). Free and community-maintained — it can lag or be
+          briefly unavailable, in which case this page says so rather than showing stale numbers as live.
+        </p>
+      )}
     </div>
   );
 }

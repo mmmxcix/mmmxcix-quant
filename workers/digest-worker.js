@@ -592,10 +592,40 @@ async function syncVolSnapshot(env) {
   }
 }
 
+// Append yesterday's BVOL (Binance's crypto vol index) day to the /api/bvol
+// series. Same arrangement as the vol snapshot above: the upstream is a daily
+// ZIP archive with a row per second, so a scheduled pull into D1 is the only
+// sensible way to serve it. The endpoint fetches the days it is missing
+// (bounded to a few per run — a longer outage is caught up over consecutive
+// nights, or in one go with `node scripts/bvol-backfill.mjs --push`).
+async function syncBvol(env) {
+  if (!env.DEV_ACCESS_TOKEN) {
+    console.error('[bvol] SYNC SKIPPED — DEV_ACCESS_TOKEN is not set on this worker (see [vol] above).');
+    return { skipped: 'no_token' };
+  }
+  try {
+    const r = await fetch('https://quant.mmmxcix.com/api/bvol', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token: env.DEV_ACCESS_TOKEN, sync: true, days: 7 }),
+    });
+    const out = await r.json().catch(() => ({ error: 'bad_json' }));
+    if (!r.ok || out?.error) {
+      console.error(`[bvol] sync failed (HTTP ${r.status}): ${JSON.stringify(out).slice(0, 300)}`
+        + (r.status === 401 ? ' — DEV_ACCESS_TOKEN on this worker no longer matches the one on Pages.' : ''));
+    }
+    return out;
+  } catch (e) {
+    console.error(`[bvol] sync threw: ${String(e.message || e).slice(0, 160)}`);
+    return { error: String(e.message || e).slice(0, 120) };
+  }
+}
+
 export default {
   async scheduled(_event, env, ctx) {
     ctx.waitUntil(runDigest(env));
     ctx.waitUntil(syncVolSnapshot(env));
+    ctx.waitUntil(syncBvol(env));
   },
 
   // Manual test runs: GET https://<worker>/?token=<DIGEST_TEST_TOKEN>
