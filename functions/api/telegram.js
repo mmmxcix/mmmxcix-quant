@@ -21,6 +21,10 @@ const CHANNELS = [
 ];
 
 const CACHE_TTL = 120; // seconds — OSINT wants freshness, but be gentle on t.me
+// When EVERY channel failed, the empty result is a fact about the next few
+// seconds (t.me hiccup, rate limit), not about the next two minutes: caching it
+// for CACHE_TTL made the OSINT panel vanish for 120 s after one bad scrape.
+const NEGATIVE_TTL = 20;
 const PER_CHANNEL = 6;
 const MAX_ITEMS = 60;
 
@@ -133,10 +137,16 @@ export async function onRequest(context) {
     .sort((a, b) => b.time - a.time)
     .slice(0, MAX_ITEMS);
 
+  // fetchChannel turns any failure into [], so "every channel came back empty"
+  // is the all-failed case. Say so in the body, and cache it only briefly.
+  const allFailed = items.length === 0;
+  const ttl = allFailed ? NEGATIVE_TTL : CACHE_TTL;
   const response = json(
-    { ok: true, items, channels: CHANNELS.length, note: "OSINT — unverified, fast. Public Telegram previews." },
+    allFailed
+      ? { ok: true, items, channels: CHANNELS.length, error: "channels_unavailable", note: "No Telegram channel answered — retrying shortly." }
+      : { ok: true, items, channels: CHANNELS.length, note: "OSINT — unverified, fast. Public Telegram previews." },
     200,
-    { "cache-control": `public, max-age=${CACHE_TTL}` }
+    { "cache-control": `public, max-age=${ttl}` }
   );
   try { if (cache) context.waitUntil(cache.put(cacheKey, response.clone())); } catch { /* ignore */ }
   return response;

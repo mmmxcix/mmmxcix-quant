@@ -131,6 +131,8 @@ const FEEDS = [
 
 const FEED_TIMEOUT_MS = 10000;
 const MAX_ITEMS = 150;
+// Cache lifetime for an all-feeds-failed answer (see onRequest).
+const NEGATIVE_TTL = 20;
 const MAX_ITEMS_PER_FEED = 20; // stops a high-volume wire (PR Newswire) from crowding out everything else
 const DESC_MAX = 240;
 
@@ -338,9 +340,12 @@ export async function onRequest(context) {
     body = { items: items.slice(0, MAX_ITEMS), meta };
   }
 
+  // All feeds failed: the browser must not keep that for the full 90 s (it
+  // used to — the header was the same for success and failure). The edge
+  // cache below already skips it.
   const response = new Response(JSON.stringify(body), {
     status: 200,
-    headers: jsonHeaders,
+    headers: successes === 0 ? { ...jsonHeaders, 'cache-control': `public, max-age=${NEGATIVE_TTL}` } : jsonHeaders,
   });
 
   if (cache && cacheKey && successes > 0) {
