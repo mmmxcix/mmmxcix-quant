@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams, Link } from "react-router-dom";
 import { LayoutDashboard, Star, Activity, TrendingUp, ShieldCheck, RefreshCw, Compass, CandlestickChart, FlaskConical, Radar, GraduationCap, X } from "lucide-react";
 import { fetchCandles, fetchLatestCandles, WATCHLIST } from "@/lib/data";
 import { getPortfolio, getWatchlist, subscribe as subscribeStore } from "@/lib/portfolio";
+import { buildEquityCurve } from "@/lib/equityCurve";
 import WorldClock from "@/components/WorldClock";
 import WatchlistPage from "@/pages/Watchlist";
 import MonitorPage from "@/pages/Monitor";
@@ -297,31 +298,6 @@ function WatchlistCard() {
   );
 }
 
-// Align multiple daily candle series on their common timeline and combine them
-// (portfolio = Σ shares × close; watchlist = equal-weight index, start 100).
-// value(close, t) also receives the bar time so portfolio positions can respect
-// their buy/sell window (0 before the buy, frozen proceeds after the sale).
-function combineSeries(entries) {
-  if (!entries.length) return [];
-  const start = Math.max(...entries.map((e) => e.candles[0].time));
-  const times = [...new Set(entries.flatMap((e) => e.candles.map((c) => c.time)))]
-    .filter((t) => t >= start)
-    .sort((a, b) => a - b);
-  const idx = entries.map(() => 0);
-  const out = [];
-  for (const t of times) {
-    let v = 0, ok = true;
-    entries.forEach((e, i) => {
-      const cs = e.candles;
-      while (idx[i] + 1 < cs.length && cs[idx[i] + 1].time <= t) idx[i]++;
-      if (cs[idx[i]].time > t) { ok = false; return; }
-      v += e.value(cs[idx[i]].close, t); // forward-fill: last known close
-    });
-    if (ok) out.push({ t: t * 1000, v });
-  }
-  return out;
-}
-
 const EQUITY_SRC_KEY = "quant_equity_src";
 const EQUITY_RANGE_KEY = "quant_equity_range";
 
@@ -399,34 +375,32 @@ function EquityCard({ lab }) {
   // the selected window. Portfolio positions honor buy/sell dates: nothing
   // before the buy, live value while held, frozen sale proceeds after selling.
   const listKey = list.map((w) => `${w.market}:${w.symbol}`).join(",");
-  const [curve, setCurve] = useState({ data: null, loading: false, empty: "" });
+  const [curve, setCurve] = useState({ data: null, loading: false, empty: "", failed: [] });
   useEffect(() => {
-    if (active === "paper") { setCurve({ data: null, loading: false, empty: "" }); return; }
-    const entries = active === "portfolio"
+    if (active === "paper") { setCurve({ data: null, loading: false, empty: "", failed: [] }); return; }
+    const specs = active === "portfolio"
       ? positions.map((p) => {
           const buySec = Math.floor((p.buyDate ?? p.addedAt ?? 0) / 1000);
           const sellSec = p.sellPrice > 0 && p.sellDate ? Math.floor(p.sellDate / 1000) : null;
-          return { market: p.market, symbol: p.symbol, mk: (candles) => ({ candles, value: (close, t) => {
+          return { market: p.market, symbol: p.symbol, value: (close, t) => {
             if (t < buySec) return 0;
             if (sellSec != null && t >= sellSec) return p.shares * p.sellPrice;
             return p.shares * close;
-          } }) };
+          } };
         })
-      : list.map((w) => ({ market: w.market, symbol: w.symbol, mk: (candles) => ({ candles, value: (close) => (close / candles[0].close) * (100 / list.length) }) }));
-    if (!entries.length) {
-      setCurve({ data: [], loading: false, empty: active === "portfolio" ? "No positions yet — add some on the Portfolio page." : "Watchlist is empty." });
+      : list.map((w) => ({ market: w.market, symbol: w.symbol }));
+    if (!specs.length) {
+      setCurve({ data: [], loading: false, empty: active === "portfolio" ? "No positions yet — add some on the Portfolio page." : "Watchlist is empty.", failed: [] });
       return;
     }
     let alive = true;
-    setCurve({ data: null, loading: true, empty: "" });
-    Promise.allSettled(entries.map(async (e) => {
-      const cs = await fetchCandles({ market: e.market, symbol: e.symbol, interval: "1d", range: range.fetch });
-      if (!cs || cs.length < 2) throw new Error("no data");
-      return e.mk(cs);
-    })).then((rs) => {
+    setCurve({ data: null, loading: true, empty: "", failed: [] });
+    Promise.allSettled(specs.map((e) =>
+      fetchCandles({ market: e.market, symbol: e.symbol, interval: "1d", range: range.fetch })
+    )).then((rs) => {
       if (!alive) return;
-      const ok = rs.filter((r) => r.status === "fulfilled").map((r) => r.value);
-      setCurve({ data: combineSeries(ok), loading: false, empty: ok.length ? "" : "Couldn't load price data." });
+      const { data, loaded, failed } = buildEquityCurve(active, specs, rs);
+      setCurve({ data, loading: false, empty: loaded ? "" : "Couldn't load price data.", failed, total: specs.length });
     });
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -512,6 +486,13 @@ function EquityCard({ lab }) {
         <div className="grid place-items-center text-sm text-dim" style={{ height: 200 }}>{curve.empty}</div>
       ) : (
         <AreaChart key={`${active}:${rangeId}`} history={history} fmt={fmtHover} />
+      )}
+      {active !== "paper" && active !== "argus" && !curve.loading && !curve.empty && curve.failed?.length > 0 && (
+        <p className="text-[11px] text-warn mt-2">
+          {active === "portfolio"
+            ? `Excludes ${curve.failed.length} of ${curve.total} positions whose price history didn't load (${curve.failed.join(", ")}) — the curve understates the book until they do.`
+            : `Index built from ${curve.total - curve.failed.length} of ${curve.total} symbols — ${curve.failed.join(", ")} didn't load.`}
+        </p>
       )}
     </div>
   );

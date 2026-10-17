@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { RefreshCw, ArrowUpDown } from "lucide-react";
-import { scanCrypto, scanStocks, applyFilters } from "@/lib/screener";
+import { scanCrypto, scanStocks, applyFilters, unevaluable } from "@/lib/screener";
 import { MARKETS } from "@/lib/data";
 import { cn, fmtPrice, fmtPct, fmtNum } from "@/lib/utils";
 
@@ -50,7 +50,7 @@ export default function Screener() {
       // A screen is a statement about a LIST. Symbols the data proxy refused
       // (usually a rate limit) used to vanish from the results with nothing
       // said, so a partial scan read exactly like a complete one.
-      setMissing(data.unreachable?.length ? { syms: data.unreachable, of: data.universeSize } : null);
+      setMissing(data.unreachable?.length ? { syms: data.unreachable, of: data.universeSize, partialMetrics: !!data.partialMetrics } : null);
     } catch (e) {
       setError(e.message || "Scan failed.");
       setRows([]);
@@ -87,6 +87,13 @@ export default function Screener() {
       return (av - bv) * mul;
     });
   }, [rows, minChange, rsiFilter, trendFilter, sectorFilter, sort]);
+
+  // Rows an RSI/trend filter dropped only because their indicators never
+  // loaded — said out loud, so "not checked" doesn't read as "didn't match".
+  const unchecked = useMemo(
+    () => unevaluable(rows, { rsi: rsiFilter, trend: trendFilter }).map((r) => r.symbol),
+    [rows, rsiFilter, trendFilter]
+  );
 
   const toggleSort = (key) =>
     setSort((s) => (s.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: "desc" }));
@@ -148,14 +155,26 @@ export default function Screener() {
       {/* A screen is a statement about a LIST. Symbols the data proxy refused
           (usually a rate limit) used to vanish from the results with nothing
           said, so a partial scan read exactly like a complete one. */}
+      {unchecked.length > 0 && (
+        <div className="rounded-xl border border-warn/40 bg-warn/5 px-4 py-2.5 mb-3 text-[12px] leading-relaxed text-warn">
+          <b>Not checked:</b>{" "}
+          <span className="text-dim">
+            {unchecked.length} symbol{unchecked.length === 1 ? "" : "s"} ({unchecked.slice(0, 8).join(", ")}{unchecked.length > 8 ? "…" : ""})
+            {" "}could not be tested against the RSI/trend filter because {unchecked.length === 1 ? "its" : "their"} indicators didn't load.
+            They are hidden from the matches, not rejected by them.
+          </span>
+        </div>
+      )}
       {missing && (
         <div className="rounded-xl border border-warn/40 bg-warn/5 px-4 py-2.5 mb-3 text-[12px] leading-relaxed text-warn">
           <b>Partial scan.</b>{" "}
           <span className="text-dim">
             {missing.syms.length} of {missing.of} symbols could not be loaded
-            ({missing.syms.slice(0, 8).join(", ")}{missing.syms.length > 8 ? "…" : ""}) and are missing
-            from the results below. Usually a rate limit on the data proxy — rescanning in a minute
-            normally fixes it.
+            ({missing.syms.slice(0, 8).join(", ")}{missing.syms.length > 8 ? "…" : ""}){" "}
+            {missing.partialMetrics
+              ? "have no RSI/SMA — they show price and volume only, and RSI/trend filters can't check them."
+              : "and are missing from the results below."}
+            {" "}Usually a rate limit — rescanning in a minute normally fixes it.
           </span>
         </div>
       )}

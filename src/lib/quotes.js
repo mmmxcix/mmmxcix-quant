@@ -27,6 +27,26 @@ function getCached(symbol) {
 
 function setCached(symbol, quote) {
   cache.set(symbol, { at: Date.now(), quote });
+  lastGood.set(symbol, { at: Date.now(), quote });
+}
+
+// Last successful quote per symbol, kept past the TTL. A failed poll used to
+// turn a known price into `null`, and pages that summed values (Portfolio)
+// then counted the position as $0 while still counting its cost: a fake loss.
+// Callers that opt in (`keepStale`) get the last good price back, marked
+// `stale` with its `asOf`, so they can show it labelled and leave it out of
+// any total that claims to be current.
+const lastGood = new Map(); // symbol -> { at, quote }
+
+/**
+ * Resolve a failed lookup: the last good quote marked stale, or an explicit
+ * "no quote" when there has never been one. Pure, exported for tests.
+ */
+export function staleOrMissing(entry, good) {
+  if (good && Number.isFinite(good.quote?.price)) {
+    return { ...entry, ...good.quote, stale: true, asOf: good.at };
+  }
+  return { ...entry, price: null, changePct: null, stale: true, asOf: null };
 }
 
 // Single stock-like quote via the Yahoo chart endpoint: last two valid daily
@@ -90,8 +110,13 @@ async function mapLimit(items, limit, fn) {
 // with a concurrency limit of 6. Individual failures never reject the whole
 // call — the affected entry just carries { price: null, changePct: null }.
 // Returns Map<symbol, { market, symbol, name, price, changePct }>.
-export async function fetchQuotes(entries) {
+export async function fetchQuotes(entries, { keepStale = false } = {}) {
   const out = new Map();
+  // A miss: with keepStale, fall back to the last good quote (labelled stale);
+  // otherwise the historical shape, price/changePct null.
+  const miss = (e) => keepStale
+    ? staleOrMissing(e, lastGood.get(e.symbol))
+    : { ...e, price: null, changePct: null };
   const misses = [];
   const useIbkr = ibkrActive();
 
@@ -99,7 +124,7 @@ export async function fetchQuotes(entries) {
     // With IBKR live quotes on, stocks always bypass the client cache — the
     // gateway is local and rate-limit-free, so caching only adds staleness.
     const hit = useIbkr && e.market !== "crypto" ? null : getCached(e.symbol);
-    if (hit) out.set(e.symbol, { ...e, ...hit });
+    if (hit) out.set(e.symbol, { ...e, ...hit, stale: false, asOf: cache.get(e.symbol).at });
     else misses.push(e);
   }
 
@@ -115,7 +140,7 @@ export async function fetchQuotes(entries) {
         const q = live.get(e.symbol.toUpperCase());
         if (q) {
           setCached(e.symbol, q); // fallback freshness if IBKR drops mid-session
-          out.set(e.symbol, { ...e, ...q, source: "ibkr" });
+          out.set(e.symbol, { ...e, ...q, source: "ibkr", stale: false, asOf: Date.now() });
         } else {
           rest.push(e);
         }
@@ -134,14 +159,14 @@ export async function fetchQuotes(entries) {
             const t = tickers.get(e.symbol.toUpperCase());
             if (t) {
               setCached(e.symbol, t);
-              out.set(e.symbol, { ...e, ...t });
+              out.set(e.symbol, { ...e, ...t, stale: false, asOf: Date.now() });
             } else {
-              out.set(e.symbol, { ...e, price: null, changePct: null });
+              out.set(e.symbol, miss(e));
             }
           }
         })
         .catch(() => {
-          for (const e of cryptoMisses) out.set(e.symbol, { ...e, price: null, changePct: null });
+          for (const e of cryptoMisses) out.set(e.symbol, miss(e));
         })
     );
   }
@@ -152,9 +177,9 @@ export async function fetchQuotes(entries) {
         try {
           const { price, changePct } = await fetchStockQuote(e.symbol);
           setCached(e.symbol, { price, changePct });
-          out.set(e.symbol, { ...e, price, changePct });
+          out.set(e.symbol, { ...e, price, changePct, stale: false, asOf: Date.now() });
         } catch {
-          out.set(e.symbol, { ...e, price: null, changePct: null });
+          out.set(e.symbol, miss(e));
         }
       })
     );
