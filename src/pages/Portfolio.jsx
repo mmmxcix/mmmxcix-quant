@@ -21,6 +21,7 @@ import {
 import { fxRateToUSD, DEPOSIT_CURRENCIES } from "@/lib/fx";
 import { ibkrActive, fetchIbkrPositions } from "@/lib/ibkr";
 import { cn, fmtNum, fmtPrice, fmtPct } from "@/lib/utils";
+import { computeHoldings, ageLabel } from "@/lib/portfolioTotals";
 
 const REFRESH_MS = 30_000;
 
@@ -171,7 +172,7 @@ export default function Portfolio() {
     }
     let alive = true;
     const load = async () => {
-      const map = await fetchQuotes(openPositions);
+      const map = await fetchQuotes(openPositions, { keepStale: true });
       if (!alive) return;
       const next = {};
       for (const [, v] of map) next[`${v.market}:${v.symbol}`] = v;
@@ -196,59 +197,12 @@ export default function Portfolio() {
   );
 
   // ── Derived rows + totals ──────────────────────────────────────────────────
-  const { rows, totals } = useMemo(() => {
-    const computed = positions.map((p) => {
-      const closed = isClosed(p);
-      const cost = p.shares * p.avgPrice;
-      if (closed) {
-        // Realized: frozen at the sale — no live quote involved.
-        const value = p.shares * p.sellPrice;
-        const pnl = value - cost;
-        return {
-          ...p, closed: true, price: p.sellPrice, changePct: null, cost, value, pnl,
-          pnlPct: cost > 0 ? (pnl / cost) * 100 : null, prevClose: null, dayPnl: null,
-        };
-      }
-      const q = quotes[`${p.market}:${p.symbol}`];
-      const price = q && Number.isFinite(q.price) ? q.price : null;
-      const changePct = q && Number.isFinite(q.changePct) ? q.changePct : null;
-      const value = price != null ? p.shares * price : null;
-      const pnl = value != null ? value - cost : null;
-      const pnlPct = value != null && cost > 0 ? (pnl / cost) * 100 : null;
-      // Today's move: back out yesterday's close from the live day-change %, so
-      // the day P/L tracks the market in real time (updates every poll).
-      const prevClose = price != null && changePct != null ? price / (1 + changePct / 100) : null;
-      const dayPnl = prevClose != null ? p.shares * (price - prevClose) : null;
-      return { ...p, closed: false, price, changePct, cost, value, pnl, pnlPct, prevClose, dayPnl };
-    });
-    const open = computed.filter((r) => !r.closed);
-    const closedRows = computed.filter((r) => r.closed);
-    const totalValue = open.reduce((s, r) => s + (r.value ?? 0), 0);
-    const totalCost = open.reduce((s, r) => s + (r.cost || 0), 0);
-    const totalPnl = totalValue - totalCost;
-    const totalPnlPct = totalCost > 0 ? (totalPnl / totalCost) * 100 : null;
-    // Realized P/L across all closed positions.
-    const realizedPnl = closedRows.reduce((s, r) => s + r.pnl, 0);
-    const realizedCost = closedRows.reduce((s, r) => s + r.cost, 0);
-    const realizedPct = realizedCost > 0 ? (realizedPnl / realizedCost) * 100 : null;
-    // Today's P/L across the OPEN book, and yesterday's value as its % base.
-    const dayPnl = open.reduce((s, r) => s + (r.dayPnl ?? 0), 0);
-    const dayBase = open.reduce((s, r) => s + (r.prevClose != null ? r.shares * r.prevClose : 0), 0);
-    const dayPnlPct = dayBase > 0 ? (dayPnl / dayBase) * 100 : null;
-    const dayHasData = open.some((r) => r.dayPnl != null);
-    // Allocation is % of current OPEN value; closed rows sink below open ones.
-    const withAlloc = [...open, ...closedRows].map((r) => ({
-      ...r,
-      allocPct: !r.closed && r.value != null && totalValue > 0 ? (r.value / totalValue) * 100 : null,
-    }));
-    return {
-      rows: withAlloc,
-      totals: {
-        totalValue, totalCost, totalPnl, totalPnlPct, dayPnl, dayPnlPct, dayHasData,
-        realizedPnl, realizedPct, hasClosed: closedRows.length > 0, count: computed.length,
-      },
-    };
-  }, [positions, quotes]);
+  // A position without a current quote is shown (last price + age) but left out
+  // of the totals — see lib/portfolioTotals.js for why.
+  const { rows, totals } = useMemo(
+    () => computeHoldings(positions, quotes, isClosed),
+    [positions, quotes]
+  );
 
   // ── Cash (derived: deposits − buys + realized sells, all USD) ─────────────
   const cash = useMemo(() => cashUSD(positions, deposits), [positions, deposits]);
@@ -372,12 +326,22 @@ export default function Portfolio() {
         Simulated portfolio — not real money, not investment advice.
       </p>
 
+      {totals.excludedCount > 0 && (
+        <div className="rounded-xl border border-warn/40 bg-warn/5 px-4 py-2.5 mb-3 text-[12px] leading-relaxed text-warn">
+          {totals.excludedCount} position{totals.excludedCount === 1 ? "" : "s"} without a current quote
+          ({totals.excludedSymbols.slice(0, 8).join(", ")}{totals.excludedCount > 8 ? "…" : ""}) {totals.excludedCount === 1 ? "is" : "are"} left
+          out of value, invested and P/L below
+          {totals.excludedStaleValue > 0 ? ` (last known value ${fmtNum(totals.excludedStaleValue, 2)} USD)` : ""}.
+          {" "}{totals.excludedCount === 1 ? "It rejoins" : "They rejoin"} the totals on the next successful refresh.
+        </div>
+      )}
+
       {/* Summary */}
       <div className={cn("grid grid-cols-2 gap-3 mb-6", totals.hasClosed ? "lg:grid-cols-6" : "lg:grid-cols-5")}>
         <SummaryCard
           label="Account value · USD"
           value={fmtNum(accountValue, 2)}
-          sub={`positions ${fmtNum(totals.totalValue, 2)}`}
+          sub={`positions ${fmtNum(totals.totalValue, 2)}${totals.excludedCount ? ` · excl. ${totals.excludedCount} stale` : ""}`}
           big
         />
         <SummaryCard
@@ -744,7 +708,14 @@ export default function Portfolio() {
                         )}
                       </td>
                       <td className="px-4 py-3 text-right font-mono">
-                        {r.price != null ? fmtPrice(r.price) : <span className="text-dim">–</span>}
+                        {r.price != null ? (
+                          <span className={r.stale && !r.closed ? "text-dim" : undefined}>{fmtPrice(r.price)}</span>
+                        ) : <span className="text-dim">–</span>}
+                        {r.stale && !r.closed && (
+                          <div className="text-[10px] text-warn" title="This quote failed to refresh. The position is left out of the totals until it does.">
+                            {r.price != null ? `stale · ${ageLabel(r.asOf) ?? "age unknown"}` : "no quote"}
+                          </div>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-right font-mono">
                         {r.value != null ? fmtNum(r.value, 2) : <span className="text-dim">–</span>}

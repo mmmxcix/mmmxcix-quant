@@ -6,13 +6,14 @@
 // and SMA. Stocks: a curated liquid universe fetched daily via the Yahoo proxy.
 // Results are cached for 5 minutes to keep it cheap.
 
-import { sma, rsi } from "./indicators";
+import { sma, rsi } from "./indicators.js";
 
 const BINANCE = "https://api.binance.com/api/v3";
 import { fetchRetry, mapLimit } from "./netRetry.js";
 
 const YAHOO = "/api/yahoo/v8/finance/chart";
 const CACHE_TTL = 5 * 60 * 1000;
+const PARTIAL_TTL = 60 * 1000; // a scan with holes is cached only this long
 const cache = new Map(); // key → { t, data }
 
 // Curated liquid stock/ETF universe for the stock screener.
@@ -86,18 +87,28 @@ export async function scanCrypto({ limit = 30 } = {}) {
     .sort((a, b) => b.volume - a.volume)
     .slice(0, limit);
 
+  // A coin whose klines we could not fetch has price/volume from the ticker
+  // but NO RSI/SMA. Those rows used to carry nulls that silently failed every
+  // RSI/trend filter — "not oversold" when the truth was "not checked". Now
+  // the fetch is retried, a row it still fails on is flagged
+  // `metricsUnavailable`, and the scan names it in `unreachable`.
+  const unreachable = [];
   const enriched = await mapLimit(top, 8, async (t) => {
     try {
-      const k = await fetch(`${BINANCE}/klines?symbol=${t.symbol}&interval=1d&limit=250`);
-      if (!k.ok) return { ...t, rsi: null, sma50: null, sma200: null };
+      const k = await fetchRetry(`${BINANCE}/klines?symbol=${t.symbol}&interval=1d&limit=250`);
       const rows = await k.json();
       return { ...t, ...metricsFromCloses(rows.map((r) => +r[4])) };
     } catch {
-      return { ...t, rsi: null, sma50: null, sma200: null };
+      unreachable.push(t.symbol);
+      return { ...t, rsi: null, sma50: null, sma200: null, metricsUnavailable: true };
     }
   });
 
-  cache.set(key, { t: Date.now(), data: enriched });
+  enriched.unreachable = unreachable;
+  enriched.universeSize = top.length;
+  enriched.partialMetrics = true; // unreachable rows stay listed, only their indicators are missing
+  // A partial scan is kept briefly, so a rescan a minute later can fill it in.
+  cache.set(key, { t: unreachable.length ? Date.now() - CACHE_TTL + PARTIAL_TTL : Date.now(), data: enriched });
   return enriched;
 }
 
@@ -155,6 +166,10 @@ export async function scanStocks() {
 //   trend: "any"|"above50"|"below50"|"above200"|"below200",
 //   minVolume (number|null)
 // }
+// Rows whose indicators could not be fetched (`metricsUnavailable`) cannot be
+// judged by an RSI/trend filter. They are left out of the result like any
+// non-match, but `unevaluable()` names them so the page can say "not checked"
+// instead of letting them pass for "checked and rejected".
 export function applyFilters(rows, f) {
   return rows.filter((r) => {
     if (f.minChange != null && r.changePct < f.minChange) return false;
@@ -168,4 +183,10 @@ export function applyFilters(rows, f) {
     if (f.trend === "below200" && !(r.sma200 != null && r.price < r.sma200)) return false;
     return true;
   });
+}
+
+/** Rows an indicator filter is active on but could not evaluate (no metrics). */
+export function unevaluable(rows, f) {
+  const needsMetrics = (f.rsi && f.rsi !== "any") || (f.trend && f.trend !== "any");
+  return needsMetrics ? rows.filter((r) => r.metricsUnavailable) : [];
 }
