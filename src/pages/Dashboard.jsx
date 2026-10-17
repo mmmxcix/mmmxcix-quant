@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams, Link } from "react-router-dom";
 import { LayoutDashboard, Star, Activity, TrendingUp, ShieldCheck, RefreshCw, Compass, CandlestickChart, FlaskConical, Radar, GraduationCap, X } from "lucide-react";
 import { fetchCandles, fetchLatestCandles, WATCHLIST } from "@/lib/data";
 import { getPortfolio, getWatchlist, subscribe as subscribeStore } from "@/lib/portfolio";
+import { useSession, isAdmin } from "@/lib/authClient";
 import WorldClock from "@/components/WorldClock";
 import WatchlistPage from "@/pages/Watchlist";
 import MonitorPage from "@/pages/Monitor";
@@ -93,22 +94,35 @@ function useUserWatchlist() {
 
 // Cortex paper-portfolio + RiskGate summary (private — needs the dev token).
 function useLabState() {
+  const { data: session, isPending } = useSession();
+  const admin = isAdmin(session);
   const [state, setState] = useState(undefined); // undefined=loading, null=none
   useEffect(() => {
+    // Public visitors never ask: /api/lab is admin-gated, and polling it from
+    // every home tab only bought a 401 per minute per visitor — one Function
+    // invocation each, against the free plan's 100k/day.
+    if (isPending) return undefined;
+    if (!admin) { setState(null); return undefined; }
     let alive = true;
+    let id = null;
     const load = async () => {
       try {
-        // Admin session cookie gates this server-side; a 401 (not signed in as
-        // the dev account) just means the private KPIs stay hidden.
         const res = await fetch("/api/lab");
+        // A refusal won't change on its own (session expired, or the server
+        // disagrees about admin) — stop instead of asking again every minute.
+        if (res.status === 401 || res.status === 403) {
+          clearInterval(id);
+          if (alive) setState(null);
+          return;
+        }
         const out = await res.json();
         if (alive) setState(res.ok ? out.state : null);
       } catch { if (alive) setState(null); }
     };
     load();
-    const id = setInterval(load, 60000);
+    id = setInterval(load, 60000);
     return () => { alive = false; clearInterval(id); };
-  }, []);
+  }, [admin, isPending]);
   return state;
 }
 
