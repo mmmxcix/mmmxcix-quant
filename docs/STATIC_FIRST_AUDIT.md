@@ -284,6 +284,8 @@ The producer runs in Actions; the PC agents push the same snapshot format only w
 | Kronos forecasts (`scripts/kronos/`) | PyTorch model, local CPU/GPU | PC |
 | Local LLM via OmniRoute (statements, research) | localhost service | PC (or switch to a hosted free tier) |
 
+**Binance stays on the PC agents (decided 2026-10-17).** Nothing Binance-related moves into the Actions pipeline: spot REST, eapi options, the futures funding endpoint, and the order-book WS. GitHub-hosted runners are US-based and Binance geo-blocks US IPs, so a job there would fail silently for weeks. The PC (Switzerland) can reach it, and the book stream needs a persistent connection anyway. Exception to check case by case: the static `data.binance.vision` archive (BVOL ZIPs) is a file download, not the API. The browser-side Binance calls (visitor's own IP) are unaffected.
+
 **Can run in Actions** (plain scheduled HTTP pulls): Yahoo EOD/fundamentals, Stooq, FRED/ALFRED, SEC EDGAR, CFTC COT, FINRA, the RSS feeds, `t.me/s` scrape, DoltHub IV, data.binance.vision BVOL archive, FIRMS, UCDP, GDACS, World Bank, CelesTrak, adsb.lol/airplanes.live sweeps.
 
 **Must be verified from a real Actions runner before relying on it:**
@@ -311,6 +313,8 @@ Required: measured per-route request counts and CPU time, not estimates. This co
 - **Requests per route:** the zone's `httpRequestsAdaptiveGroups` (GraphQL Analytics API) grouped by `clientRequestPath` for `quant.mmmxcix.com/api/*`, over 7 days. Needs an API token with *Account Analytics: Read* + *Zone Analytics: Read*.
 - **CPU per route:** Cloudflare's Workers/Pages analytics report CPU time per **script**, not per path, so per-route CPU needs either Workers Logs/Logpush with per-invocation CPU and the URL, or a temporary `performance.now()`-style marker logged per route (wall time, not CPU, so it is only an upper bound). Logs are the accurate option.
 - Next step: provide that token as a session secret (or run the query yourself) and the numbers will be added here.
+- **Token scope (added 2026-10-17):** per-route request counts come from the **zone** dataset `httpRequestsAdaptiveGroups`. That needs **Zone → Analytics: Read** on `mmmxcix.com` (scoped to that one zone). *Account → Analytics: Read* alone covers the account-level Workers/Pages invocation totals, but not the per-path breakdown. Read-only either way; nothing else.
+- **CPU (decided 2026-10-17):** don't over-invest. Take CPU from `npx wrangler pages deployment tail` during a scripted test run of the top routes, or accept the estimates in §2b. The request counts are the part that decides Phase 3.
 
 ### Briefing (reserved, not built)
 See `docs/BRIEFING.md`. Paths and stubs are created in Phase 3/4, together with the producer.

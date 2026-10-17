@@ -104,6 +104,7 @@ Adding a browser-side host means adding it to `connect-src` in `public/_headers`
 
 ## Static-first rules (decided 2026-10-17, see `docs/STATIC_FIRST_AUDIT.md` §5)
 - Scheduled snapshots: **GitHub Actions is primary**, PC agents are failover only. Sources that need a persistent connection (aisstream, Binance book WS, Telegram MTProto, the 24/7 agent loops, Kronos) stay on an always-on process.
+- **Binance never goes into Actions** (US runners, Binance geo-blocks US IPs): Binance pulls stay on the PC agents. Browser-side Binance calls are unaffected.
 - Daily snapshots = committed JSON (with a repo size guard). Intraday = R2 on its **public custom domain, never behind a Worker**.
 - Arbitrary symbols stay on `/api/yahoo` with a 5-min edge cache per symbol; anonymous users get cached-or-stale.
 - API keys live only in Actions/Cloudflare secrets. The browser never calls a keyed source (FRED etc.) directly.
