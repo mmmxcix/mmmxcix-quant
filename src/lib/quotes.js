@@ -2,8 +2,12 @@
 // change) — full candle history lives in src/lib/data.js.
 //
 // Crypto: ONE Binance 24hr-ticker call covers every symbol (public CORS API).
-// Stocks/indices/FX/futures: the /api/yahoo proxy v8 chart endpoint. Do NOT
-// switch to v7/finance/quote — that endpoint is auth-gated and returns 401.
+// Stocks/indices/FX/futures: ONE /api/yahoo v7/finance/quote?symbols=… call
+// per tick for the whole list (the proxy attaches Yahoo's crumb + cookie; v7
+// returns 401 without them). Each Pages Function invocation counts against the
+// free plan's 100k/day, and the per-symbol v8 chart path cost the Monitor 28 of
+// them per tick. The v8 path stays as the fallback for symbols the batch
+// doesn't return, or when the batch request fails outright.
 //
 // Dev-only upgrade: with the IBKR gateway feature enabled (Tools page, dev
 // token required), stock quotes come real-time from the local Client Portal
@@ -12,6 +16,11 @@
 import { ibkrActive, fetchIbkrQuotes } from "./ibkr.js";
 
 const YAHOO_CHART = "/api/yahoo/v8/finance/chart";
+const YAHOO_QUOTE = "/api/yahoo/v7/finance/quote";
+// Symbols per v7 request. The whole Monitor (28) fits in one; the cap only
+// keeps a very long watchlist's URL a sane length.
+const BATCH_MAX = 50;
+const QUOTE_FIELDS = "regularMarketPrice,regularMarketChangePercent,regularMarketPreviousClose,regularMarketTime";
 const BINANCE_24H = "https://api.binance.com/api/v3/ticker/24hr";
 
 // Module-level cache so tab revisits within the TTL are instant. Kept short:
@@ -74,6 +83,82 @@ export async function fetchStockQuote(symbol) {
   const changePct = prevClose ? ((price - prevClose) / prevClose) * 100 : null;
 
   return { symbol: symbol.toUpperCase(), price, changePct, prevClose };
+}
+
+/**
+ * Parse a v7/finance/quote response into Map<SYMBOL, { price, changePct, prevClose }>.
+ * Only rows with a finite price are kept; a symbol Yahoo didn't return (or
+ * returned without a price) is simply absent, and the caller falls back.
+ * changePct is Yahoo's regularMarketChangePercent, already in percent; when it
+ * is missing it is derived from regularMarketPreviousClose. Pure, for tests.
+ */
+export function parseQuoteBatch(json) {
+  const out = new Map();
+  for (const r of json?.quoteResponse?.result || []) {
+    const symbol = typeof r?.symbol === "string" ? r.symbol.toUpperCase() : null;
+    const price = r?.regularMarketPrice;
+    if (!symbol || !Number.isFinite(price)) continue;
+    const prevClose = Number.isFinite(r.regularMarketPreviousClose) ? r.regularMarketPreviousClose : null;
+    const changePct = Number.isFinite(r.regularMarketChangePercent)
+      ? r.regularMarketChangePercent
+      : prevClose ? ((price - prevClose) / prevClose) * 100 : null;
+    out.set(symbol, { price, changePct, prevClose });
+  }
+  return out;
+}
+
+/** One batched v7 request per BATCH_MAX symbols. Throws if a request fails. */
+export async function fetchStockQuotesBatch(symbols) {
+  const upper = [...new Set(symbols.map((s) => s.toUpperCase()))];
+  const out = new Map();
+  for (let i = 0; i < upper.length; i += BATCH_MAX) {
+    const chunk = upper.slice(i, i + BATCH_MAX);
+    const url = `${YAHOO_QUOTE}?symbols=${chunk.map(encodeURIComponent).join(",")}&fields=${QUOTE_FIELDS}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`Yahoo quote batch ${res.status}`);
+    for (const [k, v] of parseQuoteBatch(await res.json())) out.set(k, v);
+  }
+  return out;
+}
+
+const YAHOO_SPARK = "/api/yahoo/v8/finance/spark";
+
+/**
+ * Parse a v8/finance/spark response into Map<SYMBOL, closes[]> (ascending,
+ * nulls dropped). Spark carries close series only — no quote fields — so it
+ * feeds sparklines and nothing else. Two response shapes are in the wild:
+ *   { "AAPL": { symbol, timestamp:[…], close:[…] }, … }                (flat)
+ *   { spark: { result: [{ symbol, response:[{ indicators:{ quote:[{ close }] } }] }] } }
+ * Both are accepted. Pure, for tests.
+ */
+export function parseSparkBatch(json) {
+  const out = new Map();
+  const put = (sym, closes) => {
+    if (typeof sym !== "string" || !Array.isArray(closes)) return;
+    const clean = closes.filter((c) => Number.isFinite(c));
+    if (clean.length >= 2) out.set(sym.toUpperCase(), clean);
+  };
+  if (Array.isArray(json?.spark?.result)) {
+    for (const r of json.spark.result) put(r?.symbol, r?.response?.[0]?.indicators?.quote?.[0]?.close);
+    return out;
+  }
+  for (const [k, v] of Object.entries(json || {})) {
+    if (v && typeof v === "object") put(v.symbol || k, v.close);
+  }
+  return out;
+}
+
+/** Close series for many symbols in one request (sparklines only). */
+export async function fetchSparks(symbols, { range = "3mo", interval = "1d" } = {}) {
+  const upper = [...new Set(symbols.map((s) => s.toUpperCase()))];
+  const out = new Map();
+  for (let i = 0; i < upper.length; i += BATCH_MAX) {
+    const chunk = upper.slice(i, i + BATCH_MAX);
+    const res = await fetch(`${YAHOO_SPARK}?symbols=${chunk.map(encodeURIComponent).join(",")}&range=${range}&interval=${interval}`);
+    if (!res.ok) throw new Error(`Yahoo spark ${res.status}`);
+    for (const [k, v] of parseSparkBatch(await res.json())) out.set(k, v);
+  }
+  return out;
 }
 
 // All USDT crypto tickers in one call (no symbol param → full list).
@@ -172,8 +257,20 @@ export async function fetchQuotes(entries, { keepStale = false } = {}) {
   }
 
   if (stockMisses.length) {
-    jobs.push(
-      mapLimit(stockMisses, 6, async (e) => {
+    jobs.push((async () => {
+      // One request for the whole list. Whatever it doesn't cover — the batch
+      // failed, or Yahoo left a symbol out — goes through the old per-symbol
+      // path, so a batch outage is never worse than before.
+      let batch = new Map();
+      try { batch = await fetchStockQuotesBatch(stockMisses.map((e) => e.symbol)); } catch { /* fall back below */ }
+      const rest = [];
+      for (const e of stockMisses) {
+        const q = batch.get(e.symbol.toUpperCase());
+        if (!q) { rest.push(e); continue; }
+        setCached(e.symbol, { price: q.price, changePct: q.changePct });
+        out.set(e.symbol, { ...e, price: q.price, changePct: q.changePct, stale: false, asOf: Date.now() });
+      }
+      await mapLimit(rest, 6, async (e) => {
         try {
           const { price, changePct } = await fetchStockQuote(e.symbol);
           setCached(e.symbol, { price, changePct });
@@ -181,8 +278,8 @@ export async function fetchQuotes(entries, { keepStale = false } = {}) {
         } catch {
           out.set(e.symbol, miss(e));
         }
-      })
-    );
+      });
+    })());
   }
 
   await Promise.all(jobs);

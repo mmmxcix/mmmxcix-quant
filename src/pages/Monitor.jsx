@@ -7,6 +7,7 @@ import { cn, fmtPrice, fmtPct } from "@/lib/utils";
 // The instrument list lives in src/lib/universe.js so the monitor and the board
 // (/api/board market.quotes) read ONE list instead of two that drift apart.
 import { PANELS, ALL_ENTRIES } from "@/lib/universe";
+import { visibleInterval } from "@/lib/visiblePoll";
 
 // Bloomberg-terminal-style market overview: the instrument list comes from
 // src/lib/universe.js (shared with the board); data via src/lib/quotes.js
@@ -124,11 +125,13 @@ export default function Monitor() {
     aliveRef.current = true;
     load();
     // With IBKR live quotes the gateway is local and rate-limit-free — poll
-    // fast. Crypto stays served from the 30s client cache either way.
-    const id = setInterval(() => load(true), ibkr ? 3_000 : 30_000);
+    // fast (it never touches Cloudflare).
+    // Yahoo quotes now arrive as ONE batched request per tick (lib/quotes.js),
+    // and 60 s is plenty for a daily-change overview. Hidden tabs don't poll.
+    const stop = visibleInterval(() => load(true), ibkr ? 3_000 : 60_000);
     return () => {
       aliveRef.current = false;
-      clearInterval(id);
+      stop();
     };
   }, [load, ibkr]);
 

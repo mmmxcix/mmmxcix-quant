@@ -9,6 +9,7 @@ import { decodeCountries, projectCountries, countryAt, invMercLon, invMercLat, y
 import { mercX, mercY } from "@/lib/ais";
 import { fetchYieldStats, fetchYields, yieldCurves } from "@/lib/macro";
 import { vizColor } from "@/lib/vizColors";
+import { visibleInterval } from "@/lib/visiblePoll";
 
 // The unified world map (worldmonitor.app-inspired, own implementation):
 // ONE map, layer toggles instead of separate tabs. Countries with real
@@ -437,8 +438,8 @@ export default function WorldMap() {
       } catch { /* pins simply stay absent */ }
     };
     load();
-    const id = setInterval(load, 5 * 60_000);
-    return () => { alive = false; clearInterval(id); };
+    const stop = visibleInterval(load, 5 * 60_000);
+    return () => { alive = false; stop(); };
   }, [layers.news]);
 
   /* ── Fires (NASA FIRMS 24h): global snapshot via the fleet agent ─────── */
@@ -456,8 +457,8 @@ export default function WorldMap() {
       } catch { /* keep last data */ }
     };
     load();
-    const id = setInterval(load, 10 * 60_000);
-    return () => { alive = false; clearInterval(id); };
+    const stop = visibleInterval(load, 10 * 60_000);
+    return () => { alive = false; stop(); };
   }, [layers.fires]);
 
   /* ── Conflicts (UCDP candidate, ~6 months): snapshot via fleet agent ─── */
@@ -477,8 +478,8 @@ export default function WorldMap() {
       } catch { /* keep last data */ }
     };
     load();
-    const id = setInterval(load, 30 * 60_000);
-    return () => { alive = false; clearInterval(id); };
+    const stop = visibleInterval(load, 30 * 60_000);
+    return () => { alive = false; stop(); };
   }, [layers.conflicts]);
 
   /* ── Disasters (GDACS floods/droughts/cyclones/wildfires) ────────────── */
@@ -503,8 +504,8 @@ export default function WorldMap() {
       } catch { /* keep last */ }
     };
     load();
-    const id = setInterval(load, 15 * 60_000);
-    return () => { alive = false; clearInterval(id); };
+    const stop = visibleInterval(load, 15 * 60_000);
+    return () => { alive = false; stop(); };
   }, [layers.disasters]);
 
   /* ── Power infrastructure (vendored WRI plants >= 50 MW) ─────────────── */
@@ -597,8 +598,8 @@ export default function WorldMap() {
       } catch { /* keep last */ }
     };
     load();
-    const id = setInterval(load, 2 * 60_000);
-    return () => { alive = false; clearInterval(id); };
+    const stop = visibleInterval(load, 2 * 60_000);
+    return () => { alive = false; stop(); };
   }, [layers.jamming]);
 
   /* ── World Bank projects (per country, pinned at centroid) ───────────── */
@@ -620,8 +621,8 @@ export default function WorldMap() {
       } catch { /* keep last */ }
     };
     load();
-    const id = setInterval(load, 30 * 60_000);
-    return () => { alive = false; clearInterval(id); };
+    const stop = visibleInterval(load, 30 * 60_000);
+    return () => { alive = false; stop(); };
   }, [layers.projects]);
 
   /* ── Quakes layer (USGS, direct — they send CORS) ────────────────────── */
@@ -643,8 +644,8 @@ export default function WorldMap() {
       } catch { /* keep last data */ }
     };
     load();
-    const id = setInterval(load, 5 * 60_000);
-    return () => { alive = false; clearInterval(id); };
+    const stop = visibleInterval(load, 5 * 60_000);
+    return () => { alive = false; stop(); };
   }, [layers.quakes]);
 
   /* ── Counts tick + vessel pruning ────────────────────────────────────── */

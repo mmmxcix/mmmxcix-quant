@@ -22,6 +22,7 @@ import { fxRateToUSD, DEPOSIT_CURRENCIES } from "@/lib/fx";
 import { ibkrActive, fetchIbkrPositions } from "@/lib/ibkr";
 import { cn, fmtNum, fmtPrice, fmtPct } from "@/lib/utils";
 import { computeHoldings, ageLabel } from "@/lib/portfolioTotals";
+import { visibleInterval } from "@/lib/visiblePoll";
 
 const REFRESH_MS = 30_000;
 
@@ -180,10 +181,10 @@ export default function Portfolio() {
       setFirstLoad(false);
     };
     load();
-    const id = setInterval(load, REFRESH_MS);
+    const stop = visibleInterval(load, REFRESH_MS);
     return () => {
       alive = false;
-      clearInterval(id);
+      stop();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [symbolKey]);

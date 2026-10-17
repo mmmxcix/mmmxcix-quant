@@ -6,6 +6,7 @@ import FleetSwitch from "@/components/FleetSwitch";
 import { Link } from "react-router-dom";
 import { chartHref, chartLogHref } from "@/lib/chartLink";
 import { LineChart } from "lucide-react";
+import { visibleInterval } from "@/lib/visiblePoll";
 
 // The arena: live paper trading for strategies that CANNOT be backtested.
 // See src/lib/arena.js for why (no historical order-book depth) and
@@ -328,8 +329,8 @@ export default function Arena() {
       } catch { if (alive) setErr("offline"); }
     };
     load();
-    const t = setInterval(load, 20000);
-    return () => { alive = false; clearInterval(t); };
+    const stop = visibleInterval(load, 20000);
+    return () => { alive = false; stop(); };
   }, []);
 
   const entries = data?.entries || [];

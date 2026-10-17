@@ -4,6 +4,8 @@ import { LayoutDashboard, Star, Activity, TrendingUp, ShieldCheck, RefreshCw, Co
 import { fetchCandles, fetchLatestCandles, WATCHLIST } from "@/lib/data";
 import { getPortfolio, getWatchlist, subscribe as subscribeStore } from "@/lib/portfolio";
 import { buildEquityCurve } from "@/lib/equityCurve";
+import { fetchQuotes, fetchSparks } from "@/lib/quotes";
+import { visibleInterval } from "@/lib/visiblePoll";
 import WorldClock from "@/components/WorldClock";
 import WatchlistPage from "@/pages/Watchlist";
 import MonitorPage from "@/pages/Monitor";
@@ -32,8 +34,11 @@ function useWatchlistQuotes(list) {
   // re-renders, so switching tabs doesn't re-download either.
   const sparkCache = useRef(new Map());
   const load = useCallback(async () => {
-    const results = await Promise.allSettled(
-      list.map(async (w) => {
+    const crypto = list.filter((w) => w.market === "crypto");
+    const stocks = list.filter((w) => w.market !== "crypto");
+    // Crypto: Binance directly from the browser — free, no Function involved —
+    // so the per-symbol history + tail path stays as it was.
+    const cryptoJobs = crypto.map(async (w) => {
         const k = `${w.market}:${w.symbol}`;
         const cached = sparkCache.current.get(k);
         if (!cached) {
@@ -59,8 +64,35 @@ function useWatchlistQuotes(list) {
           changePct: prev ? ((last.close - prev.close) / prev.close) * 100 : 0,
           spark: trimmed.slice(-30).map((c) => c.close),
         };
-      })
-    );
+    });
+    // Stocks go through /api/yahoo, where every request is a Function
+    // invocation. Per tick that is now ONE quote batch for all of them, plus —
+    // once per symbol per session — ONE spark batch for the sparklines (spark
+    // is close series only, never used for the price). Before, it was one
+    // 3-month chart per symbol, then one tail per symbol every 30 s.
+    const stockJob = (async () => {
+      if (!stocks.length) return [];
+      const keyOf = (w) => `${w.market}:${w.symbol}`;
+      const needSpark = stocks.filter((w) => !sparkCache.current.has(keyOf(w)));
+      if (needSpark.length) {
+        try {
+          const sparks = await fetchSparks(needSpark.map((w) => w.symbol));
+          for (const w of needSpark) {
+            const closes = sparks.get(w.symbol.toUpperCase());
+            if (closes) sparkCache.current.set(keyOf(w), closes.slice(-30));
+          }
+        } catch { /* sparkline stays empty until a later tick; price is unaffected */ }
+      }
+      const q = await fetchQuotes(stocks, { keepStale: true });
+      return stocks.map((w) => {
+        const r = q.get(w.symbol);
+        if (!r || !Number.isFinite(r.price)) return { status: "rejected" };
+        const spark = (sparkCache.current.get(keyOf(w)) || []).slice();
+        if (spark.length) spark[spark.length - 1] = r.price; // line ends at the live price
+        return { status: "fulfilled", value: { key: keyOf(w), price: r.price, changePct: r.changePct ?? 0, spark, stale: !!r.stale, asOf: r.asOf } };
+      });
+    })();
+    const results = [...await Promise.allSettled(cryptoJobs), ...await stockJob.catch(() => [])];
     setQuotes((prev) => {
       const map = { ...prev };
       for (const r of results) if (r.status === "fulfilled") map[r.value.key] = r.value;
@@ -75,10 +107,10 @@ function useWatchlistQuotes(list) {
   useEffect(() => {
     let alive = true;
     setLoading(true); // list changed (or first mount) — show skeletons once
-    const tick = () => { if (!document.hidden && alive) load(); };
+    const tick = () => { if (alive) load(); };
     load();
-    const id = setInterval(tick, 30000);
-    return () => { alive = false; clearInterval(id); };
+    const stop = visibleInterval(tick, 30000);
+    return () => { alive = false; stop(); };
   }, [load]);
 
   return { quotes, loading, reload };

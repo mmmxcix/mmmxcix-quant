@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { LayoutList, MessageSquare, RefreshCw, Terminal, TriangleAlert } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { cliEnabled, cliModel, cliUrl, omniComplete, omniEnabled, omniModel, omniUrl } from "@/lib/omniroute";
+import { visibleInterval } from "@/lib/visiblePoll";
 
 // The board — one screen over the three agents, the market, the charts and the
 // news, all of it served by /api/board from the catalog in src/lib/board.
@@ -426,8 +427,7 @@ export default function Board() {
 
   useEffect(() => {
     load();
-    const t = setInterval(load, REFRESH_MS);
-    return () => clearInterval(t);
+    return visibleInterval(load, REFRESH_MS);
   }, [load]);
 
   useEffect(() => {

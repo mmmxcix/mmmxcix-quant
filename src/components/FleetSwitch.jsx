@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 import { useSession, isAdmin } from "@/lib/authClient";
+import { visibleInterval } from "@/lib/visiblePoll";
 
 // The fleet switch, same shape as the Cortex Always-On one. ON = the agents on
 // the dev machine run; OFF = everything stops, so the GPU and the CPU are free
@@ -34,8 +35,8 @@ export default function FleetSwitch() {
       })
       .catch(() => { if (alive) setControl({ paused: false }); });
     load();
-    const t = setInterval(load, 15000);   // reflect a local toggle without a reload
-    return () => { alive = false; clearInterval(t); };
+    const stop = visibleInterval(load, 15000);   // reflect a local toggle without a reload
+    return () => { alive = false; stop(); };
   }, [admin]);
 
   if (!admin) return null;

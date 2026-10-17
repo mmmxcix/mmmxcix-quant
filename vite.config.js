@@ -8,7 +8,7 @@ import { fetchOptionsOverview, clearBinanceOptionsCache } from "./src/lib/binanc
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
-// Yahoo's crumb-protected endpoints (options v7, quoteSummary v10) need a
+// Yahoo's crumb-protected endpoints (options + quote v7, quoteSummary v10) need a
 // cookie + crumb pair. The production proxy (functions/api/yahoo) does this
 // handshake at the edge; in dev we do it once at server start so those
 // endpoints work under `vite dev` too. Best-effort: if it fails, the plain
@@ -35,7 +35,8 @@ async function yahooSession() {
 }
 
 const session = await yahooSession();
-const NEEDS_CRUMB = /^\/(v7\/finance\/options|v10\/finance\/quoteSummary)\//;
+// v7 quote is matched by path only (it takes ?symbols=, no trailing segment).
+const NEEDS_CRUMB = /^\/(v7\/finance\/options\/|v7\/finance\/quote(\?|$)|v10\/finance\/quoteSummary\/)/;
 
 // Dev stand-in for the Pages Function /api/bvol (the BVOL history behind the
 // Volatility tab's crypto view). In production it reads D1; here it serves the
