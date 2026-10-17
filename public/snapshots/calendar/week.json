@@ -1,0 +1,11 @@
+{
+  "schema": "mmmxcix.snapshot/v1",
+  "name": "week",
+  "source": "FRED release calendar, Fed/ECB calendars, LSE economic calendar",
+  "asOf": null,
+  "producer": null,
+  "status": "stub",
+  "cadence": "daily",
+  "note": "This week's releases and central-bank events.",
+  "data": null
+}

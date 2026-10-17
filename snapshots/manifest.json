@@ -1,0 +1,58 @@
+{
+  "schema": "mmmxcix.snapshot-manifest/v1",
+  "envelope": "Every snapshot: { schema, name, source, asOf (ms epoch|null), producer ('actions'|'pc'|null), status ('live'|'stale'|'down'|'stub'), cadence, note, data }",
+  "stores": {
+    "committed": "public/snapshots/<path> \u2014 overwritten in place, deployed by the Pages build, served as static files",
+    "r2": "R2 bucket on its public custom domain (not created yet), key = <path>; never fronted by a Worker"
+  },
+  "paths": [
+    {
+      "path": "macro/latest.json",
+      "store": "committed",
+      "source": "FRED + ALFRED (vintages)",
+      "cadence": "release days"
+    },
+    {
+      "path": "calendar/week.json",
+      "store": "committed",
+      "source": "FRED release calendar, Fed/ECB calendars, LSE economic calendar",
+      "cadence": "daily"
+    },
+    {
+      "path": "positioning/cot.json",
+      "store": "committed",
+      "source": "CFTC Commitments of Traders",
+      "cadence": "weekly (Fri)"
+    },
+    {
+      "path": "positioning/short-interest.json",
+      "store": "committed",
+      "source": "FINRA short interest",
+      "cadence": "twice monthly"
+    },
+    {
+      "path": "tape/latest.json",
+      "store": "committed",
+      "source": "Yahoo EOD (Stooq fallback), Binance",
+      "cadence": "daily after US close"
+    },
+    {
+      "path": "tape/intraday.json",
+      "store": "r2",
+      "source": "Yahoo v7 quote (batched), Binance",
+      "cadence": "1-5 min"
+    },
+    {
+      "path": "news-clusters/YYYY-MM-DD.json",
+      "store": "r2",
+      "source": "15 RSS feeds + t.me/s scrape, clustered by Workers AI in the job",
+      "cadence": "2x daily"
+    },
+    {
+      "path": "briefing/YYYY-MM-DD.json",
+      "store": "r2",
+      "source": "assembled from the snapshots above",
+      "cadence": "2x daily"
+    }
+  ]
+}

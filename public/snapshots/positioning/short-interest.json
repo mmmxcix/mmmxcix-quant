@@ -1,0 +1,11 @@
+{
+  "schema": "mmmxcix.snapshot/v1",
+  "name": "short-interest",
+  "source": "FINRA short interest",
+  "asOf": null,
+  "producer": null,
+  "status": "stub",
+  "cadence": "twice monthly",
+  "note": "Short interest for the fixed universes.",
+  "data": null
+}

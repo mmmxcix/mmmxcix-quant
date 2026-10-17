@@ -1,0 +1,11 @@
+{
+  "schema": "mmmxcix.snapshot/v1",
+  "name": "tape/intraday.json",
+  "source": "Yahoo v7 quote (batched), Binance",
+  "asOf": null,
+  "producer": null,
+  "status": "stub",
+  "cadence": "1-5 min",
+  "note": "Intraday copy of the tape. Template only: uploaded to R2 by the producer, never committed with data.",
+  "data": null
+}
