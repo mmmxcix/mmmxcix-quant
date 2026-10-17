@@ -1,0 +1,11 @@
+{
+  "schema": "mmmxcix.snapshot/v1",
+  "name": "news-clusters/YYYY-MM-DD.json",
+  "source": "15 RSS feeds + t.me/s scrape, clustered by Workers AI in the job",
+  "asOf": null,
+  "producer": null,
+  "status": "stub",
+  "cadence": "2x daily",
+  "note": "Headlines grouped into stories, one neutral summary each. Clustering/summarisation runs in the scheduled job via Workers AI, never in a Pages Function.",
+  "data": null
+}

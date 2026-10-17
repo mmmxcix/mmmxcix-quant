@@ -1,0 +1,11 @@
+{
+  "schema": "mmmxcix.snapshot/v1",
+  "name": "latest",
+  "source": "Yahoo EOD (Stooq fallback), Binance",
+  "asOf": null,
+  "producer": null,
+  "status": "stub",
+  "cadence": "daily after US close",
+  "note": "Indices, rates, FX, commodities, crypto: level, 1d/5d/1m change, 52-week position.",
+  "data": null
+}

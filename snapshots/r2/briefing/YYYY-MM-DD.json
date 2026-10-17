@@ -1,0 +1,61 @@
+{
+  "schema": "mmmxcix.snapshot/v1",
+  "name": "briefing/YYYY-MM-DD.json",
+  "source": "assembled from the snapshots above",
+  "asOf": null,
+  "producer": null,
+  "status": "stub",
+  "cadence": "2x daily",
+  "note": "One briefing per day, fetched once per visit, rendered client-side. Every panel carries its own source/asOf/status.",
+  "data": null,
+  "panels": {
+    "tape": {
+      "source": null,
+      "asOf": null,
+      "status": "stub",
+      "data": null
+    },
+    "macro": {
+      "source": null,
+      "asOf": null,
+      "status": "stub",
+      "data": null
+    },
+    "calendar": {
+      "source": null,
+      "asOf": null,
+      "status": "stub",
+      "data": null
+    },
+    "positioning": {
+      "source": null,
+      "asOf": null,
+      "status": "stub",
+      "data": null
+    },
+    "volatility": {
+      "source": null,
+      "asOf": null,
+      "status": "stub",
+      "data": null
+    },
+    "news": {
+      "source": null,
+      "asOf": null,
+      "status": "stub",
+      "data": null
+    },
+    "yourBook": {
+      "source": null,
+      "asOf": null,
+      "status": "stub",
+      "data": null
+    },
+    "deskIntegrity": {
+      "source": null,
+      "asOf": null,
+      "status": "stub",
+      "data": null
+    }
+  }
+}

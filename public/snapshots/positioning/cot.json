@@ -1,0 +1,11 @@
+{
+  "schema": "mmmxcix.snapshot/v1",
+  "name": "cot",
+  "source": "CFTC Commitments of Traders",
+  "asOf": null,
+  "producer": null,
+  "status": "stub",
+  "cadence": "weekly (Fri)",
+  "note": "Net positioning by market + percentile vs. 3 years.",
+  "data": null
+}

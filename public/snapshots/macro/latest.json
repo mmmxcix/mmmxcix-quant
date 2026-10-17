@@ -1,0 +1,11 @@
+{
+  "schema": "mmmxcix.snapshot/v1",
+  "name": "latest",
+  "source": "FRED + ALFRED (vintages)",
+  "asOf": null,
+  "producer": null,
+  "status": "stub",
+  "cadence": "release days",
+  "note": "Key macro series with first print vs. latest revision. FRED_API_KEY lives only in the Actions secrets.",
+  "data": null
+}
