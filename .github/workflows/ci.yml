@@ -1,0 +1,35 @@
+# CI: tests, build, and the deployment-size guard on every PR and on main.
+# Pages deploys main on its own (Git integration); this only checks, it never
+# deploys. smoke/a11y stay local (npm run check) — they need a Chrome binary.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # Includes test/snapshots.test.mjs (snapshot envelope + repo size guard).
+      # The Python-strategy tests load numpy/pandas wheels from cdn.jsdelivr.net.
+      - run: npm test
+      - run: npm run build
+      # Pages Free: <= 20,000 files per deployment, <= 25 MiB per file.
+      # Warns (annotation) at 15,000 files, fails at 20,000.
+      - run: npm run deploy-guard

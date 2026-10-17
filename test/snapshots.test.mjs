@@ -53,3 +53,12 @@ test("repo size guard: committed snapshots stay small and are not per-day histor
   // R2 templates are templates: they never carry data in the repo.
   for (const f of walk(R2)) assert.equal(JSON.parse(readFileSync(f, "utf8")).data, null, `${f}: R2 template with data`);
 });
+
+test("repo size guard: public/ stays well under the Pages file-count limit", (t) => {
+  // Pages Free rejects a deployment over 20,000 files. Daily snapshots grow the
+  // COUNT long before the bytes, so this counts files. The authoritative check
+  // on the built output is scripts/check-deploy-size.mjs (warns at 15,000).
+  const n = walk("public").length;
+  if (n >= 10_000) t.diagnostic(`public/ has ${n} files — check-deploy-size warns at 15,000, Pages rejects at 20,000`);
+  assert.ok(n < 15_000, `public/ has ${n} files; per-day snapshots belong in R2`);
+});
