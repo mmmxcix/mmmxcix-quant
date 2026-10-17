@@ -243,7 +243,79 @@ calls, and live lookups of symbols outside the precomputed universes.
 - A test or CI check that fails if a page issues more than N `/api/*` calls on load (puppeteer is already a dev dependency via `scripts/smoke.mjs`).
 - Remove obsolete KV/D1 snapshot keys and routes. Update CLAUDE.md and the docs.
 
-### Decisions needed from you before Phase 3
+## 5. Decisions (2026-10-17) and Phase 1 status
+
+### Phase 1 PRs (one per item, reordered: correctness before performance)
+| # | PR | Status |
+|---|---|---|
+| 1 | Stop `/api/lab` polling for non-admin visitors (#1) | open |
+| 2 | Failed quote ≠ $0: Portfolio stale/excluded totals, equity-curve weighting, crypto-screener "not checked" (#2) | open |
+| 3 | Batch quotes via `v7/finance/quote`, spark for sparklines only, Monitor 60 s, pause polling in hidden tabs | **built, not committed**: waiting on a live check against Yahoo (`scripts/verify-yahoo-batch.mjs`); the build sandbox can't reach Yahoo |
+| 4 | Negative caching: all-failed `/api/telegram` and `/api/news` cached 20 s (#3) | open |
+| — | Dedupe `/api/world` on the map; delete dead `Planes.jsx` / `Ships.jsx` | not started |
+| — | Remaining wrong-number cases: accruals/short quintiles, intraday chunk gaps, day change across a null bar | not started |
+
+### Does anything fall back to a second source when Yahoo fails?
+**No.** Confirmed from the code:
+- `src/lib/data.js` `fetchYahoo` / `fetchYahooIntraday` / `fetchOlderCandles`: Yahoo only. A failure throws (or, for intraday chunks, is swallowed).
+- `src/lib/lse.js` (London Strategic Edge) is a **manual** source picked in Backtest (`Backtest.jsx:433`, `dataSrc === "london"`), never an automatic fallback.
+- `src/lib/quotes.js` falls back the *other* way: IBKR (dev only) → Yahoo.
+- The only real upstream failover in the codebase is `/api/adsb` (adsb.lol → airplanes.live).
+
+**Where a Stooq EOD fallback plugs in**:
+1. **Now (browser path):** `fetchCandles` in `src/lib/data.js`, only in the daily/weekly/monthly branches (`isMaxDaily` and the final `else`). Stooq has no intraday data, so the sub-hour and 60m branches stay Yahoo-only. Wrap `fetchYahoo(...)` as "try Yahoo; on a transport/5xx/429 error, try Stooq", and stamp the result with `source` so the chart can say "EOD via Stooq".
+   - Stooq sends no CORS headers, so this needs a small proxy (`functions/api/stooq/[[path]].js`, CSV → candle JSON, same 5-min edge cache as below).
+   - Symbol mapping needed: `AAPL` → `aapl.us`, `^GSPC` → `^spx`, `EURUSD=X` → `eurusd`.
+   - Before relying on it, verify that Stooq's CSV download still works without a key; it has added friction for automated clients before.
+2. **Phase 3 (preferred):** in the GitHub Actions EOD producer. Yahoo first, Stooq on failure, and the source is written into the snapshot. The browser then never needs the fallback for the fixed universes.
+3. Not a candidate: `quotes.js` intraday prices. Stooq has no live quotes.
+
+### Snapshots: GitHub Actions primary, PC agents failover only
+The producer runs in Actions; the PC agents push the same snapshot format only when the Actions copy is stale (each snapshot carries `asOf` + `producer`, so the reader can tell which one it got).
+
+**Cannot run in Actions** (needs a persistent connection, a long-lived stateful loop, or local hardware), so these stay on an always-on process:
+
+| Source / agent | Why | Where it lives |
+|---|---|---|
+| aisstream.io ships (`ais-agent.mjs:28`, `/api/ais-stream`) | WebSocket that must stay connected; positions are a stream, not a pull | PC, or a Durable Object (to evaluate) |
+| Binance order book for Arena (`arena-agent.mjs:94`, `bookTicker` WS) | live depth stream; paper fills need every tick | PC |
+| Telegram MTProto (`telegram-mtproto.mjs`) | authenticated session client; re-logging in from rotating CI IPs risks the account | PC. The public `t.me/s` scrape is plain HTTP and **can** run in Actions |
+| Argus / Lab / executor / agent-daemon loops | 24/7 stateful loops (minutes cadence, open positions, command queue) | PC |
+| Kronos forecasts (`scripts/kronos/`) | PyTorch model, local CPU/GPU | PC |
+| Local LLM via OmniRoute (statements, research) | localhost service | PC (or switch to a hosted free tier) |
+
+**Can run in Actions** (plain scheduled HTTP pulls): Yahoo EOD/fundamentals, Stooq, FRED/ALFRED, SEC EDGAR, CFTC COT, FINRA, the RSS feeds, `t.me/s` scrape, DoltHub IV, data.binance.vision BVOL archive, FIRMS, UCDP, GDACS, World Bank, CelesTrak, adsb.lol/airplanes.live sweeps.
+
+**Must be verified from a real Actions runner before relying on it:**
+- **Binance:** `api.binance.com` and `eapi.binance.com` geo-block US IPs (HTTP 451), and GitHub-hosted runners are mostly US. Binance spot/options may need to stay on the PC, or go through `data-api.binance.vision` for spot.
+- **Yahoo:** it throttles cloud IP ranges.
+
+### Storage: committed JSON for daily, R2 for intraday
+- **Daily** snapshots are committed under `public/data/…` and deployed by the normal Pages build.
+  - One commit per day, so well under the Pages Free build cap (~500/month).
+  - **Repo size guard** (Phase 3, with the first producer): a CI check fails the job if the snapshot tree exceeds a budget (proposal: 50 MB total, 2 MB per file), or if a single commit adds more than 5 MB.
+  - Snapshots are overwritten in place, not appended per day, so git history is the archive. A file that would need per-day history (e.g. `briefing/YYYY-MM-DD.json`) goes to R2 instead.
+- **Intraday** snapshots go to an R2 bucket on its **public custom domain** (e.g. `data.quant.mmmxcix.com`). It is never fronted by a Worker, because any Worker in that path is an invocation per read again.
+  - Needs: a bucket CORS rule for `quant.mmmxcix.com`, a `connect-src` entry in `public/_headers`, and an R2 API token in the Actions secrets.
+
+### Arbitrary symbols: proxy + 5-min edge cache keyed by symbol
+For symbols outside the precomputed universes:
+- `/api/yahoo` keeps serving them.
+- The response is cached at the edge for 5 min **keyed by symbol + endpoint + range/interval**, so only the first request per window reaches Yahoo.
+- Anonymous callers get cached-or-stale: on a cache miss during an upstream failure they get the last cached copy marked stale, never a live call on their own.
+
+Note this caps **Yahoo** calls, not **Function invocations**. Each request still runs the Function, because the cache lookup happens inside it. Getting a cache hit served before the Function runs needs a zone Cache Rule in front of Pages, which has to be verified. Phase 5.
+
+### Measurement before Phase 3
+Required: measured per-route request counts and CPU time, not estimates. This could not be done from the build session: it has no Cloudflare analytics access, and its network policy blocks Cloudflare and Yahoo. What it takes:
+- **Requests per route:** the zone's `httpRequestsAdaptiveGroups` (GraphQL Analytics API) grouped by `clientRequestPath` for `quant.mmmxcix.com/api/*`, over 7 days. Needs an API token with *Account Analytics: Read* + *Zone Analytics: Read*.
+- **CPU per route:** Cloudflare's Workers/Pages analytics report CPU time per **script**, not per path, so per-route CPU needs either Workers Logs/Logpush with per-invocation CPU and the URL, or a temporary `performance.now()`-style marker logged per route (wall time, not CPU, so it is only an upper bound). Logs are the accurate option.
+- Next step: provide that token as a session secret (or run the query yourself) and the numbers will be added here.
+
+### Briefing (reserved, not built)
+See `docs/BRIEFING.md`. Paths and stubs are created in Phase 3/4, together with the producer.
+
+### Decisions that were needed before Phase 3 (answered in section 5)
 1. **Producer:** your PC agents (already running, but they stop when the PC is off), GitHub Actions cron (independent of the PC; Yahoo may throttle its IPs; free minutes depend on repo visibility), or both with failover.
 2. **Static store:** (a) commit JSON and let Pages rebuild, which is fine for daily data but the Pages Free build cap (~500/month) rules it out for 5-min data; or (b) an R2 bucket on a public custom domain, which serves reads without any Worker invocation and fits the fast data. Verify the current R2 free-tier numbers and CORS setup. My recommendation is **(a) for daily data and (b) for intraday**.
 3. Should arbitrary-symbol live charts stay on the proxy, or be limited for anonymous users?

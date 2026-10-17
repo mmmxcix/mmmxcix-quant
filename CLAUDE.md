@@ -102,5 +102,13 @@ Adding a browser-side host means adding it to `connect-src` in `public/_headers`
 - **Design tokens** (tailwind.config.js): bg #0a0e14, surface, line, text, dim, accent #2dd4bf, up, down; utilities `.input-base`, `.btn-accent`, `.chip*` in src/index.css. See DESIGN.md.
 - **Service worker** never caches (stale-chunk incidents). Never add a root `public/404.html` (it breaks SPA deep links, see `public/_redirects`).
 
+## Static-first rules (decided 2026-10-17, see `docs/STATIC_FIRST_AUDIT.md` §5)
+- Scheduled snapshots: **GitHub Actions is primary**, PC agents are failover only. Sources that need a persistent connection (aisstream, Binance book WS, Telegram MTProto, the 24/7 agent loops, Kronos) stay on an always-on process.
+- Daily snapshots = committed JSON (with a repo size guard). Intraday = R2 on its **public custom domain, never behind a Worker**.
+- Arbitrary symbols stay on `/api/yahoo` with a 5-min edge cache per symbol; anonymous users get cached-or-stale.
+- API keys live only in Actions/Cloudflare secrets. The browser never calls a keyed source (FRED etc.) directly.
+- Every panel shows source + as-of. A failing source yields "stale/down, as of …", never a blank or a wrong number.
+- New polling uses `visibleInterval` (`src/lib/visiblePoll.js`) so hidden tabs don't spend Function invocations.
+
 ## Planned
-Static-first data refactor (see `docs/STATIC_FIRST_AUDIT.md`), saved strategies, parameter optimisation, IBKR integration, AI strategy generator via the Anthropic API behind a paywall.
+Static-first data refactor (see `docs/STATIC_FIRST_AUDIT.md`), daily briefing built from the snapshots (`docs/BRIEFING.md`, reserved, not built), saved strategies, parameter optimisation, IBKR integration, AI strategy generator via the Anthropic API behind a paywall.
